@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Output from a steering wheel and pedal set.
+// Axis values are normalized joystick values in [-1, 1], and buttons are
+// stored as 0/1 bytes. Retargeters own any device-specific pedal inversion or
+// pressed-fraction conversion.
+table SteeringWheelOutput {
+  steering: float (id: 0);
+
+  throttle: float (id: 1);
+
+  brake: float (id: 2);
+
+  clutch: float (id: 3);
+
+  buttons: [ubyte] (id: 4);
+
+  hat_x: int (id: 5);
+
+  hat_y: int (id: 6);
+}
+
+// Tracked wrapper for the in-memory tracker API (data is null when no wheel data available).
+table SteeringWheelOutputTracked {
+    data: SteeringWheelOutput (id: 0);
+}
+
+// MCAP recording wrapper for SteeringWheelOutput.
+table SteeringWheelOutputRecord {
+    data: SteeringWheelOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SteeringWheelOutputRecord;

@@ -20,7 +20,9 @@
 #include "plugin_device_status_bindings.h"
 #include "pose_bindings.h"
 #include "se3_tracker_bindings.h"
+#include "steering_wheel_bindings.h"
 #include "timestamp_bindings.h"
+#include "vehicle_control_bindings.h"
 
 namespace py = pybind11;
 
@@ -58,6 +60,11 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind SE3 tracker types (Se3TrackerPose table) for generic 6-DoF pose sources.
     core::bind_se3_tracker(m);
+    // Bind steering wheel types (SteeringWheelOutput table).
+    core::bind_steering_wheel(m);
+
+    // Bind vehicle control types (VehicleControlCommand table).
+    core::bind_vehicle_control(m);
 
     // Bind message channel types (MessageChannelMessages table).
     core::bind_message_channel(m);
