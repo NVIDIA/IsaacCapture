@@ -60,3 +60,8 @@ tensor_identifier = "frame_metadata"
 channel = "oak"
 header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
+
+[[tracker]]
+name = "steering_wheel"
+table = "SteeringWheelOutput"
+max_flatbuffer_size = 1024
