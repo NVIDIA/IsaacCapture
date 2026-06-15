@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Normalized vehicle command produced by retargeting operator input.
+// Steering is in [-1, 1]. Accel is signed [-1, 1], where positive values request
+// propulsion and negative values request braking. Throttle and brake are split
+// non-negative [0, 1] values for vehicle backends that do not consume signed accel.
+table VehicleControlCommand {
+  sequence: uint64 (id: 0);
+
+  steer: float (id: 1);
+
+  accel: float (id: 2);
+
+  throttle: float (id: 3);
+
+  brake: float (id: 4);
+}
+
+// MCAP recording wrapper for VehicleControlCommand.
+table VehicleControlCommandRecord {
+    data: VehicleControlCommand (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type VehicleControlCommandRecord;
