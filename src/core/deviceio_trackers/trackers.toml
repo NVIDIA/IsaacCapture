@@ -65,3 +65,4 @@ max_flatbuffer_size = 128
 name = "steering_wheel"
 table = "SteeringWheelOutput"
 max_flatbuffer_size = 1024
+python_accessor = "get_wheel_data"

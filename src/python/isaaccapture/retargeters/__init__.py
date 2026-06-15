@@ -15,6 +15,7 @@ Available Retargeters:
     - LocomotionFixedRootCmdRetargeter: Fixed root command (standing still)
     - LocomotionRootCmdRetargeter: Locomotion from controller inputs
     - FootPedalRootCmdRetargeter: Root command from 3-axis foot pedal (horizontal/vertical + rudder)
+    - VehicleControlRetargeter: Vehicle command retargeting from steering wheel input
     - GripperRetargeter: Pinch-based gripper control
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
@@ -104,6 +105,18 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "FootPedalRootCmdRetargeterConfig",
         None,
     ),
+    # .vehicle_control_retargeter
+    "VehicleControlRetargeter": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeter",
+        None,
+    ),
+    "VehicleControlRetargeterConfig": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeterConfig",
+        None,
+    ),
+    "axis_to_pedal": (".vehicle_control_retargeter", "axis_to_pedal", None),
     # .gripper_retargeter
     "GripperRetargeter": (".gripper_retargeter", "GripperRetargeter", None),
     "GripperRetargeterConfig": (".gripper_retargeter", "GripperRetargeterConfig", None),
@@ -269,6 +282,9 @@ __all__ = [
     "TriHandMotionControllerConfig",
     "FootPedalRootCmdRetargeter",
     "FootPedalRootCmdRetargeterConfig",
+    "VehicleControlRetargeter",
+    "VehicleControlRetargeterConfig",
+    "axis_to_pedal",
     # Locomotion retargeters
     "LocomotionFixedRootCmdRetargeter",
     "LocomotionFixedRootCmdRetargeterConfig",
