@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+g920_racing_wheel:
+  steering_wheel: 0
+  throttle: 2
+  brake: 3
+  clutch: 1
+  handbrake: 4
+  reverse: 10
+
+sensitivity:
+  mode: 0
+  min: 0.5
+  max: 0.5
