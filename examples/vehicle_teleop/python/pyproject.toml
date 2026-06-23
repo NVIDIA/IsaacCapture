@@ -7,10 +7,18 @@ version = "0.0.0"
 description = "Isaac Teleop vehicle steering and Kia Panda control example"
 requires-python = ">=3.10,<3.14"
 dependencies = [
+    "crcmod",
     "isaacteleop[cloudxr]",
+    "libusb-package",
+    "libusb1",
     "mcap>=1.2.0",
+    "pycapnp==2.1.0",
+    "pycryptodome",
     "pyyaml",
     "pyzmq",
+    "scons",
+    "tqdm",
+    "websockets>=14",
 ]
 
 [[tool.uv.index]]

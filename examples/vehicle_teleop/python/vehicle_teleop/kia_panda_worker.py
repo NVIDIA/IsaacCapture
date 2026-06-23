@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
@@ -121,7 +120,9 @@ class KiaPandaWorker:
         printable = (command.sequence, round(command.accel, 3), round(command.steer, 3))
         if printable == self._last_printed:
             return
-        print(f"seq={command.sequence} accel={command.accel:+.3f} steer={command.steer:+.3f}")
+        print(
+            f"seq={command.sequence} accel={command.accel:+.3f} steer={command.steer:+.3f}"
+        )
         self._last_printed = printable
 
     def _apply_command(self, command: VehicleControlCommand) -> None:

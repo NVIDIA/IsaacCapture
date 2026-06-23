@@ -15,20 +15,34 @@ Build and install Isaac Teleop with examples enabled. From the Isaac Teleop repo
 
 ```bash
 cmake -B build -DBUILD_EXAMPLES=ON
-cmake --build build --parallel 2
+cmake --build build --parallel 4
 cmake --install build
+```
+
+Create the example virtual environment from this directory. The scripts use
+`.venv/bin/python` directly, so keep the virtual environment at
+`examples/vehicle_teleop/.venv`.
+
+```bash
+cd examples/vehicle_teleop
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python --find-links ../../build/wheels "isaacteleop[cloudxr]"
+source .venv/bin/activate
+cd python
+uv sync --active --inexact --no-install-project --no-install-package isaacteleop
+cd ..
 ```
 
 Clone the vehicle-side dependencies into this example's `thirdparty` directory. These repositories are intentionally not added as git submodules.
 
 ```bash
-cd examples/vehicle_teleop
 mkdir -p thirdparty
 git clone https://github.com/commaai/panda.git thirdparty/panda
-git clone git@github.com:UCR-CISL/kia-opendbc.git thirdparty/kia-opendbc
+git clone https://github.com/commaai/opendbc.git thirdparty/opendbc
 ```
 
-You can use existing local checkouts instead, as long as the paths match `thirdparty/panda` and `thirdparty/kia-opendbc`.
+You can use existing local checkouts instead, as long as the paths match `thirdparty/panda` and `thirdparty/opendbc`.
+In our usage, the `opendbc` and `panda` repos are not a "one-size-fits-all" solutions for some cars. We recommend debugging as needed if the Panda device cannot connect to the car. In the future, we will provide a repository that works for our usage (Kia Niro EV 2022) as a useful reference.
 
 ## Remote Side
 
@@ -57,6 +71,14 @@ Useful options:
 ```
 
 Steering wheel axis mapping is configured in `config/steering_wheel_config.yaml`. The default mapping is for a Logitech G920/G923-style setup where steering, throttle, brake, and clutch are raw Linux joystick axes.
+
+For IsaacTeleop keyboard fallback without a steering wheel, run:
+
+```bash
+./scripts/run_isaac_keyboard_control_worker.sh --verbose
+```
+
+Keyboard controls are `W`/`S` for gas-brake, `A`/`D` for steering, `R` or `C` for neutral, and `Q` or `Esc` to quit.
 
 ## Vehicle Side
 

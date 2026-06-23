@@ -51,7 +51,12 @@ def default_config_path() -> Path:
 def default_plugin_binary() -> Path:
     root = example_root()
     candidates = [
-        root.parents[1] / "build" / "src" / "plugins" / "steering_wheel" / "steering_wheel_plugin",
+        root.parents[1]
+        / "build"
+        / "src"
+        / "plugins"
+        / "steering_wheel"
+        / "steering_wheel_plugin",
         root.parents[1] / "plugins" / "steering_wheel" / "steering_wheel_plugin",
     ]
     for candidate in candidates:
@@ -112,7 +117,9 @@ def load_axis_mapping_from_config(path: str | Path) -> dict[str, int]:
         raise ValueError(f"Steering wheel config must be a YAML mapping: {config_path}")
     wheel = data.get("g920_racing_wheel")
     if not isinstance(wheel, dict):
-        raise KeyError(f"Steering wheel config missing g920_racing_wheel section: {config_path}")
+        raise KeyError(
+            f"Steering wheel config missing g920_racing_wheel section: {config_path}"
+        )
 
     mapping = dict(DEFAULT_AXIS_MAPPING)
     mapping["steering_axis"] = int(wheel["steering_wheel"])
@@ -170,11 +177,16 @@ class IsaacRemoteSteeringWorker:
             McapCommandLogger(self._log_mcap) if self._log_mcap else nullcontext()
         )
         try:
-            with plugin_ctx, oxr.OpenXRSession(
-                "VehicleTeleopSteeringWorker", required_extensions
-            ) as oxr_session:
+            with (
+                plugin_ctx,
+                oxr.OpenXRSession(
+                    "VehicleTeleopSteeringWorker", required_extensions
+                ) as oxr_session,
+            ):
                 handles = oxr_session.get_handles()
-                with deviceio.DeviceIOSession.run(trackers, handles) as self._deviceio_session:
+                with deviceio.DeviceIOSession.run(
+                    trackers, handles
+                ) as self._deviceio_session:
                     with logger_ctx as self._logger:
                         self._capture_steering_neutral()
                         period_s = 1.0 / self._rate_hz
@@ -226,7 +238,9 @@ class IsaacRemoteSteeringWorker:
         self._publish(command)
         if self._logger is not None:
             self._logger.write(
-                sample=wire_sample_from_isaac_sample(sample, timestamp_ns=command.timestamp_ns),
+                sample=wire_sample_from_isaac_sample(
+                    sample, timestamp_ns=command.timestamp_ns
+                ),
                 command=command,
             )
         if self._verbose:
@@ -289,7 +303,9 @@ class IsaacRemoteSteeringWorker:
         signal.signal(signal.SIGTERM, self.stop)
 
 
-def isaac_command_to_wire_command(command, *, timestamp_ns: int) -> VehicleControlCommand:
+def isaac_command_to_wire_command(
+    command, *, timestamp_ns: int
+) -> VehicleControlCommand:
     return VehicleControlCommand(
         sequence=int(command.sequence),
         timestamp_ns=timestamp_ns,
@@ -384,7 +400,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Record raw-axis samples and commands to an MCAP log.",
     )
-    parser.add_argument("--verbose", action="store_true", help="Print live control values.")
+    parser.add_argument(
+        "--verbose", action="store_true", help="Print live control values."
+    )
     return parser
 
 
