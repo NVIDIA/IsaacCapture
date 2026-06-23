@@ -111,7 +111,9 @@ class McapCommandLogger:
         schema_id = self._writer.register_schema(
             name="vehicle_teleop.VehicleControlCommandRecord",
             encoding="jsonschema",
-            data=json.dumps(VEHICLE_COMMAND_SCHEMA, separators=(",", ":")).encode("utf-8"),
+            data=json.dumps(VEHICLE_COMMAND_SCHEMA, separators=(",", ":")).encode(
+                "utf-8"
+            ),
         )
         self._channel_id = self._writer.register_channel(
             topic=VEHICLE_COMMAND_TOPIC,
@@ -129,7 +131,9 @@ class McapCommandLogger:
             self._file.close()
             self._file = None
 
-    def write(self, *, sample: SteeringWheelSample, command: VehicleControlCommand) -> None:
+    def write(
+        self, *, sample: SteeringWheelSample, command: VehicleControlCommand
+    ) -> None:
         if self._writer is None or self._channel_id is None:
             raise RuntimeError("McapCommandLogger must be opened before writing")
         record = CommandLogRecord(sample=sample, command=command)
@@ -149,5 +153,9 @@ class McapCommandLogReader:
     def records(self) -> Iterable[CommandLogRecord]:
         with self._path.open("rb") as file:
             reader = make_reader(file)
-            for _schema, _channel, message in reader.iter_messages(topics=[VEHICLE_COMMAND_TOPIC]):
-                yield CommandLogRecord.from_dict(json.loads(message.data.decode("utf-8")))
+            for _schema, _channel, message in reader.iter_messages(
+                topics=[VEHICLE_COMMAND_TOPIC]
+            ):
+                yield CommandLogRecord.from_dict(
+                    json.loads(message.data.decode("utf-8"))
+                )

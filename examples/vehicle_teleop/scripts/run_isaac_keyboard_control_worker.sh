@@ -12,7 +12,8 @@ if [[ ! -x "${PYTHON}" ]]; then
     exit 1
 fi
 
-export PYTHONPATH="${EXAMPLE_ROOT}/python:${EXAMPLE_ROOT}/thirdparty/opendbc:${EXAMPLE_ROOT}/thirdparty/panda${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONPATH="${EXAMPLE_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec "${PYTHON}" -m vehicle_teleop.kia_panda_worker \
+exec "${PYTHON}" -m vehicle_teleop.isaac_keyboard_control_worker \
+    --rate-hz 50 \
     "$@"

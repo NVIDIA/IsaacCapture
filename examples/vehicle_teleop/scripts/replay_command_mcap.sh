@@ -4,8 +4,15 @@
 set -euo pipefail
 
 EXAMPLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${EXAMPLE_ROOT}/.venv/bin/python"
+
+if [[ ! -x "${PYTHON}" ]]; then
+    echo "Missing example virtual environment: ${EXAMPLE_ROOT}/.venv" >&2
+    echo "Create it with: uv venv --python 3.11 .venv" >&2
+    exit 1
+fi
+
 export PYTHONPATH="${EXAMPLE_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec uv run --project "${EXAMPLE_ROOT}/python" \
-    python -m vehicle_teleop.replay_command_mcap \
+exec "${PYTHON}" -m vehicle_teleop.replay_command_mcap \
     "$@"
