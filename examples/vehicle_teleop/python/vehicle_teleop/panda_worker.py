@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Receive vehicle teleop commands over ZMQ and forward them to PandaRunner."""
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +19,10 @@ DEFAULT_TOPIC = "vehicle_control"
 
 
 class PandaWorker:
+    """Apply streamed vehicle commands to a Panda device."""
+
     def __init__(self, args: argparse.Namespace):
+        """Initialize the worker from parsed command-line arguments."""
         self._connect = args.connect
         self._topic = args.topic
         self._command_timeout = args.command_timeout
@@ -37,6 +42,7 @@ class PandaWorker:
         self._running = True
 
     def run(self) -> None:
+        """Run the receive/apply loop until a shutdown signal is received."""
         self._register_signal_handlers()
         self._open_socket()
         self._open_panda()
@@ -60,13 +66,16 @@ class PandaWorker:
             print("\nVehicle panda worker stopped.")
 
     def stop(self, _signum=None, _frame=None) -> None:
+        """Request loop shutdown from a signal handler."""
         self._running = False
 
     def _register_signal_handlers(self) -> None:
+        """Register process signal handlers for graceful shutdown."""
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
 
     def _open_socket(self) -> None:
+        """Open the ZMQ subscription socket for the configured command topic."""
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.setsockopt(zmq.CONFLATE, 1)
         self._socket.setsockopt_string(zmq.SUBSCRIBE, f"{self._topic} ")
@@ -74,6 +83,7 @@ class PandaWorker:
         self._poller.register(self._socket, zmq.POLLIN)
 
     def _open_panda(self) -> None:
+        """Open PandaRunner unless the worker is in dry-run mode."""
         if self._dry_run:
             return
 
@@ -85,6 +95,7 @@ class PandaWorker:
         self._panda = self._panda_runner.__enter__()
 
     def _poll_once(self) -> bool:
+        """Poll for one valid command frame and update the held command."""
         events = dict(self._poller.poll(timeout=self._poll_ms))
         if self._socket not in events:
             return False
@@ -110,6 +121,7 @@ class PandaWorker:
         return True
 
     def _next_command_to_apply(self) -> VehicleControlCommand | None:
+        """Return the latest command or one neutral command after timeout."""
         if self._poll_once():
             return self._last_command
         if self._last_received == 0.0:
@@ -130,6 +142,7 @@ class PandaWorker:
         )
 
     def _print_command(self, command: VehicleControlCommand) -> None:
+        """Print command changes in dry-run mode."""
         printable = (command.sequence, round(command.accel, 3), round(command.steer, 3))
         if printable == self._last_printed:
             return
@@ -139,6 +152,7 @@ class PandaWorker:
         self._last_printed = printable
 
     def _apply_command(self, command: VehicleControlCommand) -> None:
+        """Write a normalized vehicle command to PandaRunner."""
         self._car_control.actuators.accel = float(4.0 * clamp(command.accel, -1.0, 1.0))
         self._car_control.actuators.torque = float(
             self._steer_sign * clamp(command.steer, -1.0, 1.0)
@@ -152,6 +166,7 @@ class PandaWorker:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the Panda worker."""
     parser = argparse.ArgumentParser(
         description="Receive vehicle teleop commands over ZMQ and write them to PandaRunner."
     )
@@ -184,6 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Run the Panda worker command-line entrypoint."""
     PandaWorker(build_parser().parse_args()).run()
 
 

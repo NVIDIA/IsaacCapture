@@ -90,9 +90,5 @@ def axis_to_pedal(axis_value: float) -> float:
 
     return _clamp((-float(axis_value) + 1.0) / 2.0, 0.0, 1.0)
 
-def _finite_or_zero(value: float) -> float:
-    v = float(value)
-    return v if math.isfinite(v) else 0.0
-
 def _clamp(value: float, lower: float, upper: float) -> float:
     return min(upper, max(lower, float(value)))

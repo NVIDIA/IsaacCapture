@@ -327,6 +327,7 @@ def wire_sample_from_isaac_sample(
     )
 
 def parse_float_arg(value: str) -> float:
+    """Parse a strictly positive floating-point command-line argument."""
     parsed = float(value)
     if parsed <= 0.0:
         raise argparse.ArgumentTypeError("value must be > 0")
