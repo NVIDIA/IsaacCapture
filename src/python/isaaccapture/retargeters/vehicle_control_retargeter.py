@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Protocol
 
 from isaaccapture.schema import SteeringWheelOutput, VehicleControlCommand
@@ -52,6 +53,11 @@ class VehicleControlRetargeter:
     def retarget(
         self, sample: SteeringWheelLike | SteeringWheelOutput, *, sequence: int
     ) -> VehicleControlCommand:
+        if not math.isfinite(sample.steering) or \
+            not math.isfinite(sample.throttle) or \
+            not math.isfinite(sample.brake):
+            raise ValueError("Steering wheel sample data contains non-finite values.")
+
         steer = self._apply_deadzone(
             (sample.steering - self._steering_neutral) * self._config.steer_scale,
             self._config.steering_deadzone,
@@ -84,6 +90,9 @@ def axis_to_pedal(axis_value: float) -> float:
 
     return _clamp((-float(axis_value) + 1.0) / 2.0, 0.0, 1.0)
 
+def _finite_or_zero(value: float) -> float:
+    v = float(value)
+    return v if math.isfinite(v) else 0.0
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return min(upper, max(lower, float(value)))

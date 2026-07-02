@@ -4,7 +4,7 @@
 [project]
 name = "vehicle-teleop-example"
 version = "0.0.0"
-description = "Isaac Teleop vehicle steering and Kia Panda control example"
+description = "Isaac Teleop vehicle steering and Panda control example"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "crcmod",
