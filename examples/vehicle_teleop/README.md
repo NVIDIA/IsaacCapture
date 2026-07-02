@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Vehicle Teleop Example
 
-This example sends steering wheel and pedal input through Isaac Teleop, retargets it to a vehicle command, and publishes that command over ZMQ for a Kia Panda worker.
+This example sends steering wheel and pedal input through Isaac Teleop, retargets it to a vehicle command, and publishes that command over ZMQ for a Panda worker.
 
 The remote side uses the native Linux steering wheel plugin and Isaac Teleop OpenXR session. The vehicle side subscribes to the command stream and writes to `PandaRunner`.
 
@@ -42,7 +42,7 @@ git clone https://github.com/commaai/opendbc.git thirdparty/opendbc
 ```
 
 You can use existing local checkouts instead, as long as the paths match `thirdparty/panda` and `thirdparty/opendbc`.
-In our usage, the `opendbc` and `panda` repos are not a "one-size-fits-all" solutions for some cars. We recommend debugging as needed if the Panda device cannot connect to the car. In the future, we will provide a repository that works for our usage (Kia Niro EV 2022) as a useful reference.
+In our usage, the `opendbc` and `panda` repos are not a "one-size-fits-all" solution for every car. We recommend debugging as needed if the Panda device cannot connect to the car.
 
 ## Remote Side
 
@@ -59,14 +59,14 @@ source ~/.cloudxr/run/cloudxr.env
 ./scripts/run_isaac_remote_steering_worker.sh --verbose
 ```
 
-By default, the worker binds to `tcp://*:5555` on topic `kia_control`.
+By default, the worker binds to `tcp://*:5555` on topic `vehicle_control`.
 
 Useful options:
 
 ```bash
 ./scripts/run_isaac_remote_steering_worker.sh --device /dev/input/js0
 ./scripts/run_isaac_remote_steering_worker.sh --bind "tcp://*:5555"
-./scripts/run_isaac_remote_steering_worker.sh --log-mcap logs/kia_control.mcap
+./scripts/run_isaac_remote_steering_worker.sh --log-mcap logs/vehicle_control.mcap
 ./scripts/run_isaac_remote_steering_worker.sh --plugin-binary /path/to/steering_wheel_plugin
 ```
 
@@ -85,13 +85,13 @@ Keyboard controls are `W`/`S` for gas-brake, `A`/`D` for steering, `R` or `C` fo
 Run the Panda worker on the vehicle machine:
 
 ```bash
-./scripts/run_kia_panda_worker.sh --connect "tcp://<remote-ip>:5555"
+./scripts/run_panda_worker.sh --connect "tcp://<remote-ip>:5555"
 ```
 
 For local testing without opening PandaRunner, use dry-run mode:
 
 ```bash
-./scripts/run_kia_panda_worker.sh --connect "tcp://<remote-ip>:5555" --dry-run
+./scripts/run_panda_worker.sh --connect "tcp://<remote-ip>:5555" --dry-run
 ```
 
 Do not run the live vehicle-side worker unless the vehicle-side hardware and safety process are ready.
@@ -101,8 +101,8 @@ Do not run the live vehicle-side worker unless the vehicle-side hardware and saf
 If the remote worker was started with `--log-mcap`, replay the recorded commands with:
 
 ```bash
-./scripts/replay_command_mcap.sh logs/kia_control.mcap
-./scripts/replay_command_mcap.sh logs/kia_control.mcap --realtime
+./scripts/replay_command_mcap.sh logs/vehicle_control.mcap
+./scripts/replay_command_mcap.sh logs/vehicle_control.mcap --realtime
 ```
 
 The replay command prints the retargeted vehicle command values. It does not write to PandaRunner.

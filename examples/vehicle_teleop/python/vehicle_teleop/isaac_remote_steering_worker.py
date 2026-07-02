@@ -28,7 +28,7 @@ from vehicle_teleop.vehicle_command import VehicleControlCommand
 
 
 DEFAULT_BIND = "tcp://*:5555"
-DEFAULT_TOPIC = "kia_control"
+DEFAULT_TOPIC = "vehicle_control"
 DEFAULT_COLLECTION_ID = "steering_wheel"
 DEFAULT_DEVICE_PATH = "/dev/input/js0"
 DEFAULT_FIRST_SAMPLE_TIMEOUT_S = 5.0
@@ -326,17 +326,22 @@ def wire_sample_from_isaac_sample(
         timestamp_ns=timestamp_ns,
     )
 
+def parse_float_arg(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be > 0")
+    return parsed
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read steering wheel input through IsaacTeleop and publish Kia "
+            "Read steering wheel input through IsaacTeleop and publish "
             "vehicle commands over ZMQ."
         )
     )
     parser.add_argument("--bind", default=DEFAULT_BIND, help="ZMQ PUB bind address.")
-    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic prefix.")
-    parser.add_argument("--rate-hz", type=float, default=50.0, help="Publish rate.")
+    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic.")
+    parser.add_argument("--rate-hz", type=parse_float_arg, default=50.0, help="Publish rate(Hz, must be > 0).")
     parser.add_argument(
         "--device",
         default=DEFAULT_DEVICE_PATH,

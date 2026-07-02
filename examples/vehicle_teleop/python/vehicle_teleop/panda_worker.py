@@ -13,10 +13,10 @@ from vehicle_teleop.vehicle_command import VehicleControlCommand, clamp
 
 
 DEFAULT_CONNECT = "tcp://127.0.0.1:5555"
-DEFAULT_TOPIC = "kia_control"
+DEFAULT_TOPIC = "vehicle_control"
 
 
-class KiaPandaWorker:
+class PandaWorker:
     def __init__(self, args: argparse.Namespace):
         self._connect = args.connect
         self._topic = args.topic
@@ -69,7 +69,7 @@ class KiaPandaWorker:
     def _open_socket(self) -> None:
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.setsockopt(zmq.CONFLATE, 1)
-        self._socket.setsockopt_string(zmq.SUBSCRIBE, self._topic)
+        self._socket.setsockopt_string(zmq.SUBSCRIBE, f"{self._topic} ")
         self._socket.connect(self._connect)
         self._poller.register(self._socket, zmq.POLLIN)
 
@@ -89,9 +89,22 @@ class KiaPandaWorker:
         if self._socket not in events:
             return False
 
-        message = self._socket.recv_string()
-        _topic, payload = message.split(" ", 1)
-        self._last_command = VehicleControlCommand.from_dict(json.loads(payload))
+        raw_message = self._socket.recv()
+        try:
+            message = raw_message.decode("utf-8")
+            topic, payload = message.split(" ", 1)
+            if topic != self._topic:
+                return False
+            self._last_command = VehicleControlCommand.from_dict(json.loads(payload))
+        except (
+            UnicodeDecodeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
+            print(f"Ignoring malformed vehicle command frame: {exc}")
+            return False
         self._last_received = time.monotonic()
         self._neutral_sent_after_timeout = False
         return True
@@ -140,12 +153,12 @@ class KiaPandaWorker:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Receive Kia teleop commands over ZMQ and write them to PandaRunner."
+        description="Receive vehicle teleop commands over ZMQ and write them to PandaRunner."
     )
     parser.add_argument(
         "--connect", default=DEFAULT_CONNECT, help="ZMQ PUB endpoint to connect to."
     )
-    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic prefix.")
+    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic.")
     parser.add_argument(
         "--command-timeout",
         type=float,
@@ -171,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    KiaPandaWorker(build_parser().parse_args()).run()
+    PandaWorker(build_parser().parse_args()).run()
 
 
 if __name__ == "__main__":

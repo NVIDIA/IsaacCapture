@@ -22,7 +22,7 @@ from vehicle_teleop.vehicle_command import VehicleControlCommand, clamp
 
 
 DEFAULT_BIND = "tcp://*:5555"
-DEFAULT_TOPIC = "kia_control"
+DEFAULT_TOPIC = "vehicle_control"
 
 
 @dataclass
@@ -188,14 +188,23 @@ def isaac_command_to_wire_command(
         brake=float(command.brake),
     )
 
+def parse_float_arg(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be > 0")
+    return parsed
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Read WASD keyboard input through IsaacTeleop retargeting and publish Kia teleop commands over ZMQ."
+        description="Read WASD keyboard input through IsaacTeleop retargeting and publish vehicle teleop commands over ZMQ."
     )
     parser.add_argument("--bind", default=DEFAULT_BIND, help="ZMQ PUB bind address.")
-    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic prefix.")
-    parser.add_argument("--rate-hz", type=float, default=50.0, help="Publish rate.")
+    parser.add_argument("--topic", default=DEFAULT_TOPIC, help="ZMQ topic.")
+    parser.add_argument(
+        "--rate-hz", 
+        type=parse_float_arg, 
+        default=50.0, 
+        help="Publish rate(Hz, must be > 0).")
     parser.add_argument(
         "--axis-increment",
         type=float,

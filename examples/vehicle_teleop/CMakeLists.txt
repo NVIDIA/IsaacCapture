@@ -18,6 +18,6 @@ install(PROGRAMS
     scripts/replay_command_mcap.sh
     scripts/run_isaac_keyboard_control_worker.sh
     scripts/run_isaac_remote_steering_worker.sh
-    scripts/run_kia_panda_worker.sh
+    scripts/run_panda_worker.sh
     DESTINATION examples/vehicle_teleop/scripts
 )

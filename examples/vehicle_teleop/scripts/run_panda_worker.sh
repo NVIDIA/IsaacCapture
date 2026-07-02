@@ -14,5 +14,5 @@ fi
 
 export PYTHONPATH="${EXAMPLE_ROOT}/python:${EXAMPLE_ROOT}/thirdparty/opendbc:${EXAMPLE_ROOT}/thirdparty/panda${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec "${PYTHON}" -m vehicle_teleop.kia_panda_worker \
+exec "${PYTHON}" -m vehicle_teleop.panda_worker \
     "$@"
