@@ -4,13 +4,17 @@
 dVRK PSM retargeters
 ====================
 
+The da Vinci Research Kit (dVRK) is a telerobotics research platform built from
+first-generation da Vinci surgical-system components and an open control stack.
+See the `dVRK Research Wiki <https://research.intusurg.com/index.php/Main_Page>`_
+and the `JHU dVRK software wiki
+<https://github.com/jhu-dvrk/sawIntuitiveResearchKit/wiki>`_ for the hardware,
+software, and research community.
+
 The dVRK Patient Side Manipulator (PSM) retargeters map XR controllers to one or
 two simulated PSMs.  They convert controller state into absolute tool-pose and
-paired-jaw targets.  Isaac Lab reads those targets, uses the live articulation
-Jacobian and joint state, and solves differential IK.
-
-They are not a physical dVRK driver or force-feedback system, and are not
-intended for clinical workflow or surgical validation.
+paired-jaw targets.  A simulator integration can read those targets, use its
+live articulation Jacobian and joint state, and solve differential IK.
 
 At a glance
 -----------
@@ -63,11 +67,12 @@ separately.
 The squeeze threshold defaults to ``0.5``.  The trigger value captured at
 squeeze engagement is neutral.  The first jaw movement requires at least
 ``0.05`` travel from that value.  Positive travel past the threshold starts
-closing immediately.  Negative travel must remain at least ``0.05`` below its
-reference for ``0.1`` seconds before opening begins.  Once opening is active,
-further release opens the jaws continuously.  Releasing squeeze, losing
-tracking, or stopping the session cancels a pending opening and holds the last
-target.  Travel is capped at the configured physical endpoints:
+closing immediately.  Negative travel must first be observed at least ``0.05``
+below its reference, then remain there for ``0.1`` seconds before opening
+begins.  Once opening is active, further release opens the jaws continuously.
+Releasing squeeze, losing tracking, or stopping the session cancels a pending
+opening and holds the last target.  Travel is capped at the configured physical
+endpoints:
 
 .. code-block:: text
 
@@ -101,7 +106,10 @@ Use the retargeters from Python
 
 .. code-block:: python
 
+   import numpy as np
+
    from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
+   from isaacteleop.retargeting_engine.interface import OutputCombiner
    from isaacteleop.retargeters import (
        DVRKPSMClutchConfig,
        DVRKPSMClutchRetargeter,
@@ -109,35 +117,61 @@ Use the retargeters from Python
        DVRKPSMGripperRetargeter,
    )
 
-   left_pose = DVRKPSMClutchRetargeter(
-       DVRKPSMClutchConfig(
-           input_device=ControllersSource.LEFT,
-           home_reference_T_ee=left_home_world_T_ee,
-           workspace_lower=(-0.50, -0.40, -0.10),
-           workspace_upper=(0.50, 0.40, 0.60),
-           clutch_threshold=0.5,
-       ),
-       name="left_psm_pose",
-   )
-   left_jaws = DVRKPSMGripperRetargeter(
-       DVRKPSMGripperConfig(input_device=ControllersSource.LEFT),
-       name="left_psm_jaws",
-   )
+   def build_right_psm_pipeline() -> OutputCombiner:
+       controllers = ControllersSource(name="controllers")
 
-Create one pose retargeter and one jaw retargeter for each PSM.  Concatenate the
-outputs for a bimanual action in this order:
+       # The home transform, raw controller grip pose, and workspace are all
+       # expressed in this example's shared tracking reference frame.
+       home_reference_T_ee = np.eye(4, dtype=np.float64)
+       home_reference_T_ee[:3, 3] = (0.0, 0.0, 0.18)
 
-.. code-block:: text
+       pose = DVRKPSMClutchRetargeter(
+           DVRKPSMClutchConfig(
+               input_device=ControllersSource.RIGHT,
+               home_reference_T_ee=home_reference_T_ee,
+               workspace_lower=(-0.16, -0.14, 0.06),
+               workspace_upper=(0.16, 0.14, 0.28),
+               clutch_threshold=0.5,
+           ),
+           name="right_psm_pose",
+       )
+       jaws = DVRKPSMGripperRetargeter(
+           DVRKPSMGripperConfig(input_device=ControllersSource.RIGHT),
+           name="right_psm_jaws",
+       )
 
-   left xyzxyzw, left jaws, right xyzxyzw, right jaws
+       right_controller = controllers.output(ControllersSource.RIGHT)
+       connected_pose = pose.connect(
+           {ControllersSource.RIGHT: right_controller}
+       )
+       connected_jaws = jaws.connect(
+           {ControllersSource.RIGHT: right_controller}
+       )
 
-Use ``DVRKPSMClutchRetargeter.OUTPUT_POSE`` and
+       return OutputCombiner(
+           {
+               "ee_pose": connected_pose.output(
+                   DVRKPSMClutchRetargeter.OUTPUT_POSE
+               ),
+               "jaw_targets": connected_jaws.output(
+                   DVRKPSMGripperRetargeter.OUTPUT_JAW_TARGETS
+               ),
+           }
+       )
+
+
+   pipeline = build_right_psm_pipeline()
+
+Create one pose retargeter and one jaw retargeter for each PSM.  Each instance
+publishes an independent named output; the downstream consumer chooses any
+packing and ordering required by its own action contract.  Use
+``DVRKPSMClutchRetargeter.OUTPUT_POSE`` and
 ``DVRKPSMGripperRetargeter.OUTPUT_JAW_TARGETS`` when wiring those output ports.
 These names are part of the public retargeter API, so callers do not need to
 import implementation modules.
 
-Validation
-----------
+Validate
+--------
 
 Tests that do not require Isaac Sim cover jaw endpoints, time-based opening
 intent, jaw hold across clutch release and re-engagement, Cartesian clutch

@@ -37,6 +37,7 @@ from isaacteleop.retargeters.DVRK.control import (
     DVRKPSMJawIntentConfig,
     DVRKPSMJawIntentStateMachine,
     closedness_to_jaw_targets,
+    normalise_quaternion_xyzw,
     quat_mul_xyzw,
     rebased_position,
 )
@@ -240,12 +241,17 @@ class TestDVRKPSMGripperRetargeter:
         )
         initial = self._compute(retargeter, time_s=0.00, trigger=1.0)
         np.testing.assert_allclose(initial, configured_hold, atol=1e-8)
-        self._compute(retargeter, time_s=0.05, trigger=0.0)
-        opened = self._compute(retargeter, time_s=0.10, trigger=0.0)
+        np.testing.assert_array_equal(
+            self._compute(retargeter, time_s=0.05, trigger=0.0), initial
+        )
+        np.testing.assert_array_equal(
+            self._compute(retargeter, time_s=0.10, trigger=0.0), initial
+        )
+        opened = self._compute(retargeter, time_s=0.151, trigger=0.0)
         assert not np.array_equal(opened, initial)
 
         retargeter.reset_target_state()
-        reset_engagement = self._compute(retargeter, time_s=0.11, trigger=0.0)
+        reset_engagement = self._compute(retargeter, time_s=0.16, trigger=0.0)
         np.testing.assert_allclose(reset_engagement, configured_hold, atol=1e-8)
 
     def test_wrapper_times_deliberate_opening_from_graph_time(self):
@@ -260,7 +266,10 @@ class TestDVRKPSMGripperRetargeter:
         np.testing.assert_array_equal(
             self._compute(retargeter, time_s=0.099, trigger=0.4), closed
         )
-        opened = self._compute(retargeter, time_s=0.100, trigger=0.4)
+        np.testing.assert_array_equal(
+            self._compute(retargeter, time_s=0.100, trigger=0.4), closed
+        )
+        opened = self._compute(retargeter, time_s=0.121, trigger=0.4)
         assert not np.array_equal(opened, closed)
 
     def test_regressed_graph_time_cannot_bypass_opening_duration(self):
@@ -452,10 +461,16 @@ class TestDVRKPSMJawIntentStateMachine:
             self._step(kernel, trigger=0.2, squeeze=1.0, dt=0.50), closed
         )
 
-    def test_deliberate_opening_uses_elapsed_time_not_frame_count(self):
+    def test_deliberate_opening_uses_observed_time_not_frame_count(self):
         for time_steps in ((0.02, 0.02, 0.04), (0.079, 0.001)):
             kernel = self._kernel(initial_closedness=1.0)
             closed = self._step(kernel, trigger=1.0, dt=0.0)
+
+            # A long gap before opening intent is first observed contributes
+            # no duration: the trigger state during that gap is unknown.
+            np.testing.assert_array_equal(
+                self._step(kernel, trigger=0.4, dt=10.0), closed
+            )
             for dt in time_steps[:-1]:
                 np.testing.assert_array_equal(
                     self._step(kernel, trigger=0.4, dt=dt), closed
@@ -463,6 +478,34 @@ class TestDVRKPSMJawIntentStateMachine:
             opened = self._step(kernel, trigger=0.4, dt=time_steps[-1])
             assert kernel.closedness == pytest.approx(0.4)
             assert not np.array_equal(opened, closed)
+
+    def test_reversing_after_closing_starts_a_fresh_observed_opening_timer(self):
+        kernel = self._kernel(initial_closedness=0.5)
+        self._step(kernel, trigger=0.4, dt=0.0)
+        closed = self._step(kernel, trigger=0.8, dt=0.02)
+        assert kernel.closedness == pytest.approx(0.9)
+
+        # This exercises the post-interaction direction-reversal path.  The
+        # first lower sample starts, but cannot satisfy, the time gate.
+        np.testing.assert_array_equal(self._step(kernel, trigger=0.6, dt=10.0), closed)
+        opened = self._step(kernel, trigger=0.6, dt=0.08)
+        assert kernel.closedness == pytest.approx(0.7)
+        assert not np.array_equal(opened, closed)
+
+    def test_returning_to_anchor_cancels_pending_opening_after_closing(self):
+        kernel = self._kernel(initial_closedness=0.5)
+        self._step(kernel, trigger=0.4, dt=0.0)
+        closed = self._step(kernel, trigger=0.8, dt=0.02)
+        self._step(kernel, trigger=0.6, dt=0.0)
+
+        # Returning to the pre-opening anchor cannot mature a zero-motion
+        # intent, regardless of how long it remains there.
+        np.testing.assert_array_equal(self._step(kernel, trigger=0.8, dt=1.0), closed)
+        np.testing.assert_array_equal(self._step(kernel, trigger=0.6, dt=0.0), closed)
+
+        opened = self._step(kernel, trigger=0.6, dt=0.08)
+        assert kernel.closedness == pytest.approx(0.7)
+        assert not np.array_equal(opened, closed)
 
     def test_closing_is_immediate_but_capped_at_configured_endpoint(self):
         kernel = self._kernel(initial_closedness=0.4)
@@ -486,9 +529,41 @@ class TestDVRKPSMJawIntentStateMachine:
         np.testing.assert_allclose(reset, expected, atol=1e-6)
         np.testing.assert_allclose(self._step(kernel, trigger=0.9), expected, atol=1e-6)
 
+    @pytest.mark.parametrize(
+        ("config", "field"),
+        (
+            (
+                DVRKPSMJawIntentConfig(
+                    jaw_open=(-1e40, 1e40),
+                    jaw_closed=(-0.09, 0.09),
+                ),
+                "jaw_open",
+            ),
+            (
+                DVRKPSMJawIntentConfig(
+                    jaw_open=(-0.50, 0.50),
+                    jaw_closed=(-1e40, 1e40),
+                ),
+                "jaw_closed",
+            ),
+        ),
+    )
+    def test_finite_jaw_endpoints_outside_float32_range_are_rejected(
+        self, config, field
+    ):
+        with pytest.raises(
+            ValueError, match=f"{field} must lie within the finite float32 range"
+        ):
+            DVRKPSMJawIntentStateMachine(config)
+
 
 class TestDVRKPSMClutchMath:
     """Pure absolute-pose clutch calculations."""
+
+    def test_large_finite_quaternion_normalises_without_overflow(self):
+        quaternion = normalise_quaternion_xyzw((1e308, 1e308, 1e308, 1e308))
+        assert quaternion is not None
+        np.testing.assert_allclose(quaternion, (0.5, 0.5, 0.5, 0.5), atol=1e-12)
 
     def test_rebased_position_applies_scaled_controller_delta(self):
         """The latching frame is home and later controller motion is scaled from it."""
@@ -583,6 +658,64 @@ class TestDVRKPSMCartesianClutchStateMachine:
             moved[3:].astype(np.float64), _quat_xyzw_z(0.2)
         )
         np.testing.assert_allclose(resumed[3:], expected_orientation, atol=1e-6)
+
+    def test_non_commuting_orientation_offset_maps_z_rotation_to_negative_y(self):
+        quarter_turn_about_x = _quat_xyzw_x(math.pi / 2.0)
+        kernel = DVRKPSMCartesianClutchStateMachine(
+            DVRKPSMCartesianClutchConfig(
+                home_position=(0.02, 0.00, 0.18),
+                workspace_lower=(-0.10, -0.10, 0.08),
+                workspace_upper=(0.10, 0.10, 0.24),
+                orientation_offset=tuple(quarter_turn_about_x),
+            )
+        )
+        origin = np.array((0.30, -0.20, 0.50), dtype=np.float64)
+        self._step(kernel, position=origin, orientation=_IDENTITY_QUAT)
+
+        angle = 0.4
+        pose = self._step(
+            kernel,
+            position=origin,
+            orientation=_quat_xyzw_z(angle),
+        )
+
+        # Rx(pi/2) Rz(angle) Rx(-pi/2) is a rotation of -angle about Y.
+        expected = np.array(
+            (0.0, -math.sin(angle / 2.0), 0.0, math.cos(angle / 2.0)),
+            dtype=np.float64,
+        )
+        np.testing.assert_allclose(pose[3:], expected, atol=1e-6)
+
+    @pytest.mark.parametrize(
+        ("config", "field"),
+        (
+            (
+                DVRKPSMCartesianClutchConfig(
+                    home_position=(1e40, 0.0, 0.18),
+                ),
+                "home_position",
+            ),
+            (
+                DVRKPSMCartesianClutchConfig(
+                    workspace_lower=(-1e40, -0.14, 0.06),
+                ),
+                "workspace_lower",
+            ),
+            (
+                DVRKPSMCartesianClutchConfig(
+                    workspace_upper=(1e40, 0.14, 0.28),
+                ),
+                "workspace_upper",
+            ),
+        ),
+    )
+    def test_finite_pose_configuration_outside_float32_range_is_rejected(
+        self, config, field
+    ):
+        with pytest.raises(
+            ValueError, match=f"{field} must lie within the finite float32 range"
+        ):
+            DVRKPSMCartesianClutchStateMachine(config)
 
     @pytest.mark.parametrize(
         ("bad_position", "bad_orientation"),

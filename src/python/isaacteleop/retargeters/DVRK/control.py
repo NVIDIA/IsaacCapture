@@ -27,16 +27,25 @@ DEFAULT_WORKSPACE_LOWER = (-0.16, -0.14, 0.06)
 DEFAULT_WORKSPACE_UPPER = (0.16, 0.14, 0.28)
 IDENTITY_QUATERNION_XYZW = (0.0, 0.0, 0.0, 1.0)
 MIN_QUATERNION_NORM = 1e-6
+FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
 def _as_vector(values: object, *, length: int, name: str) -> np.ndarray:
     """Return a finite vector, accepting NumPy and DLPack producers."""
     if hasattr(values, "__dlpack__"):
-        values = np.from_dlpack(values)  # type: ignore[arg-type]
+        values = np.from_dlpack(values)
     vector = np.asarray(values, dtype=np.float64)
     if vector.shape != (length,) or not np.all(np.isfinite(vector)):
         raise ValueError(f"{name} must be a finite vector with shape ({length},)")
     return vector.copy()
+
+
+def _as_float32_output_vector(values: object, *, length: int, name: str) -> np.ndarray:
+    """Return a finite vector whose values lie within the finite float32 range."""
+    vector = _as_vector(values, length=length, name=name)
+    if np.any(np.abs(vector) > FLOAT32_MAX):
+        raise ValueError(f"{name} must lie within the finite float32 range")
+    return vector
 
 
 def normalise_quaternion_xyzw(quaternion: object) -> np.ndarray | None:
@@ -45,10 +54,14 @@ def normalise_quaternion_xyzw(quaternion: object) -> np.ndarray | None:
         vector = _as_vector(quaternion, length=4, name="quaternion")
     except (TypeError, ValueError):
         return None
-    norm = float(np.linalg.norm(vector))
-    if norm < MIN_QUATERNION_NORM:
+    scale = float(np.max(np.abs(vector)))
+    if scale == 0.0:
         return None
-    return vector / norm
+    scaled = vector / scale
+    scaled_norm = float(np.linalg.norm(scaled))
+    if not np.isfinite(scaled_norm) or scale < MIN_QUATERNION_NORM / scaled_norm:
+        return None
+    return scaled / scaled_norm
 
 
 def quat_mul_xyzw(left: np.ndarray, right: np.ndarray) -> np.ndarray:
@@ -147,14 +160,20 @@ def rebased_position(
     translation_scale: float,
 ) -> np.ndarray:
     """Apply an absolute controller delta to a pose captured at engagement."""
-    return home_position + translation_scale * (controller_position - controller_origin)
+    return np.asarray(
+        home_position + translation_scale * (controller_position - controller_origin),
+        dtype=np.float64,
+    )
 
 
 def clip_workspace(
     position: np.ndarray, workspace_lower: np.ndarray, workspace_upper: np.ndarray
 ) -> np.ndarray:
     """Clip a Cartesian target to configured reference-frame bounds."""
-    return np.minimum(np.maximum(position, workspace_lower), workspace_upper)
+    return np.asarray(
+        np.minimum(np.maximum(position, workspace_lower), workspace_upper),
+        dtype=np.float64,
+    )
 
 
 @dataclass(frozen=True)
@@ -188,7 +207,7 @@ class DVRKPSMCartesianClutchStateMachine:
 
     def __init__(self, config: DVRKPSMCartesianClutchConfig | None = None) -> None:
         self._config = config or DVRKPSMCartesianClutchConfig()
-        self._configured_home = _as_vector(
+        self._configured_home = _as_float32_output_vector(
             self._config.home_position, length=3, name="home_position"
         )
         home_orientation = normalise_quaternion_xyzw(self._config.home_orientation)
@@ -197,10 +216,10 @@ class DVRKPSMCartesianClutchStateMachine:
                 "home_orientation must be a non-zero finite xyzw quaternion"
             )
         self._configured_home_orientation = home_orientation
-        self._workspace_lower = _as_vector(
+        self._workspace_lower = _as_float32_output_vector(
             self._config.workspace_lower, length=3, name="workspace_lower"
         )
-        self._workspace_upper = _as_vector(
+        self._workspace_upper = _as_float32_output_vector(
             self._config.workspace_upper, length=3, name="workspace_upper"
         )
         if np.any(self._workspace_lower > self._workspace_upper):
@@ -231,7 +250,9 @@ class DVRKPSMCartesianClutchStateMachine:
         ):
             raise ValueError("clutch_threshold must be finite and in [0, 1]")
 
-        self._last_pose = np.concatenate(
+        # Keep this explicit: NumPy's chained concatenate/astype stubs otherwise
+        # leave the attribute as Any under the repository's mypy configuration.
+        self._last_pose: np.ndarray = np.concatenate(
             [self._configured_home, self._configured_home_orientation]
         ).astype(np.float32)
         self._engaged = False
@@ -345,12 +366,15 @@ def closedness_to_jaw_targets(
     closedness: float, jaw_open: np.ndarray, jaw_closed: np.ndarray
 ) -> np.ndarray:
     """Interpolate paired jaw targets between configured physical endpoints."""
-    return jaw_open + float(np.clip(closedness, 0.0, 1.0)) * (jaw_closed - jaw_open)
+    return np.asarray(
+        jaw_open + float(np.clip(closedness, 0.0, 1.0)) * (jaw_closed - jaw_open),
+        dtype=np.float64,
+    )
 
 
 def _as_jaw_vector(values: object, *, name: str) -> np.ndarray:
-    """Return a finite two-element jaw vector."""
-    return _as_vector(values, length=2, name=name)
+    """Return a finite two-element jaw vector within the float32 range."""
+    return _as_float32_output_vector(values, length=2, name=name)
 
 
 @dataclass(frozen=True)
@@ -540,7 +564,10 @@ class DVRKPSMJawIntentStateMachine:
             if trigger_delta <= -self._config.trigger_deadband:
                 if self._opening_anchor_trigger is None:
                     self._opening_anchor_trigger = self._last_trigger
-                self._opening_elapsed_s += elapsed_seconds
+                else:
+                    # The interval preceding the first qualifying sample is
+                    # not evidence that opening intent was already present.
+                    self._opening_elapsed_s += elapsed_seconds
                 if self._opening_elapsed_s >= self._config.opening_intent_duration_s:
                     opening_delta = trigger_value - self._opening_anchor_trigger
                     self._interaction_started = True
@@ -567,13 +594,16 @@ class DVRKPSMJawIntentStateMachine:
                 return self.targets
             if self._opening_anchor_trigger is None:
                 self._opening_anchor_trigger = self._last_trigger
+            else:
+                # Start timing at the first observed threshold crossing.  A
+                # delayed frame must not count the unobserved preceding gap.
+                self._opening_elapsed_s += elapsed_seconds
             if (
                 trigger_value
                 > self._opening_anchor_trigger - self._config.trigger_deadband
             ):
                 self._cancel_opening()
                 return self.targets
-            self._opening_elapsed_s += elapsed_seconds
             if self._opening_elapsed_s >= self._config.opening_intent_duration_s:
                 opening_delta = trigger_value - self._opening_anchor_trigger
                 self._opening_active = True
@@ -581,15 +611,11 @@ class DVRKPSMJawIntentStateMachine:
                 self._last_trigger = trigger_value
             return self.targets
 
-        # A held-lower trigger still constitutes sustained opening intent even
-        # though no new analogue delta arrived in this particular sample.
+        # While opening is pending, _last_trigger remains the pre-opening
+        # anchor.  A zero delta therefore means the trigger returned to that
+        # anchor, rather than remaining held lower, so pending intent must end.
         if self._opening_anchor_trigger is not None and not self._opening_active:
-            self._opening_elapsed_s += elapsed_seconds
-            if self._opening_elapsed_s >= self._config.opening_intent_duration_s:
-                opening_delta = trigger_value - self._opening_anchor_trigger
-                self._opening_active = True
-                self._set_closedness(self._closedness + opening_delta)
-                self._last_trigger = trigger_value
+            self._cancel_opening()
         return self.targets
 
 

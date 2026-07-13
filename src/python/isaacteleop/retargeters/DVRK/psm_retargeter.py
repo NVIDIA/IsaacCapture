@@ -18,16 +18,16 @@ This module owns the XR-facing contracts only:
 
 Differential IK deliberately remains in the simulator integration, where the
 live articulation Jacobian, current joint state, and robot-specific limits are
-available.  The Isaac Lab dVRK examples consume this module's outputs with a
-six-DOF DLS controller targeting ``psm_tool_tip_link``.
+available.  A simulator consumer can use this module's outputs with a six-DOF
+DLS controller targeting its PSM tool-tip link.
 
 Frame contract
 --------------
 The controller stream, home pose, and workspace must use one shared reference
-frame.  For one PSM a caller may choose its base frame.  The bimanual Isaac Lab
-example instead keeps both streams in the Isaac world frame, then transforms
-each target into that arm's base frame immediately before DLS IK.  This keeps
-one XR stream valid for two independently placed PSM bases.
+frame.  For one PSM a caller may choose its base frame.  A bimanual integration
+can instead keep both streams in a shared world frame, then transform each
+target into that arm's base frame immediately before DLS IK.  This keeps one XR
+stream valid for two independently placed PSM bases.
 """
 
 from __future__ import annotations

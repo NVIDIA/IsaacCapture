@@ -61,6 +61,7 @@ add_test(
     COMMAND uv run --python ${ISAAC_TELEOP_PYTHON_VERSION} --extra dev
         mypy --config-file pyproject.toml
         "${CMAKE_SOURCE_DIR}/src/python/isaaccapture/retargeting_engine"
+        "${CMAKE_SOURCE_DIR}/src/python/isaacteleop/retargeters/DVRK"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
