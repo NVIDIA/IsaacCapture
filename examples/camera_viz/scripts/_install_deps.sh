@@ -13,7 +13,7 @@
 #   --sender-only  sender path only. No isaaccapture, no vulkan deps.
 #
 # Flags: --venv, --wheel, --python, --no-v4l2, --no-oakd, --with-rtp,
-#        --with-zed, --zed-sdk, --build-from-source.
+#        --with-argus, --with-zed, --zed-sdk, --build-from-source.
 
 set -euo pipefail
 
@@ -54,6 +54,7 @@ WITH_OAKD=true
 # build, and the native codec — none of which direct mode needs.
 # --sender-only forces it on below (streaming is the sender's whole job).
 WITH_RTP=false
+WITH_ARGUS=false
 WITH_ZED=false
 ZED_SDK_DIR=/usr/local/zed
 # Skip the index probes and build isaaccapture from this checkout. Also the
@@ -75,6 +76,7 @@ while (( $# )); do
         --no-v4l2)      WITH_V4L2=false; shift;;
         --no-oakd)      WITH_OAKD=false; shift;;
         --with-rtp)     WITH_RTP=true; shift;;
+        --with-argus)   WITH_ARGUS=true; shift;;
         --with-zed)     WITH_ZED=true; shift;;
         --zed-sdk)      ZED_SDK_DIR=$2; shift 2;;
         --build-from-source) BUILD_FROM_SOURCE=true; shift;;
@@ -618,6 +620,19 @@ if $WITH_RTP; then
         fi
         deactivate
     fi
+fi
+
+# Native Argus camera source. Jetson-only and opt-in; failures are non-fatal
+# because some Jetson images may still lack matching libargus/CUDA headers.
+ARGUS_DIR="$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/argus"
+if $WITH_ARGUS && [[ -d "$ARGUS_DIR" && -d /usr/src/jetson_multimedia_api/argus ]]; then
+    echo "==> building native Argus source"
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+    if ! "$ARGUS_DIR/build.sh"; then
+        echo "_install_deps.sh: Argus source build failed - type: argus will be unavailable" >&2
+    fi
+    deactivate
 fi
 
 # Smoke imports. ``gi`` is in the list under RTP to confirm PyGObject

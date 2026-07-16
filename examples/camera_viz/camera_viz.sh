@@ -6,7 +6,7 @@
 # deployment of the camera_viz example.
 #
 # Local:
-#   ./camera_viz.sh setup [--sender-only]      install deps + build codec
+#   ./camera_viz.sh setup [--sender-only]      install deps + build native modules
 #   ./camera_viz.sh loopback CONFIG            run streamer + viz on 127.0.0.1
 #   ./camera_viz.sh run CONFIG [--mode M]      run the viewer (honors source:)
 #
@@ -110,6 +110,7 @@ rsync_to_remote() {
     rsync -az --delete \
         --exclude='.venv/' \
         --exclude='codec/build/' \
+        --exclude='python/isaaccapture_examples/camera_viz/argus/build/' \
         --exclude='__pycache__/' \
         --exclude='*.pyc' \
         --exclude='.pytest_cache/' \
@@ -402,10 +403,10 @@ camera_viz.sh — local development + Jetson deployment for camera_viz
 
 LOCAL
     setup [--venv PATH] [--sender-only] [--jetson]
-          [--no-v4l2] [--no-oakd] [--with-rtp] [--with-zed]
+          [--no-v4l2] [--no-oakd] [--with-rtp] [--with-argus] [--with-zed]
           [--wheel PATH | --build-from-source]
                           Create .venv, install Python deps via uv into
-                          the venv, build native codec. Python deps stay
+                          the venv, build native codec / Argus modules. Python deps stay
                           inside .venv (no --system-site-packages).
                           System-side prerequisites (GStreamer plugins,
                           cairo/girepository dev headers, cuda-nvrtc on
@@ -432,6 +433,8 @@ LOCAL
                           setup offers to build it from this checkout;
                           --build-from-source picks that without asking,
                           --wheel PATH installs a wheel you already built.
+                          --with-argus builds the optional Jetson Argus
+                          native source when Argus headers are present.
 
     loopback CONFIG       Run camera_streamer + camera_viz on 127.0.0.1.
 
