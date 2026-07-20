@@ -4,17 +4,40 @@
 dVRK PSM retargeters
 ====================
 
-The da Vinci Research Kit (dVRK) is a telerobotics research platform built from
-first-generation da Vinci surgical-system components and an open control stack.
-See the `dVRK Research Wiki <https://research.intusurg.com/index.php/Main_Page>`_
-and the `JHU dVRK software wiki
-<https://github.com/jhu-dvrk/sawIntuitiveResearchKit/wiki>`_ for the hardware,
-software, and research community.
+The da Vinci Research Kit (dVRK) fills a role in surgical robotics similar to
+the :doc:`SO-101 </getting_started/lerobot/index>` in general manipulation: it
+provides a shared research embodiment built from repurposed first-generation
+da Vinci hardware, with open controllers and software.  The patient-side
+architecture combines an Endoscopic Camera Manipulator (ECM) with up to three
+Patient Side Manipulators (PSMs), which carry instruments such as needle drivers
+and forceps.
+
+Physical dVRK systems are scarce and are primarily available to eligible
+non-profit education and research institutions as non-clinical research
+platforms.  Simulation broadens access to the PSM embodiment for teleoperation,
+demonstration collection, policy development, and reproducible evaluation.
+dVRK research setups are typically bimanual, with two PSMs coordinating in a
+shared workspace.  Collaborative manipulation tasks therefore abound,
+including passing a needle from one instrument to the other, as shown below.
+See the `Intuitive Foundation dVRK programme
+<https://www.intuitive-foundation.org/dvrk/>`_, the `dVRK Research Wiki
+<https://research.intusurg.com/index.php/Main_Page>`_, and the `JHU dVRK
+software wiki <https://github.com/jhu-dvrk/sawIntuitiveResearchKit/wiki>`_ for
+the hardware, software, and research community.
 
 The dVRK Patient Side Manipulator (PSM) retargeters map XR controllers to one or
 two simulated PSMs.  They convert controller state into absolute tool-pose and
 paired-jaw targets.  A simulator integration can read those targets, use its
 live articulation Jacobian and joint state, and solve differential IK.
+
+.. figure:: ../../_static/dvrk-needle-pass.gif
+   :alt: Real dVRK PSM teleoperation passing a surgical needle in Isaac Lab
+   :width: 720px
+   :align: center
+   :class: no-image-zoom
+
+   A real bimanual teleoperation run of the Isaac Lab needle-passing task using
+   the same dVRK tool-pose and jaw-target contract.
 
 At a glance
 -----------
