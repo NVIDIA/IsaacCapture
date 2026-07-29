@@ -17,26 +17,32 @@ structures, factory, and integration points documented here. No plugin/build wir
 real SLAM library integration yet.
 
 Decisions locked in:
-- Sensor input: **generic sensor abstraction** (`ISensorSource`); OAK, ZED (Stereolabs),
-  and Sensing (GMSL) are each one impl. A device that estimates pose natively (e.g. ZED
-  SDK's built-in tracking) may instead be wrapped as an `IPoseProvider` — the source vs
-  provider split handles both "dumb sensor" and "smart sensor" without new interfaces.
+
+- Sensor input: **device interface layer** (`ICamera`/`IImu`, defined in the Ego Data
+  Capture Interface design — out of scope here); bridged to the Pose Provider via a
+  `SensorAdapter` in the plugin. A device that estimates pose natively (e.g. ZED SDK's
+  built-in tracking) may instead be wrapped directly as an `IPoseProvider`, bypassing the
+  sensor layer entirely.
 - Backend selection: **compile-time** (CMake option); heterogeneous backends across
   instances come from deploying **different per-backend binaries** (see Topologies).
 - Output: **reuse `se3_tracker`** (`core::Se3TrackerPose`), no new device type.
 - Topology: one interface spans all configs; must support **both** a rigid multi-camera
   rig (M sensors → 1 pose) and **collaborative** multi-device SLAM (M sensors → N poses in
   one shared map frame). See "SLAM topologies & multi-instance orchestration".
+- Consumption profile: the primary target is **egocentric data collection** (pose recorded,
+  aligned offline). Driving a robot live from a SLAM pose is supported but materially
+  stricter — declared per instance via `SlamInstanceConfig::profile` and enforced at
+  startup. See "Real-time teleop vs data collection".
 
 ## Architecture
 
 ```
-ISensorSource impl            IPoseProvider impl            producer plugin
-(OakSensorSource, ...)        (OrbSlam3, Vins, ...)         (SE3 push path)
+Device layer                   IPoseProvider impl             producer plugin
+(ICamera + IImu, out of scope) (cuVSLAM, ORB-SLAM3, ...)      (SE3 push path)
         │                            │                            │
   images + IMU  ──on_image/on_imu──▶ SLAM/VIO estimator           │
-  + intrinsics                       │                            │
-                                     └── get_latest_pose() ──▶ Se3TrackerPoseT
+  [via SensorAdapter]                │                            │
+                                     └── get_latest_poses() ──▶ Se3TrackerPoseT
                                                                   │  SchemaPusher
                                                                   ▼  .push_buffer()
                                                      OpenXR tensor collection
@@ -46,133 +52,120 @@ ISensorSource impl            IPoseProvider impl            producer plugin
                                                 → Python IDeviceIOSource → teleop graph
 ```
 
-Three seams, each independently swappable: **sensor** (`ISensorSource`), **estimator**
-(`IPoseProvider`), **transport** (existing `SchemaPusher` + `se3_tracker`, unchanged).
+Three seams, each independently swappable: **device layer** (`ICamera`/`IImu`, defined
+elsewhere), **estimator** (`IPoseProvider`), **transport** (existing `SchemaPusher` +
+`se3_tracker`, unchanged).
+
+**Design alternative considered: device-locked providers.** The simpler approach is one
+plugin per (device, backend) pair — `oak_orb_slam3`, `oak_cuvslam`, etc. — mirroring how
+`controller_se3_tracker` owns its device directly. This is rejected because it scales
+multiplicatively: N devices × M backends = N×M plugins, each a partial copy of the others.
+The layered design scales additively (N+M), so adding one backend or one device is always
+one self-contained unit of work.
 
 ## Module placement
 
 A new core library `src/core/pose_provider/` holding the interfaces and data types
 (public headers under `inc/pose_provider/`, per the `cmake-structure` conventions).
 Backend impls live in sibling dirs selected by CMake, e.g.
-`src/core/pose_provider/backends/orbslam3/`, `.../vins/`, `.../stub/`. `ISensorSource`
-lives here too; the OAK implementation lives with the OAK plugin
-(`src/plugins/oak/`, which already owns the DepthAI pipeline). A future
-`slam_pose_provider` plugin wires `OakSensorSource → IPoseProvider → SchemaPusher`,
-modeled on `src/plugins/controller_se3_tracker/`.
+`src/core/pose_provider/backends/orbslam3/`, `.../vins/`, `.../stub/`. A future
+`slam_pose_provider` plugin wires the device layer → `SensorAdapter` → `IPoseProvider`
+→ `SchemaPusher`, modeled on `src/plugins/controller_se3_tracker/`. The device layer
+(`ICamera`, `IImu`) is defined in the Ego Data Capture Interface design and is out of
+scope here.
 
-## Interface 1 — `ISensorSource` (generic camera/IMU input)
+## Interface 1 — Device interface requirements and `ISensorSink`
 
-Push model (matches OAK's existing `FrameSink::on_frame` callback style; frames and IMU
-arrive asynchronously at different rates). The source owns hardware; the provider is the
-sink.
+> **Out of scope:** The design of the device interface layer (`ICamera`, `IImu`, vendor
+> backends, and the `SensorAdapter` implementation) is defined in the **Ego Data Capture
+> Interface design** (IsaacTeleop#571). This document only specifies what the Pose Provider
+> needs from that layer, and defines `ISensorSink` as the boundary the provider exposes.
 
-**Delivery contract (timing-critical — see Timing & synchronization below):**
-- Every sample carries **two clocks**: `sample_time_device_ns` (single hardware clock
-  domain shared by camera + IMU — the clock VIO fuses on) and `sample_time_local_ns`
-  (host monotonic, for teleop alignment). Host-arrival time alone desyncs image/IMU.
-- The sink MUST receive samples in **monotonically non-decreasing `sample_time_device_ns`
-  order** across `on_image`/`on_imu` (IMU interleaved with frames, not batched after).
-- `on_image`/`on_imu` MUST be cheap (enqueue only). The provider runs SLAM on its own
-  thread so a slow estimator cannot block the source and drop frames (backpressure).
+### What the Pose Provider requires from the device interface layer
+
+The `slam_pose_provider` plugin bridges the device interface layer to `ISensorSink` via a
+`SensorAdapter`. For that bridge to work correctly the device layer must provide:
+
+1. **Push delivery** — frames and IMU arrive via callbacks, not polled. The provider's
+   `on_image`/`on_imu` are enqueue-only; the provider runs SLAM on its own thread. A
+   blocking or synchronous delivery model would stall the capture path and drop frames.
+2. **Two timestamps per sample** — `sample_time_device_ns` (hardware clock, the clock VIO
+   fuses on) and `sample_time_local_ns` (host monotonic, for teleop stream alignment).
+   Host-arrival time alone is not sufficient; USB/scheduling jitter desyncs image and IMU.
+3. **Format flexibility** — the ability to open a stream in a requested pixel format. The
+   backend declares which formats it accepts (Gray8 for classical SLAM, BGR/RGB for learned
+   approaches) via `supported_pixel_formats()`; the orchestrator requests the first one the
+   device can produce natively, and the `SensorAdapter` converts only if none matched.
+4. **IMU at the required rate** — ≥200 Hz with device-clock timestamps on the same clock
+   domain as the camera where possible (intra-device IMU is strongly preferred; cross-device
+   IMU requires clock bridging — see Timing & synchronization C).
+5. **Calibration at open time** — per-camera intrinsics and inter-camera extrinsics from
+   the camera interface; IMU spatial transform, time offset, and noise parameters from the
+   IMU interface. These are the device self-report source; file-based sources (Kalibr)
+   override them in the calibration merge (see Calibration).
+6. **Fan-out** *(Phase 2 only)* — recording and SLAM subscribe to the same camera
+   independently, without either consumer knowing about the other. Phase 1 does not depend
+   on this: `OakSensorAdapter` owns its own DepthAI pipeline and serves both paths from
+   separate queues (see Phased implementation).
+
+### `SensorAdapter` contract (plugin layer, not a public interface)
+
+The `SensorAdapter` lives in the `slam_pose_provider` plugin. It is not a reusable
+interface — it is the glue that bridges the device layer to `ISensorSink`. Its obligations:
+
+- Subscribes to `ICamera` and `IImu` independently (fan-out: the recording path also
+  subscribes to the same camera).
+- Populates both timestamps on every `ImageFrame`/`ImuSample`, and forwards samples **in the
+  order the device produced them** — it does not buffer or reorder. Cross-source ordering is
+  the `SensorMultiplexer`'s job (see Timing & synchronization C); a single adapter only
+  guarantees it does not itself introduce reordering between its own camera and IMU streams.
+- Performs pixel format conversion only when the device could not natively produce a format
+  from the backend's `supported_pixel_formats()`.
+- Never blocks on SLAM compute; all downstream calls are enqueue-only.
+
+### `ISensorSink` — the Pose Provider's input boundary
 
 ```cpp
 namespace core {
 
-// Identifiers (see "SLAM topologies"): a SensorId names one physical stream (a camera or
-// an IMU); a RigId names a rigid body of 1+ sensors with known extrinsics — one pose is
-// estimated per rig. Stable strings so config files can reference them.
+// Identifiers: a SensorId names one physical stream (camera or IMU); a RigId names a
+// rigid body of 1+ sensors with known extrinsics — one pose per rig. Stable strings so
+// config files can reference them.
 using SensorId = std::string;
 using RigId = std::string;
 
-enum class PixelFormat { Gray8, NV12, BGR888 };   // SLAM usually wants Gray8
+enum class PixelFormat { Gray8, NV12, BGR888, RGBA8 };
 
 struct ImageFrame {
-    SensorId sensor_id;          // stable routing key -> (rig, role) via instance config
+    SensorId sensor_id;               // stable routing key -> (rig, role) via instance config
     uint32_t width, height, stride;
     PixelFormat format;
-    const uint8_t* data;         // borrowed; valid only during the callback
+    const uint8_t* data;             // borrowed; valid only during the callback
     size_t size;
-    int64_t sample_time_local_ns;   // common/monotonic clock (os_monotonic_now_ns)
-    int64_t sample_time_device_ns;  // device clock
+    int64_t sample_time_local_ns;    // host monotonic clock (os_monotonic_now_ns)
+    int64_t sample_time_device_ns;   // hardware clock; VIO fuses on this
 };
 
 struct ImuSample {
     SensorId sensor_id;
-    double accel[3];             // m/s^2
-    double gyro[3];              // rad/s
+    double accel[3];                 // m/s^2
+    double gyro[3];                  // rad/s
     int64_t sample_time_local_ns;
     int64_t sample_time_device_ns;
-};
-
-// Per-sensor calibration below is the self-reportable subset; the full, resolved,
-// backend-neutral model is RigCalibration (see "Calibration"). ISensorSource exposes what
-// it can self-report as one calibration *source*; files/Kalibr provide the rest.
-struct CameraIntrinsics {        // per sensor_id
-    SensorId sensor_id;
-    uint32_t width, height;
-    double fx, fy, cx, cy;
-    enum class Distortion { None, RadTan, Fisheye } model;
-    std::vector<double> coeffs;  // model-dependent
 };
 
 class ISensorSink {
 public:
     virtual ~ISensorSink() = default;
-    virtual void on_image(const ImageFrame&) = 0;
-    virtual void on_imu(const ImuSample&) = 0;
-};
-
-class ISensorSource {
-public:
-    virtual ~ISensorSource() = default;
-    // Self-reported calibration = one calibration *source* (empty when the device can't
-    // self-report, e.g. GMSL — then a FileCalibrationSource supplies it). See "Calibration".
-    virtual std::vector<CameraIntrinsics> get_self_reported_intrinsics() const = 0;
-    // Clock domain of this source's sample_time_device_ns, so the orchestrator knows whether
-    // two sources' device stamps are directly comparable (same synced domain) or must be
-    // bridged via the host clock. See "Multi-sensor / inter-device time sync".
-    virtual SensorTimebase get_timebase() const = 0;
-    // Register sink, then drive: run() blocks; or poll()/update() per tick.
-    virtual void set_sink(ISensorSink* sink) = 0;
-    virtual void update() = 0;    // drains available samples -> sink callbacks
-};
-
-struct SensorTimebase {
-    // Sources sharing domain_id have directly-comparable sample_time_device_ns (hardware
-    // synced). Distinct ids are only comparable after mapping to the host clock.
-    uint32_t domain_id;
-    enum class Sync { HardwareTrigger, Ptp, SoftwareOffset } method;
-    bool device_to_host_available;   // true if sample_time_local_ns is a trustworthy mapping
+    virtual void on_image(const ImageFrame&) = 0;  // must be cheap; enqueue only
+    virtual void on_imu(const ImuSample&) = 0;     // must be cheap; enqueue only
 };
 
 } // namespace core
 ```
 
-Note the two **gaps in the OAK plugin today** that an `OakSensorSource`
-impl must fill — neither exists now:
-- **IMU capture** — no `dai::node::IMU` in `src/plugins/oak/`; must be added.
-- **Intrinsics/extrinsics** — nothing calls DepthAI `getCalibrationData()`; must be added.
-Also, OAK currently H.264-encodes frames to file; SLAM needs raw `Gray8`, so the source
-impl exposes a raw output queue (like `preview_stream.cpp` does for the SDL preview).
-
-### Multiple camera vendors (each one `ISensorSource` impl)
-
-The estimator/topology layers never change across vendors — only the source impl differs:
-- **OAK** (`OakSensorSource`, DepthAI) — built-in IMU (needs adding), self-reported calib.
-- **ZED** (`ZedSensorSource`, ZED SDK, CUDA) — built-in IMU + factory calib. ZED also does
-  its own VIO, so it can alternatively be a `ZedSdkPoseProvider : IPoseProvider` that
-  forwards the SDK pose (skip the external SLAM entirely).
-- **Sensing** (`SensingSensorSource`, GMSL via v4l2/Argus/NvSIPL) — often **no IMU**
-  (visual-only, or pair with an IMU from a *different* sensor in the same rig), external
-  calibration file (Kalibr). HW-synchronized multi-camera capture suits the rigid-rig
-  topology and the device-clock timestamp requirement.
-
-Design consequences already covered by the interfaces:
-- **IMU can be a separate physical device from the cameras** in a rig — this is why
-  `SensorId` is per-stream and `RigSpec.sensors` is a list; `ImuExtrinsics` ties an IMU
-  sensor to a reference camera by id.
-- **Self-reported vs file-based calibration** — `CameraIntrinsics` (source-reported) and
-  `RigSpec.calibration` sources (loaded) cover both.
+`IPoseProvider` inherits `ISensorSink` (see Interface 2). The `SensorAdapter` in the plugin
+calls these after pulling from `ICamera`/`IImu` and resolving ordering and format.
 
 ## Interface 2 — `IPoseProvider` (swappable estimator, multi-in / multi-out)
 
@@ -203,21 +196,41 @@ struct RigPose {
 class IPoseProvider : public ISensorSink {
 public:
     virtual ~IPoseProvider() = default;
-    // Topology (rigs, sensors, backend config path) plus each rig's resolved, canonical
-    // RigCalibration (see Calibration) come from the instance config. The backend adapter
-    // translates RigCalibration into its own native format.
-    virtual void initialize(const SlamInstanceConfig&) = 0;
+    // The orchestrator resolves each rig's CalibrationSourceSpec list into a canonical
+    // RigCalibration before calling initialize(), then passes the results alongside the
+    // config. Entries are matched to config.rigs by RigCalibration::rig_id (not by
+    // position). The backend adapter translates each RigCalibration into its native format.
+    virtual void initialize(const SlamInstanceConfig& config,
+                            const std::vector<RigCalibration>& calibrations) = 0;
     // Inherited from ISensorSink: on_image(...), on_imu(...) — samples carry sensor_id, which
     // the provider maps to a rig via its config.
-    // Appends a RigPose for every rig with a fresh estimate since the last call; returns count.
+    // Clears `out`, then fills it with one RigPose per rig that has a fresh estimate since
+    // the last call; returns out.size(). Safe to reuse the same vector across ticks.
     virtual size_t get_latest_poses(std::vector<RigPose>& out) = 0;
     virtual void reset() = 0;
     virtual const char* backend_name() const = 0;
 
-    // Capability introspection so the plugin can validate a config against the linked backend
-    // and fail fast (e.g. a mono-VIO backend rejects a 2-rig collaborative config).
+    // Forward-predicts each tracked rig to target_time_device_ns (typically "now" or the
+    // next display time) by integrating IMU past the last processed frame. Required for
+    // real-time teleop, where a pose stamped tens of ms in the past reads as lag; optional
+    // for data collection, where correct timestamps suffice. Backends that cannot predict
+    // return the unpredicted estimate and report supports_prediction() == false, which the
+    // orchestrator rejects when the instance is configured for teleop use.
+    // See "Real-time teleop vs data collection".
+    virtual size_t predict_to(int64_t target_time_device_ns, std::vector<RigPose>& out) = 0;
+    virtual bool supports_prediction() const = 0;
+
+    // --- Capability introspection ---------------------------------------------------
+    // All const and valid BEFORE initialize(), so the plugin can validate a config and pick
+    // stream formats before opening any hardware (see Orchestration).
     virtual bool supports_multi_sensor_rig() const = 0;  // rigid multi-camera rig
     virtual bool supports_multi_rig() const = 0;         // collaborative, shared frame
+
+    // Pixel formats this backend accepts, most-preferred first. The orchestrator opens each
+    // stream in the first entry the device supports natively; the SensorAdapter converts
+    // only if none matched. Classical SLAM typically returns {Gray8}; a learned backend may
+    // return {BGR888, Gray8}.
+    virtual std::vector<PixelFormat> supported_pixel_formats() const = 0;
 };
 
 } // namespace core
@@ -229,6 +242,10 @@ A CMake option chooses exactly one backend to build/link, so only its heavy deps
 (Pangolin/Eigen/Ceres/…) are pulled in. A single factory, guarded by the same macro,
 returns the concrete provider — the plugin only ever sees `IPoseProvider`.
 
+`stub` is the build default so a checkout with no SLAM deps installed still configures and
+compiles; **cuVSLAM is the intended production backend** (see below) and is what deployment
+builds select explicitly.
+
 ```cmake
 set(POSE_PROVIDER_BACKEND stub CACHE STRING "cuvslam | orbslam3 | vins | stub")
 ```
@@ -237,7 +254,7 @@ set(POSE_PROVIDER_BACKEND stub CACHE STRING "cuvslam | orbslam3 | vins | stub")
 // pose_provider/factory.cpp
 std::unique_ptr<IPoseProvider> core::create_pose_provider() {
 #if defined(POSE_PROVIDER_CUVSLAM)
-    return std::make_unique<CuVslamPoseProvider>();   // in-house, GPU (default target)
+    return std::make_unique<CuVslamPoseProvider>();   // in-house, GPU (production target)
 #elif defined(POSE_PROVIDER_ORBSLAM3)
     return std::make_unique<OrbSlam3PoseProvider>();
 #elif defined(POSE_PROVIDER_VINS)
@@ -267,7 +284,7 @@ meaningless anyway.
 cuVSLAM fits with **no interface changes**, and its own API model mirrors this design:
 - **Rig maps 1:1.** cuVSLAM's C API (`cuvslam.h`) is built around a `CUVSLAM_Rig` (a set of
   `CUVSLAM_Camera`s with intrinsics + extrinsics + optional IMU). `CuVslamPoseProvider`
-  mostly translates `RigSpec`/`CameraIntrinsics`/`ImuExtrinsics` into that registration.
+  mostly translates `RigCalibration` (cameras + IMU) into that registration.
 - **Capabilities:** `supports_multi_sensor_rig() = true` (multi-camera rig is a headline
   cuVSLAM feature); `supports_multi_rig() = false` (cuVSLAM tracks one body — collaborative
   multi-agent needs per-agent cuVSLAM instances + an external map-merge layer, out of
@@ -277,8 +294,9 @@ cuVSLAM fits with **no interface changes**, and its own API model mirrors this d
 - **Output:** returns pose + covariance + tracking state → `PoseEstimate`; adapter converts
   cuVSLAM's axis convention into the `se3_tracker` `Pose` convention.
 - **Loop-closure caveat (teleop):** full-SLAM mode does pose-graph optimization → pose
-  *jumps* on map correction. Prefer pure visual-inertial **odometry** mode for teleop
-  unless the consumer tolerates discontinuities.
+  *jumps* on map correction. This is what `SlamInstanceConfig::odometry_only` disables, and
+  it is forced on for `profile == RealtimeControl` (see "Real-time teleop vs data
+  collection").
 - **Build/deploy:** ships as a **prebuilt binary** (`.so` + header) + CUDA runtime + GPU —
   so its CMake backend links a *vendored prebuilt lib* (like `deps/cloudxr`), not
   FetchContent-from-source. The repo already uses `find_package(CUDAToolkit)` (viz,
@@ -318,9 +336,17 @@ parses `plugin.yaml` with it), so a sibling `slam_topology.yaml` per instance is
 ```cpp
 struct SensorSpec {              // how to open one physical stream
     SensorId sensor_id;
-    std::string device;          // "oak"
+    std::string device;          // "oak" | "zed" | "sensing" — selects the source impl
     std::string device_serial;   // DepthAI mxid; empty = any
+    // Vendor-neutral role name, kept a string so slam_topology.yaml stays readable and no
+    // vendor enum leaks into the config schema. Each source impl owns the mapping to its
+    // own enum (e.g. OakSensorAdapter: "left" -> core::StreamType_MonoLeft); an unknown
+    // name for that device is a startup error.
     std::string stream;          // "left" | "right" | "color" | "imu"
+};
+struct CalibrationSourceSpec {
+    enum class Kind { Device, File } kind;
+    std::string path;   // when kind == File; empty for Device
 };
 struct RigSpec {
     RigId rig_id;
@@ -331,8 +357,15 @@ struct RigSpec {
 };
 struct OutputSpec {
     RigId rig_id;
-    std::string collection_id;                 // se3_tracker wire instance for this rig
+    std::string collection_id;                    // se3_tracker wire instance for this rig
     enum class Frame { SlamWorld, Session } output_frame;
+    // Required when output_frame == Session; startup validation rejects Session with this
+    // unset. Rigid transform aligning the SLAM world origin (set at tracker init) into the
+    // OpenXR session base space. Typed as core::Pose — the same type it is composed with
+    // per-frame — rather than a 4x4, unlike the calibration extrinsics which stay matrices
+    // because that is what calibration files and backend APIs use. Source: a calibration
+    // file or an init-time alignment procedure (see Open questions).
+    std::optional<Pose> T_session_slamworld;
 };
 struct SlamInstanceConfig {
     std::string instance_id;
@@ -340,26 +373,79 @@ struct SlamInstanceConfig {
     std::vector<RigSpec> rigs;       // 1 rig = per-device/rigid; N rigs = collaborative
     std::vector<OutputSpec> outputs;
     std::string backend_config_path; // ORB vocab / VINS yaml
+
+    // Declares what this instance's pose is consumed for. Not a hint — it changes which
+    // backend behaviours are legal and is enforced at startup.
+    // See "Real-time teleop vs data collection".
+    enum class Profile {
+        DataCollection,  // pose is recorded and aligned offline; latency tolerated
+        RealtimeControl, // pose drives a robot live; requires prediction, forbids pose jumps
+    } profile = Profile::DataCollection;
+
+    // Disables loop closure / pose-graph optimisation, running the backend as pure
+    // visual-inertial odometry. Drift accumulates, but the pose never jumps on map
+    // correction. Forced true when profile == RealtimeControl.
+    bool odometry_only = false;
 };
 ```
 
 ### Orchestration (one process = one instance = one backend binary)
 
 The `slam_pose_provider` plugin generalizes `controller_se3_tracker` by owning **multiple**
-sources and **multiple** pushers:
-1. Load `SlamInstanceConfig`; open every `SensorSpec` via an `ISensorSource` impl.
-2. Feed all sources through a **`SensorMultiplexer`** (single time-ordered stream on one
-   fusion timeline; see Timing & synchronization C) into the one provider
-   (`create_pose_provider()` = this binary's backend), each sample tagged with its
-   `sensor_id`.
-3. Validate the config against the backend's capabilities (`supports_multi_rig()` /
-   `supports_multi_sensor_rig()`) **and against clock domains** (reject an unsynced
-   multi-device rig unless software-offset fallback is explicitly allowed); fail fast with a
-   clear message on mismatch.
-4. Per tick: `get_latest_poses()` → for each `RigPose`, look up its `OutputSpec`, apply the
-   `output_frame` transform, and push `Se3TrackerPose` on that rig's `collection_id` via a
-   **per-output `SchemaPusher`** (N pushers in one process; each is an independent
-   `se3_tracker` device on the consumer).
+sources and **multiple** pushers. Ordering matters: the backend is created **first** so its
+capabilities and accepted formats are known, and validation runs **before** any hardware is
+opened, so a bad config fails without touching a device.
+
+1. Load `SlamInstanceConfig`.
+2. `create_pose_provider()` — this binary's backend. Its capability methods
+   (`supports_multi_rig()`, `supports_multi_sensor_rig()`, `supported_pixel_formats()`) are
+   const and valid before `initialize()`, so they can drive the next two steps.
+3. **Validate before opening hardware:** config vs backend capabilities (reject e.g. a 2-rig
+   collaborative config on a single-body backend; reject `profile == RealtimeControl` on a
+   backend reporting `supports_prediction() == false`), and config self-consistency (every
+   `OutputSpec.rig_id` resolves to a `RigSpec`; `output_frame == Session` implies
+   `T_session_slamworld` is set). Fail fast with a clear message.
+4. Resolve each `RigSpec`'s ordered `CalibrationSourceSpec` list into a canonical
+   `RigCalibration` (see Calibration); run `validate(RigCalibration, provider)`.
+5. Open every `SensorSpec` via the device interface layer (`ICamera`/`IImu` — out of scope
+   here), requesting a stream in the first format from `supported_pixel_formats()` the device
+   can produce natively. Instantiate a **`SensorAdapter`** per source, which bridges device
+   callbacks into `ISensorSink` and converts format only if no native match was available.
+6. Wire every `SensorAdapter` into a **`SensorMultiplexer`** (single time-ordered stream on
+   one fusion timeline; see Timing & synchronization C) whose output is the provider, each
+   sample tagged with its `sensor_id`. Then `provider.initialize(config, calibrations)`.
+7. Per tick: `mux.update()` to drain the reorder buffer into the provider, then
+   `get_latest_poses()` (or `predict_to(now)` when `profile == RealtimeControl`) → for each
+   `RigPose`, look up its `OutputSpec`, apply the `output_frame` transform, and push
+   `Se3TrackerPose` on that rig's `collection_id` via a **per-output `SchemaPusher`**
+   (N pushers in one process; each is an independent `se3_tracker` device on the consumer).
+
+Validation against **clock domains** (reject an unsynced multi-device rig unless
+software-offset fallback is explicitly allowed) happens in step 5, since the clock domain is
+only known once the device layer reports it.
+
+```cpp
+// Merges N per-adapter input streams into one time-ordered ISensorSink output.
+// Each SensorAdapter writes into the slot returned by add_source(); the mux k-way merges
+// by sample_time_device_ns through a bounded reorder buffer and forwards to the output.
+// This is the ONE place reordering happens — adapters push as samples arrive, and the
+// provider receives an already-coherent monotonic stream.
+struct MultiplexerConfig {
+    int64_t reorder_window_ns;   // buffer depth: max out-of-order skew absorbed
+    int64_t skew_alert_ns;       // inter-sensor skew above this logs a warning
+};
+
+class SensorMultiplexer {
+public:
+    explicit SensorMultiplexer(const MultiplexerConfig&);
+    ISensorSink* add_source();            // call once per SensorAdapter; returns its input slot
+    void set_output(ISensorSink* sink);   // the IPoseProvider
+    // Releases every buffered sample older than (newest_seen - reorder_window_ns) to the
+    // output, in device-time order. Called each plugin tick so a quiet source cannot stall
+    // the stream indefinitely.
+    void update();
+};
+```
 
 Deployment example (three processes, mixed backends, one collaborative):
 ```
@@ -417,21 +503,43 @@ struct RigCalibration {                  // one rig; optionality encodes setup v
 **Layered sources (`RigSpec.calibration`).** An `ICalibrationSource` yields a partial
 `RigCalibration`; the orchestrator merges an ordered list (later overrides earlier) into the
 resolved model at startup:
-- `DeviceCalibrationSource` — from the `ISensorSource` self-report (OAK `getCalibrationData()`,
-  ZED SDK factory calib).
+
+```cpp
+class ICalibrationSource {
+public:
+    virtual ~ICalibrationSource() = default;
+    // Returns a partial RigCalibration; unset fields are left at defaults.
+    // The orchestrator merges an ordered list, later sources overriding earlier ones.
+    virtual RigCalibration load(const RigSpec&) const = 0;
+};
+
+// Reads from the device interface at open time (ICamera.open() / IImu.open()).
+class DeviceCalibrationSource : public ICalibrationSource { /* out of scope: device layer */ };
+
+// Parses a Kalibr yaml or native calibration file.
+class FileCalibrationSource : public ICalibrationSource { /* path from CalibrationSourceSpec */ };
+```
+
+- `DeviceCalibrationSource` — from the device interface self-report (intrinsics/extrinsics
+  from `ICamera.open()`, IMU calibration from `IImu.open()`). How the device layer exposes
+  this is out of scope here.
 - `FileCalibrationSource` — Kalibr yaml / native file (the only option for GMSL/Sensing).
 - Mixed is the common case: device intrinsics as base, Kalibr file overriding cam↔IMU +
-  IMU noise. `CalibrationSourceSpec` = `{ kind: device|file, path?, overrides? }`.
+  IMU noise.
 
 **Backend adapters translate canonical → native** (cuVSLAM rig struct / ORB-SLAM3 yaml / VINS
 yaml), owning distortion-model and axis-convention mapping. The interface only ever carries
 `RigCalibration`.
 
-**Validation at startup** (`validate(RigCalibration, backend_capabilities)`): distortion model
-supported by the backend? extrinsic star graph complete? IMU noise present when the backend
-needs VIO? units/convention sane? Fail fast — reuses the capability introspection from
-Topologies. Online refinement (VIO backends refine cam↔IMU/time-offset live) is a backend
-concern; the canonical model supplies the *prior*.
+**Validation at startup** (`validate(const RigCalibration&, const IPoseProvider&)`): queries
+the provider's capability methods against the resolved calibration — distortion model
+supported by the backend? extrinsic star graph complete (every camera has `T_body_cam`)?
+IMU noise present when the backend needs VIO? `rolling_readout_ns` set when
+`shutter == Rolling`? units/convention sane? Fail fast. Config-level checks that need no
+calibration (rig/output id consistency, `Session` output frame implies `T_session_slamworld`
+is set, backend supports the requested rig count) run earlier — see Orchestration step 3.
+Online refinement (VIO backends refine cam↔IMU/time-offset live) is a backend concern; the
+canonical model supplies the *prior*.
 
 ## Output — reuse `se3_tracker` (recommended)
 
@@ -440,19 +548,30 @@ The plugin's per-tick loop maps each `RigPose` onto the existing SE3 push path �
 template):
 
 ```cpp
+// Composes the SLAM-world pose into the configured output frame.
+// SlamWorld -> pass through; Session -> T_session_slamworld * pose.
+core::Pose apply_output_frame(const core::OutputSpec& spec, const core::Pose& slam_world_pose) {
+    if (spec.output_frame == core::OutputSpec::Frame::SlamWorld)
+        return slam_world_pose;
+    return compose(*spec.T_session_slamworld, slam_world_pose);  // validated non-null at startup
+}
+
+// Per-tick loop. `poses` is reused across ticks; get_latest_poses() clears it.
 std::vector<core::RigPose> poses;
 provider.get_latest_poses(poses);
 for (const auto& rp : poses) {
+    const core::OutputSpec& spec = output_for(rp.rig_id);
     core::SchemaPusher& pusher = pusher_for(rp.rig_id);   // per-OutputSpec collection_id
     core::Se3TrackerPoseT out;
     if (rp.pose.state == core::TrackingState::Tracking) {
-        out.pose = std::make_shared<core::Pose>(apply_output_frame(rp));  // -> Session if configured
+        out.pose = std::make_shared<core::Pose>(apply_output_frame(spec, rp.pose.pose));
         out.is_valid = true;
     } else {
         out.pose = std::make_shared<core::Pose>(/* identity */);
         out.is_valid = false;               // tracking-lost filler; consumers freeze
     }
-    // Pack -> builder.Finish() -> pusher.push_buffer(ptr, size, t_local, t_device)
+    // Pack -> builder.Finish() -> pusher.push_buffer(ptr, size,
+    //                                rp.pose.sample_time_local_ns, rp.pose.sample_time_device_ns)
 }
 ```
 
@@ -483,15 +602,17 @@ for the first pass — the `is_valid` bool already carries the essential trackin
 
 Two distinct delays exist between the seams; they need different handling.
 
-**A. Inter-interface delay (source → provider).** In-process callbacks, so the delay is
-small — but the hazard is **backpressure and ordering**, not latency:
+**A. Inter-interface delay (adapter → mux → provider).** In-process callbacks, so the
+delay is small — but the hazard is **backpressure and ordering**, not latency:
 - Provider `on_image`/`on_imu` are enqueue-only; SLAM runs on the provider's own worker
-  thread. A synchronous heavy estimator would stall the source's `update()` loop and drop
+  thread. A blocking call into the provider would stall the whole chain and drop
   frames / back up IMU.
-- The sensor sink delivers in **monotonic device-time order** (IMU interleaved with
-  frames). If a source cannot guarantee this, the provider sorts its input buffer by
-  `sample_time_device_ns`. VIO integrates IMU *between* consecutive frames, so out-of-order
-  or dropped IMU corrupts the estimate.
+- The provider is guaranteed samples in **monotonic device-time order** (IMU interleaved
+  with frames). That guarantee is produced by the `SensorMultiplexer`, which is the single
+  owner of reordering — adapters forward as-arrived, the provider never sorts. VIO
+  integrates IMU *between* consecutive frames, so out-of-order or dropped IMU corrupts the
+  estimate; a sample arriving later than the mux's `reorder_window_ns` is dropped and
+  counted rather than delivered out of order.
 
 **B. Provider processing latency (the one that reaches teleop).** SLAM/VIO compute is tens
 of ms, so an emitted pose is *for a past frame*, not "now." Rules:
@@ -504,10 +625,11 @@ of ms, so an emitted pose is *for a past frame*, not "now." Rules:
 
 **Are the inputs time-synced?** They must be, on **one clock domain**. Image and IMU are
 fused on `sample_time_device_ns` (hardware clock), not host-arrival time (USB/scheduling
-jitter would desync them). OAK/DepthAI supplies this via `getTimestampDevice()` — a single
-device clock across camera and IMU (`src/plugins/oak/core/oak_camera.cpp:155-166` already
-reads it for the camera). `sample_time_local_ns` is carried in parallel purely so the
-resulting SE3 pose aligns with the other teleop device streams on the common clock.
+jitter would desync them). `sample_time_local_ns` is carried in parallel purely so the
+resulting SE3 pose aligns with the other teleop device streams on the common clock. How the
+device layer provides these timestamps is a device interface concern (out of scope here);
+the `SensorAdapter` is responsible for populating both fields correctly on `ImageFrame` and
+`ImuSample` before calling into `ISensorSink`.
 
 **C. Multi-sensor / inter-device time sync.** Four layers, easiest to hardest:
 1. *Intra-device (cam ↔ its own IMU):* same on-device oscillator → trivially synced. **The
@@ -526,43 +648,115 @@ resulting SE3 pose aligns with the other teleop device streams on the common clo
    consistent across cameras, latency-corrected; rolling-shutter caveat. Never fuse on
    host-arrival time.
 
-**Who owns alignment: the orchestrator, not the estimator.** Sources *declare* their clock
-domain via `get_timebase()`; a **`SensorMultiplexer`** in the plugin merges the N source
-streams into one coherent, monotonic, single-timeline stream (k-way merge by fusion
-timestamp + a small bounded reorder buffer to absorb per-source jitter), and **monitors
-inter-sensor skew, flagging threshold breaches** (VIO degrades silently otherwise). The
-provider stays sync-agnostic: by the time samples reach it they are already one coherent
-fusion timeline satisfying the monotonic-ordering contract in (A). Same-domain sources pass
-device stamps through; cross-domain sources are rewritten to the host timeline first.
+**Who owns alignment: the orchestrator, not the estimator.** The device layer exposes each
+source's clock domain (how is a device-layer concern, out of scope here); the `SensorAdapter`
+uses this to populate timestamps correctly and signals the domain to the plugin. A
+**`SensorMultiplexer`** in the plugin merges the N source streams into one coherent, monotonic,
+single-timeline stream (k-way merge by fusion timestamp + a small bounded reorder buffer to
+absorb per-source jitter), and **monitors inter-sensor skew, flagging threshold breaches**
+(VIO degrades silently otherwise). The provider stays sync-agnostic: by the time samples
+reach it they are already one coherent fusion timeline satisfying the monotonic-ordering
+contract in (A). Same-domain sources pass device stamps through; cross-domain sources are
+rewritten to the host timeline first.
 
 Recommendation ranking: (1) single camera with built-in IMU; (2) hardware-synced multi-cam
 rig (GMSL/FSIN), IMU on the same sync domain; (3) software-offset fallback only, with skew
 monitoring — not for tight VIO.
 
+## Real-time teleop vs data collection
+
+The primary use case is **egocentric data collection**, where the pose is recorded and
+aligned offline — a 50 ms pipeline latency is irrelevant as long as timestamps are correct.
+A second, much stricter use case is **replacing a live tracked device** (e.g. swapping a
+Pico controller for an OAK-D + SLAM rig) so the pose drives a robot in real time. The wire
+path is identical for both — a SLAM rig is just another `se3_tracker` device, so no consumer
+work is needed either way — but the two profiles have materially different requirements.
+`SlamInstanceConfig::profile` declares which one an instance serves, and startup validation
+enforces it.
+
+| Concern | `DataCollection` | `RealtimeControl` |
+|---|---|---|
+| Pipeline latency | Tolerated; correct timestamps suffice | Must be hidden by prediction |
+| Loop closure / pose jumps | Fine (better global consistency) | Forbidden — jumps move the robot |
+| Tracking loss | Gap in the recording | Robot stops mid-motion |
+| Backend prediction | Optional | Required (`supports_prediction()`) |
+| Drift over a session | Correctable offline | Accumulates uncorrected |
+
+### The four constraints `RealtimeControl` adds
+
+**1. Latency must be hidden, not just measured.** A SLAM pose is *for a past frame* — with
+OAK-D + a CPU-bound backend, roughly 40–70 ms old by the time it is pushed (USB transfer,
+tracking compute, tick and transport). Worse than the absolute number is the *asymmetry*:
+OpenXR gives head and controller poses already extrapolated to display time, so a SLAM
+channel fused with XR channels reads as lagging by the full gap plus the XR runtime's
+forward prediction. Propagating timestamps (Timing B) makes this correctly *describable*;
+`predict_to()` is what makes it usable. The plugin calls `predict_to(now)` instead of
+`get_latest_poses()` when `profile == RealtimeControl`, and startup fails if the linked
+backend reports `supports_prediction() == false`.
+
+**2. Loop closure is forbidden.** Full-SLAM pose-graph optimisation corrects the map and the
+pose *jumps*. During recording that is a feature — better global consistency. Driving a
+robot, it is a discontinuity in the commanded end-effector pose. `odometry_only` is forced
+true for this profile, trading drift (bounded, slow) for continuity (safety-critical). Note
+this is a sharper constraint for ORB-SLAM3 than for cuVSLAM: loop closing and multi-map
+merging are ORB-SLAM3's headline features, so odometry-only mode gives up most of what
+distinguishes it.
+
+**3. Tracking loss needs a policy beyond `is_valid = false`.** The `se3_tracker` schema
+carries two-level validity, and the consumer contract is "freeze on invalid." For a
+recording, a gap is a gap. Mid-teleop, freezing means the robot stops accepting input at an
+arbitrary moment — possibly mid-grasp — and `Initializing` means there is *no* usable pose
+for the first seconds of every session, unlike a controller which is tracked from the start.
+The interface already carries the full `TrackingState`; what is missing is a decision about
+what the teleop layer does with `Lost` vs `Relocalizing` vs `Initializing`. This is a
+consumer-side policy question (see Open questions), not an interface gap.
+
+**4. Relative drift is the failure mode, not absolute drift.** What teleop actually needs is
+the hand pose *relative to the head*. On a Pico, both come from one tracking system, so the
+relative geometry stays consistent even as the whole map drifts. Replacing only the
+controller leaves two independent trackers with independent drift — each individually
+healthy, their relative pose degrading over a session. A fixed `T_session_slamworld` cannot
+correct this, since the error is time-varying. Mitigations (periodic re-alignment against a
+shared observable, or tracking both head and hand as rigs in *one* collaborative instance so
+they share a map frame) are out of scope for the first pass but are the reason the
+collaborative topology exists.
+
+### Practical verdict
+
+`DataCollection` works with the design as specified. `RealtimeControl` is viable for slow,
+deliberate manipulation once `predict_to()` and `odometry_only` are implemented, and is not
+recommended for dynamic motion regardless — the residual latency after prediction, plus the
+tracking-loss failure modes, are qualitatively worse than a dedicated XR controller. Prefer
+a native XR tracked device where one is available; use a SLAM rig where none is (which is
+exactly the egocentric, no-headset case the design targets).
+
 ## Files (design-level; no implementation this pass)
 
-- `src/core/pose_provider/cpp/inc/pose_provider/sensor_source.hpp` — `ISensorSource`,
-  `ISensorSink`, `ImageFrame`, `ImuSample`, `CameraIntrinsics`, `SensorTimebase`.
-- `src/core/pose_provider/cpp/inc/pose_provider/pose_provider.hpp` — `IPoseProvider`,
-  `PoseEstimate`, `RigPose`, `TrackingState`, `SensorId`/`RigId`, `create_pose_provider()`.
+- `src/core/pose_provider/cpp/inc/pose_provider/sensor_sink.hpp` — `ISensorSink`,
+  `ImageFrame`, `ImuSample`, `SensorId`, `RigId`, `PixelFormat`.
+- `src/core/pose_provider/cpp/inc/pose_provider/pose_provider.hpp` — `IPoseProvider`
+  (including `predict_to()` / `supports_prediction()`), `PoseEstimate`, `RigPose`,
+  `TrackingState`, `create_pose_provider()`.
 - `src/core/pose_provider/cpp/inc/pose_provider/topology.hpp` — `SensorSpec`, `RigSpec`,
-  `OutputSpec`, `SlamInstanceConfig` (+ a yaml-cpp loader for `slam_topology.yaml`).
-- `src/core/pose_provider/cpp/.../sensor_multiplexer.*` — merges N `ISensorSource`s into one
-  time-ordered, single-fusion-timeline stream; reorder buffer + inter-sensor skew monitor.
+  `OutputSpec`, `SlamInstanceConfig` (+ a yaml-cpp loader for `slam_topology.yaml`), and the
+  config-level validation from Orchestration step 3.
+- `src/core/pose_provider/cpp/.../sensor_multiplexer.*` — `SensorMultiplexer` +
+  `MultiplexerConfig`: merges N `SensorAdapter` outputs into one time-ordered,
+  single-fusion-timeline stream; the sole owner of reordering (bounded reorder buffer,
+  late-sample drop counter, inter-sensor skew monitor).
 - `src/core/pose_provider/cpp/inc/pose_provider/calibration.hpp` — canonical `RigCalibration`
-  (`CameraCalibration`/`ImuCalibration`), `ICalibrationSource` (`Device`/`File`), the
-  precedence-merge resolver, and `validate(RigCalibration, capabilities)`. Backend adapters
-  live with each backend and translate canonical → native.
+  (`CameraCalibration`/`ImuCalibration`), `ICalibrationSource` (`Device`/`File`),
+  `CalibrationSourceSpec`, the precedence-merge resolver (input: ordered `CalibrationSourceSpec`
+  list per rig → output: `RigCalibration`), and
+  `validate(const RigCalibration&, const IPoseProvider&)`. Backend adapters live with each
+  backend and translate canonical → native.
 - `src/core/pose_provider/backends/{cuvslam,orbslam3,vins,stub}/` — one lib each, selected
   by `POSE_PROVIDER_BACKEND`; built into per-backend plugin binaries for heterogeneity.
   cuVSLAM links a vendored prebuilt `.so` (+ CUDA); others FetchContent-from-source.
-- Sensor sources (one per vendor): `src/plugins/oak/core/oak_sensor_source.*`
-  (`OakSensorSource`, adds IMU node + raw-frame queue + `getCalibrationData()`);
-  `ZedSensorSource` (ZED SDK; or a `ZedSdkPoseProvider` using built-in tracking);
-  `SensingSensorSource` (GMSL via v4l2/Argus/NvSIPL, external calib, optional external IMU).
-- `src/plugins/slam_pose_provider/` — producer plugin generalizing `controller_se3_tracker`:
-  opens N `ISensorSource`s → multiplex into one `create_pose_provider()` → **per-rig**
-  `SchemaPusher`s on `se3_tracker`. One process per `SlamInstanceConfig`.
+- `src/plugins/slam_pose_provider/` — producer plugin: owns `SensorAdapter` per source
+  (bridges device layer → `ISensorSink`), feeds `SensorMultiplexer` → one
+  `create_pose_provider()` → **per-rig** `SchemaPusher`s on `se3_tracker`. One process per
+  `SlamInstanceConfig`. Device interface (`ICamera`/`IImu`) backends are out of scope here.
 
 Reused as-is: `core::SchemaPusher` (`src/core/pusherio/`), `core::Se3Tracker` +
 `Se3TrackerPose` schema, `os_monotonic_now_ns()`, the `controller_se3_tracker` plugin
@@ -571,24 +765,158 @@ skeleton, `DeviceIOSession`/`OpenXRSession`.
 ## Verification (of the design, before/after implementation)
 
 - **Design review acceptance:** a new backend can be added by implementing `IPoseProvider`
-  + adding one CMake branch + one factory `#elif`, touching neither `ISensorSource`, the
-  plugin, nor any consumer. A new camera = one `ISensorSource` impl. All four topologies
+  + adding one CMake branch + one factory `#elif`, touching neither the device interface
+  layer, the plugin, nor any consumer. A new camera vendor = one `SensorAdapter` impl in
+  the plugin (device interface design concern). All four topologies
   (per-device, rigid rig, collaborative, hybrid) express as `SlamInstanceConfig` data with
   no interface change. Confirm `PoseEstimate` → `Se3TrackerPose` mapping is lossless for the
-  fields `se3_tracker` carries.
+  fields `se3_tracker` carries. Confirm a `RealtimeControl` instance cannot be configured
+  onto a backend without prediction, and that `odometry_only` is forced for that profile.
 - **Once implemented (out of scope now):** build with `POSE_PROVIDER_BACKEND=stub`, run the
   plugin, read the pose back with `examples/schemaio/se3_printer.cpp` on the chosen
   `collection_id` — the same reader used for `controller_se3_tracker` — to confirm the pose
   and `is_valid` gating flow end-to-end without any consumer changes.
 
+## Phased implementation — OAK-first path
+
+The `ICamera`/`IImu` device interface design (IsaacTeleop#571) is still in progress.
+Rather than block on it, the Pose Provider can be implemented end-to-end with an
+OAK-specific adapter that talks DepthAI directly. Once the device interface lands, the
+adapter is swapped out; everything above `ISensorSink` is untouched.
+
+### Phase 1 — `OakSensorAdapter` (temporary, OAK-only)
+
+A new class in `src/plugins/oak/core/oak_sensor_adapter.*`, following the same DepthAI
+patterns as `OakCamera` but targeting `ISensorSink` instead of `FrameSink`:
+
+```text
+OAK (DepthAI direct)
+  dai::Pipeline
+  ├─ MonoLeft/Right raw queue  ───────────── on_image() ──▶ ISensorSink ──▶ IPoseProvider
+  ├─ MonoLeft/Right H.264 queue ──────────▶ RawDataWriter (.h264 sidecar, hardware enc)
+  ├─ IMU queue (dai::node::IMU, 200 Hz) ─┬─ on_imu()  ──▶ ISensorSink ──▶ IPoseProvider
+  │                                       └─ MCAP imu channel
+  └─ readCalibration() ───────────────────────────────────▶ RigCalibration
+
+  IPoseProvider ──▶ SchemaPusher ──▶ se3_tracker MCAP channel  (pose recording)
+```
+
+Both recording and SLAM draw from the same DepthAI pipeline. Video is hardware-encoded
+to an H.264 sidecar (same as the existing `OakCamera`/`RawDataWriter` pattern); raw frames
+go to SLAM only. IMU is delivered to both SLAM and an MCAP channel. Pose is recorded via
+the existing `se3_tracker` path, timestamped with `sample_time_device_ns` of the source
+frame — so sensor data, IMU, and pose are all correlated on the device clock in the final
+MCAP episode.
+
+Key differences from the existing `OakCamera`:
+
+- **Two queues per camera stream.** The raw `requestOutput` queue feeds SLAM (`GRAY8` or
+  `NV12`); a second queue through `dai::node::VideoEncoder` feeds `RawDataWriter` for the
+  H.264 sidecar. Same device timestamps on both (same `dai::ImgFrame` source node).
+- **IMU node added.** Adds `dai::node::IMU` to the pipeline
+  (`ACCELEROMETER_RAW` + `GYROSCOPE_RAW` at 200 Hz, `setBatchReportThreshold(1)` for
+  per-sample delivery). `update()` polls `m_imu_queue`, calls `m_slam_sink->on_imu()` and
+  writes to the MCAP IMU channel.
+- **Calibration from device.** Calls `m_device->readCalibration()` at construction and
+  translates `dai::CalibrationHandler` intrinsics + `getCameraExtrinsics()` into a
+  `core::RigCalibration` — the device self-report source in the calibration merge.
+- **Timestamps.** Both `getTimestampDevice()` (→ `sample_time_device_ns`) and
+  `getTimestamp()` (→ `sample_time_local_ns`) already exist on `dai::ImgFrame` and
+  `dai::IMUReport`; the same extraction pattern as `oak_camera.cpp:155-166` applies.
+
+```cpp
+// Minimal interface for writing ImuSamples to an MCAP channel; impl lives in the plugin.
+class IImuMcapWriter {
+public:
+    virtual ~IImuMcapWriter() = default;
+    virtual void write(const ImuSample&) = 0;
+};
+```
+
+```cpp
+// src/plugins/oak/core/oak_sensor_adapter.hpp
+class OakSensorAdapter {
+public:
+    // Takes SensorSpecs directly and owns the "left"/"right"/"imu" -> core::StreamType
+    // mapping, so the vendor enum never appears in slam_topology.yaml. Throws on an
+    // unrecognized stream name. `format` is the orchestrator's chosen entry from the
+    // backend's supported_pixel_formats().
+    OakSensorAdapter(const OakConfig& config,
+                     const std::vector<core::SensorSpec>& sensors,
+                     core::PixelFormat format,
+                     core::ISensorSink* slam_sink,         // SLAM consumer
+                     core::IImuMcapWriter* imu_writer);    // IMU recording (nullable)
+
+    core::RigCalibration get_calibration() const;
+    void update();   // poll all queues: raw+H.264 frames, IMU -> sinks
+
+private:
+    std::shared_ptr<dai::Device> m_device;
+    std::unique_ptr<dai::Pipeline> m_pipeline;
+    std::map<core::StreamType, std::shared_ptr<dai::MessageQueue>> m_raw_queues;   // SLAM
+    std::map<core::StreamType, std::shared_ptr<dai::MessageQueue>> m_h264_queues;  // recording
+    std::shared_ptr<dai::MessageQueue> m_imu_queue;
+    core::ISensorSink* m_slam_sink;
+    core::IImuMcapWriter* m_imu_writer;   // null = don't record IMU
+    core::RigCalibration m_calibration;
+    std::map<core::StreamType, std::unique_ptr<RawDataWriter>> m_video_writers;
+};
+```
+
+The `slam_pose_provider` plugin in Phase 1 is a simplified variant of the full
+orchestration: one `OakSensorAdapter` (no `SensorMultiplexer` needed for single-device),
+feeds one `IPoseProvider`, one `SchemaPusher` per output rig. Recording is opt-in:
+`imu_writer` is null when recording is disabled; `m_h264_queues` and `m_video_writers`
+are omitted from the pipeline when video recording is off.
+
+### Phase 2 — migration to the generic device interface
+
+Once `ICamera`/`IImu` land with built-in fan-out, `OakSensorAdapter` is replaced by a
+generic `SensorAdapter` bridging `ICamera`/`IImu` callbacks to `ISensorSink`. The
+recording path moves to the device layer (the recording sink subscribes to `ICamera`
+directly, as described in the Ego Data Capture Interface design). A `FanOutSensorSink`
+can optionally sit between `SensorAdapter` and `IPoseProvider` if any recording concern
+needs to tap the post-adapter, post-format-conversion stream. The `IPoseProvider`,
+calibration stack, and pose recording path are untouched in this migration.
+
+```cpp
+// Distributes ISensorSink callbacks to N downstream sinks (e.g. IPoseProvider + RecordingSink).
+class FanOutSensorSink : public ISensorSink {
+public:
+    void add_sink(ISensorSink* sink);
+    void on_image(const ImageFrame&) override;  // forwards to all registered sinks
+    void on_imu(const ImuSample&) override;
+};
+```
+
 ## Open questions to resolve at implementation time
 
 - OAK IMU + intrinsics extraction from DepthAI (absent today) — spike needed. Confirm the
   IMU node's timestamps come from the same `getTimestampDevice()` clock domain as frames.
-- SLAM world-frame → OpenXR session-space alignment strategy (fixed calib vs init-time).
-- Latency budget: is propagating the correct pose timestamp enough, or does teleop need
-  the provider to forward-predict to "now" (see Timing & synchronization B)? Decide per
-  use case; affects whether `IPoseProvider` gains a `predict_to(t_ns)` method.
+- **`T_session_slamworld` source:** `OutputSpec` carries the transform but doesn't say where
+  it comes from. Two options: (a) a fixed extrinsic from a calibration file (known rig
+  mounting); (b) an init-time alignment procedure that runs once at session start (e.g.
+  levelling to gravity + a known reference point). Decide per use case; (b) means the plugin
+  cannot push a valid pose until alignment completes — decide what it emits until then
+  (`is_valid = false`, or `SlamWorld` frame with a documented caveat).
+- **Tracking-loss policy for `RealtimeControl`:** the interface carries the full
+  `TrackingState`, but `se3_tracker` only carries `is_valid`, and the consumer contract is
+  "freeze on invalid." Decide what the teleop layer should do for `Initializing` (no pose
+  for the first seconds of a session) vs `Lost` mid-motion vs `Relocalizing`. If freeze is
+  wrong, this is the concrete trigger for the dedicated `slam_pose` device type (see Output)
+  that can carry state rather than a bool.
+- **Prediction horizon and quality:** `predict_to()` integrates IMU past the last processed
+  frame. Pin the maximum sane horizon (beyond which prediction error exceeds the latency it
+  hides) and whether prediction should be refused rather than degraded past it. Measure the
+  actual end-to-end budget per backend before committing to `RealtimeControl` support.
+- **Relative head↔hand drift** when a SLAM rig replaces one tracked device while the head
+  stays on XR: two independent trackers drift independently and a fixed
+  `T_session_slamworld` cannot correct a time-varying error. Evaluate tracking both as rigs
+  in one collaborative instance (shared map frame) versus periodic re-alignment.
+- **ORB-SLAM3 licensing (GPLv3)** vs IsaacTeleop's Apache-2.0. The per-backend-binary
+  architecture keeps it out of the main process, but this needs a legal answer before
+  ORB-SLAM3 ships as a supported backend rather than a local experiment. cuVSLAM (in-house,
+  vendored prebuilt) does not have this constraint.
 - Collaborative SLAM across separate machines needs an inter-process **image transport**
   (frames don't cross the tensor bus today) — deferred; single-host multi-device only for now.
 - Calibration: pin the canonical convention (frame direction, quaternion order, units) and
