@@ -5,26 +5,25 @@ SPDX-License-Identifier: Apache-2.0
 
 # Pose Provider — Interface Design
 
-## Context
+This design introduces a backend-neutral Pose Provider that converts synchronized camera
+and optional IMU measurements into a 6-DoF pose stream. The initial OAK-D integration targets
+OAK-D stereo and stereo-inertial data collection while allowing different SLAM/VIO backends
+behind one API. Existing pose transport, recording/replay, and consumer APIs remain
+unchanged. Capture APIs, vendor synchronization, recording formats, and SLAM algorithms are
+outside this design.
 
-IsaacTeleop needs 6-DoF pose from cameras that do not emit a pose through the existing
-teleop device path. A Pose Provider consumes synchronized camera and optional IMU
-measurements, runs a SLAM/VIO backend, and republishes the estimate through the existing
-pose transport.
+## Motivation
 
-The initial hardware target is an OAK-D stereo camera. We already have a working data
-collection pipeline using OAK-D with ORB-SLAM3; that pipeline is the functional reference
-for input modes and expected behavior. cuVSLAM is the intended production reference
-backend.
-
-This document designs the Pose Provider boundary and its integration requirements. It does
-not design the camera capture interface, the vendor pipeline, or the recording subsystem.
+IsaacTeleop needs 6-DoF pose from cameras that expose images and optional IMU data but do
+not provide pose through the existing teleop device path. A proven OAK-D and ORB-SLAM3
+data-collection pipeline provides the behavioral baseline; cuVSLAM is the intended
+production backend.
 
 ## Goals
 
 - Define a common Pose Provider contract that supports interchangeable SLAM/VIO backends and
   produces one 6-DoF pose stream from synchronized camera and optional IMU measurements.
-- Preserve measurement timing and provenance so pose output remains correlatable with
+- Preserve measurement timing and source identity so pose output remains correlatable with
   recorded sensor data.
 - Define consistent input, calibration, frame, lifecycle, and health contracts across
   backends, including a stable pose frame for each run.
@@ -36,16 +35,16 @@ not design the camera capture interface, the vendor pipeline, or the recording s
 
 The initial release has one supported input topology and two input modes:
 
-| Topology | Input mode | Pose output |
-|---|---|---|
-| One OAK-D stereo pair | `Stereo` | One pose stream |
-| One OAK-D stereo pair + its onboard IMU | `StereoImu` | One pose stream |
+| Topology | Input mode |
+|---|---|
+| One OAK-D stereo pair | `Stereo` |
+| One OAK-D stereo pair + its onboard IMU | `StereoImu` |
 
-Normative initial-release constraints:
+For the initial release:
 
 - The supported device is one physical OAK-D providing one stereo pair and, optionally, its
   onboard IMU. It forms one rigid rig and one raw device-clock domain.
-- The existing OAK integration remains the device owner. One process coordinates capture,
+- The existing OAK plugin remains the device owner. One process coordinates capture,
   sensor recording, pose estimation, and publication from the same capture pipeline without
   depending on the unfinished generic capture interface.
 - Input uses owned CPU buffers from two pinhole camera streams. Configuration selects one
@@ -58,14 +57,26 @@ Normative initial-release constraints:
 - Output uses the backend's fixed `SlamWorld` by default or one fixed startup transform into
   `Session`. Dynamic map-frame or alignment changes are not supported within a run.
 
+## Design boundaries and non-goals
+
+These are responsibilities this design does not own, including when a deferred capability
+eventually uses them:
+
+- Designing camera or IMU capture APIs, delivery to multiple consumers, vendor
+  synchronization, or clock mapping mechanisms.
+- Defining sensor-recording infrastructure or file formats.
+- Defining backend algorithms or backend-native configuration formats.
+- Defining unrelated camera consumers, cross-machine transport, or collaborative-map
+  protocols. Those components may integrate with the Pose Provider through separate designs.
+
 ## Deferred capabilities and extension directions
 
 These capabilities are related to the Pose Provider but are not initial-release requirements
 or delivery commitments. They may require interface changes or separate designs:
 
-1. **Capture-interface migration.** Replace the direct OAK integration after a generic
-   capture interface can provide the required synchronization, calibration, provenance,
-   recording fan-out, and lifecycle outcomes.
+1. **Capture-interface migration.** Replace the direct OAK-D integration after a generic
+   capture interface can provide the required synchronization, calibration, source identity,
+   delivery to recording and other consumers, and lifecycle outcomes.
 2. **Input expansion.** Add other devices, mono and larger camera groups, multi-adapter or
    cross-clock rigs, additional camera and timing models, and accelerated buffer transport.
 3. **SLAM and map behavior.** Add operating modes such as localization against an existing
@@ -76,94 +87,122 @@ or delivery commitments. They may require interface changes or separate designs:
 The initial release stabilizes only the seams it exercises; these directions are not
 compatibility promises.
 
-## Design boundaries and non-goals
-
-These are responsibilities this design does not own, including when a deferred capability
-eventually uses them:
-
-- Designing camera or IMU capture APIs, capture fan-out, vendor synchronization, or clock
-  mapping mechanisms.
-- Defining sensor-recording infrastructure or file formats.
-- Defining backend algorithms or backend-native configuration formats.
-- Defining unrelated camera consumers, cross-machine transport, or collaborative-map
-  protocols. Those components may integrate with the Pose Provider through separate designs.
-
 ## Architecture and ownership boundary
-
-```text
-Generic responsibility                                                    Initial OAK-D realization
-──────────────────────                                                    ─────────────────────────
-Session integration owner ──────────────────────────────────────────────▶ plugins::oak::DataCollectionSession
-        ├── Capture/device owner ───────────────────────────────────────▶ OakCamera
-        ├── Sensor recording ───────────────────────────────────────────▶ DataCollectionSession-owned recorder
-        └── Capture adapter ────────────────────────────────────────────▶ SensorAdapter
-                    │
-         normalized, fusion-ordered,
-     owned image groups + optional IMU
-                    │
-                    ▼
-             IPoseProvider implementation ──────────────────────────────▶ ORB-SLAM3 / cuVSLAM / stub adapter
-                              │
-                         PoseEstimate
-                              │
-                              ▼
-          Output drain and frame transform ─────────────────────────────▶ DataCollectionSession update loop
-                              │
-                              ▼
-              Existing pose transport ──────────────────────────────────▶ SchemaPusher / Se3Tracker
-                                                                          live + record/replay consumers
-```
-
-The left column defines architectural responsibilities; the right column shows their initial
-OAK-D realization. Horizontal arrows mean “realized by,” while vertical and branch connectors
-show runtime flow and coordination. Concrete names in the right column are not part of the
-generic provider contract.
 
 There are three independent seams:
 
 1. **Capture seam.** The capture layer owns devices, synchronization, sensor recording, and
-   fan-out. `SensorAdapter` translates its output into the normalized provider types below.
+   delivery to its consumers.
 2. **Estimator seam.** `IPoseProvider` owns SLAM/VIO state and backend-native translation.
 3. **Transport seam.** Existing `se3_tracker` schema, consumer API, recording, and replay
    remain unchanged; live consumers use the collection name derived from `instance_id`.
 
-For the initial OAK-D integration, the existing OAK capture process remains the single
-device-owning process. `OakCamera` owns the device and DepthAI pipeline;
-`plugins::oak::DataCollectionSession` owns their integration lifecycle and non-blocking
-update loop. Recording and pose estimation branch from that one pipeline. A separate pose
-process must not reopen the same device.
+`SensorAdapter` is in scope only as the initial OAK-D capture adapter. This design defines
+its provider-facing normalization, `AppliedCaptureSpec` construction, fusion-time ordering,
+delivery, and lifecycle obligations—not device access, vendor synchronization, capture APIs,
+or recording infrastructure.
 
-### Architecture scope inventory
+### Runtime ownership
 
-The top-level types and components designed here are:
+The session integration owner composes these runtime responsibilities and coordinates their
+lifecycle. Each child retains the internal responsibility defined by the three seams above.
 
-- **Core interfaces:** `ISensorSink` and `IPoseProvider`.
-- **Input and identity types:** `SensorId`, `RigId`, `FrameId`, `ClockDomainId`,
-  `CaptureGroupId`, `PixelFormat`, `ImageFrame`, `ImageGroup`, `ImuSample`, and
-  `EnqueueResult`.
-- **Provider mode, output, and status types:** `ProviderInputMode`,
-  `PinholeDistortionModel`, `TrackingState`, `SourceImageRef`, `PoseEstimate`,
-  `ProviderCapabilities`, `ProviderIdentity`, and `ProviderHealth`.
-- **Applied configuration types:** `AppliedImageStreamSpec`, `AppliedImuStreamSpec`,
-  `AppliedCaptureSpec`, `StereoRigSpec`, `OutputSpec`, `QueueConfig`, and
-  `SlamInstanceConfig`.
-- **Calibration types:** `PinholeCameraModel`, `CameraCalibration`, `ImuCalibration`, and
-  `RigCalibration`.
-- **Initial integration components:** `plugins::oak::SensorAdapter` and the Pose
-  Provider-related orchestration in `plugins::oak::DataCollectionSession`, plus the stub,
-  ORB-SLAM3, and cuVSLAM implementations of `IPoseProvider`.
+```text
+Session integration owner
+        ├── Capture integration
+        │       ├── capture/device source
+        │       ├── sensor recording
+        │       └── capture adapter
+        ├── IPoseProvider backend
+        ├── output integration
+        ├── telemetry
+        └── lifecycle and shutdown
+```
 
-`SensorAdapter` is in scope only as the initial OAK-specific provider-input adapter: this
-design defines its provider-facing normalization, applied-descriptor construction, fusion
-ordering, and delivery and lifecycle obligations. It does not own device access, vendor
-synchronization, capture APIs, or recording infrastructure. `OakCamera`, the recorder,
-`SchemaPusher`, and `Se3Tracker` are existing or separately designed dependencies rather than
-types designed here.
+The table maps those ownership responsibilities to the initial OAK-D implementation without
+adding new contract behavior.
+
+| Generic responsibility | Initial OAK-D integration |
+|---|---|
+| Session integration owner | `plugins::oak::DataCollectionSession` |
+| Capture integration | `DataCollectionSession` coordinates `OakCamera`, the recorder, and `plugins::oak::SensorAdapter` |
+| Capture/device source | `OakCamera` |
+| Sensor recording | Session-owned recorder |
+| Capture adapter | `plugins::oak::SensorAdapter` |
+| `IPoseProvider` backend | ORB-SLAM3, cuVSLAM, or stub adapter |
+| Output integration | `DataCollectionSession` update loop and output-frame transform |
+| Telemetry | `DataCollectionSession` live health view and episode summary |
+| Lifecycle and shutdown | `DataCollectionSession` |
+
+The existing OAK plugin process remains the single device-owning process. Recording and pose
+estimation branch from the same capture pipeline; a separate pose process must not reopen
+the device. `OakCamera`, the recorder, `SchemaPusher`, and `Se3Tracker` remain existing or
+separately designed dependencies.
+
+### End-to-end data flow
+
+The ownership view does not show the data path. This diagram instead makes the provider's
+inputs and outputs visible at a glance.
+
+```text
+capture/device source ── sensor data ──┬──▶ sensor recording
+                                       │
+                                       └──▶ capture adapter
+                                                 │
+                                      fusion-time-ordered sensor input
+                                      (ImageGroup; optional ImuSample)
+                                                 │
+                                                 ▼
+                                           IPoseProvider
+                                      ┌──────────┴──────────┐
+                                      │                     │
+                                PoseEstimate          ProviderHealth
+                                      │                     │
+                                      ▼                     ▼
+                             output integration          telemetry ◀── diagnostics
+                                      │                              from capture/session
+                                      ▼
+                                  pose stream
+                               ┌──────┴──────┐
+                               ▼             ▼
+                         live consumers  pose recording
+```
+
+The two capture branches receive the same source measurement, but provider delivery through
+the adapter occurs only after recorder acceptance succeeds, as required below.
+
+The session assembles one immutable setup and queries capabilities and identity before
+initialization. The capture integration then submits normalized measurements for asynchronous
+processing in fusion-time order, while the session drains estimates and health without
+exposing provider pull calls to pose consumers.
+
+### Interface and type relationships
+
+```text
+ImageGroup ──contains──▶ ImageFrame
+ImageGroup ─┐
+ImuSample ──┴──accepted by──▶ ISensorSink ◀──implemented by── IPoseProvider
+
+SlamInstanceConfig ─┐
+AppliedCaptureSpec ──┼──validate + initialize──▶ IPoseProvider
+RigCalibration ──────┘                                  │
+                                                       ├── advertises ProviderCapabilities
+                                                       ├── identifies ProviderIdentity
+                                                       ├── produces PoseEstimate
+                                                       └── reports ProviderHealth
+
+IPoseProvider lifecycle:
+validate_configuration → initialize → start → finish_input → input_drained → stop
+```
+
+In contrast to the runtime view above, this UML-lite view shows only contract-level type
+relationships, not ownership or end-to-end flow. The API sections below define the supporting
+types without turning the diagram into a field-by-field data model.
 
 ## Capture-integration requirements
 
-The direct OAK integration and any future generic capture interface must provide the same
-observable contract to the Pose Provider:
+The direct OAK-D integration and any future generic capture interface must provide the same
+provider-facing contract:
 
 - **Synchronized input.** Deliver each image measurement as one atomic `ImageGroup`, with
   stable sensor and capture identities, source sequences, and device and local measurement
@@ -171,38 +210,66 @@ observable contract to the Pose Provider:
   have exactly equal device timestamps; future capture implementations may use another
   declared grouping rule. Host arrival time is never treated as measurement time.
 - **Recording correlation.** The data-collection session records the same measurements it
-  offers to the provider, including their identities and timestamps. Recorder acceptance
-  precedes provider delivery; a measurement that recording cannot accept is not sent to the
-  provider. A later recording failure fails the session rather than leaving an apparently
-  valid pose stream without its source data. The provider remains independent of the
-  recording implementation and carries source identity and measurement time into
-  `PoseEstimate`.
+  offers to the provider, including their identities and timestamps. Recorded image-group
+  metadata retains each image's sensor ID and source sequence. Recorder acceptance precedes
+  provider delivery; a measurement that recording cannot accept is not sent to the provider.
+  A later recording failure fails the session rather than leaving an apparently valid pose
+  stream without its source data. The provider remains independent of the recording
+  implementation and carries source identity and measurement time into `PoseEstimate`.
 - **Immutable applied setup.** Before provider initialization, the integration supplies one
   selected `ProviderInputMode`, one `AppliedCaptureSpec` describing the streams actually
   delivered, and one fully resolved `RigCalibration`. Calibration describes the delivered
   images after any capture-side processing and is established before measurement delivery
-  begins. The same records are used for validation, provider initialization, fusion
+  begins. The same records are used for validation, provider initialization, fusion-time
   ordering, and episode metadata, and remain fixed for the run.
 
-For the initial OAK-D path, `OakCamera` reports the applied capture-native stream properties
-without depending on Pose Provider types. `plugins::oak::SensorAdapter` converts that report
-into the provider-facing `AppliedCaptureSpec`, while the session orchestrator resolves the
-final calibration once. Future capture-interface migration may change where the source
-information comes from, but not these provider-facing outcomes or ownership boundaries.
+For the initial OAK-D integration, `OakCamera` reports the applied capture-native stream
+properties and device calibration without depending on Pose Provider types.
+`plugins::oak::SensorAdapter` converts the stream report into the provider-facing
+`AppliedCaptureSpec`, while the session orchestrator applies any file override to the device
+calibration and resolves the final `RigCalibration` once. Future capture-interface migration
+may change where the source information comes from, but not these provider-facing outcomes or
+ownership boundaries.
 
-## Interface 1 — provider input
+### Initial OAK-D fusion-time ordering
+
+`SensorAdapter` merges complete image groups and IMU samples into one monotonic fusion-time
+stream using a reorder buffer bounded by a configured time window and item capacity. Capacity
+must cover the items expected within that window at the applied stream rates, plus the
+qualified delivery-jitter margin. Camera fusion time is the group device timestamp; IMU
+fusion time applies the resolved calibration offset without changing the recorded raw
+timestamp. An item is normally emitted when its fusion time is no greater than the greatest
+observed fusion time minus the window.
+
+An incoming item older than the last emitted fusion time is late, counted, and withheld
+before buffering. Otherwise, when admitting it would exceed capacity, the adapter emits the
+earliest item from the union of the buffer and the incoming item. If the incoming item is
+earliest, it is emitted directly; otherwise, the earliest buffered item is emitted and the
+incoming item is inserted. The adapter never rejects an on-time item solely because the
+reorder buffer is full. Normal shutdown flushes buffered items in order.
+
+The applied window and capacity, forced-emission count, and late-input count are recorded in
+episode metadata. They belong to capture/session configuration and telemetry rather than
+`SlamInstanceConfig` or `ProviderHealth`.
+
+## Pose Provider API
+
+### Input ingestion — `ISensorSink`
 
 ```cpp
 namespace core {
 
+// Stable identifiers shared across capture, calibration, and provider records.
 using SensorId = std::string;
 using RigId = std::string;
 using FrameId = std::string;
 using ClockDomainId = std::string;
 using CaptureGroupId = uint64_t;
 
+// Pixel formats accepted at the provider boundary.
 enum class PixelFormat { Gray8, NV12, BGR888, RGBA8 };
 
+// One captured image with owned pixel data and source timestamps.
 struct ImageFrame {
     SensorId sensor_id;
     uint64_t source_sequence;
@@ -215,13 +282,15 @@ struct ImageFrame {
     int64_t sample_time_device_ns;   // raw capture-device clock
 };
 
+// One atomic, synchronized camera measurement.
 struct ImageGroup {
     CaptureGroupId capture_group_id;
-    int64_t sample_time_local_ns;    // capture-selected group reference time
-    int64_t sample_time_device_ns;   // capture-selected group reference time
-    std::vector<ImageFrame> images;  // owned frames; cardinality is mode-dependent
+    int64_t sample_time_local_ns;    // group measurement time in local common clock
+    int64_t sample_time_device_ns;   // group measurement time in raw device clock
+    std::vector<ImageFrame> images;  // owned frames; matched by sensor_id
 };
 
+// One accelerometer and gyroscope measurement.
 struct ImuSample {
     SensorId sensor_id;
     uint64_t source_sequence;
@@ -231,123 +300,86 @@ struct ImuSample {
     int64_t sample_time_device_ns;
 };
 
+// Result of a non-blocking input-admission attempt.
 enum class EnqueueResult {
+    // The complete measurement was queued.
     Accepted,
+
+    // A full queue rejected the complete measurement.
     DroppedBackpressure,
+
+    // The measurement does not match the initialized input contract.
     RejectedInvalidInput,
+
+    // The provider is not accepting input in its current lifecycle state.
     RejectedNotRunning,
 };
 
+// Non-blocking sensor-input boundary implemented by each Pose Provider.
 class ISensorSink {
 public:
     virtual ~ISensorSink() = default;
 
-    // The group is one indivisible queue item. Initial OAK-D requires:
-    // - exactly two images
-    // - one image for each initialized left/right sensor ID
-    // - each image's device timestamp matches the group device timestamp
+    // One atomic, owned image measurement.
     virtual EnqueueResult on_image_group(ImageGroup group) = 0;
 
-    // Called only in StereoImu mode.
+    // Available only in StereoImu mode.
     virtual EnqueueResult on_imu(const ImuSample& sample) = 0;
 };
 
 } // namespace core
 ```
 
-### Input ownership, ordering, and concurrency
+#### Ownership and call model
 
-- `on_image_group()` transfers ownership of the group and all image buffers.
-- `on_imu()` copies the small sample into the provider queue before returning.
-- Calls are enqueue-only and do not execute SLAM compute.
-- `ImageGroup::sample_time_local_ns` and `sample_time_device_ns` are the capture-selected
-  reference measurement times for the group. The provider uses them for ordering and pose
-  output without choosing or averaging frame timestamps; each `ImageFrame` retains its own
-  source timestamps for recording and diagnostics.
-- One `SensorAdapter` serializes all calls into an `ISensorSink` instance. Callbacks are not
-  concurrent in the initial release.
-- `SensorAdapter` owns a bounded fusion-ordering buffer. Its capture-side configuration has
-  positive `fusion_reorder_window_ns` and `max_reorder_items` bounds; the applied values are
-  recorded with the episode and selected from measured OAK-D behavior before release.
-  `max_reorder_items` must be at least one greater than the maximum aggregate number of
-  stereo-group and optional IMU items that the configured sensor rates can place within one
-  full reorder window.
-- Image-group fusion time is `ImageGroup::sample_time_device_ns`. IMU fusion time is
-  `sample_time_device_ns + RigCalibration::imu.time_offset_ns`, following the convention
-  `t_camera = t_imu + time_offset_ns`.
-- The adjustment is an ordering/backend-input operation only. `ImuSample` and recorded
-  metadata retain the original raw device timestamp.
-- On every non-late arrival, the adapter advances `greatest_observed_fusion_time` before its
-  admission decision, then computes `watermark = greatest_observed_fusion_time -
-  fusion_reorder_window_ns`. It emits buffered items whose fusion time is at or before that
-  watermark.
-- Delivery into the provider is monotonic by fusion time; for equal fusion times, IMU
-  precedes stereo and source sequence breaks same-type ties.
-- A sample whose ordering key precedes an already emitted item is late. It is not delivered
-  to the provider and increments capture health `late_fusion_samples`. Sensor data already
-  accepted by the recorder remains in the episode and the drop is attributable to source
-  identity.
-- If admitting an item would exceed `max_reorder_items` after watermark-eligible emissions,
-  the adapter immediately emits the lowest item from the union of the buffer and incoming
-  item, ignoring the watermark, and retains the rest. This preserves monotonic delivery and
-  forward progress while reducing effective reorder depth. Each such transition increments
-  capture health `fusion_reorder_forced_emits`; no item is dropped by the capacity event.
-- During normal shutdown, the adapter flushes its remaining items in order before becoming
-  quiescent. These capture-side outcomes do not add an `EnqueueResult` because rejected
-  items never reach `ISensorSink`.
-- Calls are legal only after `IPoseProvider::start()` returns and before the capture adapter
-  becomes quiescent during shutdown.
-- No sensor callback may arrive after `IPoseProvider::finish_input()` begins.
-- The input-callback thread may run concurrently with one output/observer thread calling
-  `try_get_next_pose()`, `health()`, and `input_drained()`. Implementations must be safe for
-  that one-producer/one-consumer pattern. Lifecycle calls remain serialized: `finish_input()`
-  follows adapter quiescence, and `stop()` follows the final output drain.
+The capture integration satisfies the synchronization, recording, and applied-setup
+requirements above before calling this interface. `ISensorSink` only admits work; SLAM/VIO
+processing happens asynchronously.
 
-### Bounded backpressure
+- `on_image_group()` transfers one complete group and its image buffers. `on_imu()` copies
+  the small sample before returning.
+- Each image group contains exactly one frame for every configured camera sensor. Sensor ID,
+  not vector position, identifies the stream.
+- The capture integration serializes input and delivers it in monotonic fusion-time order
+  under the capture-side contract above. Camera groups use their device measurement time;
+  IMU samples apply the resolved calibration offset for ordering without changing their
+  recorded raw timestamps.
+- Input calls are legal only while the provider is running. One input producer may operate
+  concurrently with one thread draining estimates and reading health; lifecycle operations
+  remain serialized.
 
-`SlamInstanceConfig::queues` sets finite capacities for stereo input, IMU input, and pose
-output.
+#### Backpressure behavior
 
-- A full stereo queue drops the incoming `ImageGroup` as one unit and returns
-  `DroppedBackpressure`. It never splits a group.
-- A full IMU queue returns `DroppedBackpressure`, increments the IMU-drop counter, and
-  records one IMU-gap event. The wrapper sets an implementation-internal pending-gap marker;
-  the next successfully queued IMU item carries that marker to the worker. A
-  source-sequence discontinuity marks the affected accepted item directly.
-- Before ingesting a marked IMU item, the worker invokes the backend adapter's internal
-  gap-notification entry point. Every backend adapter must implement that entry point;
-  `ISensorSink` is unchanged. If no later IMU item is accepted, health still records the gap
-  and no backend notification is needed because there is no post-gap sample to qualify.
-  Backend-specific configuration determines whether tracking remains valid and what
-  recovery requires. The generic wrapper does not override `TrackingState`.
-- A full pose-output queue stalls the backend worker until the consumer drains it.
-  Already-computed poses are never dropped. The stall increments `pose_output_stalls` once
-  when the worker begins waiting and does not set `fatal_error`.
-- Output pressure never blocks `on_image_group()` or `on_imu()`. While the worker is stalled,
-  bounded input queues may fill and their normal `DroppedBackpressure` outcomes apply to
-  complete stereo groups and/or IMU samples.
-- Structurally invalid input is rejected before backend ingestion and returns
-  `RejectedInvalidInput`.
-- All drops, invalid inputs, and rejected-state calls are counted and exposed through
-  `ProviderHealth`.
+Input methods use finite per-provider queues and never block:
 
-`imu_gap_events` increments once when a local IMU drop or source-sequence discontinuity
-opens a new gap episode. Delivery of the next marked accepted IMU item notifies the backend
-and closes that episode; further contiguous accepted input does not create another event.
-`dropped_imu_samples` counts samples dropped by the provider queue, while capture-side drops
-remain in capture health. `pose_output_stalls` increments once each time the backend worker
-transitions from running to waiting on a full output queue.
+- A full image queue rejects the incoming `ImageGroup` as one atomic unit.
+- Every dropped IMU sample increments `dropped_imu_samples`. The first drop before the next
+  accepted IMU opens one gap episode and increments `imu_gap_events`; further drops in that
+  episode only increment the sample count. The next accepted IMU carries an internal pending
+  gap marker, and the provider wrapper notifies the backend adapter before ingesting that
+  sample. The adapter owns the resulting tracking behavior; `ISensorSink` does not expose the
+  internal notification.
+- Drops and rejections are counted in provider health.
+- A full pose-output queue stalls the backend worker until the output consumer drains it;
+  `pose_output_stalls` increments once when the worker enters each such stall. The condition
+  is non-fatal, does not block input callbacks, and does not discard an already-computed pose.
+  Continued pressure can instead fill the input queues and produce normal backpressure drops.
 
-The initial capacities are configuration values, not ABI constants. Deployment defaults
-must be selected from measured OAK-D/backend behavior before implementation release.
+Queue defaults are deployment choices based on measured device and backend behavior.
 
-## Interface 2 — `IPoseProvider`
+### Provider lifecycle and estimates — `IPoseProvider`
 
 ```cpp
 namespace core {
 
+struct AppliedCaptureSpec;
+struct RigCalibration;
+struct SlamInstanceConfig;
+
+// Sensor combinations accepted for one provider run.
 enum class ProviderInputMode { Stereo, StereoImu };
 
+// Canonical pinhole distortion models negotiated with a backend.
 enum class PinholeDistortionModel {
     None,
     RadTan5,
@@ -356,6 +388,7 @@ enum class PinholeDistortionModel {
     Tilted14,
 };
 
+// Provider tracking state for one output estimate.
 enum class TrackingState {
     Initializing,
     Tracking,
@@ -363,41 +396,40 @@ enum class TrackingState {
     Relocalizing,
 };
 
-struct SourceImageRef {
-    SensorId sensor_id;
-    uint64_t source_sequence;
-};
-
+// One pose estimate and the source measurement used to produce it.
 struct PoseEstimate {
-    Pose pose;                          // T_slamworld_body
+    Pose pose;                          // existing core::Pose; T_slamworld_body
     TrackingState state;
     CaptureGroupId source_capture_group_id;
-    std::vector<SourceImageRef> source_images;
     int64_t sample_time_local_ns;       // source image group's reference time
     int64_t sample_time_device_ns;      // source image group's device time
 };
 
+// Supported input forms; vector order has no meaning.
 struct ProviderCapabilities {
     std::vector<ProviderInputMode> input_modes;
-    std::vector<PixelFormat> pixel_formats; // most preferred first
+    std::vector<PixelFormat> pixel_formats;
     std::vector<PinholeDistortionModel> distortion_models;
 };
 
+// Runtime identity of the selected backend implementation.
 struct ProviderIdentity {
     std::string backend_name;
     std::string backend_version;
 };
 
+// Aggregated admission, processing, and fatal-error health.
 struct ProviderHealth {
-    uint64_t dropped_stereo_groups;
+    uint64_t dropped_image_groups;
     uint64_t dropped_imu_samples;
     uint64_t imu_gap_events;
     uint64_t rejected_invalid_input;
     uint64_t rejected_not_running;
     uint64_t pose_output_stalls;
-    bool fatal_error;
+    bool fatal_error; // once true, remains true for the run
 };
 
+// Backend-neutral Pose Provider lifecycle and output interface.
 class IPoseProvider : public ISensorSink {
 public:
     virtual ~IPoseProvider() = default;
@@ -431,76 +463,50 @@ public:
 } // namespace core
 ```
 
-`PoseEstimate::source_images` contains exactly one `{sensor_id, source_sequence}` reference
-for every image in the originating `ImageGroup`, preserving group order for determinism
-while using `sensor_id`, not vector position, as the semantic association. The initial OAK
-modes therefore emit exactly the configured left and right references.
-`source_capture_group_id` and these references remain internal provenance; the existing
-`se3_tracker` schema does not transport them.
+Each `PoseEstimate` copies the identity and measurement timestamps of its originating
+`ImageGroup`. The recorded group metadata resolves that identity to the exact source images
+and sequences, avoiding duplicate frame-level source details in every estimate. The group ID
+remains internal because the existing `se3_tracker` schema does not carry it.
 
-`ProviderCapabilities` advertises only modes, pixel formats, and distortion models the
-selected adapter can ingest without approximation. All three lists are non-empty; generic
-startup validation checks the applied configuration against them before backend-specific
-validation.
+`ProviderCapabilities` advertises only input modes, pixel formats, and distortion models the
+backend accepts without approximation; each advertised list is non-empty. Generic startup
+validation checks membership without assigning meaning to list order, then runs
+backend-specific validation.
 
-### Lifecycle and map-frame invariant
+#### Lifecycle
 
-Startup order:
+The session integration owns the provider lifecycle:
 
-1. Load and validate `SlamInstanceConfig`.
-2. Create the selected provider and inspect `capabilities()` and `identity()`.
-3. Prepare the capture session, then obtain the immutable `AppliedCaptureSpec` from
-   `SensorAdapter` plus fusion-ordering bounds and calibration self-report from the capture
-   integration.
-4. Resolve any calibration-file override once, then install that final `RigCalibration` into
-   `SensorAdapter`.
-5. Load the exact backend configuration contents, run generic validation, then
-   `provider.validate_configuration()` with the same final calibration.
-6. Persist the complete resolved setup required by Recording correlation.
-7. `DataCollectionSession` arms the recorder, then calls `provider.initialize()` and
-   `provider.start()`.
-8. Start capture delivery. For every measurement, recorder acceptance still precedes
-   provider delivery.
+1. **Configure.** Resolve the instance configuration, applied capture description,
+   calibration, and backend configuration; inspect capabilities and identity; then validate
+   and record that immutable setup.
+2. **Start.** Arm recording, initialize and start the provider, and only then begin sensor
+   delivery.
+3. **Run.** Enqueue prepared measurements, drain all ready estimates without blocking, and
+   monitor health. A fatal provider error fails the data-collection session.
+4. **Finish.** Stop new sensor delivery, flush the capture adapter's buffered input, call
+   `finish_input()`, and continue draining until `input_drained()` is true and no estimate
+   remains. Then call `stop()` and finalize the recording.
 
-On each running tick, `DataCollectionSession::update()` non-blockingly polls `OakCamera`,
-allows capture callbacks and `SensorAdapter` to enqueue fusion-ready input, drains
-`try_get_next_pose()` until it returns false, publishes each estimate through
-`SchemaPusher`, and checks `provider.health()`. Application code continues to consume poses
-through `DeviceIOSession::update()` and `Se3Tracker`; it does not call
-`try_get_next_pose()`. A provider `fatal_error` ends the session and prevents it from being
-finalized as a successful recording.
+`input_drained()` means every accepted input has been processed and no additional estimate
+can be produced. Output must continue to drain while finishing so a bounded output queue
+cannot stall shutdown. Repeating `finish_input()` or `stop()` after the first successful
+call has no additional effect; `stop()` also supports abort and partial-startup cleanup.
 
-Shutdown order:
+#### Stable map frame
 
-1. Stop capture delivery and wait for the `SensorAdapter` to become quiescent.
-2. Call `provider.finish_input()`. It closes the input side and returns immediately; later
-   sensor callbacks return `RejectedNotRunning`.
-3. Continue draining pose output while the backend processes every previously `Accepted`
-   input. `input_drained()` becomes true only after all accepted input has been processed and
-   no more pose output can be produced.
-4. After `input_drained()` is true, drain `try_get_next_pose()` until it returns false.
-5. Call `provider.stop()`; on the normal path it releases backend resources after the worker
-   is already quiescent.
-6. Finalize pose and sensor recording, then close the capture session.
+One provider run uses one fixed `SlamWorld` frame. Relocalization must return to that frame;
+a backend that cannot preserve it remains `Lost` or fails the session rather than silently
+creating a new origin. Starting a new map requires a new provider run and recording episode.
 
-`DataCollectionSession` must drain output while waiting in step 3 so a finite output queue
-cannot deadlock shutdown. `finish_input()` is idempotent. On a fatal-error/abort path,
-`stop()` may be called before normal draining completes; it quiesces the worker and may
-discard queued input, and the recording episode is marked failed. `stop()` is idempotent and
-is also valid for cleanup after a partially completed `initialize()` or failed `start()`.
+## Provider setup and calibration
 
-There is no in-process reset in the initial release. Within one successful
-`start()`/`stop()` run:
-
-- `PoseEstimate::pose` is always expressed in the same `SlamWorld` frame.
-- Relocalization must return to that same map frame.
-- A backend that cannot preserve the frame after tracking loss remains `Lost` or fails the
-  session. It must not silently initialize a new origin.
-- Starting a new map requires a full session restart and produces a new recording episode.
-
-## Configuration
+### Instance configuration
 
 ```cpp
+namespace core {
+
+// One image stream as it will actually be delivered to the provider.
 struct AppliedImageStreamSpec {
     SensorId sensor_id;
     uint32_t width;
@@ -510,11 +516,13 @@ struct AppliedImageStreamSpec {
     double rate_hz;
 };
 
+// Optional IMU stream as it will actually be delivered to the provider.
 struct AppliedImuStreamSpec {
     SensorId sensor_id;
     double rate_hz;
 };
 
+// Immutable description of all capture streams for one provider run.
 struct AppliedCaptureSpec {
     AppliedImageStreamSpec left;
     AppliedImageStreamSpec right;
@@ -522,6 +530,7 @@ struct AppliedCaptureSpec {
     ClockDomainId clock_domain_id;
 };
 
+// Configured sensor topology and output body frame.
 struct StereoRigSpec {
     RigId rig_id;
     FrameId body_frame_id;
@@ -531,6 +540,7 @@ struct StereoRigSpec {
     ClockDomainId clock_domain_id;
 };
 
+// Selects the published pose frame and optional fixed Session alignment.
 struct OutputSpec {
     enum class Frame { SlamWorld, Session };
 
@@ -538,12 +548,14 @@ struct OutputSpec {
     std::optional<Pose> T_session_slamworld;
 };
 
+// Finite capacities for provider input and output queues.
 struct QueueConfig {
-    size_t max_stereo_groups;
+    size_t max_image_groups;
     size_t max_imu_samples;
     size_t max_pose_estimates;
 };
 
+// User-configured setup for one Pose Provider instance.
 struct SlamInstanceConfig {
     std::string instance_id;
     ProviderInputMode input_mode;
@@ -552,155 +564,155 @@ struct SlamInstanceConfig {
     QueueConfig queues;
     std::string backend_config_path;
 };
+
+} // namespace core
 ```
 
-The transport integration derives the existing `SchemaPusher` collection identifier from
-the validated provider instance identifier:
+`SlamInstanceConfig`, the applied capture description, and the resolved calibration form one
+immutable setup. The same records are validated, passed to `initialize()`, and stored with
+the recording.
 
-```cpp
-std::string make_pose_collection_id(std::string_view instance_id);
-// Returns "pose/" + instance_id.
-```
+Before `initialize()`, the session performs generic startup validation across this complete
+setup. The provider then applies backend-specific restrictions through
+`validate_configuration()`. Generic validation requires:
 
-The exact mapping is part of the integration contract so `DataCollectionSession`,
-`Se3Tracker` consumers, and recording setup rendezvous on the same name. The helper's
-placement is an implementation detail; `collection_id` is not separately configurable in
-`SlamInstanceConfig`. The derived name must occupy at most
-`XR_MAX_TENSOR_IDENTIFIER_SIZE - 1` bytes—255 bytes with the current OpenXR extension
-header—excluding the terminating null byte.
-
-Existing live-consumer configurations that pass `"se3_tracker"` must migrate to
-`make_pose_collection_id(instance_id)` or the equivalent resolved string. A mismatched
-collection name produces no data rather than a connection error, so the session launcher
-must single-source `instance_id` and supply the same derived value to
-`DataCollectionSession` and every live consumer. This changes consumer configuration, not
-the `Se3Tracker` API or the recorded MCAP channel names.
-
-Generic startup validation rejects:
-
-- An empty `instance_id`, an instance ID that is not a portable identifier, or one whose
-  derived pose collection name exceeds `XR_MAX_TENSOR_IDENTIFIER_SIZE - 1` bytes.
-- Empty `rig_id`, `body_frame_id`, sensor IDs, or clock-domain ID.
-- Equal left/right sensor IDs.
-- `StereoImu` without `imu_sensor_id`.
-- `Stereo` with an IMU stream wired into the provider or an IMU record in
-  `AppliedCaptureSpec`; `StereoImu` without matching configured, applied, and calibrated IMU
-  records.
-- A selected input mode, pixel format, or applied pinhole distortion model absent from
-  `capabilities()`.
-- Applied descriptors with non-positive dimensions, stride, or rates; a stride too small for
-  the selected format; or a clock-domain mismatch.
-- Applied descriptors whose sensor IDs, dimensions, formats, or clock domain do not match
-  the config and resolved calibration.
-- Duplicate calibration records, an incorrect calibration `rig_id`, a calibration
-  `body_frame_id` that differs from the configured value, missing configured sensor records,
-  or calibration records for unknown sensors.
-- A camera model with an unknown distortion tag, a coefficient count that does not match the
-  authoritative model table, non-positive or non-finite `fx`/`fy`, or a non-finite principal
-  point or distortion coefficient.
-- `output_frame == Session` without a finite, valid rigid `T_session_slamworld`;
-  `output_frame == SlamWorld` with `T_session_slamworld`.
-- Non-positive queue capacities.
-
-`instance_id` uses letters, digits, `.`, `_`, and `-`, begins with a letter or digit, and is
-unique among active pose providers in one OpenXR runtime. Therefore its derived
-`collection_id` is also unique. It is configured rather than randomly generated so
-independently launched consumers can derive the same transport name.
+- Identifiers that satisfy the rules below, with distinct left and right sensors.
+- Agreement among the selected input mode, rig topology, optional IMU, applied streams,
+  resolved calibration, and advertised provider capabilities.
+- Valid applied stream geometry, format, rate, and clock domain, with matching canonical
+  calibration.
+- A present, finite rigid `T_session_slamworld` when `Session` output is selected, and no
+  `T_session_slamworld` when `SlamWorld` output is selected.
+- Positive `max_image_groups` and `max_pose_estimates`; positive `max_imu_samples` in
+  `StereoImu` mode. `max_imu_samples` is ignored in `Stereo` mode.
 
 A fixed `T_session_slamworld` has no automatic compatibility identifier. It must be
-re-established whenever the backend map-frame convention, backend-native pose frame, input
-mode, or repeatable-start convention changes. Changes to calibration or backend
-configuration also require re-establishment when they change that map-frame convention or
-physical start relationship. Startup validates only the transform's presence and numeric
-form; it cannot verify its physical correctness. The complete resolved setup and
-application-build provenance are recorded for post-hoc audit.
+re-established whenever the backend map-frame convention or repeatable physical start
+relationship changes. Startup validates its form, not its physical correctness. The
+recording retains the resolved setup, provider identity, backend configuration, and
+application-build information for later audit. The recorded backend configuration is the
+resolved content used for the run, not only its machine-local source path.
 
 ### Identifier semantics
 
+These identifiers connect configuration, capture, calibration, recording, and pose output
+for one provider run:
+
 | Identifier | Assigned by | Scope and lifetime | Purpose |
 |---|---|---|---|
-| `instance_id` | Session configuration | Unique among active pose providers; stable for one provider run | Names the provider instance and deterministically derives its pose transport collection |
-| `collection_id` | `make_pose_collection_id()` | `"pose/" + instance_id`; stable for the run | Existing `SchemaPusher`/`Se3Tracker` rendezvous name; not a separate configuration field |
-| `rig_id` | Rig configuration and resolved calibration | Stable for the configured physical rig | Prevents applying calibration for a different rig |
-| `sensor_id` | Capture configuration and resolved calibration | Unique within a rig; stable for the run | Binds delivered image/IMU samples and applied descriptors to calibration records; `left_sensor_id`, `right_sensor_id`, and `imu_sensor_id` are references to these values |
-| `body_frame_id` | Rig configuration and resolved calibration | Names one fixed rigid frame for the run | Defines the body frame used by the reported pose and every `T_body_<sensor>` extrinsic |
-| `clock_domain_id` | Capture integration | Stable for one raw device-clock domain during the run | Establishes which raw timestamps may be compared and fusion-ordered |
-| `capture_group_id` | Capture integration | Unique within one recording episode, normally a monotonic counter | Identifies one atomic image measurement shared by the recorder and provider branches |
-| `source_capture_group_id` | Pose Provider | Copies the originating `capture_group_id` into `PoseEstimate` | Preserves internal input provenance for diagnostics and tests |
+| `instance_id` | Session configuration | Unique among active providers in one runtime; stable for the run | Names the provider and derives its transport collection |
+| `collection_id` | Derived from `instance_id` | `"pose/" + instance_id`; stable for the run | Shared stream name used by publication, recording setup, and consumers |
+| `rig_id` | Rig configuration and calibration | Stable for the physical rig | Prevents applying calibration for another rig |
+| `sensor_id` | Capture configuration and calibration | Unique within the rig; stable for the run | Connects measurements and applied streams to calibration |
+| `body_frame_id` | Rig configuration and calibration | One fixed rigid frame for the run | Defines the body frame of the reported pose and sensor extrinsics |
+| `clock_domain_id` | Capture integration | Stable for one raw clock domain | Identifies timestamps that can be fusion-ordered together |
+| `capture_group_id` | Capture integration | Unique within one recording episode | Identifies one atomic image measurement across recording and estimation |
+| `source_capture_group_id` | Pose Provider | One value per estimate, copied from its image group | Links an internal pose estimate back to its recorded image group |
 
-## Canonical calibration and frame convention
+#### Pose transport naming
 
-The orchestrator supplies one fully resolved record after combining capture self-report and
-any file override. Device loaders and backend adapters are the only convention-conversion
-points. Calibration describes the exact pixel arrays and sample timing delivered through
-`AppliedCaptureSpec` and `ImageFrame`, not a sensor mode upstream of crop, resize, ISP, or
-rectification.
+`instance_id` is configured rather than generated so independently launched components can
+derive the same transport name. It is unique among active providers in one runtime, begins
+with an ASCII letter or digit, and otherwise uses only ASCII letters, digits, `.`, `_`, and
+`-`.
 
-### Frames and transforms
+The collection name is not separately configurable:
 
-- All frames are right-handed.
-- `StereoRigSpec::body_frame_id` selects one fixed rigid frame for the run, and
-  `RigCalibration::body_frame_id` must match it. In the initial OAK-D release, the physical
-  left or center/RGB optical frame may be selected when resolved device calibration supplies
-  all required transforms. A virtual stereo-midpoint frame is permitted only through a
-  calibration-file override that supplies its `body_frame_id` and every
-  `T_body_<sensor>`; the initial release does not synthesize virtual body frames. A body
-  frame need not correspond to a delivered stream.
-- `T_A_B` transforms coordinates expressed in frame B into frame A.
-- `T_body_left`, `T_body_right`, and optional `T_body_imu` express delivered sensor frames in
-  the configured body frame; none is required to be identity.
-- All 4x4 matrices are row-major homogeneous transforms in meters.
-- `PoseEstimate::pose` is `T_slamworld_body`.
-- `core::Pose` uses position in meters and a unit Hamilton quaternion ordered `(x,y,z,w)`,
-  matching the existing `se3_tracker` schema.
-- A backend adapter that estimates `T_slamworld_native` converts it with
-  `T_slamworld_body = T_slamworld_native * inverse(T_body_native)`.
-- `SlamWorld` is the backend's fixed map frame, not the configured body frame at tracking
-  initialization. Changing `body_frame_id` changes `T_slamworld_body` only through the
-  extrinsic conversion above; it does not redefine `SlamWorld`.
-- `T_session_slamworld * T_slamworld_body` produces `T_session_body`.
-  `OutputSpec::T_session_slamworld` aligns the fixed map frame to `Session`; the operational
-  validity rules under Configuration determine when that fixed transform must be
-  re-established.
+```cpp
+std::string make_pose_collection_id(std::string_view instance_id);
+// Example: make_pose_collection_id("oak_front") == "pose/oak_front"
+```
 
-### Calibration-to-output pose flow
+The session, live consumers, and recording setup derive the same value. Startup rejects a
+derived name longer than `XR_MAX_TENSOR_IDENTIFIER_SIZE - 1` bytes—255 bytes with the
+current OpenXR extension header, excluding the terminating null byte.
 
-Resolved calibration serves two distinct purposes:
+### Frames and calibration
+
+Before provider initialization, the session resolves one `RigCalibration` from the capture
+self-report and any file override. An override replaces only explicitly supplied fields and
+takes precedence over the self-report; any required field still missing after the merge fails
+startup. The result describes the exact images and sample timing delivered to the provider
+after capture-side processing. Device loaders and backend adapters are the only points that
+convert vendor-specific conventions.
+
+#### Frame conventions
+
+**Frames.** Named frames in prose use CamelCase, while transform subscripts use lowercase
+tokens.
+
+| Frame | Meaning | Transform token |
+|---|---|---|
+| `Body` | The configured rigid frame whose pose is reported; selected by the matching `body_frame_id` in `StereoRigSpec` and `RigCalibration` | `body` |
+| `SlamWorld` | The backend's fixed map frame for the run | `slamworld` |
+| `Session` | Optional fixed output frame | `session` |
+
+For the initial OAK-D integration, the body may be the physical left or center/RGB optical
+frame when calibration supplies every required transform. A virtual stereo midpoint is
+allowed only through a calibration override that defines the body frame and all sensor
+extrinsics; the integration does not synthesize it. The body need not correspond to a
+delivered stream.
+
+**Transforms.** All frames are right-handed. `T_A_B` transforms coordinates from frame B
+into frame A; 4x4 matrices are row-major homogeneous transforms in meters. `core::Pose` uses
+meters and a unit Hamilton quaternion ordered `(x,y,z,w)`, matching the existing
+`se3_tracker` schema.
+
+| Transform | Meaning |
+|---|---|
+| `T_body_left`, `T_body_right`, and optional `T_body_imu` | Fixed extrinsics from each delivered sensor frame into `Body` |
+| `T_slamworld_body` | Body pose in `SlamWorld`; stored in `PoseEstimate::pose` before optional Session alignment |
+| `T_session_slamworld` | Optional fixed alignment producing `T_session_body = T_session_slamworld * T_slamworld_body` |
+
+Changing `body_frame_id` changes the fixed conversion used for the reported body pose; it
+does not redefine `SlamWorld`. The backend-native conversion is described next, and the
+fixed Session-alignment validity rules remain under Instance configuration.
+
+#### Calibration-to-output pose flow
+
+Resolved calibration affects pose output in two ways:
 
 1. Camera intrinsics, distortion, stereo extrinsics, and optional IMU calibration configure
-   the estimator and therefore affect the pose it computes.
-2. The fixed extrinsic between the backend's estimated frame and the configured body frame
-   converts each valid backend estimate into the pose exposed by `IPoseProvider`.
+   the estimator.
+2. A fixed extrinsic converts the backend's native pose into the configured `Body` frame.
 
-During initialization, each backend adapter identifies the native rigid frame in which its
-backend reports pose. The native frame may be a calibrated sensor frame such as the delivered
-left camera or IMU, or a deterministic backend frame whose fixed relation to the calibrated
-sensors is known. The adapter resolves one immutable `T_body_native` from the final
-`RigCalibration` and backend configuration. Backend-specific validation fails initialization
-if the native frame is ambiguous or its transform to the configured body frame cannot be
-resolved; the adapter must not guess it or infer a changing transform while running.
+During initialization, each backend adapter declares the rigid frame in which its backend
+reports pose. This may be a calibrated sensor frame or another backend frame with a known
+fixed relation to the rig. The adapter resolves one immutable `T_body_native` from the final
+calibration and backend configuration; initialization fails if that transform is ambiguous
+or unavailable.
 
 The output path is:
 
 ```text
 resolved RigCalibration
-    ├── estimator calibration ──▶ backend ──▶ T_slamworld_native ──┐
-    │                                                              │
-    └── fixed T_body_native ───────────────────────────────────────┤
-                                                                   ▼
-             T_slamworld_body =
-                 T_slamworld_native * inverse(T_body_native)
-                                   │
-                 ┌─────────────────┴──────────────────┐
-                 ▼                                    ▼
-         SlamWorld output                      Session output
-         T_slamworld_body          T_session_slamworld * T_slamworld_body
+    ├── estimator parameters ──▶ backend
+    │                               │
+    │                               ▼
+    │                    T_slamworld_native
+    │                               │
+    └── T_body_native ──────────────┤  compose with inverse(T_body_native)
+                                    ▼
+                             T_slamworld_body
+                                    │
+                     ┌──────────────┴──────────────┐
+                     ▼                             ▼
+             SlamWorld output             apply T_session_slamworld
+             T_slamworld_body                      │
+                                                   ▼
+                                           Session output
+                                           T_session_body
 ```
 
-The inverse is required because calibration stores `T_body_native`, while pose composition
-needs `T_native_body` to move from the estimated native frame to the configured body frame.
-This post-estimation composition uses only the resolved native-to-body extrinsic; the other
-calibration fields already influenced the estimate through backend initialization.
+The resulting provider pose is:
+
+```text
+T_slamworld_body = T_slamworld_native * inverse(T_body_native)
+```
+
+The inverse is required because calibration stores the transform from the backend-native
+frame into `Body`, while pose composition needs the opposite direction. Other calibration
+fields have already affected the estimate through backend initialization.
 
 For example, when the OAK-D center/RGB optical frame is the configured body and a backend
 reports the delivered left-camera pose:
@@ -709,17 +721,273 @@ reports the delivered left-camera pose:
 T_slamworld_body = T_slamworld_left * inverse(T_body_left)
 ```
 
-Changing the configured body frame changes this final fixed extrinsic composition, not the
-backend's `SlamWorld`. `PoseEstimate::pose` always contains the resulting
-`T_slamworld_body`; `DataCollectionSession` applies the optional `Session` transform when
-constructing the valid wire pose.
+`PoseEstimate::pose` always contains `T_slamworld_body`. Pose publication applies the optional
+fixed `Session` alignment when that output frame is selected.
 
-### Initial camera model
+#### Initial calibration support
 
-The initial release supports one pinhole projection family using the
-`PinholeDistortionModel` tag declared in the provider interface:
+The initial release accepts one canonical `RigCalibration` with:
+
+- Two pinhole cameras and, for `StereoImu`, one IMU.
+- Camera parameters for the delivered pixel grids, preserving every coefficient of the
+  declared distortion model without truncation or guessing.
+- IMU extrinsics, timing offset, and noise parameters when IMU input is enabled.
+- Sensor identities and stream properties that match the applied capture description.
+
+A backend may advertise a supported subset of the canonical pinhole models and impose
+tighter constraints through `validate_configuration()`. Exact records, coefficient ordering,
+normalization, and validation rules are in the
+[Canonical calibration reference](#appendix-canonical-calibration-reference).
+
+## Backend selection and reference roles
+
+One build contains exactly one provider backend: ORB-SLAM3, cuVSLAM, or the stub. An unknown
+selection fails explicitly; there is no fallback. Every backend reports its name, library
+version, and supported capabilities through the common API. The recording stores that
+identity and the IsaacTeleop application build separately.
+
+| Backend | Role | Boundary |
+|---|---|---|
+| [ORB-SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) | Proven OAK-D stereo and stereo-inertial baseline for development validation | Developer-supplied under its GPLv3 or commercial terms; not vendored, downloaded, or included in normal release CI/artifacts. Shipping requires an approved commercial license or GPL-compliant distribution plan. |
+| [cuVSLAM](https://github.com/nvidia-isaac/cuVSLAM) | Intended production backend | The selected SDK version must be qualified for its advertised modes, calibration conversion, redistribution terms, CUDA requirements, and target platforms. |
+| `Stub` | Deterministic conformance backend with no external dependency | Supports the full initial contract and exercises trajectories, tracking states, source matching, draining, gaps, backpressure, and map-frame invariants. |
+
+Each adapter advertises only the input modes, pixel formats, and distortion models it can
+accept without approximation, and converts the canonical calibration and frame convention
+to its backend API.
+
+## Pose publication and timing
+
+### Existing transport mapping
+
+`DataCollectionSession` drains ready estimates and maps them to the existing
+[`se3_tracker` schema](../../src/core/schema/fbs/se3_tracker.fbs). This integration does not
+change the schema or recorded channel names.
+
+Conceptually, the existing transport contains these small records:
+
+```text
+Se3TrackerPose        { pose: position + orientation, is_valid }
+Se3TrackerPoseTracked { data: Se3TrackerPose or no sample }       // live API
+Se3TrackerPoseRecord  { data: Se3TrackerPose, timestamp }         // recording
+```
+
+Position is in meters and orientation is a quaternion in `(x, y, z, w)` order. The recorded
+timestamp contains availability time, local measurement time, and raw device measurement
+time. The producer defines the pose's reference frame. The transport does not carry a
+detailed tracking state, source image-group ID, or map version.
+
+| Provider result | Published behavior |
+|---|---|
+| `pose` | Apply the selected output-frame transform described in [Calibration-to-output pose flow](#calibration-to-output-pose-flow). |
+| `state` | Set `is_valid=true` only for `Tracking`. Other states publish `is_valid=false`; the filler pose is unspecified. The transport does not expose the detailed state. |
+| Measurement timestamps | Publish the source image group's device and local measurement times, not the time at which SLAM completes or publication occurs. |
+| `source_capture_group_id` | Keep it available internally for diagnostics. The current transport cannot carry it, so recorded source data and poses are correlated by measurement timestamp. |
+
+The pose collection name is derived from `instance_id` as described in
+[Pose transport naming](#pose-transport-naming). Only fresh backend estimates are published:
+the integration neither repeats an old pose nor fabricates an invalid estimate when no
+output is available. Missing output therefore remains a visible gap in the pose stream.
+
+### Measurement and availability time
+
+This subsection defines the timestamp and synchronization guarantees visible to the Pose
+Provider; it does not define how capture establishes those guarantees.
+
+The following three times serve different purposes and must not be mixed up:
+
+| Time concept | Provider field | `SchemaPusher` argument | Recorded `DeviceDataTimestamp` field |
+|---|---|---|---|
+| Raw device measurement time | `PoseEstimate::sample_time_device_ns` | `sample_time_raw_device_clock_ns` | `sample_time_raw_device_clock` |
+| Local common measurement time | `PoseEstimate::sample_time_local_ns` | `sample_time_local_common_clock_ns` | `sample_time_local_common_clock` |
+| Availability time | No provider field | No argument | `available_time_local_common_clock` |
+
+`ImageFrame`, `ImageGroup`, and `ImuSample` use the same provider-side measurement-time
+field names as `PoseEstimate`.
+
+Capture supplies the two measurement times, and the Pose Provider preserves them even though
+it produces the result later. Camera fusion time uses raw device measurement time directly;
+IMU fusion time applies the recorded calibration offset without overwriting the raw
+timestamp. Local common measurement time uses the host monotonic timeline to align the pose
+with other recorded streams.
+
+The receiving runtime sets availability time when the published pose reaches it and becomes
+available to a live consumer or recorder. This is not the time when the backend finishes
+computing the pose or when a recorder writes it to disk. Because availability time and local
+measurement time use the same host clock, their difference measures pose availability
+latency:
+
+```text
+pose availability latency = available_time_local_common_clock
+                           - sample_time_local_common_clock
+```
+
+For accepted image group N:
+
+```text
+recorded image-group metadata: group N, group device time T, group local time L
+provider input:                group N, group device time T, group local time L
+provider pose output:          source group N, sample device time T, sample local time L
+runtime receives pose:         availability time A
+recorded pose timestamp:       sample device T, sample local L, availability A
+```
+
+`T` and `L` are the group measurement times selected by capture's declared grouping rule.
+Initial OAK-D frames share the same device timestamp; other stereo integrations may retain
+different per-frame timestamps.
+
+When IMU is enabled, each sample retains its own device and local measurement times. The
+pose remains stamped at the source image group's time; `time_offset_ns` relates the IMU
+timeline to it without changing the recorded raw timestamps.
+
+To make timestamp correlation unambiguous, accepted image groups have strictly increasing
+device timestamps. A duplicate is rejected without ending the episode; a timestamp
+regression fails the episode because the source timeline is no longer trustworthy. Unknown
+or mismatched clock domains are rejected before provider initialization. Clock mapping,
+camera pairing, skew estimation, and drift correction remain capture responsibilities.
+
+## Telemetry and diagnostics
+
+Telemetry here means the health and performance data needed to decide whether a collection
+run is usable and to explain missing or delayed poses. It stays separate from pose output,
+must not block capture or estimation, and does not change the existing `se3_tracker` schema.
+
+| Source | Minimum data | What it explains |
+|---|---|---|
+| Existing pose stream | Every emitted pose is recorded once with `is_valid`, measurement timestamps, and availability time | Primary pose output and the source for counts, gaps, valid-tracking periods, and pose availability latency; telemetry does not create a duplicate per-pose stream |
+| `ProviderHealth` | Dropped image groups and IMU samples, IMU gaps, rejected input, pose-output stalls, and fatal-error state | Provider input loss, queue pressure, invalid calls or data, and provider failure |
+| Capture and session integration | Measurements offered, recorded, and accepted; fusion-time ordering bounds, forced emissions, and late input; timestamp violations; recorder pressure or failure; final session state and failure reason | Whether recording and estimation saw the same source data and where a run failed |
+
+`ProviderHealth` counters start at zero for each provider run, increase until final drain,
+and never reset during that run. `health()` is non-blocking and safe for the one documented
+output/health consumer while input and backend processing run concurrently; additional
+concurrent callers are not supported. `fatal_error` stays true after the first fatal provider
+error. The session derives its own input and output totals from enqueue results and drained
+estimates rather than duplicating those totals in the provider API.
+
+The initial OAK-D integration makes current health available for live inspection and records
+the final provider, capture, and session summary with the episode. That summary is stored
+with the applied capture and calibration, provider identity, backend configuration, and
+IsaacTeleop application build already required as episode setup. The pose records themselves
+remain the time-based source for validity, gaps, and latency analysis.
+
+The exact encoding of the final telemetry summary is an implementation detail of the
+existing episode metadata path; this design defines its required content, not a new
+telemetry schema.
+
+A future need for high-rate queue depth, detailed tracking-state transitions, or
+backend-specific metrics may add a separate time-series telemetry schema; those fields must
+not become requirements for all Pose Provider backends.
+
+## Integration and verification
+
+Verification is divided by ownership so provider behavior, capture integration, physical
+hardware, and backend-specific behavior can be tested independently.
+
+### Provider conformance
+
+The deterministic stub is the common contract-test target. The same tests run against each
+enabled backend where applicable.
+
+| Area | Required outcome |
+|---|---|
+| Lifecycle | Only documented transitions succeed; input is rejected outside the running interval; final draining completes without deadlock or loss of an already-produced estimate. |
+| Configuration and input validation | Unsupported capabilities, malformed image groups, mismatched clocks or geometry, and invalid calibration fail before backend ingestion. Supported calibration is preserved without truncation or approximation. |
+| Concurrency and backpressure | One producer and one output consumer operate without races. Queues stay bounded, image groups remain atomic, individual IMU drops and gap episodes are counted as specified, and pose-output pressure neither blocks capture callbacks nor discards an already produced pose. |
+| Pose semantics | Estimates preserve their source group and measurement timestamps. A missing estimate produces no repeated or fabricated pose, and one run never silently changes its `SlamWorld` frame. |
+| Frames | Known trajectories verify body and optional session transforms; invalid frame configurations fail at startup. |
+| Provider health | Health counters are cumulative, pose-output stall transitions are counted once, the fatal flag stays set, and non-blocking snapshots match the injected outcomes. |
+
+### Capture and recording integration
+
+Run a common integration suite using deterministic recorded or synthetic sensor fixtures.
+Apply it to the initial OAK-D integration and future implementations of the
+capture-integration requirements.
+
+- Verify recorder acceptance precedes provider delivery; rejected measurements never reach
+  the provider.
+- Verify the same applied capture description and calibration are used for fusion-time
+  ordering, provider initialization, and episode metadata.
+- Verify grouping and timestamp rules before backend ingestion, including duplicate,
+  regressed, or late input, while preserving raw measurement timestamps.
+- Exercise the applied fusion-time ordering window and item capacity; verify emitting the
+  union minimum under capacity pressure guarantees progress without discarding an on-time
+  incoming minimum, and the applied bounds and counters are recorded.
+- Verify every provider input is present in the resulting episode and every emitted pose
+  correlates with exactly one recorded image group.
+- Verify pose publication preserves both measurement times and the receiving runtime adds
+  availability time.
+- Verify coordinated shutdown processes every accepted input, preserves every produced
+  estimate, and records session totals and any counted loss or failure consistently.
+- Verify episode metadata reconstructs the configured provider setup.
+- Verify published poses through `Se3Tracker` and recorded poses through the existing replay
+  API, using the derived collection name and unchanged sensor channels.
+
+This suite runs routinely in CI and does not require physical hardware.
+
+### Initial OAK-D hardware qualification
+
+Run live OAK-D sessions in both `Stereo` and `StereoImu` modes:
+
+- Verify one process owns the device and recording pipeline; no pose component reopens it.
+- Verify `OakCamera` reports the actual applied stream configuration and calibration.
+- Verify synchronized stereo frames have equal, strictly increasing device timestamps.
+- Verify an IMU `time_offset_ns` override takes precedence over the self-report, and that it
+  and any crop, resize, or rectification are reflected in the applied calibration and recorded
+  episode.
+- Run a live smoke test of recording, pose publication, coordinated shutdown, and subsequent
+  replay.
+
+These checks require physical hardware and are not required for every CI run.
+
+### Backend qualification
+
+- Compare the ORB-SLAM3 adapter with the proven OAK-D reference pipeline using the same
+  recorded sensor data.
+- Qualify cuVSLAM independently for every input mode it advertises.
+- Verify each backend's calibration and frame conversions with known transforms and
+  trajectories.
+- Inject IMU drop episodes and verify each inertial adapter receives the internal gap
+  notification before the next accepted sample, then verify backend-specific tracking-state
+  changes and recovery.
+- Verify release builds and artifacts exclude ORB-SLAM3 unless a separate licensing
+  approval exists.
+
+## Implementation impact
+
+Implementation adds a core Pose Provider module and backend adapters, and evolves the
+existing OAK plugin for the initial OAK-D integration. Exact file placement, build targets,
+and dependency wiring belong in the implementation plan.
+
+| Area | Implementation effect |
+|---|---|
+| Core Pose Provider | Add the interfaces, normalized sensor types, configuration, calibration, validation, lifecycle, and health defined in this document. |
+| Backend adapters | Add the deterministic stub, production cuVSLAM adapter, and developer-supplied ORB-SLAM3 reference adapter. Each implements the same provider contract and preserves the licensing boundaries above. |
+| Existing pose transport | Reuse `SchemaPusher`, `Se3Tracker`, recording, and replay without changing their schemas or consumer APIs. |
+
+### Initial OAK-D integration
+
+| Component | Change | Responsibility |
+|---|---|---|
+| `OakCamera` | Evolve existing component | Remain the sole device and DepthAI-pipeline owner, and report the applied capture configuration and device calibration without depending on Pose Provider types. |
+| `SensorAdapter` | New component | Convert OAK-D capture output into provider input, construct `AppliedCaptureSpec`, apply bounded fusion-time ordering, and deliver accepted measurements. |
+| `DataCollectionSession` | New integration owner | Coordinate recording, resolved calibration, provider lifecycle, pose publication, telemetry, output draining, and shutdown. |
+
+The initial OAK-D integration remains in the OAK plugin process so the camera is opened only
+once. Internal class or file organization may change as long as these ownership boundaries
+remain intact.
+
+## Appendix: Canonical calibration reference
+
+This appendix defines the normalized calibration passed to every backend. Capture-specific
+loaders resolve it before provider initialization; backends do not interpret vendor-native
+calibration records directly.
+
+### Calibration types
 
 ```cpp
+namespace core {
+
 // Returns nullopt for an unknown/deserialized enum value.
 std::optional<size_t> distortion_coefficient_count(PinholeDistortionModel model);
 
@@ -739,52 +1007,7 @@ struct CameraCalibration {
     PinholeCameraModel model;
     std::array<double, 16> T_body_camera;
 };
-```
 
-The coefficient list uses the cumulative OpenCV/DepthAI Perspective ordering:
-
-| Distortion model | Count | Coefficient order |
-|---|---:|---|
-| `None` | 0 | Empty |
-| `RadTan5` | 5 | `k1, k2, p1, p2, k3` |
-| `Rational8` | 8 | `k1, k2, p1, p2, k3, k4, k5, k6` |
-| `ThinPrism12` | 12 | Rational8 followed by `s1, s2, s3, s4` |
-| `Tilted14` | 14 | ThinPrism12 followed by `tau_x, tau_y` |
-
-Enum values are semantic model tags, not encoded coefficient counts, and configuration
-serializes their symbolic names. Generic validation uses the single helper above and the
-table as its authoritative enum-to-length mapping. It also requires positive finite
-`fx`/`fy` and finite principal-point and coefficient values. The resolved canonical record
-uses `None` with an empty list for a distortion-free delivered pixel grid. A source
-record explicitly tagged by its device/file API as OpenCV/DepthAI Perspective with four
-coefficients is normalized by that loader to `RadTan5` by appending `k3 = 0`. A bare
-four-element list without a source projection/convention tag is rejected: the canonical
-model has no four-coefficient variant, and selecting one would require guessing the source
-convention.
-
-DepthAI `Perspective` calibration maps to the matching pinhole variant without truncating
-coefficients. DepthAI `Fisheye` and other non-pinhole projection families remain deferred
-capabilities even though a fisheye source may also carry four coefficients; coefficient count
-alone never selects the model. Initial OAK-D camera streams are treated as global-shutter
-inputs. Rolling-shutter timing models are also deferred capabilities.
-
-The canonical validator understands every pinhole variant above. Generic startup validation
-rejects an applied model absent from the selected backend's `distortion_models` capability;
-backend-specific `validate_configuration()` may impose tighter constraints, but an adapter
-must not silently discard higher-order coefficients.
-
-For each camera, calibration width and height must equal its applied stream descriptor.
-Intrinsics and distortion coefficients describe the delivered pixel grid after every
-capture-side crop, scale, and rectification step. If capture delivers rectified images, it
-must supply the calibration of those rectified images using `None` when the delivered grid
-is distortion-free, and `T_body_camera` must remain consistent with that rectification
-convention. A mismatch fails startup; the provider never guesses or rescales calibration.
-Changing rectification or `body_frame_id` requires a newly resolved calibration and a new
-provider run.
-
-### IMU calibration
-
-```cpp
 struct ImuCalibration {
     SensorId sensor_id;
     double rate_hz;
@@ -804,292 +1027,49 @@ struct RigCalibration {
     CameraCalibration right;
     std::optional<ImuCalibration> imu;
 };
+
+} // namespace core
 ```
 
-`RigCalibration::imu` must be present in `StereoImu` mode and absent in `Stereo` mode. Its
-sensor ID and rate must match `AppliedCaptureSpec::imu`. A backend may impose tighter
-model/rate/noise or applied-stream constraints through
-`validate_configuration()`.
+### Supported distortion models
 
-The resolved calibration, including any file override, is part of the complete provider
-setup recorded with the data-collection episode.
+The initial release uses the pinhole projection family. Coefficients follow the cumulative
+OpenCV/DepthAI Perspective ordering:
 
-## Backend selection and reference roles
+| Distortion model | Count | Coefficient order |
+|---|---:|---|
+| `None` | 0 | Empty |
+| `RadTan5` | 5 | `k1, k2, p1, p2, k3` |
+| `Rational8` | 8 | `k1, k2, p1, p2, k3, k4, k5, k6` |
+| `ThinPrism12` | 12 | Rational8 followed by `s1, s2, s3, s4` |
+| `Tilted14` | 14 | ThinPrism12 followed by `tau_x, tau_y` |
 
-One CMake selection builds exactly one provider implementation into a binary:
+Enum values are semantic tags, not encoded counts. Configuration serializes their symbolic
+names, and `distortion_coefficient_count()` plus this table define the enum-to-length
+mapping.
 
-```cmake
-set(POSE_PROVIDER_BACKEND stub CACHE STRING "cuvslam | orbslam3 | stub")
-set_property(CACHE POSE_PROVIDER_BACKEND PROPERTY STRINGS cuvslam orbslam3 stub)
-```
+### Normalization and validation
 
-Configuration rejects any value outside that set. The factory has an explicit branch for
-each value and no silent fallback. Every implementation returns a non-empty
-`ProviderIdentity`; the backend version identifies the linked or developer-supplied SLAM
-library. The recording session captures IsaacTeleop application-build provenance separately
-instead of making provider adapters report their own build identifiers.
-
-### ORB-SLAM3 — proven functional reference
-
-- The existing OAK-D stereo and stereo-inertial pipeline is the behavioral baseline for
-  initial integration.
-- ORB-SLAM3 supports the two initial input modes and is useful for development validation.
-- The adapter advertises only the applied pixel formats and pinhole distortion models it
-  converts without dropping coefficients.
-- The upstream project is GPLv3 and offers separate commercial licensing. Under the normal
-  development path it is developer-supplied, not vendored or downloaded, and absent from
-  release CI and release artifacts.
-- Shipping an ORB-SLAM3 binary requires an approved commercial license or a separately
-  approved GPL-compliant distribution plan.
-
-### cuVSLAM — production reference
-
-- cuVSLAM is the intended production backend.
-- The adapter reports only input modes actually supported by the selected cuVSLAM version.
-  The design does not assume IMU is mandatory: `Stereo` and `StereoImu` are negotiated
-  independently through `ProviderCapabilities::input_modes`.
-- It likewise reports only pixel formats and pinhole distortion models supported by the
-  selected SDK adapter.
-- The backend adapter converts the canonical calibration and frame convention to the
-  selected cuVSLAM API.
-- Exact SDK version, redistribution, CUDA, and target-platform requirements are release
-  qualification gates.
-
-### Stub — contract-test reference
-
-The stub has no external dependencies and supports both initial input modes, every declared
-pixel format, and every canonical pinhole distortion model. It is scriptable to:
-
-- Produce a deterministic trajectory.
-- Emit every `TrackingState`.
-- Hold one final estimate until `finish_input()` to exercise lossless draining.
-- Simulate an IMU gap, queue overflow, and attempted map-frame reset.
-- Preserve and echo capture provenance/timestamps for conformance tests.
-
-## Output contract
-
-`DataCollectionSession` drains `try_get_next_pose()` until false on each integration tick
-and maps every estimate to the existing schema:
-
-```cpp
-core::Pose apply_output_frame(const OutputSpec& output,
-                              const core::Pose& T_slamworld_body) {
-    if (output.output_frame == OutputSpec::Frame::SlamWorld) {
-        return T_slamworld_body;
-    }
-    return compose(*output.T_session_slamworld,
-                   T_slamworld_body); // presence and rigid-transform form validated at startup
-}
-
-core::Se3TrackerPoseT to_wire(const PoseEstimate& estimate,
-                              const OutputSpec& output) {
-    core::Se3TrackerPoseT wire;
-    wire.is_valid = estimate.state == TrackingState::Tracking;
-    wire.pose = std::make_shared<core::Pose>(
-        wire.is_valid ? apply_output_frame(output, estimate.pose)
-                      : core::Pose{}); // contents unspecified when invalid
-    return wire;
-}
-```
-
-`DataCollectionSession` creates `SchemaPusher` with
-`make_pose_collection_id(config.instance_id)`. Consumers use the same helper or the
-equivalent resolved string, so no separately configured collection name can drift from the
-provider instance name.
-
-`SchemaPusher::push_buffer()` receives
-`estimate.sample_time_local_ns` and `estimate.sample_time_device_ns`. These are always the
-measurement timestamps of `source_capture_group_id`, never the time at which SLAM completed
-or the plugin published the estimate.
-
-`se3_tracker` cannot carry `source_capture_group_id` or source sequences. In the initial
-OAK-D recording, the exact raw-device measurement timestamp is therefore the wire-level
-join key between:
-
-- Recorded left/right frame metadata.
-- The pose computed from that stereo group.
-
-The capture integration enforces a strictly increasing raw device timestamp for accepted
-stereo groups before either recorder or provider delivery. A duplicate is rejected and
-increments capture health `nonmonotonic_stereo_groups`; the episode may continue because the
-previously accepted group retains sole ownership of that timestamp. A regression is rejected,
-increments the same counter, fails the episode, and requires a new episode before delivery
-can resume because the device timeline is no longer trustworthy. The internal
-`PoseEstimate` provenance remains available for tests and diagnostics. A future need to
-transport provenance explicitly would trigger a schema extension or a new pose schema.
-
-### Tracking-state publication
-
-- `is_valid` is true only in `Tracking`.
-- `Initializing`, `Lost`, and `Relocalizing` publish an identity/unspecified filler with
-  `is_valid=false`.
-- A fresh invalid estimate uses its own source capture timestamps.
-- `DataCollectionSession` publishes only fresh estimates returned by the backend. It does
-  not synthesize an invalid measurement or reuse an earlier capture timestamp when output
-  is absent.
-- Missing pose output remains a timestamp-visible gap in the recorded pose stream. Liveness
-  monitoring may fail the data-collection session, but it must not fabricate a measurement.
-
-Detailed tracking state is intentionally dropped at the `se3_tracker` boundary.
-
-## Timing contract
-
-Three times must not be conflated:
-
-1. **Raw device measurement time** — the source timestamp preserved for provenance. Camera
-   fusion time uses this value directly; IMU fusion time applies the recorded calibration
-   offset without overwriting it.
-2. **Local common measurement time** — the corresponding host monotonic timeline used to
-   align the pose with other recorded streams.
-3. **Availability time** — when the computed pose becomes observable.
-
-Capture supplies the first two; the recording infrastructure supplies availability time.
-The Pose Provider preserves the two measurement timestamps and may report the result later.
-
-For stereo group N:
-
-```text
-recorded left/right metadata: group N, device time T, local time L
-provider input:              group N, device time T, local reference time L
-pose output (later):         source group N, sample device time T, sample local time L
-```
-
-When IMU is enabled, individual IMU samples retain their own device/local measurement
-times. The pose remains stamped at the stereo group time; the recorded IMU interval can be
-located around that time using the recorded `time_offset_ns`.
-
-The integration rejects unknown/mismatched clock domains before provider initialization. It
-does not perform device-to-host clock mapping, camera pairing, skew estimation, or drift
-correction.
-
-## Integration and verification
-
-### Provider conformance
-
-Run all tests against the stub and each enabled backend where applicable:
-
-- Lifecycle accepts only the documented transition sequence.
-- Sensor callbacks are rejected outside the running interval.
-- Capability lists are non-empty, and generic startup validation rejects an applied input
-  mode, pixel format, or distortion model absent from them.
-- Initialization receives exactly one immutable applied-capture descriptor; descriptor,
-  calibration, and frame-buffer geometry mismatches fail before backend ingestion.
-- Generic calibration validation accepts `None`, `RadTan5`, `Rational8`, `ThinPrism12`, and
-  `Tilted14` only with their exact coefficient counts and finite values; it rejects an
-  unknown tag, a tag/count mismatch, or an untagged four-element list.
-- For every enabled backend, preserve every coefficient of each supported pinhole variant;
-  reject an unsupported variant before initialization rather than truncating it.
-- Initial stereo input is one atomic `ImageGroup` containing exactly the configured left and
-  right images; concurrent worker processing cannot observe a partial group.
-- One input producer delivers callbacks while one output consumer concurrently drains poses
-  and reads health/drain state without races.
-- An incorrect image count, duplicate or unconfigured sensor IDs, or an image timestamp that
-  does not match the initial OAK-D group timestamp returns `RejectedInvalidInput` before
-  backend ingestion; mismatched clock domains fail integration validation before
-  initialization.
-- Input and output queues remain within configured capacities.
-- Stereo overflow drops one complete `ImageGroup` and increments one group counter.
-- IMU overflow increments the drop and gap-event counters; the next accepted IMU item carries
-  the internal gap marker, the worker notifies the stub/backend adapter before ingestion, and
-  the generic wrapper does not override tracking state.
-- IMU callbacks are ordered by calibration-adjusted fusion time while their raw timestamps
-  remain unchanged.
-- Pose output preserves the source capture ID, the complete set of sensor-ID/sequence
-  references, and both measurement timestamps.
-- A full pose-output queue stalls the worker, increments `pose_output_stalls`, loses no pose,
-  never sets `fatal_error`, and never blocks an input callback. Sustained pressure surfaces
-  through normal counted input drops.
-- `finish_input()` rejects new callbacks; `DataCollectionSession` drains output while
-  waiting for `input_drained()`, then observes an empty final output queue without deadlock
-  or loss.
-- A simulated internal map reset cannot emit a pose in a new map frame under the same run.
-- Provider silence does not synthesize an output or reuse an old measurement timestamp.
-- Backend-specific validation rejects an ambiguous native pose frame or a native frame with
-  no fixed transform to the configured body frame.
-- With a non-identity `T_body_native`, a known backend-native trajectory produces the expected
-  `T_slamworld_body`; selecting `Session` additionally pre-multiplies exactly
-  `T_session_slamworld`.
-- `Session` output requires a finite valid `T_session_slamworld`; `SlamWorld` output rejects
-  one. Confirm that the documented map-frame/start changes require operational
-  re-establishment rather than implying that startup validates physical correctness.
-- The derived collection ID is exactly `"pose/" + instance_id`, satisfies the transport
-  identifier limit, and is used by both `SchemaPusher` and the `Se3Tracker` consumer.
-
-### OAK-D data-collection integration
-
-Using a recorded or live OAK-D episode:
-
-- Run both `Stereo` and `StereoImu`.
-- Confirm every provider stereo input corresponds to recorded left/right metadata with the
-  same strictly increasing device timestamp and source sequences.
-- Inject a duplicate stereo timestamp; confirm capture rejects it before recorder/provider
-  delivery, increments `nonmonotonic_stereo_groups`, and continues the episode. Inject a
-  regressed timestamp; confirm capture rejects it, increments the same counter, and fails the
-  episode.
-- In `StereoImu`, confirm every provider IMU input is present in the recorded episode.
-- Exercise the configured fusion reorder window, late-sample rejection, item-capacity forced
-  emission, counters, and ordered shutdown flush while preserving raw recorded timestamps.
-- Reject a fusion-ordering configuration whose item capacity cannot hold one full configured
-  aggregate-rate window plus one item.
-- Apply a calibration override to `time_offset_ns`; confirm the same resolved record drives
-  adapter ordering, provider initialization, and recording.
-- Confirm the OAK loader uses the device camera-model tag, preserves all Perspective
-  coefficients in canonical order, normalizes distortion-free delivered pixels to `None`,
-  and rejects Fisheye under the initial scope.
-- Confirm the recorded episode contains the resolved instance/output configuration, applied
-  descriptors, body-frame selection, fusion-ordering settings/counters, calibration,
-  provider identity, IsaacTeleop application-build provenance, exact backend configuration
-  contents, and `T_session_slamworld` when Session output is selected.
-- Force recorder backpressure and confirm rejected sensor measurements never reach the
-  provider.
-- Confirm every emitted pose joins to exactly one recorded stereo group by device
-  measurement timestamp.
-- Exercise capture and provider backpressure; verify all gaps are attributable and no
-  partial image group is delivered.
-- Exercise any capture-side crop, resize, or rectification and verify the recorded/applied
-  calibration describes the exact delivered pixel geometry and configured body frame.
-- Read the pose through the existing `Se3Tracker`/replay API using the derived live
-  collection name and unchanged recorded channel names.
-
-### Backend qualification
-
-- Compare the provider's ORB-SLAM3 path with the proven OAK-D reference pipeline on the same
-  recorded episodes.
-- Qualify cuVSLAM independently for both input modes it advertises.
-- Confirm backend-native calibration/frame conversions against known transforms and
-  trajectories.
-- Qualify each inertial backend's configured gap tolerance, tracking-state behavior, and
-  recovery criteria; the generic wrapper must not override those results.
-- Keep ORB-SLAM3 absent from default/release dependency resolution and artifacts unless a
-  separate licensing approval exists.
-
-## Design-level files
-
-This pass defines interfaces and integration contracts; implementation is separate.
-
-- `src/core/pose_provider/cpp/inc/pose_provider/sensor_sink.hpp` — normalized input types,
-  `ISensorSink`, and `EnqueueResult`.
-- `src/core/pose_provider/cpp/inc/pose_provider/pose_provider.hpp` — `IPoseProvider`,
-  capabilities, identity, estimates, health, and factory.
-- `src/core/pose_provider/cpp/inc/pose_provider/calibration.hpp` — canonical initial-release
-  calibration.
-- `src/core/pose_provider/cpp/inc/pose_provider/config.hpp` — stereo-rig, output, and queue
-  configuration, immutable applied-capture descriptors, and generic validation.
-- `src/plugins/oak/core/oak_camera.hpp/.cpp` — evolve the existing OAK device owner to report
-  capture-native applied stream information without depending on Pose Provider types.
-- `src/plugins/oak/core/oak_sensor_adapter.hpp/.cpp` —
-  `plugins::oak::SensorAdapter`, which constructs and owns the initial
-  `AppliedCaptureSpec`, performs bounded fusion ordering, and delivers provider input.
-- `src/plugins/oak/core/data_collection_session.hpp/.cpp` —
-  `plugins::oak::DataCollectionSession`, which owns the initial integration lifecycle,
-  recorders, provider, pose `SchemaPusher`, non-blocking update loop, output drain, and
-  coordinated shutdown.
-- `src/core/pose_provider/backends/stub/` — deterministic conformance backend.
-- `src/core/pose_provider/backends/cuvslam/` — production backend.
-- `src/core/pose_provider/backends/orbslam3/` — developer-supplied functional-reference
-  adapter, subject to the licensing boundary above.
-
-The initial integration lives in the existing OAK capture process so one process owns the
-device and recording pipeline. The responsibility split among `OakCamera`, `SensorAdapter`,
-and `DataCollectionSession` is normative; internal refactoring within those boundaries
-remains an implementation detail.
+- Calibration dimensions, sensor identities, and rates must match `AppliedCaptureSpec`.
+  Intrinsics and distortion describe the delivered pixel grid after capture-side crop,
+  resize, and rectification. A distortion-free rectified grid uses `None` with no
+  coefficients, and its extrinsics must follow the same rectification convention.
+- Generic validation requires positive finite `fx` and `fy`, finite principal-point and
+  coefficient values, and the coefficient count declared by the model. It rejects unknown
+  enum values and never guesses or rescales calibration.
+- A source explicitly tagged as OpenCV/DepthAI Perspective with four coefficients is
+  normalized to `RadTan5` by appending `k3 = 0`. An untagged four-element list is rejected;
+  coefficient count alone cannot identify a projection convention. DepthAI `Perspective`
+  maps to the matching pinhole model without truncation. Fisheye and other projection
+  families are deferred.
+- Startup rejects a distortion model not advertised by the selected backend. A backend may
+  impose tighter constraints through `validate_configuration()`, but its adapter must not
+  silently discard coefficients.
+- `RigCalibration::imu` is present in `StereoImu` mode and absent in `Stereo` mode. When
+  present, its sensor ID and rate match `AppliedCaptureSpec::imu`; a backend may impose
+  tighter noise, rate, or stream constraints.
+- Initial OAK-D input is treated as global shutter; rolling-shutter timing models are
+  deferred. Changing rectification or `body_frame_id` requires newly resolved calibration
+  and a new provider run.
+- The complete resolved calibration, including any file override, is recorded with the
+  data-collection episode.
