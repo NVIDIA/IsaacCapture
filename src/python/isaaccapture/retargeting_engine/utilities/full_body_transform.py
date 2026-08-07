@@ -26,10 +26,34 @@ from .transform_utils import _copy_tensor_group_slots_from_dlpack_input
 # anatomically wrong, but the correction tables below were fitted against this
 # chain: do not "fix" it without refitting them.
 BODY_PARENT_INDICES = (
-    -1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 22,
+    -1,
+    0,
+    0,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    9,
+    9,
+    12,
+    13,
+    14,
+    16,
+    17,
+    18,
+    19,
+    20,
+    22,
 )
 
-# Per-joint (x, y, z, w). See this module's entry in docs/ for the derivation.
+# Per-joint (x, y, z, w), fitted from paired Quest/PICO captures of the same
+# poses. See the commit that introduced this file for the fit and its residuals.
 _QUEST_LEFT = (
     (-0.027511403, +0.023796476, +0.003647535, +0.999331550),  #  0 PELVIS
     (+0.044720703, +0.754457857, -0.106548888, -0.646096537),  #  1 LEFT_HIP
@@ -248,6 +272,6 @@ class FullBodyTransform(BaseRetargeter):
             return
 
         orientations = np.from_dlpack(out[FullBodyInputIndex.JOINT_ORIENTATIONS])
-        orientations[:] = correct_body_orientations(
-            orientations, self._profile
-        ).astype(orientations.dtype)
+        orientations[:] = correct_body_orientations(orientations, self._profile).astype(
+            orientations.dtype
+        )
