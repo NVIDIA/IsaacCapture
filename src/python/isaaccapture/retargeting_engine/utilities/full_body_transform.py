@@ -193,7 +193,8 @@ def correct_body_orientations(orientations, profile: str = "quest") -> np.ndarra
     for j, parent in enumerate(BODY_PARENT_INDICES):
         out[j] = local[j] if parent < 0 else _qmul(out[parent], local[j])
 
-    return out / np.linalg.norm(out, axis=-1, keepdims=True)
+    normalized: np.ndarray = out / np.linalg.norm(out, axis=-1, keepdims=True)
+    return normalized
 
 
 class FullBodyTransform(BaseRetargeter):
