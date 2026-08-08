@@ -105,7 +105,17 @@ PYBIND11_MODULE(_deviceio_trackers, m)
                float frequency_hz, float duration_s)
             { self.apply_right_haptic_feedback(session, amplitude, frequency_hz, duration_s); },
             py::arg("session"), py::arg("amplitude"), py::arg("frequency_hz") = 0.0f, py::arg("duration_s") = 0.0f,
-            "Apply one frame of haptic vibration to the right controller. See apply_left_haptic_feedback.");
+            "Apply one frame of haptic vibration to the right controller. See apply_left_haptic_feedback.")
+        .def(
+            "get_interaction_profile",
+            [](const core::ControllerTracker& self, const core::ITrackerSession& session)
+            { return self.get_interaction_profile(session); },
+            py::arg("session"),
+            "Get the interaction profile the runtime bound for the controllers, as an OpenXR\n"
+            "path (e.g. '/interaction_profiles/bytedance/pico4_controller').\n\n"
+            "Identifies the physical headset behind a streaming runtime, which otherwise\n"
+            "presents every device identically. Returns an empty string until actions have\n"
+            "synced at least once, so treat empty as 'not known yet' rather than an error.");
 
     py::enum_<core::MessageChannelStatus>(m, "MessageChannelStatus")
         .value("CONNECTING", core::MessageChannelStatus::CONNECTING)

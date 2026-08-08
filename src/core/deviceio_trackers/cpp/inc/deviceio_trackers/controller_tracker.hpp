@@ -6,6 +6,8 @@
 #include <deviceio_base/controller_tracker_base.hpp>
 #include <schema/controller_generated.h>
 
+#include <string>
+
 namespace core
 {
 
@@ -49,6 +51,10 @@ public:
                                      float amplitude,
                                      float frequency_hz,
                                      float duration_s) const;
+
+    /// The interaction profile bound for the controllers; see
+    /// :cpp:func:`IControllerTrackerImpl::get_interaction_profile`.
+    std::string get_interaction_profile(const ITrackerSession& session) const;
 
 private:
     static constexpr const char* TRACKER_NAME = "ControllerTracker";
