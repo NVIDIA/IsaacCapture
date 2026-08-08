@@ -38,4 +38,9 @@ void ControllerTracker::apply_right_haptic_feedback(const ITrackerSession& sessi
         .apply_right_haptic_feedback(amplitude, frequency_hz, duration_s);
 }
 
+std::string ControllerTracker::get_interaction_profile(const ITrackerSession& session) const
+{
+    return static_cast<const IControllerTrackerImpl&>(session.get_tracker_impl(*this)).get_interaction_profile();
+}
+
 } // namespace core

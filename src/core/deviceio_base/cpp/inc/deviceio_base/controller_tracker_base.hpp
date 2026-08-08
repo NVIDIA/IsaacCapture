@@ -7,6 +7,8 @@
 
 #include <schema/serialized.hpp>
 
+#include <string>
+
 namespace core
 {
 
@@ -36,6 +38,18 @@ public:
     /// tear down the tracker.
     virtual void apply_left_haptic_feedback(float amplitude, float frequency_hz, float duration_s) const = 0;
     virtual void apply_right_haptic_feedback(float amplitude, float frequency_hz, float duration_s) const = 0;
+
+    /// The interaction profile the runtime has bound for the controllers, as an
+    /// OpenXR path (e.g. "/interaction_profiles/bytedance/pico4_controller"), or
+    /// empty when none is bound yet or the implementation cannot report one.
+    ///
+    /// Identifies the physical hardware behind a remote-streaming runtime, which
+    /// otherwise presents every headset identically. Empty is a normal state, not
+    /// an error: nothing is bound until actions have synced at least once.
+    virtual std::string get_interaction_profile() const
+    {
+        return {};
+    }
 };
 
 } // namespace core

@@ -46,6 +46,7 @@ struct OpenXRCoreFunctions
 
     // Action system functions (for controller tracking)
     PFN_xrStringToPath xrStringToPath;
+    PFN_xrPathToString xrPathToString;
     PFN_xrCreateActionSet xrCreateActionSet;
     PFN_xrDestroyActionSet xrDestroyActionSet;
     PFN_xrCreateAction xrCreateAction;
@@ -89,6 +90,7 @@ struct OpenXRCoreFunctions
         // Action system functions (optional, for controller tracking)
         // Note: These don't fail the load if not available, as they're only needed by controller tracker
         getProcAddr(instance, "xrStringToPath", reinterpret_cast<PFN_xrVoidFunction*>(&results.xrStringToPath));
+        getProcAddr(instance, "xrPathToString", reinterpret_cast<PFN_xrVoidFunction*>(&results.xrPathToString));
         getProcAddr(instance, "xrCreateActionSet", reinterpret_cast<PFN_xrVoidFunction*>(&results.xrCreateActionSet));
         getProcAddr(instance, "xrDestroyActionSet", reinterpret_cast<PFN_xrVoidFunction*>(&results.xrDestroyActionSet));
         getProcAddr(instance, "xrCreateAction", reinterpret_cast<PFN_xrVoidFunction*>(&results.xrCreateAction));
@@ -149,6 +151,8 @@ struct ActionContextFunctions
     PFN_xrCreateSessionActionContextNV create_session_ctx;
     PFN_xrDestroySessionActionContextNV destroy_session_ctx;
     PFN_xrSyncActions2NV sync_actions_2;
+    // Optional: absent on runtimes predating the query. Null-check before use.
+    PFN_xrGetCurrentInteractionProfile2NV get_current_interaction_profile;
 
     static ActionContextFunctions load(XrInstance instance, PFN_xrGetInstanceProcAddr getProcAddr)
     {
@@ -163,6 +167,8 @@ struct ActionContextFunctions
                               reinterpret_cast<PFN_xrVoidFunction*>(&f.destroy_session_ctx));
         loadExtensionFunction(
             instance, getProcAddr, "xrSyncActions2NV", reinterpret_cast<PFN_xrVoidFunction*>(&f.sync_actions_2));
+        loadExtensionFunction(instance, getProcAddr, "xrGetCurrentInteractionProfile2NV",
+                              reinterpret_cast<PFN_xrVoidFunction*>(&f.get_current_interaction_profile));
 
         if (!f.create_instance_ctx || !f.destroy_instance_ctx || !f.create_session_ctx || !f.destroy_session_ctx ||
             !f.sync_actions_2)

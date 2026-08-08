@@ -190,6 +190,7 @@ LiveControllerTrackerImpl::LiveControllerTrackerImpl(const OpenXRSessionHandles&
                                                      std::unique_ptr<ControllerMcapChannels> mcap_channels)
     : core_funcs_(OpenXRCoreFunctions::load(handles.instance, handles.xrGetInstanceProcAddr)),
       time_converter_(handles),
+      instance_(handles.instance),
       session_(handles.session),
       base_space_(handles.space),
       left_hand_path_(xr_path_from_string(core_funcs_, handles.instance, "/user/hand/left")),
@@ -315,6 +316,27 @@ LiveControllerTrackerImpl::LiveControllerTrackerImpl(const OpenXRSessionHandles&
         throw std::runtime_error("Failed to suggest interaction profile bindings: " + std::to_string(result));
     }
 
+    // Also offer the PICO profile. The runtime binds whichever matches the
+    // connected hardware, which is what makes the headset identifiable through
+    // a streaming runtime that presents every device identically.
+    //
+    // Suggested separately and tolerantly on purpose: the call rejects a whole
+    // profile if any binding path is unsupported, and controller input must keep
+    // working even when a profile is refused. Measured accepted on both a PICO 4
+    // Ultra and a Quest 3.
+    XrInteractionProfileSuggestedBinding pico_bindings{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+    pico_bindings.next = &binding_ctx_info;
+    pico_bindings.interactionProfile =
+        xr_path_from_string(core_funcs_, handles.instance, "/interaction_profiles/bytedance/pico4_controller");
+    pico_bindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+    pico_bindings.suggestedBindings = bindings.data();
+    if (XR_FAILED(core_funcs_.xrSuggestInteractionProfileBindings(handles.instance, &pico_bindings)))
+    {
+        std::cout << "[ControllerTracker] PICO interaction profile not accepted; headset identification "
+                     "will report no profile"
+                  << std::endl;
+    }
+
     // Create session action context (makes the instance context immutable)
     session_action_context_ =
         createSessionActionContext(action_ctx_funcs_, handles.session, instance_action_context_.get());
@@ -336,6 +358,44 @@ LiveControllerTrackerImpl::LiveControllerTrackerImpl(const OpenXRSessionHandles&
     }
 
     logger_->info("ControllerTracker initialized (left + right) with action context");
+}
+
+std::string LiveControllerTrackerImpl::get_interaction_profile() const
+{
+    return interaction_profile_;
+}
+
+std::string LiveControllerTrackerImpl::query_interaction_profile() const
+{
+    if (action_ctx_funcs_.get_current_interaction_profile == nullptr)
+    {
+        return {};
+    }
+
+    // Both hands normally report the same profile; take the left and fall back to
+    // the right so one inactive controller does not hide the headset's identity.
+    for (const XrPath hand_path : { left_hand_path_, right_hand_path_ })
+    {
+        XrInteractionProfileGetInfo2NV get_info{ XR_TYPE_INTERACTION_PROFILE_GET_INFO_2_NV };
+        get_info.topLevelUserPath = hand_path;
+        get_info.sessionActionContext = session_action_context_.get();
+
+        XrInteractionProfileState profile_state{ XR_TYPE_INTERACTION_PROFILE_STATE };
+        if (XR_FAILED(action_ctx_funcs_.get_current_interaction_profile(session_, &get_info, &profile_state)) ||
+            profile_state.interactionProfile == XR_NULL_PATH)
+        {
+            continue;
+        }
+
+        char buf[XR_MAX_PATH_LENGTH]{};
+        uint32_t written = 0;
+        if (XR_SUCCEEDED(
+                core_funcs_.xrPathToString(instance_, profile_state.interactionProfile, sizeof(buf), &written, buf)))
+        {
+            return std::string(buf);
+        }
+    }
+    return {};
 }
 
 void LiveControllerTrackerImpl::update(int64_t monotonic_time_ns)
@@ -363,6 +423,14 @@ void LiveControllerTrackerImpl::update(int64_t monotonic_time_ns)
     {
         // Policy: action sync failure is a critical tracker/runtime error.
         throw std::runtime_error("[ControllerTracker] xrSyncActions2NV failed: " + std::to_string(result));
+    }
+
+    // Nothing is bound until actions have synced, so this cannot be resolved at
+    // construction. Re-read only when the runtime reports a change (a headset
+    // swap), which keeps this off the per-frame IPC path.
+    if (interaction_profile_.empty() || sync_state.interactionProfileChanged)
+    {
+        interaction_profile_ = query_interaction_profile();
     }
 
     std::optional<ControllerSnapshotT> left_native;
