@@ -151,7 +151,8 @@ struct ActionContextFunctions
     PFN_xrCreateSessionActionContextNV create_session_ctx;
     PFN_xrDestroySessionActionContextNV destroy_session_ctx;
     PFN_xrSyncActions2NV sync_actions_2;
-    // Optional: absent on runtimes predating the query. Null-check before use.
+    // Optional: null on runtimes predating the query, so null-check before use.
+    // Loaded without loadExtensionFunction on purpose -- see load() below.
     PFN_xrGetCurrentInteractionProfile2NV get_current_interaction_profile;
 
     static ActionContextFunctions load(XrInstance instance, PFN_xrGetInstanceProcAddr getProcAddr)
@@ -167,8 +168,15 @@ struct ActionContextFunctions
                               reinterpret_cast<PFN_xrVoidFunction*>(&f.destroy_session_ctx));
         loadExtensionFunction(
             instance, getProcAddr, "xrSyncActions2NV", reinterpret_cast<PFN_xrVoidFunction*>(&f.sync_actions_2));
-        loadExtensionFunction(instance, getProcAddr, "xrGetCurrentInteractionProfile2NV",
-                              reinterpret_cast<PFN_xrVoidFunction*>(&f.get_current_interaction_profile));
+        // Looked up directly rather than through loadExtensionFunction, which
+        // throws when a symbol is missing. This one is genuinely optional: a
+        // runtime without it must still construct a controller tracker, so leave
+        // the pointer null and let the caller report "no profile".
+        if (XR_FAILED(getProcAddr(instance, "xrGetCurrentInteractionProfile2NV",
+                                  reinterpret_cast<PFN_xrVoidFunction*>(&f.get_current_interaction_profile))))
+        {
+            f.get_current_interaction_profile = nullptr;
+        }
 
         if (!f.create_instance_ctx || !f.destroy_instance_ctx || !f.create_session_ctx || !f.destroy_session_ctx ||
             !f.sync_actions_2)
