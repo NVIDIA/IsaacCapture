@@ -12,7 +12,7 @@ recoverable error.
 
 import pytest
 
-from isaacteleop.deviceio.headset import (
+from isaacteleop.cloudxr.headset import (
     HEADSET_BY_INTERACTION_PROFILE,
     identify_headset,
 )

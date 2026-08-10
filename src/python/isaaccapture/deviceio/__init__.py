@@ -52,11 +52,7 @@ from ..schema import (
     OgloGloveSample,
 )
 
-from .headset import HEADSET_BY_INTERACTION_PROFILE, identify_headset
-
 __all__ = [
-    "identify_headset",
-    "HEADSET_BY_INTERACTION_PROFILE",
     "ControllerInputState",
     "ControllerPose",
     "ControllerSnapshot",
