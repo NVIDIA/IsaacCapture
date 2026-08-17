@@ -127,7 +127,18 @@ void LiveFullBodyTrackerPicoImpl::update(int64_t monotonic_time_ns)
     XrResult result = pfn_locate_body_joints_(body_tracker_, &locate_info, &locations);
     if (XR_FAILED(result))
     {
-        throw std::runtime_error("[FullBodyTracker] xrLocateBodyJointsBD failed: " + std::to_string(result));
+        // A locate call can transiently fail for reasons unrelated to body
+        // tracking itself -- e.g. the base/view pose briefly has no valid
+        // relation around a client reconnect. This tracker and the Meta one
+        // (live_full_body_tracker_meta_impl.cpp) are always polled every frame
+        // regardless of which vendor is actually connected, so throwing here
+        // would tear down the whole DeviceIO session (see
+        // IsaacTeleopClient._get_tracker_data()) over a hiccup in a tracker
+        // that may not even be the one currently in use. Degrade to "no data
+        // this frame" instead, matching the limp-mode path above.
+        std::cerr << "[FullBodyTracker] xrLocateBodyJointsBD failed: " << result << std::endl;
+        tracked_.data.reset();
+        return;
     }
 
     FullBodyPoseT data;
