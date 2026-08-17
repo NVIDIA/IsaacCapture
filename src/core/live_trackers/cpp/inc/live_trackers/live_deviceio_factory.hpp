@@ -83,6 +83,7 @@ public:
     std::unique_ptr<IControllerTrackerImpl> create_controller_tracker_impl(const ControllerTracker* tracker);
     std::unique_ptr<IMessageChannelTrackerImpl> create_message_channel_tracker_impl(const MessageChannelTracker* tracker);
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_pico_impl(const FullBodyTracker* tracker);
+    std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_meta_impl(const FullBodyTracker* tracker);
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_noitom_impl(const FullBodyTracker* tracker);
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_xsens_impl(const FullBodyTracker* tracker);
     std::unique_ptr<ITensorPushTrackerImpl> create_tensor_push_tracker_impl(const TensorPushTracker* tracker);
