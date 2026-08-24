@@ -54,6 +54,24 @@ void ensure_env_set(const char* env_name, const std::string& default_value)
     throw std::runtime_error("Environment variable " + std::string(env_name) + " is not set");
 }
 
+// Opt in to CloudXR's XR_META_body_tracking_full_body.
+//
+// CloudXR withholds that extension unless this is set, because its support is not
+// conformant: the joints are relayed from the connected client rather than produced
+// by a conformant implementation. isaacteleop wants it -- the Meta full-body tracker
+// (body.quest-cloudxr) is built on it.
+//
+// Set here, immediately before xrCreateInstance, rather than in the shared
+// ~/.cloudxr/run/cloudxr.env: that file is sourced by every CloudXR application, and
+// opting all of them in is not ours to decide. This scopes it to processes that
+// create an isaacteleop OpenXR session.
+//
+// overwrite=0, so an operator who exports it explicitly -- including to "0" -- wins.
+void opt_in_to_meta_body_tracking()
+{
+    setenv("NV_CXR_ENABLE_NON_CONFORMANT_META_BODY_TRACKING", "1", 0 /* do not overwrite */);
+}
+
 // Ensure required environment variables are set before xrCreateInstance.
 void ensure_cloudxr_runtime_configured()
 {
@@ -200,6 +218,9 @@ void OpenXRSession::create_instance(const std::string& app_name, const std::vect
 {
     // Ensure XR_RUNTIME_JSON is configured before calling xrCreateInstance
     ensure_cloudxr_runtime_configured();
+
+    // Independent of the checks above: those can be disabled, opting in should not be.
+    opt_in_to_meta_body_tracking();
 
     XrInstanceCreateInfo create_info{ XR_TYPE_INSTANCE_CREATE_INFO };
     create_info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
