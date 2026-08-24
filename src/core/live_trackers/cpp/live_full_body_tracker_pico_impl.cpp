@@ -137,7 +137,7 @@ void LiveFullBodyTrackerPicoImpl::update(int64_t monotonic_time_ns)
         // that may not even be the one currently in use. Degrade to "no data
         // this frame" instead, matching the limp-mode path above.
         std::cerr << "[FullBodyTracker] xrLocateBodyJointsBD failed: " << result << std::endl;
-        tracked_.data.reset();
+        tracked_.reset();
         return;
     }
 

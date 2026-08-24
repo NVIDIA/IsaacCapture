@@ -146,7 +146,7 @@ void LiveFullBodyTrackerMetaImpl::update(int64_t monotonic_time_ns)
     if (body_tracker_ == XR_NULL_HANDLE)
     {
         // Policy: limp mode (feature unsupported/unavailable) is non-fatal.
-        tracked_.data.reset();
+        tracked_.reset();
         return;
     }
 
@@ -177,13 +177,13 @@ void LiveFullBodyTrackerMetaImpl::update(int64_t monotonic_time_ns)
         // "no data this frame" instead, matching the !isActive and
         // limp-mode paths below.
         std::cerr << "[FullBodyTracker] xrLocateBodyJointsFB failed: " << result << std::endl;
-        tracked_.data.reset();
+        tracked_.reset();
         return;
     }
 
     if (!locations.isActive)
     {
-        tracked_.data.reset();
+        tracked_.reset();
         return;
     }
 
@@ -212,16 +212,11 @@ void LiveFullBodyTrackerMetaImpl::update(int64_t monotonic_time_ns)
     }
     data->all_joint_poses_tracked = all_tracked;
 
-    tracked_.data = std::move(data);
-
-    if (mcap_channels_)
-    {
-        DeviceDataTimestamp timestamp(last_update_time_, last_update_time_, xr_time);
-        mcap_channels_->write(0, timestamp, tracked_.data);
-    }
+    const DeviceDataTimestamp timestamp(last_update_time_, last_update_time_, xr_time);
+    tracked_ = publish_and_record(mcap_channels_.get(), 0, timestamp, data.get());
 }
 
-const FullBodyPoseTrackedT& LiveFullBodyTrackerMetaImpl::get_body_pose() const
+const Serialized<FullBodyPose>& LiveFullBodyTrackerMetaImpl::get_body_pose() const
 {
     return tracked_;
 }
