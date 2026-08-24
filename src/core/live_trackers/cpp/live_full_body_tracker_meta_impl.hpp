@@ -19,7 +19,7 @@
 namespace core
 {
 
-using FullBodyMcapChannels = McapTrackerChannels<FullBodyPoseRecord, FullBodyPose>;
+using FullBodyMcapChannels = McapTrackerChannels<FullBodyPoseRecord>;
 
 // Live full-body impl for the "body.quest-cloudxr" vendor: sources the full 84-joint
 // skeleton from XR_META_body_tracking_full_body, then reduces it to the canonical
@@ -52,13 +52,13 @@ public:
     LiveFullBodyTrackerMetaImpl& operator=(LiveFullBodyTrackerMetaImpl&&) = delete;
 
     void update(int64_t monotonic_time_ns) override;
-    const FullBodyPoseTrackedT& get_body_pose() const override;
+    const Serialized<FullBodyPose>& get_body_pose() const override;
 
 private:
     XrTimeConverter time_converter_;
     XrSpace base_space_;
     XrBodyTrackerFB body_tracker_;
-    FullBodyPoseTrackedT tracked_;
+    Serialized<FullBodyPose> tracked_;
     int64_t last_update_time_ = 0;
 
     PFN_xrCreateBodyTrackerFB pfn_create_body_tracker_;
