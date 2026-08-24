@@ -58,11 +58,6 @@ class EnvConfig:
         "NV_CXR_ENABLE_PUSH_DEVICES": "true",
         "NV_CXR_ENABLE_TENSOR_DATA": "true",
         "NV_CXR_FILE_LOGGING": "true",
-        # CloudXR withholds XR_META_body_tracking_full_body unless asked: the joints
-        # are relayed from the connected client rather than produced by a conformant
-        # implementation. isaacteleop opts in because the Meta full-body tracker
-        # needs it; set this to "false" in a user env file to take the BD path instead.
-        "NV_CXR_ENABLE_NON_CONFORMANT_META_BODY_TRACKING": "true",
         "NV_DEVICE_PROFILE": DEFAULT_DEVICE_PROFILE,
     }
 
