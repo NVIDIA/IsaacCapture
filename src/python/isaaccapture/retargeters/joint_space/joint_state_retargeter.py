@@ -18,7 +18,7 @@ the ``JointStateOutput`` FlatBuffer schema) into an Isaac Lab action, in one of 
 
 The output element names are chosen so a downstream
 :class:`~isaaccapture.retargeters.TensorReorderer` can flatten them into the exact action layout
-an Isaac Lab environment expects. See ``examples/teleop/python/joint_space_device_example.py``
+an Isaac Lab environment expects. See ``examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py``
 for an end-to-end reference.
 """
 

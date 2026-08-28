@@ -60,7 +60,8 @@ SO101_JOINTS = [
 _COLLECTION_ID = "so101_leader"
 _POSE_LABELS = ["pos_x", "pos_y", "pos_z", "quat_x", "quat_y", "quat_z", "quat_w"]
 _DEFAULT_PLUGIN_BIN = (
-    Path(__file__).resolve().parents[3]
+    # Six levels up is the repo root; see PLUGIN_ROOT_DIR in the sibling examples.
+    Path(__file__).resolve().parents[5]
     / "build/src/plugins/so101_leader/so101_leader_plugin"
 )
 

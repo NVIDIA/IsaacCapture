@@ -26,7 +26,9 @@ from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConf
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 
 
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
+# Six levels up is the tree root -- the checkout, or the install prefix
+# when running from install/examples/teleop/.
+PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
 PLUGIN_NAME = "controller_synthetic_hands"
 PLUGIN_ROOT_ID = "synthetic_hands"
 
