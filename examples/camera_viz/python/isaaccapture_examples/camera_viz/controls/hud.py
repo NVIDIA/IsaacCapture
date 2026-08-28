@@ -17,7 +17,7 @@ from typing import List, Optional, Sequence
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from placements import HeadLocked, PlacementConfig
+from ..placements import HeadLocked, PlacementConfig
 
 _W, _H = 1280, 160
 _PAD, _BAR = 36, 12  # left text inset, accent-bar width

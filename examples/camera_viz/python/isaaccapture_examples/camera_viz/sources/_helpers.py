@@ -43,7 +43,7 @@ from typing import Optional
 
 import numpy as np
 
-from pipeline import Frame, FrameSource, SourceSpec
+from ..pipeline import Frame, FrameSource, SourceSpec
 
 
 _SINK = None

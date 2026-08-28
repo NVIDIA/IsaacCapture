@@ -19,8 +19,8 @@ import threading
 import time
 from typing import Optional
 
-from pipeline import Frame, FrameSource, SourceSpec
-from transports import RtpH264Receiver
+from ..pipeline import Frame, FrameSource, SourceSpec
+from ..transports import RtpH264Receiver
 
 from ._nv_decode import NvH264Decoder
 

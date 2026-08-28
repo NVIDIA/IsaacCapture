@@ -16,7 +16,10 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
-from sources import build_local_camera, resolve_video_paths  # noqa: E402
+from isaaccapture_examples.camera_viz.sources import (  # noqa: E402
+    build_local_camera,
+    resolve_video_paths,
+)
 
 
 def _cuda_available() -> bool:

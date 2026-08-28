@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Tests live under tests/python/examples/camera_viz/ but import from
-# examples/camera_viz/ (the example's pipeline / sources modules).
-# Prepend the parent dir so those imports resolve against the in-tree
-# source rather than any installed copy.
+# Resolve `isaaccapture_examples.camera_viz` against the in-tree source, and with
+# it the codec .so built in place by codec/build.sh.
+#
+# python/, not python/isaaccapture_examples/: that is a PEP 420 namespace. Do not
+# add an __init__.py to make an import work -- it breaks the installed wheel's
+# ability to share the namespace.
 
 import sys
 from pathlib import Path
@@ -15,4 +17,4 @@ if str(_tests_python) not in sys.path:
 
 from repo_paths import repo_root  # noqa: E402
 
-sys.path.insert(0, str(repo_root() / "examples" / "camera_viz"))
+sys.path.insert(0, str(repo_root() / "examples" / "camera_viz" / "python"))

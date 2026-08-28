@@ -45,7 +45,7 @@ class NvH264Encoder:
             return
 
         try:
-            import codec
+            from .. import codec
         except ImportError as e:
             raise RuntimeError(
                 "NvH264Encoder requires the native codec. Run "

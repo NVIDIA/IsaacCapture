@@ -13,7 +13,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory={{WORKDIR}}
 Environment=PATH={{VENV}}/bin:/usr/local/cuda/bin:/usr/bin:/bin
-ExecStart={{VENV}}/bin/python {{WORKDIR}}/camera_streamer.py {{CONFIG}}{{EXTRA_ARGS}}
+ExecStart={{VENV}}/bin/python -m isaaccapture_examples.camera_viz.camera_streamer {{CONFIG}}{{EXTRA_ARGS}}
 Restart=always
 RestartSec=2
 StandardOutput=journal

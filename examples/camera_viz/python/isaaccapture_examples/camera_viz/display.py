@@ -14,8 +14,8 @@ from typing import List, Optional
 
 import isaaccapture.viz as viz
 
-from config import SourceEntry, VALID_SHAPES
-from placements import yaw_quat
+from .config import SourceEntry, VALID_SHAPES
+from .placements import yaw_quat
 
 # ImageLayerBase::kSlotCount (kMaxFramesInFlight + 2). Only used to
 # report the VRAM that shape switching adds.
