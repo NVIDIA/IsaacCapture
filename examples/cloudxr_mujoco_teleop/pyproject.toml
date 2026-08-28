@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 HTC CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "cloudxr-mujoco-teleop-example"
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-cloudxr-mujoco-teleop"
 version = "0.1.0"
 description = "Visualize OpenXR / CloudXR headset + controller poses in MuJoCo."
 requires-python = ">=3.11,<3.14"
@@ -12,3 +18,14 @@ dependencies = [
     "numpy>=1.22.2",
     "scipy>=1.10",
 ]
+
+# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
+# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
+# the latter keeps only the last path component and would root the wheel at a
+# bare top-level `cloudxr_mujoco_teleop/`.
+#
+# vive_assets/ lives inside the package because both scripts resolve it from
+# __file__, so the meshes must travel with the modules.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/cloudxr_mujoco_teleop"]
+sources = ["python"]
