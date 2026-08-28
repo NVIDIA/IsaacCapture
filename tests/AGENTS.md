@@ -77,6 +77,6 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 
 - Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
-- `examples/oxr/python/test_*.py` — standalone scripts for CloudXR GPU CI.
+- `examples/oxr/python/isaaccapture_examples/oxr/test_*.py` — standalone scripts for CloudXR GPU CI.
 - ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.
 - `scripts/sbom/tests/` — the SBOM collector's tests, run from its own uv project.

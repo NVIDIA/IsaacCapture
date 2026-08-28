@@ -26,7 +26,9 @@ import isaaccapture.plugin_manager as pm
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
 
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
+# Six levels up is the tree root -- the checkout, or the install prefix
+# when running from install/examples/.
+PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
 
 MODE_NO_METADATA = "no-metadata"
 MODE_SCHEMA_PUSHER = "schema-pusher"
