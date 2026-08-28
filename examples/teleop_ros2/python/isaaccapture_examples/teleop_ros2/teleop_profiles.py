@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TypedDict, cast
 
-from constants import (
+from .constants import (
     TRACKED_HAND_RETARGETERS,
     HandRetargeter,
     HandTrackingProvider,

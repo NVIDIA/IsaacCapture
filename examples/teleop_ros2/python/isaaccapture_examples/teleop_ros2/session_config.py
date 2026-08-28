@@ -6,12 +6,12 @@
 
 from collections.abc import Sequence
 
-from assets import (
+from .assets import (
     resolve_dex_sharpa_config,
     resolve_dex_sharpa_urdf,
     resolve_sharpa_mjcf,
 )
-from constants import (
+from .constants import (
     DEX_HANDTRACKING_TO_BASELINK_FRAME_TRANSFORM,
     LEFT_FINGER_JOINT_NAMES,
     LEFT_SHARPA_WAVE_JOINT_NAMES,
@@ -49,12 +49,12 @@ from isaaccapture.teleop_session_manager import (
     SessionMode,
     TeleopSessionConfig,
 )
-from node_parameters import NodeParameters
-from teleop_ros2_retargeters import (
+from .node_parameters import NodeParameters
+from .teleop_ros2_retargeters import (
     HandTrackingGateRetargeter,
     JointNameAliasRetargeter,
 )
-from tensor_group_helpers import joint_names_from_group_type
+from .tensor_group_helpers import joint_names_from_group_type
 
 
 def _maybe_alias_hand_joints(

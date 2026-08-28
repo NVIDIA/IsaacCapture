@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from geometry import (
+from isaaccapture_examples.teleop_ros2.geometry import (
     apply_manus_controller_to_hand_pose,
     apply_relative_pose,
     apply_transform_to_pose,

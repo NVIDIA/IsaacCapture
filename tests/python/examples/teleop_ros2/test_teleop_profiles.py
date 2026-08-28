@@ -7,8 +7,8 @@
 from types import SimpleNamespace
 
 import pytest
-import session_config
-from constants import (
+from isaaccapture_examples.teleop_ros2 import session_config
+from isaaccapture_examples.teleop_ros2.constants import (
     LEFT_WUJI_HAND_JOINT_NAMES,
     RIGHT_WUJI_HAND_JOINT_NAMES,
     TELEOP_MODES,
@@ -19,7 +19,7 @@ from constants import (
     resolve_hand_retargeter,
 )
 from isaaccapture.teleop_session_manager import SessionMode
-from teleop_profiles import (
+from isaaccapture_examples.teleop_ros2.teleop_profiles import (
     TELEOP_PROFILE_SPECS,
     PublishType,
     TeleopProfile,

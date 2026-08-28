@@ -61,7 +61,7 @@ Source-tree users can populate the same local asset directory from the repo root
 python3 examples/teleop_ros2/scripts/fetch_sharpa_wave_urdfs.py
 ```
 
-Robot assets are never downloaded by `teleop_ros2_node.py` at runtime.
+Robot assets are never downloaded by the node at runtime.
 
 ### OpenXR hand input sources
 

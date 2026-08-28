@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-teleop-ros2"
+version = "0.1.0"
+description = "Isaac Teleop ROS 2 reference publisher"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "isaaccapture[cloudxr,grounding,retargeters,wuji]",
+    "msgpack",
+    "msgpack-numpy",
+    # The ROS node installs pink_ik and dexpilot together. Require nlopt>=2.8 so
+    # dex-retargeting resolves to 0.5.x, keeping the env on NumPy 2 / Pinocchio 3.
+    "nlopt>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["../../tests/python/examples/teleop_ros2"]
+
+# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
+# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
+# the latter keeps only the last path component and would root the wheel at a
+# bare top-level `teleop_ros2/`.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/teleop_ros2"]
+sources = ["python"]

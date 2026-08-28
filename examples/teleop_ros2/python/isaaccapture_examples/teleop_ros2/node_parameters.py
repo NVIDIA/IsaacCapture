@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from constants import (
+from .constants import (
     HAND_RETARGETERS,
     HAND_TRACKING_PROVIDERS,
     TELEOP_MODES,
@@ -232,7 +232,9 @@ def _load_config_asset_root(node: Node) -> Path:
                 f"config_asset_root directory not found: {config_asset_root}"
             )
     else:
-        config_asset_root = Path(__file__).resolve().parents[1]
+        # Four levels up is the example root, where configs/ and assets/ sit --
+        # in the source tree and in the install tree alike.
+        config_asset_root = Path(__file__).resolve().parents[3]
     node.get_logger().info(f"Config/asset root: {config_asset_root}")
     return config_asset_root
 

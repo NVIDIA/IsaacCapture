@@ -8,7 +8,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/InstallPythonExample.cmake)
 
 add_subdirectory(cpp/integration_tests)
 
-install_python_example(DESTINATION examples/teleop_ros2/python)
+install_python_example(DESTINATION examples/teleop_ros2)
 
 install(FILES README.md Dockerfile
     DESTINATION examples/teleop_ros2

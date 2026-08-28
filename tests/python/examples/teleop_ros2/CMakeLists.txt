@@ -3,7 +3,7 @@
 #
 # teleop_ros2 unit tests. Each test_*.py registers as its own ctest entry under
 # the ``teleop_ros2`` label. BUILD_EXAMPLE_TELEOP_ROS2 supplies the required ROS
-# environment; the example source directory supplies its importable modules.
+# environment; conftest.py puts the example's namespace root on sys.path.
 
 file(GLOB TEST_FILES
     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -20,7 +20,7 @@ foreach(test_file ${TEST_FILES})
     )
     set_tests_properties("teleop_ros2_${test_name}" PROPERTIES
         ENVIRONMENT
-            "PYTHONPATH=${CMAKE_BINARY_DIR}/python_package/$<CONFIG>:${CMAKE_SOURCE_DIR}/examples/teleop_ros2/python"
+            "PYTHONPATH=${CMAKE_BINARY_DIR}/python_package/$<CONFIG>"
         LABELS "teleop_ros2"
     )
 endforeach()

@@ -18,4 +18,4 @@ Source-tree users can populate this directory from the repo root:
 python3 examples/teleop_ros2/scripts/fetch_sharpa_wave_urdfs.py
 ```
 
-These robot model assets are not fetched at runtime by `teleop_ros2_node.py`.
+These robot model assets are not fetched at runtime by the node.
