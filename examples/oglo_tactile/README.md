@@ -31,10 +31,11 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
    ```bash
    sudo apt install libdbus-1-dev          # BlueZ for the BLE plugin
    sudo apt install pkg-config glslang-tools libvulkan-dev   # BUILD_VIZ=ON below
-   pip install pillow numpy                 # heatmap renderer
-   pip install cupy-cuda12x                 # headset overlay GPU upload (match your CUDA)
+   uv pip install -e ./examples/oglo_tactile        # heatmap renderer + deps
+   uv pip install -e './examples/oglo_tactile[gpu]'  # adds the CUDA overlay upload
    ```
-   `cupy` is only needed for the in-headset overlay; recording works without it.
+   The `gpu` extra is only needed for the in-headset overlay; recording works
+   without it. Match your CUDA major version if you edit the pin.
 
 2. **Build** (plugin + viz + python wheel)
 
@@ -76,8 +77,7 @@ python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on fi
 cd ~/Documents/IsaacTeleop
 source scripts/setup_cloudxr_env.sh
 source ~/.cloudxr/run/cloudxr.env          # path printed by step above
-cd examples/oglo_tactile
-python oglo_teleop_record.py
+python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record
 ```
 The script: connects both gloves over BLE, starts recording to
 `oglo_teleop_<timestamp>.mcap`, and shows the **two-hand tactile heatmap** in the

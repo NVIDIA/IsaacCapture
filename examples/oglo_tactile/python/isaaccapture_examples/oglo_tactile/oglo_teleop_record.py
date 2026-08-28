@@ -36,7 +36,7 @@ import numpy as np
 import isaaccapture.deviceio as deviceio
 import isaaccapture.viz as viz
 
-from oglo_heatmap import NUM_TAXELS, Normalizer, TactileHeatmapRenderer
+from .oglo_heatmap import NUM_TAXELS, Normalizer, TactileHeatmapRenderer
 
 OVERLAY_W, OVERLAY_H = 1024, 512
 COLLECTION_PREFIX = "oglo"
@@ -50,8 +50,12 @@ def _on_signal(signum: int, frame: FrameType | None) -> None:
 
 
 def _default_plugin_bin() -> str:
+    # Only meaningful from a source checkout: examples/oglo_tactile/python/
+    # isaaccapture_examples/oglo_tactile/ is five levels below the repo root. An
+    # installed copy lands in site-packages, where this finds nothing and the
+    # PATH fallback below takes over.
     here = Path(__file__).resolve()
-    root = here.parents[2]  # repo root
+    root = here.parents[5]
     for cand in (
         root / "build/src/plugins/oglo_tactile/oglo_tactile_plugin",
         root / "install/plugins/oglo_tactile/oglo_tactile_plugin",
