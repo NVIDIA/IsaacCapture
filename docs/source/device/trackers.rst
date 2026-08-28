@@ -233,8 +233,8 @@ axis inputs. Uses standard OpenXR action bindings.
 - Examples:
 
   - :code-file:`examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py`
-  - :code-file:`examples/teleop/python/locomotion_retargeting_example.py`
-  - :code-file:`examples/teleop/python/gripper_retargeting_example_simple.py`
+  - :code-file:`examples/teleop/python/isaaccapture_examples/teleop/locomotion_retargeting_example.py`
+  - :code-file:`examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py`
 
 FullBodyTracker
 ~~~~~~~~~~~~~~~
@@ -312,7 +312,7 @@ utility internally.
 - Examples:
 
   - :code-file:`examples/schemaio/pedal_printer.cpp`
-  - :code-file:`examples/teleop/python/foot_pedal_locomotion_example.py`
+  - :code-file:`examples/teleop/python/isaaccapture_examples/teleop/foot_pedal_locomotion_example.py`
 
 .. note::
 
@@ -383,5 +383,5 @@ For end-to-end usage patterns combining trackers with a ``DeviceIOSession``, see
 For higher-level usage with the teleop session manager and retargeting, see:
 
 - :code-file:`examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py`
-- :code-file:`examples/teleop/python/gripper_retargeting_example_simple.py`
-- :code-file:`examples/teleop/python/locomotion_retargeting_example.py`
+- :code-file:`examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py`
+- :code-file:`examples/teleop/python/isaaccapture_examples/teleop/locomotion_retargeting_example.py`

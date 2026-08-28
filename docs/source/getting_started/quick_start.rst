@@ -100,7 +100,7 @@ env file and start the service with it:
    python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
 
 The same ``--cloudxr-env-config`` flag is available on the teleop examples under
-``examples/teleop/python/``, which register CloudXR's launcher arguments through
+``examples/teleop``, which register CloudXR's launcher arguments through
 ``CloudXRLauncher.add_launcher_arguments()`` — but it applies only when the
 example is the one starting the runtime. With a service already running the
 example attaches to it instead, and prints which settings it had to ignore (see
@@ -309,7 +309,7 @@ pipeline: reading XR controller input via CloudXR, retargeting it through the
 
 .. code-block:: bash
 
-   python examples/teleop/python/gripper_retargeting_example_simple.py
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Once running, squeeze the controller triggers on your XR headset to control
 the gripper. You should see periodic status output:
@@ -326,7 +326,7 @@ the gripper. You should see periodic status output:
    ...
 
 The example runs for 20 seconds and then exits. To try other examples, see
-``examples/teleop/python/`` — for instance:
+``examples/teleop`` — for instance:
 
 - ``se3_retargeting_example.py`` — maps hand or controller poses to
   end-effector poses (absolute or relative)

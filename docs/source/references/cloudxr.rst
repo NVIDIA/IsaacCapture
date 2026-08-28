@@ -183,13 +183,13 @@ for themselves and need no sourcing.
 Run teleop examples against the service
 ---------------------------------------
 
-Nothing to pass. The examples under ``examples/teleop/python/`` attach to
+Nothing to pass. The examples under ``examples/teleop`` attach to
 whatever runtime is serving, so with a service running they use it:
 
 .. code-block:: bash
 
    python -m isaaccapture.cloudxr.service start --accept-eula
-   python examples/teleop/python/gripper_retargeting_example_simple.py
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 The example leaves the service running when it exits, so the headset stays
 connected and the next run reattaches to the same session.

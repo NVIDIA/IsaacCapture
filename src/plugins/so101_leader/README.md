@@ -121,7 +121,7 @@ absorb calibration; for **EE (URDF FK)** mode the joint angles must already matc
 
 The consumer side creates a `JointStateTracker("so101_leader")` (via
 `JointStateSource(name=..., collection_id="so101_leader", joint_names=[...])`) on the same
-`collection_id`. See `examples/teleop/python/joint_space_device_example.py` for the retargeting
+`collection_id`. See `examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py` for the retargeting
 pipeline (joint-mirror and task-space EE modes).
 
 DOF order / names: `shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper`.
