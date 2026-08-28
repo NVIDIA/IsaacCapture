@@ -37,7 +37,9 @@ NOITOM_VENDOR_ID = "body.noitom"
 
 
 def _plugin_search_paths() -> list[Path]:
-    base = Path(__file__).resolve().parents[2]
+    # Six levels up is the repo root -- or the install prefix, which has the
+    # same shape under examples/<name>/python/isaaccapture_examples/<name>/.
+    base = Path(__file__).resolve().parents[5]
     candidates = [
         base / "plugins",
         base / "install" / "plugins",
@@ -70,7 +72,9 @@ def _resolve_output(path_arg: str | None) -> Path:
     if path_arg:
         path = Path(path_arg)
     else:
-        out_dir = Path(__file__).resolve().parent / "recordings"
+        # CWD-relative, matching mcap_record_replay: anchoring to __file__ would
+        # write inside the package, and into site-packages once installed.
+        out_dir = Path.cwd() / "recordings"
         path = out_dir / f"noitom_full_body_{datetime.now():%Y%m%d_%H%M%S}.mcap"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path

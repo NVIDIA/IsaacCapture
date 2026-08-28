@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from isaaccapture.schema import BodyJoint
 
-from noitom_retargeting import noitom_position_to_isaac
+from .noitom_retargeting import noitom_position_to_isaac
 
 # G1_29DOF_CFG spawn rot (0,0,0.7071,0.7071): pelvis +X aligns with world +Y (table forward).
 G1_ROBOT_FORWARD_XY = np.array([0.0, 1.0], dtype=np.float64)
