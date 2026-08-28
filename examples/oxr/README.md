@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -31,8 +31,8 @@ examples/oxr/
 │   ├── CMakeLists.txt
 │   ├── oxr_session_sharing.cpp
 │   └── oxr_simple_api_demo.cpp
-└── python/                 # Python examples
-    ├── pyproject.toml      # uv configuration
+├── pyproject.toml          # the distribution
+└── python/isaaccapture_examples/oxr/
     ├── modular_example.py
     ├── test_modular.py
     ├── test_extensions.py
@@ -41,34 +41,25 @@ examples/oxr/
 
 ## Python Examples
 
-Python examples use `uv` for dependency management and execution.
-
 ### Running Python Examples
 
-After building and installing, navigate to the installed examples:
+Install the example once, then run any module from anywhere:
 
 ```bash
-# From install directory (recommended)
-cd install/examples/oxr/python
+uv pip install -e ./examples/oxr
 export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
-uv run test_modular.py
+python -m isaaccapture_examples.oxr.test_modular
 ```
 
-Or run from source directory:
-
-```bash
-# From source directory (requires build to be complete)
-cd examples/oxr/python
-export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
-uv run test_modular.py
-```
+The installed tree works the same way — `uv pip install -e
+install/examples/oxr` resolves against the wheel that build produced.
 
 ### Available Python Examples
 
-- **modular_example.py** - Basic hand + head tracking
-- **test_modular.py** - Complete API test
-- **test_extensions.py** - Extension query demonstration
-- **test_session_sharing.py** - Session sharing between DeviceIOSession instances
+- **modular_example** - Basic hand + head tracking
+- **test_modular** - Complete API test
+- **test_extensions** - Extension query demonstration
+- **test_session_sharing** - Session sharing between DeviceIOSession instances
 
 ## C++ Examples
 
@@ -110,9 +101,9 @@ cmake --build build
 cmake --install build
 
 # Run Python example
-cd install/examples/oxr/python
+uv pip install -e install/examples/oxr
 export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
-uv run test_modular.py
+python -m isaaccapture_examples.oxr.test_modular
 ```
 
 ### C++ Example
