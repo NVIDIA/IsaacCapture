@@ -34,7 +34,7 @@ from typing import ClassVar, List, Optional
 
 import numpy as np
 
-from pipeline import Frame, FrameSource, SourceSpec
+from ..pipeline import Frame, FrameSource, SourceSpec
 from ._helpers import alloc_pinned_host, notify, notify_verbose
 
 logger = logging.getLogger("isaaccapture.camera_viz.sources.oakd")

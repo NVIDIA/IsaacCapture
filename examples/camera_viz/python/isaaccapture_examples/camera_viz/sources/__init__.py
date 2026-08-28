@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from pipeline import FrameSource
+from ..pipeline import FrameSource
 
 from ._helpers import PairedFrameSource, set_notify_sink, set_verbose
 from .oakd import OakdSource

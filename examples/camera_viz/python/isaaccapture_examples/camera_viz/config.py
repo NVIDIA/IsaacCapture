@@ -18,9 +18,9 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from pipeline import FrameSource
-from placements import PlacementConfig, PlacementStrategy, build as build_placement
-from sources import PairedFrameSource, RtpH264Source, build_local_camera
+from .pipeline import FrameSource
+from .placements import PlacementConfig, PlacementStrategy, build as build_placement
+from .sources import PairedFrameSource, RtpH264Source, build_local_camera
 
 
 @dataclass

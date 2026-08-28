@@ -344,7 +344,7 @@ environment with ``isaaccapture``) and run::
    python -m isaaccapture.cloudxr.service status
    python -m isaaccapture.cloudxr.service stop
 
-Run ``camera_viz.py --help`` for the rest (install dir, env-config file, WSS proxy toggle).
+Run ``camera_viz.sh run CONFIG --help`` for the rest (install dir, env-config file, WSS proxy toggle).
 
 Runtime settings themselves are declared in the config rather than exported. The viewer ships
 defaults (pose wait off, runtime foveation on), and ``display.cloudxr`` overrides them per
@@ -376,7 +376,7 @@ runtime resolved, read the settings dump at the top of the newest
 Split mode — robot → workstation over RTP
 -----------------------------------------
 
-Split mode runs the capture side on the robot (``camera_streamer.py``) and ships RTP H.264 to
+Split mode runs the capture side on the robot (the ``camera_streamer`` module) and ships RTP H.264 to
 the viewer on the workstation (``source: rtp``).
 
 .. warning::
@@ -521,28 +521,29 @@ Televiz as the compositor at the end of the chain:
 
    camera_viz/
    ├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
-   ├── camera_viz.py        — receiver / viewer (drives a Televiz VizSession)
-   ├── camera_streamer.py   — robot-side RTP sender (per-camera supervisor)
-   ├── pipeline/            — source ABC + threaded runner
-   ├── placements/          — XR lock-mode strategies (world / head / lazy / gimbal)
-   ├── sources/             — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
-   ├── transports/          — RTP sender + receiver (native + GStreamer)
-   ├── codec/               — native NVENC / NVDEC pybind module
    ├── configs/             — one YAML per source kind
    ├── test_data/           — sample replay clip (Git LFS)
+   ├── python/isaaccapture_examples/camera_viz/
+   │   ├── camera_viz.py    — receiver / viewer (drives a Televiz VizSession)
+   │   ├── camera_streamer.py — robot-side RTP sender (per-camera supervisor)
+   │   ├── pipeline/        — source ABC + threaded runner
+   │   ├── placements/      — XR lock-mode strategies (world / head / lazy / gimbal)
+   │   ├── sources/         — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
+   │   ├── transports/      — RTP sender + receiver (native + GStreamer)
+   │   └── codec/           — native NVENC / NVDEC pybind module
    └── scripts/             — installer + systemd unit template
 
-- **Sources** (:code-dir:`sources/ <examples/camera_viz/sources>`) implement a common source ABC and
-  hand frames to a threaded runner in :code-dir:`pipeline/ <examples/camera_viz/pipeline>`. Each
+- **Sources** (:code-dir:`sources/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/sources>`) implement a common source ABC and
+  hand frames to a threaded runner in :code-dir:`pipeline/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/pipeline>`. Each
   source produces GPU frames where possible — e.g. the ZED source uses ``retrieve_image(MEM.GPU)`` so
   BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.
-- **The viewer** (:code-file:`camera_viz.py <examples/camera_viz/camera_viz.py>`) creates a
+- **The viewer** (:code-file:`camera_viz.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py>`) creates a
   ``VizSession`` and adds one ``QuadLayer`` per enabled camera, then submits each frame to its layer
   and calls ``render()`` once per frame. Stereo cameras submit both eyes.
-- **Transport** (:code-dir:`transports/ <examples/camera_viz/transports>`) carries the split mode:
+- **Transport** (:code-dir:`transports/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/transports>`) carries the split mode:
   an RTP H.264 sender on the robot and a receiver on the workstation, with a native NVENC/NVDEC codec
-  module (:code-dir:`codec/ <examples/camera_viz/codec>`) or a GStreamer fallback.
-- **Placement** (:code-dir:`placements/ <examples/camera_viz/placements>`) holds the XR lock-mode
+  module (:code-dir:`codec/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/codec>`) or a GStreamer fallback.
+- **Placement** (:code-dir:`placements/ <examples/camera_viz/python/isaaccapture_examples/camera_viz/placements>`) holds the XR lock-mode
   strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
   sets each frame.
 

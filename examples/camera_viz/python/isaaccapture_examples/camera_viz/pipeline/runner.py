@@ -23,7 +23,7 @@ from typing import Callable, Optional, Sequence
 
 import isaaccapture.viz as viz
 
-from dashboard import CameraRow, Dashboard, Snapshot
+from ..dashboard import CameraRow, Dashboard, Snapshot
 
 from .interface import FrameSource
 

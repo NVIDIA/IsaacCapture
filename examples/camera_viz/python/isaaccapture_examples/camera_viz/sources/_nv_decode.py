@@ -36,7 +36,7 @@ class NvH264Decoder:
         if self._decoder is not None:
             return
         try:
-            import codec
+            from .. import codec
         except ImportError as e:
             raise RuntimeError(
                 "NvH264Decoder requires the native codec. Run "

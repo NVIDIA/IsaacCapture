@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from pipeline import Frame, FrameSource, SourceSpec
+from ..pipeline import Frame, FrameSource, SourceSpec
 
 from ._helpers import notify, notify_verbose
 

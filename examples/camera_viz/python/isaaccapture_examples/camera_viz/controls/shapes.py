@@ -21,7 +21,7 @@ import math
 from dataclasses import replace
 from typing import List, Optional, Tuple
 
-from placements import yaw_quat
+from ..placements import yaw_quat
 
 
 def _clamp(value: float, limits: Tuple[float, float]) -> float:

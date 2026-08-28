@@ -39,7 +39,7 @@ from typing import Any, List, Optional, Sequence
 
 from . import shapes, stereo
 from .hud import split_message
-from placements import (
+from ..placements import (
     PlacementConfig,
     PlacementStrategy,
     build as build_placement,

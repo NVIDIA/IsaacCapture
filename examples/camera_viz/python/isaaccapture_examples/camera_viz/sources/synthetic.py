@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 
-from pipeline import Frame, FrameSource, SourceSpec
+from ..pipeline import Frame, FrameSource, SourceSpec
 
 
 class SyntheticSource(FrameSource):
