@@ -37,13 +37,13 @@ from isaaccapture.retargeting_engine.interface import (
 from isaaccapture.retargeting_engine.tensor_types import DLDataType, NDArrayType
 from isaaccapture.teleop_session_manager import PluginConfig
 
-from noitom_retargeting import (
+from .noitom_retargeting import (
     ArmIkTargets,
     NoitomG1Retargeter,
     NoitomRetargetingSettings,
     noitom_position_to_isaac,
 )
-from noitom_reference_draw import (
+from .noitom_reference_draw import (
     ReferenceSkeletonLengths,
     aligned_reference_skeleton_from_frame,
 )
@@ -168,7 +168,9 @@ def _noitom_settings_from_env() -> NoitomG1Settings:
 
 
 def _plugin_search_paths() -> list[Path]:
-    base = Path(__file__).resolve().parents[2]
+    # Six levels up is the repo root -- or the install prefix, which has the
+    # same shape under examples/<name>/python/isaaccapture_examples/<name>/.
+    base = Path(__file__).resolve().parents[5]
     candidates = [
         base / "plugins",
         base / "install" / "plugins",
