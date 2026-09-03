@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: avatar_hand_plugin
+description: >
+  Sharpa Avatar HA4 glove plugin for Isaac Teleop.
+  HUMAN FK → OpenXR hand_tracker on /hand/{left,right}.
+  RAW/ROBOT → JointStateOutput tensors (collection ids avatar_raw_* / avatar_robot_*).
+  Haptic → HapticCommandReaderTracker on collection id avatar_glove_haptic
+  (pair with HapticGloveDevice / PushTensorHapticDevice on the Teleop side).
+command: "./avatar_hand_plugin"
+version: "1.1.0"
+devices:
+  - path: "/hand/left"
+    type: "hand_tracker"
+    description: "Left Avatar glove — 26 OpenXR joints (HUMAN FK → OpenXR)"
+  - path: "/hand/right"
+    type: "hand_tracker"
+    description: "Right Avatar glove — 26 OpenXR joints (HUMAN FK → OpenXR)"
+  - path: "/glove/avatar_raw_left"
+    type: "joint_state"
+    description: "Left Avatar RAW joints (collection_id=avatar_raw_left)"
+  - path: "/glove/avatar_raw_right"
+    type: "joint_state"
+    description: "Right Avatar RAW joints (collection_id=avatar_raw_right)"
+  - path: "/glove/avatar_robot_left"
+    type: "joint_state"
+    description: "Left Avatar ROBOT joints (collection_id=avatar_robot_left)"
+  - path: "/glove/avatar_robot_right"
+    type: "joint_state"
+    description: "Right Avatar ROBOT joints (collection_id=avatar_robot_right)"
