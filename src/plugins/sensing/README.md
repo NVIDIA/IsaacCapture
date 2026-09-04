@@ -8,11 +8,17 @@ SPDX-License-Identifier: Apache-2.0
 SENSING connects GMSL cameras to Jetson through the SG8A carrier. This
 integration uses NVIDIA SIPL for camera access and provides the tooling to
 provision and validate the rig on the host or in a container.
+The C++ plugin captures frames through SIPL and writes H.264 video or shares
+RGBA frames with another process through CUDA IPC.
 
 Start with the [SENSING user guide](https://nvidia.github.io/IsaacCapture/main/device/camera/sensing.html)
 for supported hardware, installation, container usage, and troubleshooting.
 That guide owns the operating instructions; this README maps the source tree.
 
+- [`app/`](app/) and [`core/`](core/): plugin entry point, SIPL capture,
+  encoding, and output sinks.
+- [`cuda_ipc/`](cuda_ipc/) and [`tools/`](tools/): frame transport and a
+  synthetic producer for development without a camera.
 - [`scripts/`](scripts/): host setup, validation, diagnostics, and the Bash
   compatibility Docker launcher. Each entry point exposes `--help`.
 - [`docker/`](docker/): example image, image-side group configuration, and
