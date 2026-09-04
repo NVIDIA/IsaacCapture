@@ -365,7 +365,8 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        ``nvargus-daemon``. Build setup with ``--with-argus`` first.
    * - ``cuda_ipc``
      - RGBA8 frames mapped straight out of another process's CUDA memory — no encode, no host
-       copy. See :ref:`camera-streaming-cuda-ipc`.
+       copy. Pairs with the :doc:`sensing plugin </device/camera/sensing>`; see
+       :ref:`camera-streaming-cuda-ipc`.
    * - ``video``
      - Recorded camera data — video-file replay (anything OpenCV's FFmpeg backend reads). Loops
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
@@ -398,9 +399,17 @@ restarting under it. ``width`` and ``height`` are checked during the handshake, 
 refused rather than rendered at the wrong stride. ``stereo: true`` is rejected, because each
 producer serves one sensor — declare one entry per socket.
 
-Any process can be the producer: the wire format is a 24-byte message and a CUDA VMM handle over
-``SCM_RIGHTS``. An animated test pattern ships with it, so the consumer can be developed with no
-camera and no capture SDK:
+The producer is the sensing plugin. Geometry comes from its platform config, not from flags, and
+``sensor=`` is the **SIPL pipeline index** — take it from ``--list-sensors``, not from the vendor
+JSON, where the same cameras are numbered differently:
+
+.. code-block:: bash
+
+   camera_plugin_sensing --add-stream=sensor=0,ipc=/tmp/s0.sock \
+                         --add-stream=sensor=1,ipc=/tmp/s1.sock
+
+To develop against this without a camera, the plugin ships an animated test pattern that speaks
+the same protocol:
 
 .. code-block:: bash
 
