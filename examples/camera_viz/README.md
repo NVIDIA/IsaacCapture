@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 | `oakd`      | OAK-D RGB / LEFT / RIGHT; mono or `stereo: true` (GRAY8 over USB, GPU-broadcast to RGBA; `stereo_rgb` for color). Needs the Luxonis udev rule — see below |
 | `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy GPU) |
 | `video`     | Video-file replay (anything OpenCV/FFmpeg reads) — preview / testing without a camera. Loops by default; `stereo: true` splits side-by-side files into eyes (viewer only) |
-| `cuda_ipc`  | RGBA8 frames mapped straight out of another process's CUDA memory — no encode, no host copy. See [below](#cuda_ipc-frames-from-another-process) |
+| `cuda_ipc`  | RGBA8 frames mapped straight out of another process's CUDA memory — no encode, no host copy. Pairs with the [sensing plugin](../../docs/source/device/camera/sensing.rst); see [below](#cuda_ipc-frames-from-another-process) |
 
 In XR mode the viewer **attaches to the CloudXR runtime + WSS proxy**, starting a background service if none is serving — nothing to start separately (`--accept-eula` for the first run; CloudXR.js is hosted at `https://<host>:48322/client/` by default when this run starts the service — `--no-host-client` only applies then; stop and restart the service to change hosting; `camera_viz.py --help` for the rest). Output: XR headset (default) or desktop window (`run CONFIG --mode window`); one surface per camera — a flat plane (default), a cylinder arc, or an equirect sphere (`placements.<name>.shape`, XR only for the curved shapes). Stereo cameras render true SBS in XR; window mode shows the left eye. XR placements: `world` / `head` / `lazy` / `gimbal`.
 
@@ -184,9 +184,18 @@ survives the producer restarting under it. `width`/`height` are checked during
 the handshake and a mismatch is refused rather than rendered at the wrong
 stride.
 
-Any process can be the producer — the wire format is a 24-byte message and a
-CUDA VMM handle over `SCM_RIGHTS`. An animated test pattern ships with it, so
-the consumer can be developed and tested with no camera and no capture SDK:
+Producer is the sensing plugin. Geometry comes from its platform config, not
+from flags, and `sensor=` is the **SIPL pipeline index** — take it from
+`--list-sensors`, not from the vendor JSON, where the same cameras are numbered
+differently:
+
+```bash
+camera_plugin_sensing --add-stream=sensor=0,ipc=/tmp/s0.sock \
+                      --add-stream=sensor=1,ipc=/tmp/s1.sock
+```
+
+To develop against this without a camera, the plugin ships an animated test
+pattern that speaks the same protocol:
 
 ```bash
 cmake --build build --target sensing_ipc_testsrc
