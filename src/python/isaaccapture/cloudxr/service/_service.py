@@ -199,6 +199,27 @@ class CloudXRService:
         # LD_PRELOAD the bundled libraries so every OpenSSL symbol in the worker
         # resolves to the version libNvStreamServer.so was built against.
         worker_env = os.environ.copy()
+
+        # Opt in to CloudXR's WebXR full-body skeleton for the runtime we launch.
+        #
+        # CloudXR ignores a client's offer of that skeleton unless this is set,
+        # because the support is not conformant: the joints are relayed from the
+        # connected client rather than produced by a conformant implementation.
+        # isaacteleop wants it -- the full-body tracker (body.quest-cloudxr) is
+        # built on it.
+        #
+        # It has to be set here rather than next to xrCreateInstance. The check
+        # lives in the CloudXR server, which is this subprocess, and its
+        # environment is the copy taken on the line above -- a setenv() in the
+        # application process at session-creation time happens later and in the
+        # wrong process, so it would never be seen.
+        #
+        # Scoped to the runtime isaacteleop starts, rather than written to the
+        # shared ~/.cloudxr/run/cloudxr.env, which every CloudXR application
+        # sources: opting all of them in is not ours to decide. setdefault, so
+        # an operator who exports it explicitly -- including to "0" -- wins.
+        worker_env.setdefault("NV_CXR_ENABLE_NON_CONFORMANT_META_BODY_TRACKING", "1")
+
         runtime_mod = resolve_cloudxr_runtime_module()
         sdk_dir = get_sdk_path()
         logger.info("CloudXR Runtime: module=%s sdk_path=%s", runtime_mod, sdk_dir)

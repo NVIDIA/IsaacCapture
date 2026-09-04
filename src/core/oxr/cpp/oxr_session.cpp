@@ -54,17 +54,21 @@ void ensure_env_set(const char* env_name, const std::string& default_value)
     throw std::runtime_error("Environment variable " + std::string(env_name) + " is not set");
 }
 
-// Opt in to CloudXR's XR_META_body_tracking_full_body.
+// Opt in to CloudXR's WebXR full-body skeleton.
 //
-// CloudXR withholds that extension unless this is set, because its support is not
-// conformant: the joints are relayed from the connected client rather than produced
-// by a conformant implementation. isaacteleop wants it -- the Meta full-body tracker
-// (body.quest-cloudxr) is built on it.
+// CloudXR ignores a client's offer of that skeleton unless this is set, because its
+// support is not conformant: the joints are relayed from the connected client rather
+// than produced by a conformant implementation. isaacteleop wants it -- the full-body
+// tracker (body.quest-cloudxr) is built on it.
 //
-// Set here, immediately before xrCreateInstance, rather than in the shared
-// ~/.cloudxr/run/cloudxr.env: that file is sourced by every CloudXR application, and
-// opting all of them in is not ours to decide. This scopes it to processes that
-// create an isaacteleop OpenXR session.
+// The check itself lives in the CloudXR server, which runs in the runtime process,
+// not this one. The authoritative place this gets set is therefore the runtime's
+// worker environment in cloudxr/service/_service.py, which is built before that
+// process is started. This call only covers the application process, for the case
+// where it was inherited from here rather than set by the service.
+//
+// Not written to the shared ~/.cloudxr/run/cloudxr.env, which every CloudXR
+// application sources: opting all of them in is not ours to decide.
 //
 // overwrite=0, so an operator who exports it explicitly -- including to "0" -- wins.
 void opt_in_to_meta_body_tracking()
