@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 | `oakd`      | OAK-D RGB / LEFT / RIGHT; mono or `stereo: true` (GRAY8 over USB, GPU-broadcast to RGBA; `stereo_rgb` for color). Needs the Luxonis udev rule — see below |
 | `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy GPU) |
 | `video`     | Video-file replay (anything OpenCV/FFmpeg reads) — preview / testing without a camera. Loops by default; `stereo: true` splits side-by-side files into eyes (viewer only) |
+| `cuda_ipc`  | RGBA8 frames mapped straight out of another process's CUDA memory — no encode, no host copy. See [below](#cuda_ipc-frames-from-another-process) |
 
 In XR mode the viewer **attaches to the CloudXR runtime + WSS proxy**, starting a background service if none is serving — nothing to start separately (`--accept-eula` for the first run; CloudXR.js is hosted at `https://<host>:48322/client/` by default when this run starts the service — `--no-host-client` only applies then; stop and restart the service to change hosting; `camera_viz.py --help` for the rest). Output: XR headset (default) or desktop window (`run CONFIG --mode window`); one surface per camera — a flat plane (default), a cylinder arc, or an equirect sphere (`placements.<name>.shape`, XR only for the curved shapes). Stereo cameras render true SBS in XR; window mode shows the left eye. XR placements: `world` / `head` / `lazy` / `gimbal`.
 
@@ -160,6 +161,41 @@ display:                      # camera_viz only
 ```
 
 Multiple cameras → multiple `cameras:` entries; each gets its own `rtp.port` (plus `port_right` if stereo) and renders as its own plane.
+
+## `cuda_ipc` — frames from another process
+
+A producer on the same machine publishes captured frames as CUDA device
+memory; camera_viz maps that memory once and renders from it. Nothing is
+encoded and nothing crosses host RAM, so the cost per frame is one 24-byte
+socket message. Measured on an AGX Orin at 1920×1080: **~1 ms** from producer
+timestamp to consumer receipt, sustained at 60 fps.
+
+```yaml
+cameras:
+  - name: left
+    type: cuda_ipc
+    socket: /tmp/s0.sock   # must match the producer's ipc= path
+    width: 2560            # must match what the producer serves
+    height: 1984
+```
+
+Start either side first — the source retries until the socket appears, and
+survives the producer restarting under it. `width`/`height` are checked during
+the handshake and a mismatch is refused rather than rendered at the wrong
+stride.
+
+Any process can be the producer — the wire format is a 24-byte message and a
+CUDA VMM handle over `SCM_RIGHTS`. An animated test pattern ships with it, so
+the consumer can be developed and tested with no camera and no capture SDK:
+
+```bash
+cmake --build build --target sensing_ipc_testsrc
+./build/src/plugins/sensing/tools/sensing_ipc_testsrc --socket=/tmp/s0.sock \
+    --width=2560 --height=1984
+```
+
+**One consumer at a time.** The producer serves whoever connected most
+recently, so a second camera_viz silently takes the feed from the first.
 
 ## Known issues
 
