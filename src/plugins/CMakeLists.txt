@@ -43,3 +43,7 @@ endif()
 if(BUILD_PLUGIN_SHARPA_AVATAR)
     add_subdirectory(sharpa_avatar)
 endif()
+# Gated: Jetson only -- the Tegra CUDA and NVENC entry points are L4T-only.
+if(BUILD_PLUGIN_SENSING)
+    add_subdirectory(sensing)
+endif()

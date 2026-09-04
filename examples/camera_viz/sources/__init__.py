@@ -14,6 +14,7 @@ from typing import List
 from pipeline import FrameSource
 
 from ._helpers import PairedFrameSource, set_notify_sink, set_verbose
+from .cuda_ipc import CudaIpcSource
 from .oakd import OakdSource
 from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
@@ -22,6 +23,7 @@ from .video_file import VideoFileSource
 from .zed import ZedSource
 
 __all__ = [
+    "CudaIpcSource",
     "OakdSource",
     "PairedFrameSource",
     "RtpH264Source",
@@ -95,6 +97,22 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
                 fourcc=spec.get("fourcc"),
             )
         ]
+    if kind == "cuda_ipc":
+        if stereo:
+            # Each publisher serves one sensor, so a stereo rig is two
+            # cameras: entries here, paired by the caller.
+            raise ValueError(
+                f"build_local_camera: cuda_ipc camera {name!r} cannot be stereo — "
+                "declare one entry per socket."
+            )
+        return [
+            CudaIpcSource(
+                name=name,
+                socket_path=spec["socket"],
+                width=int(spec["width"]),
+                height=int(spec["height"]),
+            )
+        ]
     if kind == "oakd":
         # ``stereo: true`` shorthand for ``mode: stereo``; explicit mode wins.
         mode = spec.get("mode", "stereo" if stereo else "mono")
@@ -158,5 +176,5 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
         return eyes
     raise ValueError(
         f"build_local_camera: unknown camera type {kind!r} "
-        "(known: synthetic, v4l2, oakd, zed, video)"
+        "(known: synthetic, v4l2, cuda_ipc, oakd, zed, video)"
     )

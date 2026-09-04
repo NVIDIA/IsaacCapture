@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# CUDA IPC source — frames arrive as GPU memory mapped straight out of the
+# producer process. No encode, no decode, no host copy.
+#
+# Producer is the sensing plugin:
+#   camera_plugin_sensing --add-stream=sensor=0,ipc=/tmp/s0.sock \
+#                         --add-stream=sensor=1,ipc=/tmp/s1.sock
+#
+# Or, with no camera attached:
+#   sensing_ipc_testsrc --socket=/tmp/s0.sock --width=2560 --height=1984
+#
+# Then, in a second terminal:
+#   export DISPLAY=:1     # :99 is Xvfb; Tegra EGL cannot drive it
+#   ./camera_viz.sh run configs/cuda_ipc.yaml --mode window   # desktop window
+#   ./camera_viz.sh run configs/cuda_ipc.yaml                 # XR headset
+#
+# ``width``/``height`` must match what the producer serves; the handshake
+# rejects a mismatch rather than rendering garbage. Order does not matter —
+# the source retries until the socket appears, and survives it restarting.
+
+source: local
+
+cameras:
+  - name: left
+    enabled: true
+    type: cuda_ipc
+    socket: /tmp/s0.sock
+    width: 2560
+    height: 1984
+  - name: right
+    enabled: true
+    type: cuda_ipc
+    socket: /tmp/s1.sock
+    width: 2560
+    height: 1984
+
+display:
+  mode: xr                      # xr | window (xr is the default)
+  window:
+    width: 1920
+    height: 1080
+  xr:
+    near_z: 0.05
+    far_z: 100.0
+  clear_color: [0.0, 0.0, 0.0, 0.0]
+  placements:
+    left:
+      lock_mode: lazy
+      distance: 1.0
+      # Orin + CloudXR experimental runtime: the default OpenXR compositor
+      # draws the plane but leaves its contents black. Ignored in window mode.
+      compositor: televiz
+    right:
+      lock_mode: lazy
+      distance: 1.0
+      compositor: televiz
