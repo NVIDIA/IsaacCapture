@@ -363,6 +363,9 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
    * - ``argus``
      - Jetson libargus cameras through CUDA EGLStream, including GMSL sensors exposed by
        ``nvargus-daemon``. Build setup with ``--with-argus`` first.
+   * - ``cuda_ipc``
+     - RGBA8 frames mapped straight out of another process's CUDA memory — no encode, no host
+       copy. See :ref:`camera-streaming-cuda-ipc`.
    * - ``video``
      - Recorded camera data — video-file replay (anything OpenCV's FFmpeg backend reads). Loops
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
@@ -370,6 +373,45 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
    * - ``synthetic``
      - Debugging tool — GPU-generated test pattern, no camera or file required. ``stereo: true`` adds
        a ``disparity_px`` offset between the eyes.
+
+.. _camera-streaming-cuda-ipc:
+
+Frames from another process (``cuda_ipc``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A producer on the same machine publishes captured frames as CUDA device memory; camera_viz maps
+that memory once and renders from it. Nothing is encoded and nothing crosses host RAM, so the
+cost per frame is one 24-byte socket message. Measured on an AGX Orin at 1920×1080, the delay
+from producer timestamp to consumer receipt is about 1 ms, sustained at 60 fps.
+
+.. code-block:: yaml
+
+   cameras:
+     - name: left
+       type: cuda_ipc
+       socket: /tmp/s0.sock   # must match the producer's ipc= path
+       width: 2560            # must match what the producer serves
+       height: 1984
+
+Start either side first: the source retries until the socket appears and survives the producer
+restarting under it. ``width`` and ``height`` are checked during the handshake, and a mismatch is
+refused rather than rendered at the wrong stride. ``stereo: true`` is rejected, because each
+producer serves one sensor — declare one entry per socket.
+
+Any process can be the producer: the wire format is a 24-byte message and a CUDA VMM handle over
+``SCM_RIGHTS``. An animated test pattern ships with it, so the consumer can be developed with no
+camera and no capture SDK:
+
+.. code-block:: bash
+
+   cmake --build build --target sensing_ipc_testsrc
+   ./build/src/plugins/sensing/tools/sensing_ipc_testsrc --socket=/tmp/s0.sock \
+       --width=2560 --height=1984
+
+.. note::
+
+   One consumer at a time. The producer serves whoever connected most recently, so a second
+   camera_viz silently takes the feed from the first.
 
 .. _camera-streaming-live-camera:
 
