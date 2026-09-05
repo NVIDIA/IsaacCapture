@@ -64,7 +64,7 @@ std::unique_ptr<FullBodyMcapChannels> LiveFullBodyTrackerMetaImpl::create_mcap_c
                                                                                         std::string_view base_name)
 {
     return std::make_unique<FullBodyMcapChannels>(
-        writer, base_name, FullBodyRecordingTraits::schema_name,
+        writer, base_name,
         std::vector<std::string>(
             FullBodyRecordingTraits::recording_channels.begin(), FullBodyRecordingTraits::recording_channels.end()));
 }
