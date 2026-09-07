@@ -62,7 +62,7 @@ uv pip install viser numpy
 Then launch the sample from the repository root:
 
 ```bash
-.venv/bin/python examples/sharpa_avatar/python/sharpa_avatar_sample.py
+.venv/bin/python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
 ```
 
 The command starts CloudXR and the glove plugin, serves a viser view at
@@ -85,7 +85,7 @@ Useful options:
 Run the installed copy with:
 
 ```bash
-.venv/bin/python install/examples/sharpa_avatar/python/sharpa_avatar_sample.py
+.venv/bin/python install/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
 ```
 
 ## Published data

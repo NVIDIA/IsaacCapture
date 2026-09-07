@@ -18,3 +18,6 @@ SPDX-License-Identifier: Apache-2.0
   the packager default. `AVATAR_SDK_ROOT` may be an extracted tree.
 - There is no Wuji-style `curl` in this plugin. Do not add one without a real
   release URL, and keep the plugin under `src/plugins`.
+- **Sample lives in `tools/`, not `examples/`.** Path is
+  `src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py` (ticket #9). Do not
+  put it back under `examples/sharpa_avatar`.
