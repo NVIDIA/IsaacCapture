@@ -23,3 +23,11 @@ install(TARGETS avatar_hand_tracker_printer
   RUNTIME DESTINATION plugins/sharpa_avatar
   COMPONENT avatar
 )
+
+install(
+  FILES sharpa_avatar_sample.py
+  DESTINATION plugins/sharpa_avatar/tools
+  COMPONENT avatar
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)

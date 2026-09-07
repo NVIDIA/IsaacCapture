@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Sharpa Avatar sample: public TeleopSession APIs + viser hand view + pinch haptic.
@@ -7,7 +8,7 @@ Does not import plugin C++ classes or the Sharpa desktop application.
 
 Usage (from the Isaac Teleop root, after ``src/plugins/sharpa_avatar/install.sh``)::
 
-    python examples/sharpa_avatar/python/sharpa_avatar_sample.py
+    python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
 """
 
 from __future__ import annotations
@@ -125,7 +126,7 @@ def _import_viser():
             "viser is required for the hand-shape view "
             f"({exc}). This Isaac Teleop venv has no pip; install with:\n"
             "  uv pip install viser\n"
-            "  .venv/bin/python examples/sharpa_avatar/python/sharpa_avatar_sample.py\n"
+            "  .venv/bin/python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py\n"
             "Or pass --no-viz for terminal + haptic only."
         )
     return viser
@@ -139,7 +140,7 @@ def plugin_search_paths() -> list[Path]:
     from the source tree and fail immediately.
     """
     here = Path(__file__).resolve()
-    roots = [Path.cwd(), *here.parents[:4]]
+    roots = [Path.cwd(), *here.parents]
     candidates: list[Path] = []
     for root in roots:
         candidates.extend(
