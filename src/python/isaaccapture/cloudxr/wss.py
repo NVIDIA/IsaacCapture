@@ -412,12 +412,20 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
             return Response(
                 200,
                 "OK",
-                # Preserve the existing route and cache semantics; only frame
-                # the static response body explicitly for headset browsers.
+                # no-store, because these three filenames never change while their
+                # contents do. Served without it, a headset browser is free to keep
+                # a bundle from an earlier build and reuse it against a newer
+                # server. That skew does not announce itself: the session still
+                # connects, controllers still register, and only the parts of the
+                # protocol that moved between the two builds quietly stop working.
+                # Diagnosing one such case cost an afternoon -- a stale bundle kept
+                # advertising body tracking on a field number the server had since
+                # renumbered, so the server simply saw no body tracking at all.
                 Headers(
                     {
                         "Content-Type": content_type or "application/octet-stream",
                         "Content-Length": str(len(body)),
+                        "Cache-Control": "no-store, must-revalidate",
                         **CORS_HEADERS,
                     }
                 ),
