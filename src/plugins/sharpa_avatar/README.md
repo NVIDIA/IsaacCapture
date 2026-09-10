@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Sharpa Avatar glove
 
-This plugin connects Sharpa Avatar HA4 gloves to Isaac Teleop. It publishes
+This plugin connects Sharpa Avatar gloves to Isaac Teleop. It publishes
 hand poses and glove joint data through the standard Isaac Teleop interfaces,
 and forwards haptic commands to the glove motors.
 
@@ -46,10 +46,12 @@ To use an SDK package extracted elsewhere, point the installer at its root:
 AVATAR_SDK_ROOT=/path/to/avatar-sdk ./src/plugins/sharpa_avatar/install.sh
 ```
 
-The SDK root must contain `include/avatar_sdk/AvatarSDK.h`, `lib/`, and
-`share/sdk_config.json`. The installer copies the required files into the
-gitignored plugin vendor directory, then builds the plugin and places its
-executable, configuration, and runtime dependencies under `install/`.
+The SDK package must provide `include/avatar_sdk/AvatarSDK.h`, `lib/`,
+`share/sdk_config.json`, `share/hand_fk`, and `share/wave-sdk`. The source-tree
+layout `src/hand_fk/data` is also accepted for the hand FK data. The installer
+copies these files into the gitignored plugin vendor directory, then builds the
+plugin and places its executable, configuration, and runtime dependencies under
+`install/`.
 
 ## Run the sample
 

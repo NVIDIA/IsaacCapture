@@ -30,6 +30,26 @@ if [[ ! -f "${SRC_ROOT}/lib/libavatar_sdk.so" && ! -f "${SRC_ROOT}/lib/libavatar
   echo "ERROR: libavatar_sdk[_wrapper].so not found under '${SRC_ROOT}/lib'." >&2
   exit 1
 fi
+if [[ -f "${SRC_ROOT}/share/sdk_config.json" ]]; then
+  SDK_CONFIG_SRC="${SRC_ROOT}/share/sdk_config.json"
+elif [[ -f "${SRC_ROOT}/../config/sdk_config.json" ]]; then
+  SDK_CONFIG_SRC="${SRC_ROOT}/../config/sdk_config.json"
+else
+  echo "ERROR: sdk_config.json not found under ${SRC_ROOT}/share." >&2
+  exit 1
+fi
+if [[ -d "${SRC_ROOT}/share/hand_fk" ]]; then
+  HAND_FK_SRC="${SRC_ROOT}/share/hand_fk"
+elif [[ -d "${SRC_ROOT}/../src/hand_fk/data" ]]; then
+  HAND_FK_SRC="${SRC_ROOT}/../src/hand_fk/data"
+else
+  echo "ERROR: hand_fk data not found; cannot stage the ROBOT dataset runtime." >&2
+  exit 1
+fi
+if [[ ! -d "${SRC_ROOT}/share/wave-sdk" ]]; then
+  echo "ERROR: wave-sdk not found under ${SRC_ROOT}/share; cannot stage USB transport support." >&2
+  exit 1
+fi
 
 # Prefer mode/timestamps; skip ownership (fails under some containers / sandboxes).
 if cp --help 2>&1 | grep -q -- '--no-preserve'; then
@@ -69,28 +89,12 @@ if [[ "${copied}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ -f "${SRC_ROOT}/share/sdk_config.json" ]]; then
-  cp_sdk "${SRC_ROOT}/share/sdk_config.json" "${DEST}/share/"
-elif [[ -f "${SRC_ROOT}/../config/sdk_config.json" ]]; then
-  cp_sdk "${SRC_ROOT}/../config/sdk_config.json" "${DEST}/share/"
-else
-  echo "ERROR: sdk_config.json not found under ${SRC_ROOT}/share." >&2
-  exit 1
-fi
-
-if [[ -d "${SRC_ROOT}/share/hand_fk" ]]; then
-  cp_sdk "${SRC_ROOT}/share/hand_fk" "${DEST}/share/"
-elif [[ -d "${SRC_ROOT}/../src/hand_fk/data" ]]; then
-  echo "WARNING: share/hand_fk missing; ROBOT retarget may fail without hand_fk data." >&2
-else
-  echo "WARNING: hand_fk data not found; ROBOT dataset may fail at runtime." >&2
-fi
+cp_sdk "${SDK_CONFIG_SRC}" "${DEST}/share/sdk_config.json"
+cp_sdk "${HAND_FK_SRC}" "${DEST}/share/hand_fk"
+cp_sdk "${SRC_ROOT}/share/wave-sdk" "${DEST}/share/"
 
 if [[ -f "${SRC_ROOT}/share/Version" ]]; then
   cp_sdk "${SRC_ROOT}/share/Version" "${DEST}/share/"
-fi
-if [[ -d "${SRC_ROOT}/share/wave-sdk" ]]; then
-  cp_sdk "${SRC_ROOT}/share/wave-sdk" "${DEST}/share/"
 fi
 
 # Relative roots resolve next to the bundled sdk_config.json (plugin dir).

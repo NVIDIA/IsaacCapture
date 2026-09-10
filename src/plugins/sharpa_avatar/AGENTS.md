@@ -21,3 +21,5 @@ SPDX-License-Identifier: Apache-2.0
 - **Sample lives in `tools/`, not `examples/`.** Path is
   `src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py` (ticket #9). Do not
   put it back under `examples/sharpa_avatar`.
+- Generate external delivery manifests from the packaged file list. Exclude
+  internal `AGENTS.md` files from both the package and its manifest.
