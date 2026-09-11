@@ -87,8 +87,11 @@ These retargeters do not consume face buttons, thumbsticks, thumbstick clicks,
 or menu buttons.  A task or hosting XR application may bind those inputs
 separately.
 
-The squeeze threshold defaults to ``0.5``.  The trigger value captured at
-squeeze engagement is neutral.  The first jaw movement requires at least
+The squeeze threshold defaults to ``0.5`` and must be finite and in ``[0, 1)``.
+Both retargeters engage only when squeeze strictly exceeds the threshold.
+Squeeze at or below the threshold holds the last target, including zero squeeze
+with a zero threshold.  The trigger value captured at squeeze engagement is
+neutral.  The first jaw movement requires at least
 ``0.05`` travel from that value.  Positive travel past the threshold starts
 closing immediately.  Negative travel must first be observed at least ``0.05``
 below its reference, then remain there for ``0.1`` seconds before opening
@@ -118,6 +121,21 @@ same one.  This can be a PSM base frame for a single arm or a shared world frame
 for a bimanual setup.  The home pose must lie within the workspace bounds so
 the first clutch engagement remains continuous with the reset pose instead of
 clipping to another target.
+
+Translation and rotation follow the shared reference axes by default, regardless
+of the home orientation or the controller orientation at engagement.  The
+rotation delta is ``q_now * inverse(q_origin)`` and acts on the left of the tool
+orientation captured at engagement.  Re-clutching captures fresh controller
+and tool references without changing the held target.
+
+``orientation_offset`` optionally remaps the rotation axes by conjugating this
+delta: ``offset * delta * inverse(offset)``.  It leaves translation unchanged
+and is therefore not a transform between tracking and robot reference frames.
+Express the controller input in the chosen shared reference frame before
+passing it to the retargeter.
+
+Home rotation matrices allow an absolute orthonormality error of ``1e-4`` for
+rounded configuration values and must have a positive determinant.
 
 For a bimanual setup, express both controller streams and home poses in one
 world frame.  Convert each target to that PSM's base frame immediately before

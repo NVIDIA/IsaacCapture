@@ -23,8 +23,9 @@ DLS controller targeting its PSM tool-tip link.
 
 Frame contract
 --------------
-The controller stream, home pose, and workspace must use one shared reference
-frame.  For one PSM a caller may choose its base frame.  A bimanual integration
+The controller stream, home pose and workspace must use one shared reference
+frame.  Translation and uncalibrated rotation follow that frame's axes.  For
+one PSM a caller may choose its base frame.  A bimanual integration
 can instead keep both streams in a shared world frame, then transform each
 target into that arm's base frame immediately before DLS IK.  This keeps one XR
 stream valid for two independently placed PSM bases.
@@ -74,9 +75,10 @@ class DVRKPSMClutchConfig:
     ``home_reference_T_ee`` and all workspace coordinates are expressed in one
     shared command reference frame.  The owning simulator must reset the PSM
     to the same physical home pose before the first engagement.  The
-    ``orientation_offset`` is a scalar-last calibration rotation conjugated
-    around the controller's relative rotation; this preserves the configured
-    tool orientation on the squeeze-latching frame.
+    ``orientation_offset`` is a scalar-last rotation that remaps the reference-
+    frame rotation delta by conjugation.  It leaves translation unchanged and
+    preserves the held tool orientation at engagement.  Squeeze must exceed
+    the finite ``clutch_threshold`` in ``[0, 1)`` to engage.
     """
 
     home_reference_T_ee: np.ndarray
@@ -191,7 +193,10 @@ class DVRKPSMClutchRetargeter(BaseRetargeter):
 
 @dataclass(frozen=True)
 class DVRKPSMGripperConfig:
-    """Configuration for one intent-latched pair of native PSM jaws."""
+    """Configuration for one intent-latched pair of native PSM jaws.
+
+    Squeeze must exceed the finite ``clutch_threshold`` in ``[0, 1)`` to engage.
+    """
 
     input_device: str = ControllersSource.RIGHT
     jaw_open: tuple[float, float] = _DEFAULT_JAW_OPEN

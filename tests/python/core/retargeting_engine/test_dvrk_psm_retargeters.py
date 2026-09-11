@@ -8,6 +8,7 @@ import math
 import numpy as np
 import pytest
 import isaacteleop.retargeters as retargeters
+from scipy.spatial.transform import Rotation
 
 from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
 from isaacteleop.retargeting_engine.interface import (
@@ -40,6 +41,7 @@ from isaacteleop.retargeters.DVRK.control import (
     normalise_quaternion_xyzw,
     quat_mul_xyzw,
     rebased_position,
+    rotation_matrix_to_quat_xyzw,
 )
 
 _IDENTITY_QUAT = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
@@ -47,6 +49,21 @@ _JAW_OPEN = np.array([-0.50, 0.50], dtype=np.float64)
 _JAW_CLOSED = np.array([-0.09, 0.09], dtype=np.float64)
 _POSE_OUTPUT = DVRKPSMClutchRetargeter.OUTPUT_POSE
 _JAW_OUTPUT = DVRKPSMGripperRetargeter.OUTPUT_JAW_TARGETS
+_ROUNDED_HOME_ROTATION = np.array(
+    (
+        (0.90673, -0.27703, 0.31794),
+        (0.37771, 0.86881, -0.32018),
+        (-0.18754, 0.41041, 0.89241),
+    )
+)
+_INVALID_HOME_ROTATIONS = (
+    pytest.param(np.diag((1.001, 1.0, 1.0)), id="scale"),
+    pytest.param(
+        np.array(((1.0, 0.001, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+        id="shear",
+    ),
+    pytest.param(np.diag((-1.0, 1.0, 1.0)), id="reflection"),
+)
 
 
 def test_public_package_surface_contains_only_supported_dvrk_types() -> None:
@@ -152,20 +169,34 @@ def _quat_xyzw_x(angle: float) -> np.ndarray:
     return np.array((math.sin(angle / 2.0), 0.0, 0.0, math.cos(angle / 2.0)))
 
 
-def _rotation_matrix_z(angle: float) -> np.ndarray:
-    """Build a 3-D Z-axis rotation matrix for a configured tool home."""
-    return np.array(
-        (
-            (math.cos(angle), -math.sin(angle), 0.0),
-            (math.sin(angle), math.cos(angle), 0.0),
-            (0.0, 0.0, 1.0),
-        )
-    )
-
-
 def _read_vector(outputs, key: str) -> np.ndarray:
     """Read an emitted DLPack vector into a float64 array for comparisons."""
     return np.asarray(np.from_dlpack(outputs[key][0]), dtype=np.float64)
+
+
+@pytest.mark.parametrize("threshold", (-0.01, 1.0, math.nan, math.inf, -math.inf))
+@pytest.mark.parametrize(
+    ("config_type", "consumer_type"),
+    (
+        (DVRKPSMCartesianClutchConfig, DVRKPSMCartesianClutchStateMachine),
+        (DVRKPSMJawIntentConfig, DVRKPSMJawIntentStateMachine),
+        (DVRKPSMClutchConfig, DVRKPSMClutchRetargeter),
+        (DVRKPSMGripperConfig, DVRKPSMGripperRetargeter),
+    ),
+)
+def test_clutch_threshold_must_be_finite_and_in_half_open_unit_interval(
+    threshold, config_type, consumer_type
+):
+    config_kwargs = {"clutch_threshold": threshold}
+    if config_type is DVRKPSMClutchConfig:
+        config_kwargs["home_reference_T_ee"] = _make_home_transform((0.02, 0.0, 0.18))
+    consumer_kwargs = (
+        {"name": "test"}
+        if consumer_type in (DVRKPSMClutchRetargeter, DVRKPSMGripperRetargeter)
+        else {}
+    )
+    with pytest.raises(ValueError, match="clutch_threshold"):
+        consumer_type(config_type(**config_kwargs), **consumer_kwargs)
 
 
 class TestDVRKPSMGripperMath:
@@ -208,6 +239,37 @@ class TestDVRKPSMGripperRetargeter:
 
         closed = self._compute(retargeter, time_s=0.02, trigger=1.0, squeeze=1.0)
         np.testing.assert_allclose(closed, _JAW_CLOSED, atol=1e-6)
+
+    @pytest.mark.parametrize("threshold", (0.0, 0.5))
+    def test_squeeze_threshold_holds_and_reengages_without_a_jaw_jump(self, threshold):
+        retargeter = DVRKPSMGripperRetargeter(
+            DVRKPSMGripperConfig(clutch_threshold=threshold), name="jaws"
+        )
+        initial = self._compute(retargeter, time_s=0.0, trigger=0.0, squeeze=threshold)
+        np.testing.assert_array_equal(
+            self._compute(retargeter, time_s=0.02, trigger=1.0, squeeze=threshold),
+            initial,
+        )
+        engaged_squeeze = threshold + 1e-6
+        np.testing.assert_array_equal(
+            self._compute(
+                retargeter, time_s=0.04, trigger=0.2, squeeze=engaged_squeeze
+            ),
+            initial,
+        )
+        held = self._compute(
+            retargeter, time_s=0.06, trigger=0.7, squeeze=engaged_squeeze
+        )
+        assert not np.array_equal(held, initial)
+        for time_s, squeeze in (
+            (0.08, threshold),
+            (0.10, 0.0),
+            (0.12, engaged_squeeze),
+        ):
+            np.testing.assert_array_equal(
+                self._compute(retargeter, time_s=time_s, trigger=0.0, squeeze=squeeze),
+                held,
+            )
 
     def test_configured_initial_hold_can_use_a_validated_tighter_endpoint(self):
         """A task can start at its physical grasp cap without an initial trigger jump."""
@@ -384,6 +446,52 @@ class TestDVRKPSMJawIntentStateMachine:
         np.testing.assert_allclose(
             self._step(kernel, trigger=0.73), expected, atol=1e-6
         )
+
+    @pytest.mark.parametrize("threshold", (0.0, 0.5))
+    def test_squeeze_must_exceed_threshold_and_reclutch_captures_trigger(
+        self, threshold
+    ):
+        kernel = DVRKPSMJawIntentStateMachine(
+            DVRKPSMJawIntentConfig(initial_closedness=0.2, clutch_threshold=threshold)
+        )
+        initial = kernel.targets
+        for trigger in (0.0, 1.0):
+            np.testing.assert_array_equal(
+                self._step(kernel, trigger=trigger, squeeze=threshold), initial
+            )
+
+        engaged_squeeze = threshold + 1e-6
+        np.testing.assert_array_equal(
+            self._step(kernel, trigger=0.2, squeeze=engaged_squeeze), initial
+        )
+        held = self._step(kernel, trigger=0.7, squeeze=engaged_squeeze)
+        assert kernel.closedness == pytest.approx(0.7)
+        for squeeze, trigger in ((threshold, 0.0), (0.0, 1.0)):
+            np.testing.assert_array_equal(
+                self._step(kernel, trigger=trigger, squeeze=squeeze, dt=1.0), held
+            )
+        np.testing.assert_array_equal(
+            self._step(kernel, trigger=0.0, squeeze=engaged_squeeze), held
+        )
+        self._step(kernel, trigger=0.1, squeeze=engaged_squeeze)
+        assert kernel.closedness == pytest.approx(0.8)
+
+    def test_zero_deadband_stationary_trigger_preserves_hold_and_opening_dwell(self):
+        kernel = DVRKPSMJawIntentStateMachine(
+            DVRKPSMJawIntentConfig(
+                initial_closedness=0.7,
+                trigger_deadband=0.0,
+                opening_intent_duration_s=0.08,
+            )
+        )
+        held = self._step(kernel, trigger=0.8, dt=0.0)
+        for _ in range(3):
+            np.testing.assert_array_equal(self._step(kernel, trigger=0.8, dt=1.0), held)
+        np.testing.assert_array_equal(self._step(kernel, trigger=0.4, dt=1.0), held)
+        np.testing.assert_array_equal(self._step(kernel, trigger=0.4, dt=0.07), held)
+        opened = self._step(kernel, trigger=0.4, dt=0.011)
+        assert kernel.closedness == pytest.approx(0.3)
+        assert not np.array_equal(opened, held)
 
     @pytest.mark.parametrize(
         ("jaw_open", "jaw_closed"),
@@ -565,6 +673,21 @@ class TestDVRKPSMClutchMath:
         assert quaternion is not None
         np.testing.assert_allclose(quaternion, (0.5, 0.5, 0.5, 0.5), atol=1e-12)
 
+    def test_five_decimal_rotation_matrix_is_accepted(self):
+        quaternion = rotation_matrix_to_quat_xyzw(_ROUNDED_HOME_ROTATION)
+        assert quaternion is not None
+        np.testing.assert_allclose(np.linalg.norm(quaternion), 1.0, atol=1e-12)
+        np.testing.assert_allclose(
+            Rotation.from_quat(quaternion).as_matrix(),
+            _ROUNDED_HOME_ROTATION,
+            atol=1e-5,
+            rtol=0.0,
+        )
+
+    @pytest.mark.parametrize("rotation", _INVALID_HOME_ROTATIONS)
+    def test_improper_rotation_matrix_is_rejected(self, rotation):
+        assert rotation_matrix_to_quat_xyzw(rotation) is None
+
     def test_rebased_position_applies_scaled_controller_delta(self):
         """The latching frame is home and later controller motion is scaled from it."""
         home = np.array([0.02, 0.00, 0.18], dtype=np.float64)
@@ -612,6 +735,109 @@ class TestDVRKPSMCartesianClutchStateMachine:
             tracking_valid=valid,
             session_active=active,
         )
+
+    @pytest.mark.parametrize("threshold", (0.0, 0.5))
+    def test_squeeze_must_exceed_threshold_and_reclutch_captures_pose(self, threshold):
+        kernel = DVRKPSMCartesianClutchStateMachine(
+            DVRKPSMCartesianClutchConfig(clutch_threshold=threshold)
+        )
+        home = kernel.pose
+        origin = np.array((0.3, -0.2, 0.5))
+        for position in (origin, origin + (0.03, 0.0, 0.0)):
+            np.testing.assert_array_equal(
+                self._step(kernel, position=position, squeeze=threshold), home
+            )
+            assert not kernel.engaged
+
+        engaged_squeeze = threshold + 1e-6
+        np.testing.assert_array_equal(
+            self._step(kernel, position=origin, squeeze=engaged_squeeze), home
+        )
+        assert kernel.engaged
+        held = self._step(
+            kernel, position=origin + (0.03, 0.0, 0.0), squeeze=engaged_squeeze
+        )
+        np.testing.assert_allclose(held[:3], home[:3] + (0.03, 0.0, 0.0), atol=1e-6)
+        for squeeze in (threshold, 0.0):
+            np.testing.assert_array_equal(
+                self._step(
+                    kernel,
+                    position=(1.0, 1.0, 1.0),
+                    orientation=_quat_xyzw_x(0.8),
+                    squeeze=squeeze,
+                ),
+                held,
+            )
+            assert not kernel.engaged
+        np.testing.assert_array_equal(
+            self._step(kernel, position=origin, squeeze=engaged_squeeze), held
+        )
+        resumed = self._step(
+            kernel, position=origin + (0.01, 0.0, 0.0), squeeze=engaged_squeeze
+        )
+        np.testing.assert_allclose(resumed[:3], held[:3] + (0.01, 0.0, 0.0), atol=1e-6)
+
+    @pytest.mark.parametrize(
+        ("home_axis", "home_degrees", "origin_axis", "origin_degrees"),
+        (("x", 180, "y", 60), ("y", 60, "x", 90), ("x", 0, "x", 90)),
+    )
+    def test_rotation_follows_reference_axes_with_rotated_home_and_controller(
+        self, home_axis, home_degrees, origin_axis, origin_degrees
+    ):
+        home = Rotation.from_euler(home_axis, home_degrees, degrees=True)
+        origin = Rotation.from_euler(origin_axis, origin_degrees, degrees=True)
+        delta = Rotation.from_euler("z", 30, degrees=True)
+        kernel = self._kernel(home_orientation=tuple(home.as_quat()))
+        home_pose = kernel.pose
+        np.testing.assert_array_equal(
+            self._step(kernel, orientation=origin.as_quat()), home_pose
+        )
+        pose = self._step(kernel, orientation=(delta * origin).as_quat())
+        np.testing.assert_allclose(
+            Rotation.from_quat(pose[3:]).as_matrix(),
+            delta.as_matrix() @ home.as_matrix(),
+            atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("offset_degrees", (0, 90))
+    def test_reference_rotation_and_calibration_survive_rotated_reclutch(
+        self, offset_degrees
+    ):
+        home = Rotation.from_euler("y", 60, degrees=True)
+        origin = Rotation.from_euler("x", 90, degrees=True)
+        offset = Rotation.from_euler("x", offset_degrees, degrees=True)
+        kernel = DVRKPSMCartesianClutchStateMachine(
+            DVRKPSMCartesianClutchConfig(
+                home_orientation=tuple(home.as_quat()),
+                orientation_offset=tuple(offset.as_quat()),
+            )
+        )
+        self._step(kernel, orientation=origin.as_quat())
+        delta = Rotation.from_euler("z", 30, degrees=True)
+        held = self._step(kernel, orientation=(delta * origin).as_quat())
+        offset_matrix = offset.as_matrix()
+        held_rotation = (
+            offset_matrix @ delta.as_matrix() @ offset_matrix.T @ home.as_matrix()
+        )
+        np.testing.assert_allclose(
+            Rotation.from_quat(held[3:]).as_matrix(), held_rotation, atol=1e-6
+        )
+
+        new_origin = Rotation.from_euler("zy", (-70, 40), degrees=True)
+        np.testing.assert_array_equal(
+            self._step(kernel, orientation=new_origin.as_quat(), squeeze=0.0), held
+        )
+        np.testing.assert_array_equal(
+            self._step(kernel, orientation=new_origin.as_quat()), held
+        )
+        new_delta = Rotation.from_euler("y", -20, degrees=True)
+        resumed = self._step(kernel, orientation=(new_delta * new_origin).as_quat())
+        np.testing.assert_allclose(
+            Rotation.from_quat(resumed[3:]).as_matrix(),
+            offset_matrix @ new_delta.as_matrix() @ offset_matrix.T @ held_rotation,
+            atol=1e-6,
+        )
+        np.testing.assert_array_equal(resumed[:3], held[:3])
 
     def test_engagement_and_reclutch_are_no_jump_absolute_deltas(self):
         kernel = self._kernel()
@@ -814,6 +1040,13 @@ class TestDVRKPSMClutchRetargeter:
         )
         return DVRKPSMClutchRetargeter(config, name="ee_pose")
 
+    @staticmethod
+    def _compute(retargeter, **controller_kwargs) -> np.ndarray:
+        inputs, outputs = _build_io(retargeter)
+        inputs[ControllersSource.RIGHT] = _make_controller(**controller_kwargs)
+        retargeter.compute(inputs, outputs, _make_context())
+        return _read_vector(outputs, _POSE_OUTPUT)
+
     def test_output_contract_is_absolute_7d_pose(self):
         """The DLS integration receives one position-plus-xyzw target vector."""
         pose_type = self._retargeter().output_spec()[_POSE_OUTPUT].types[0]
@@ -946,6 +1179,69 @@ class TestDVRKPSMClutchRetargeter:
                 name="ee_pose",
             )
 
+    @pytest.mark.parametrize("rotation", _INVALID_HOME_ROTATIONS)
+    def test_improper_configured_home_rotation_is_rejected(self, rotation):
+        with pytest.raises(ValueError, match="proper rotation matrix"):
+            DVRKPSMClutchRetargeter(
+                DVRKPSMClutchConfig(
+                    home_reference_T_ee=_make_home_transform(
+                        (0.02, 0.0, 0.18), rotation
+                    )
+                ),
+                name="ee_pose",
+            )
+
+    def test_five_decimal_home_rotation_is_accepted_without_an_engagement_jump(self):
+        retargeter = DVRKPSMClutchRetargeter(
+            DVRKPSMClutchConfig(
+                home_reference_T_ee=_make_home_transform(
+                    (0.02, 0.0, 0.18), _ROUNDED_HOME_ROTATION
+                )
+            ),
+            name="ee_pose",
+        )
+        home = self._compute(retargeter, squeeze=0.0)
+        np.testing.assert_allclose(
+            Rotation.from_quat(home[3:]).as_matrix(),
+            _ROUNDED_HOME_ROTATION,
+            atol=1e-5,
+            rtol=0.0,
+        )
+        np.testing.assert_array_equal(
+            self._compute(retargeter, grip_ori=_quat_xyzw_x(0.8)), home
+        )
+
+    @pytest.mark.parametrize("threshold", (0.0, 0.5))
+    def test_squeeze_threshold_holds_and_reengages_without_a_pose_jump(self, threshold):
+        retargeter = DVRKPSMClutchRetargeter(
+            DVRKPSMClutchConfig(
+                home_reference_T_ee=_make_home_transform((0.02, 0.0, 0.18)),
+                clutch_threshold=threshold,
+            ),
+            name="ee_pose",
+        )
+        origin = np.array((0.3, -0.2, 0.5))
+        home = self._compute(retargeter, grip_pos=origin, squeeze=threshold)
+        np.testing.assert_array_equal(
+            self._compute(
+                retargeter, grip_pos=origin + (0.03, 0.0, 0.0), squeeze=threshold
+            ),
+            home,
+        )
+        engaged_squeeze = threshold + 1e-6
+        np.testing.assert_array_equal(
+            self._compute(retargeter, grip_pos=origin, squeeze=engaged_squeeze), home
+        )
+        held = self._compute(
+            retargeter, grip_pos=origin + (0.03, 0.0, 0.0), squeeze=engaged_squeeze
+        )
+        np.testing.assert_allclose(held[:3], home[:3] + (0.03, 0.0, 0.0), atol=1e-6)
+        for squeeze in (threshold, 0.0, engaged_squeeze):
+            np.testing.assert_array_equal(
+                self._compute(retargeter, grip_pos=(1.0, 1.0, 1.0), squeeze=squeeze),
+                held,
+            )
+
     def test_engage_motion_workspace_clamp_and_reclutch_are_no_jump(self):
         """Engage, clamp, stop, and re-engage preserve a bounded continuous target."""
         retargeter = self._retargeter()
@@ -1076,46 +1372,49 @@ class TestDVRKPSMClutchRetargeter:
         retargeter.compute(inputs, outputs, _make_context())
         np.testing.assert_allclose(_read_vector(outputs, _POSE_OUTPUT), held, atol=1e-6)
 
-    def test_orientation_is_relative_to_squeeze_latch(self):
-        """Squeeze holds the configured orientation, then follows controller-relative rotation."""
-        home_angle = 0.4
-        controller_angle = -0.8
-        home_rotation = _rotation_matrix_z(home_angle)
+    @pytest.mark.parametrize(
+        ("home_axis", "home_degrees", "offset_degrees"),
+        (("x", 180, 0), ("y", 60, 0), ("y", 60, 90)),
+    )
+    def test_rotation_uses_reference_axes_with_rotated_home_and_controller(
+        self, home_axis, home_degrees, offset_degrees
+    ):
+        home = Rotation.from_euler(home_axis, home_degrees, degrees=True)
+        origin = Rotation.from_euler("x", 90, degrees=True)
+        offset = Rotation.from_euler("x", offset_degrees, degrees=True)
         retargeter = DVRKPSMClutchRetargeter(
             DVRKPSMClutchConfig(
                 home_reference_T_ee=_make_home_transform(
-                    (0.02, 0.00, 0.18), home_rotation
+                    (0.02, 0.00, 0.18), home.as_matrix()
                 ),
-                workspace_lower=(-0.10, -0.10, 0.08),
-                workspace_upper=(0.10, 0.10, 0.24),
+                orientation_offset=tuple(offset.as_quat()),
             ),
             name="ee_pose",
         )
-        origin_orientation = _quat_xyzw_z(controller_angle)
-        inputs, outputs = _build_io(retargeter)
-        inputs[ControllersSource.RIGHT] = _make_controller(
-            grip_pos=(0.30, -0.20, 0.50),
-            grip_ori=origin_orientation,
-            squeeze=1.0,
+        origin_position = np.array((0.3, -0.2, 0.5))
+        latched = self._compute(
+            retargeter, grip_pos=origin_position, grip_ori=origin.as_quat()
         )
-        retargeter.compute(inputs, outputs, _make_context())
-        home_quaternion = _quat_xyzw_z(home_angle)
         np.testing.assert_allclose(
-            _read_vector(outputs, _POSE_OUTPUT)[3:], home_quaternion, atol=1e-6
+            Rotation.from_quat(latched[3:]).as_matrix(), home.as_matrix(), atol=1e-6
         )
 
-        relative_rotation = _quat_xyzw_z(0.3)
-        current_orientation = quat_mul_xyzw(origin_orientation, relative_rotation)
-        inputs, outputs = _build_io(retargeter)
-        inputs[ControllersSource.RIGHT] = _make_controller(
-            grip_pos=(0.30, -0.20, 0.50),
-            grip_ori=current_orientation,
-            squeeze=1.0,
+        delta = Rotation.from_euler("z", 30, degrees=True)
+        moved = self._compute(
+            retargeter,
+            grip_pos=origin_position + (0.01, 0.02, -0.01),
+            grip_ori=(delta * origin).as_quat(),
         )
-        retargeter.compute(inputs, outputs, _make_context())
-        expected = quat_mul_xyzw(home_quaternion, relative_rotation)
         np.testing.assert_allclose(
-            _read_vector(outputs, _POSE_OUTPUT)[3:], expected, atol=1e-6
+            Rotation.from_quat(moved[3:]).as_matrix(),
+            offset.as_matrix()
+            @ delta.as_matrix()
+            @ offset.as_matrix().T
+            @ home.as_matrix(),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            moved[:3], latched[:3] + (0.01, 0.02, -0.01), atol=1e-6
         )
 
     def test_invalid_or_dropped_tracking_holds_a_finite_last_pose(self):

@@ -28,6 +28,8 @@ DEFAULT_WORKSPACE_UPPER = (0.16, 0.14, 0.28)
 IDENTITY_QUATERNION_XYZW = (0.0, 0.0, 0.0, 1.0)
 MIN_QUATERNION_NORM = 1e-6
 FLOAT32_MAX = float(np.finfo(np.float32).max)
+# Allow small orthonormality errors from rounded configuration literals.
+_ROTATION_ATOL = 1e-4
 
 
 def _as_vector(values: object, *, length: int, name: str) -> np.ndarray:
@@ -93,7 +95,7 @@ def rotation_matrix_to_quat_xyzw(rotation: object) -> np.ndarray | None:
     if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
         return None
     if (
-        not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)
+        not np.allclose(rotation.T @ rotation, np.eye(3), atol=_ROTATION_ATOL, rtol=0.0)
         or np.linalg.det(rotation) <= 0.0
     ):
         return None
@@ -180,10 +182,11 @@ def clip_workspace(
 class DVRKPSMCartesianClutchConfig:
     """Configuration for simulator-independent clutch-rebased Cartesian pose.
 
-    Home, controller samples, and workspace bounds must share one reference
-    frame.  Orientations are scalar-last ``xyzw`` quaternions.  The calibration
-    ``orientation_offset`` is conjugated around controller-relative rotation;
-    it does not change the configured home orientation at engagement.
+    Home, controller samples and workspace bounds share one reference frame.
+    Orientations are scalar-last ``xyzw`` quaternions.  ``orientation_offset``
+    remaps the reference-frame rotation delta by conjugation, leaving translation
+    unchanged.  Engagement preserves the held tool orientation.  Squeeze must
+    exceed ``clutch_threshold``, which is finite and in ``[0, 1)``.
     """
 
     home_position: tuple[float, float, float] = DEFAULT_HOME_POSITION
@@ -246,9 +249,9 @@ class DVRKPSMCartesianClutchStateMachine:
             )
         self._orientation_offset = orientation_offset
         if not np.isfinite(self._config.clutch_threshold) or not (
-            0.0 <= self._config.clutch_threshold <= 1.0
+            0.0 <= self._config.clutch_threshold < 1.0
         ):
-            raise ValueError("clutch_threshold must be finite and in [0, 1]")
+            raise ValueError("clutch_threshold must be finite and in [0, 1)")
 
         # Keep this explicit: NumPy's chained concatenate/astype stubs otherwise
         # leave the attribute as Any under the repository's mypy configuration.
@@ -303,7 +306,7 @@ class DVRKPSMCartesianClutchStateMachine:
             or not tracking_valid
             or squeeze_value is None
             or not np.isfinite(squeeze_value)
-            or squeeze_value < self._config.clutch_threshold
+            or squeeze_value <= self._config.clutch_threshold
         ):
             self._disengage()
             return self.pose
@@ -340,8 +343,9 @@ class DVRKPSMCartesianClutchStateMachine:
             self._workspace_lower,
             self._workspace_upper,
         )
+        # Spatial deltas act on the left so both channels follow reference axes.
         controller_relative_orientation = quat_mul_xyzw(
-            quat_conjugate_xyzw(self._controller_orientation_origin), orientation
+            orientation, quat_conjugate_xyzw(self._controller_orientation_origin)
         )
         calibrated_relative_orientation = quat_mul_xyzw(
             quat_mul_xyzw(self._orientation_offset, controller_relative_orientation),
@@ -349,7 +353,7 @@ class DVRKPSMCartesianClutchStateMachine:
         )
         target_orientation = normalise_quaternion_xyzw(
             quat_mul_xyzw(
-                self._pose_at_engagement[3:7], calibrated_relative_orientation
+                calibrated_relative_orientation, self._pose_at_engagement[3:7]
             )
         )
         if target_orientation is None:
@@ -385,7 +389,8 @@ class DVRKPSMJawIntentConfig:
     every emitted target is interpolated between them.  ``initial_closedness``
     selects the exact reset target on that segment (zero is open, one is
     closed).  The squeeze threshold is intentionally shared with the arm
-    clutch so releasing the arm deadman never changes the jaw command.
+    clutch so releasing the arm deadman never changes the jaw command.  Squeeze
+    must exceed the finite ``clutch_threshold`` in ``[0, 1)`` to engage.
 
     Trigger motion is relative to the value captured on each squeeze
     engagement.  This avoids a jump when the operator re-clutches with the
@@ -436,9 +441,9 @@ class DVRKPSMJawIntentStateMachine:
         ):
             raise ValueError("initial_closedness must be finite and in [0, 1]")
         if not np.isfinite(self._config.clutch_threshold) or not (
-            0.0 <= self._config.clutch_threshold <= 1.0
+            0.0 <= self._config.clutch_threshold < 1.0
         ):
-            raise ValueError("clutch_threshold must be finite and in [0, 1]")
+            raise ValueError("clutch_threshold must be finite and in [0, 1)")
         if not np.isfinite(self._config.trigger_deadband) or not (
             0.0 <= self._config.trigger_deadband < 1.0
         ):
@@ -534,7 +539,7 @@ class DVRKPSMJawIntentStateMachine:
             or squeeze_value is None
             or not np.isfinite(trigger_value)
             or not np.isfinite(squeeze_value)
-            or squeeze_value < self._config.clutch_threshold
+            or squeeze_value <= self._config.clutch_threshold
         ):
             # This also cancels a not-yet-committed opening, which is the key
             # protection for trigger-up immediately followed by squeeze-up.
