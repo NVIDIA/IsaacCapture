@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runtime configuration for the io_exo_glove_ros2 plugin.
+#
+# Edit this file and restart the plugin -- no rebuild is needed. Every key is optional: a key that
+# is absent (or a whole missing file) keeps the built-in default compiled into the plugin.
+#
+# Precedence, lowest to highest:
+#   1. built-in defaults in io_exo_glove_ros2_plugin.hpp
+#   2. this file
+#   3. command-line flags (--left-topic=..., --right-topic=..., --left-collection-id=...,
+#      --right-collection-id=...)
+#
+# Run the plugin with --print-config to see which file was loaded and the effective values.
+
+# ROS 2 topics carrying sensor_msgs/msg/JointState, published by the exoskeleton driver.
+left_topic: "/io_teleop/joint_cmd_finger_left"
+right_topic: "/io_teleop/joint_cmd_finger_right"
+
+# OpenXR tensor collection ids this plugin pushes to. These must match the collection_id used by
+# the consumer side (JointStateTracker / JointStateSource), so changing them means changing the
+# consumer configuration too.
+left_collection_id: "exo_glove_left"
+right_collection_id: "exo_glove_right"
