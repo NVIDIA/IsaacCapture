@@ -146,5 +146,6 @@ collection ids there must match `left_collection_id` / `right_collection_id` abo
 - `JointState.header.stamp` is used as the raw device clock when the driver sets it (non-zero);
   otherwise the local monotonic clock is used for both timestamps, per `SchemaPusher`'s documented
   fallback convention.
-- If `name` and `position` arrays in an incoming message have different lengths, only the common
-  prefix is forwarded (no attempt to guess the missing side).
+- A message whose `name` and `position` arrays differ in length is dropped with a throttled warning
+  rather than forwarded as a partial hand state, as is a message whose serialized payload would
+  exceed the tensor buffer (`SchemaPusher::push_buffer()` throws on oversized data).

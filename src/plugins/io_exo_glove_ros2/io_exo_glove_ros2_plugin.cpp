@@ -8,7 +8,6 @@
 #include <oxr_utils/os_time.hpp>
 #include <schema/joint_state_generated.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -68,18 +67,25 @@ void IoExoGloveRos2Plugin::push_joint_state(core::SchemaPusher& pusher,
                                             const std::string& device_id,
                                             const sensor_msgs::msg::JointState& msg)
 {
-    // Joint names and positions are already retargeted upstream to the target hand's URDF DOFs
-    // and radians, so this is a direct name/position passthrough -- no unit conversion or
-    // remapping. Rows with a missing position (name/position length mismatch) are skipped rather
-    // than guessed.
+    // ROS 2 specifies that a JointState's arrays are either empty or equally sized. A mismatched
+    // message is dropped rather than forwarded as a partial hand state: a subset of the joints looks
+    // like a valid, smaller hand configuration downstream, which is worse than skipping the frame.
+    if (msg.name.size() != msg.position.size())
+    {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Dropping JointState: %zu names but %zu positions",
+                             msg.name.size(), msg.position.size());
+        return;
+    }
+
+    // Joint names and positions are already retargeted upstream to the target hand's URDF DOFs and
+    // radians, so this is a direct name/position passthrough -- no unit conversion or remapping.
     core::JointStateOutputT out;
     out.device_id = device_id;
     out.has_velocity = false;
     out.has_effort = false;
     out.ee_pose_valid = false;
-    const size_t count = std::min(msg.name.size(), msg.position.size());
-    out.joints.reserve(count);
-    for (size_t i = 0; i < count; ++i)
+    out.joints.reserve(msg.name.size());
+    for (size_t i = 0; i < msg.name.size(); ++i)
     {
         auto joint = std::make_shared<core::JointStateT>();
         joint->name = msg.name[i];
@@ -98,7 +104,19 @@ void IoExoGloveRos2Plugin::push_joint_state(core::SchemaPusher& pusher,
     flatbuffers::FlatBufferBuilder builder(kMaxFlatbufferSize);
     auto offset = core::JointStateOutput::Pack(builder, &out);
     builder.Finish(offset);
-    pusher.push_buffer(builder.GetBufferPointer(), builder.GetSize(), local_ns, raw_ns);
+
+    // SchemaPusher::push_buffer() throws when the payload exceeds the declared tensor size, and nothing
+    // catches that here, so an oversized frame is dropped rather than aborting the subscription callback.
+    const size_t serialized_size = builder.GetSize();
+    if (serialized_size > kMaxFlatbufferSize)
+    {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                             "Dropping JointState: serialized size %zu exceeds %zu bytes", serialized_size,
+                             kMaxFlatbufferSize);
+        return;
+    }
+
+    pusher.push_buffer(builder.GetBufferPointer(), serialized_size, local_ns, raw_ns);
 }
 
 void IoExoGloveRos2Plugin::on_left(const sensor_msgs::msg::JointState::SharedPtr msg)
