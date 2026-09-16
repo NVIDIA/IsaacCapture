@@ -12,8 +12,8 @@
 //   ./avatar_hand_tracker_printer [sdk_config.json] [--datasets=human,raw,robot]
 
 #include <avatar/avatar_hand_tracking_plugin.hpp>
-#include <avatar/avatar_runtime_paths.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <iomanip>
@@ -27,10 +27,16 @@ using namespace plugins::avatar;
 
 namespace
 {
-volatile std::sig_atomic_t g_running = 1;
-void on_signal(int)
+static_assert(ATOMIC_BOOL_LOCK_FREE == 2, "lock-free atomic bool is required for signal safety");
+
+std::atomic<bool> g_stop_requested{ false };
+
+void on_signal(int signal)
 {
-    g_running = 0;
+    if (signal == SIGINT || signal == SIGTERM)
+    {
+        g_stop_requested.store(true, std::memory_order_relaxed);
+    }
 }
 
 bool starts_with(const std::string& value, const std::string& prefix)
@@ -60,9 +66,6 @@ AvatarPluginConfig parse_args(int argc, char** argv)
 {
     AvatarPluginConfig config;
     config.app_name = "AvatarHandPrinter";
-    config.sdk_config_path = default_sdk_config_path(argv[0]);
-    config.plugin_dir = executable_dir(argv[0]).string();
-    // Printer is a source-side diagnostic; haptic sink is not exercised here.
     config.haptic = false;
     std::string datasets_arg = "human,raw,robot";
 
@@ -72,10 +75,6 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         if (starts_with(arg, "--datasets="))
         {
             datasets_arg = arg.substr(std::string("--datasets=").size());
-        }
-        else if (starts_with(arg, "--transport="))
-        {
-            config.transport_link = arg.substr(std::string("--transport=").size());
         }
         else if (!starts_with(arg, "--"))
         {
@@ -124,7 +123,7 @@ AvatarPluginConfig parse_args(int argc, char** argv)
     return config;
 }
 
-void print_landmarks(const char* label, const std::vector<::avatar::Pose>& lm)
+void print_landmarks(const char* label, const std::vector<AvatarLandmark>& lm)
 {
     std::cout << label << " landmarks=" << lm.size();
     if (!lm.empty())
@@ -140,11 +139,9 @@ void print_landmarks(const char* label, const std::vector<::avatar::Pose>& lm)
     std::cout << std::endl;
 }
 
-void print_joints(const char* label, const ::avatar::AvatarDataFrame& frame, bool is_robot, bool full)
+void print_joints(const char* label, const AvatarJointFrame& frame, bool full)
 {
-    const ::avatar::Hand& hand = is_robot ? frame.robot : frame.raw;
-    const auto expected = is_robot ? ::avatar::AvatarDataFrame::kRobot : ::avatar::AvatarDataFrame::kRaw;
-    const size_t n = (frame.payload_case() == expected) ? hand.joint.position.size() : 0;
+    const size_t n = frame.positions.size();
     std::cout << label << " joints=" << n;
     if (n == 0)
     {
@@ -158,18 +155,17 @@ void print_joints(const char* label, const ::avatar::AvatarDataFrame& frame, boo
         std::cout << std::endl;
         for (size_t i = 0; i < n; ++i)
         {
-            const std::string name = i < hand.joint.name.size() && !hand.joint.name[i].empty() ?
-                                         hand.joint.name[i] :
-                                         ("joint_" + std::to_string(i));
-            std::cout << "  [" << i << "] " << name << "=" << hand.joint.position[i] << std::endl;
+            const std::string name =
+                i < frame.names.size() && !frame.names[i].empty() ? frame.names[i] : ("joint_" + std::to_string(i));
+            std::cout << "  [" << i << "] " << name << "=" << frame.positions[i] << std::endl;
         }
     }
     else
     {
-        std::cout << "  j0=" << hand.joint.position[0];
+        std::cout << "  j0=" << frame.positions[0];
         if (n > 1)
         {
-            std::cout << "  j1=" << hand.joint.position[1];
+            std::cout << "  j1=" << frame.positions[1];
         }
         if (n > 2)
         {
@@ -184,19 +180,21 @@ int main(int argc, char** argv)
 try
 {
     std::signal(SIGINT, on_signal);
-    ensure_vendored_lib_path(argv[0]);
+    std::signal(SIGTERM, on_signal);
 
     const AvatarPluginConfig config = parse_args(argc, argv);
 
-    std::cout << "Avatar Hand Tracker Printer starting (config: " << config.sdk_config_path << ")" << std::endl;
+    std::cout << "Avatar Hand Tracker Printer starting (config: "
+              << (config.sdk_config_path.empty() ? "/opt/avatar-sdk/share/sdk_config.json" : config.sdk_config_path)
+              << ")" << std::endl;
     std::cout << "Expected HUMAN landmark count: " << kAvatarHumanLandmarkCount << std::endl;
 
-    auto& tracker = AvatarTracker::instance(config);
+    AvatarTracker tracker(config);
 
     std::cout << "Streaming enabled datasets (Ctrl+C to stop)..." << std::endl;
 
     const auto period = std::chrono::milliseconds(100);
-    while (g_running)
+    while (!g_stop_requested.load(std::memory_order_relaxed))
     {
         const auto frame_start = std::chrono::steady_clock::now();
 
@@ -210,13 +208,13 @@ try
         if (config.raw)
         {
             // Full 22-DOF dump for RAW (what most bring-up checks need).
-            print_joints("LEFT  raw  ", tracker.get_left_raw_frame(), false, /*full=*/true);
-            print_joints("RIGHT raw  ", tracker.get_right_raw_frame(), false, /*full=*/true);
+            print_joints("LEFT  raw  ", tracker.get_left_raw_frame(), /*full=*/true);
+            print_joints("RIGHT raw  ", tracker.get_right_raw_frame(), /*full=*/true);
         }
         if (config.robot)
         {
-            print_joints("LEFT  robot", tracker.get_left_robot_frame(), true, /*full=*/false);
-            print_joints("RIGHT robot", tracker.get_right_robot_frame(), true, /*full=*/false);
+            print_joints("LEFT  robot", tracker.get_left_robot_frame(), /*full=*/false);
+            print_joints("RIGHT robot", tracker.get_right_robot_frame(), /*full=*/false);
         }
 
         std::this_thread::sleep_until(frame_start + period);

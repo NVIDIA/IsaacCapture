@@ -13,9 +13,10 @@
 //   source ~/.cloudxr/run/cloudxr.env
 
 #include <avatar/avatar_hand_tracking_plugin.hpp>
-#include <avatar/avatar_runtime_paths.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -27,6 +28,18 @@ using namespace plugins::avatar;
 
 namespace
 {
+
+static_assert(ATOMIC_BOOL_LOCK_FREE == 2, "lock-free atomic bool is required for signal safety");
+
+std::atomic<bool> g_stop_requested{ false };
+
+void signal_handler(int signal)
+{
+    if (signal == SIGINT || signal == SIGTERM)
+    {
+        g_stop_requested.store(true, std::memory_order_relaxed);
+    }
+}
 
 bool starts_with(const std::string& value, const std::string& prefix)
 {
@@ -53,11 +66,7 @@ std::vector<std::string> split_csv(const std::string& text)
 
 AvatarPluginConfig parse_args(int argc, char** argv)
 {
-    ensure_vendored_lib_path(argv[0]);
-
     AvatarPluginConfig config;
-    config.sdk_config_path = default_sdk_config_path(argv[0]);
-    config.plugin_dir = executable_dir(argv[0]).string();
     std::string datasets_arg = "human,raw,robot,haptic";
 
     for (int i = 1; i < argc; ++i)
@@ -66,10 +75,6 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         if (starts_with(arg, "--datasets="))
         {
             datasets_arg = arg.substr(std::string("--datasets=").size());
-        }
-        else if (starts_with(arg, "--transport="))
-        {
-            config.transport_link = arg.substr(std::string("--transport=").size());
         }
         else if (starts_with(arg, "--plugin-root-id="))
         {
@@ -129,14 +134,17 @@ try
     std::cout << "Avatar Hand Plugin starting..." << std::endl;
 
     const AvatarPluginConfig config = parse_args(argc, argv);
-    auto& tracker = AvatarTracker::instance(config);
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    AvatarTracker tracker(config);
 
     std::cout << "Plugin running. Press Ctrl+C to stop." << std::endl;
 
     // Target 90Hz frequency (~11.1ms period).
     const auto target_frame_duration = std::chrono::nanoseconds(1000000000 / 90);
 
-    while (true)
+    while (!g_stop_requested.load(std::memory_order_relaxed))
     {
         const auto frame_start = std::chrono::steady_clock::now();
 

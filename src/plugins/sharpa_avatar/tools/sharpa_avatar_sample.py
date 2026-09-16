@@ -464,11 +464,6 @@ def main() -> int:
         help="Start avatar_hand_plugin via TeleopSession (default: on).",
     )
     parser.add_argument(
-        "--transport",
-        default="",
-        help="wired or wireless (default: plugin USB dongle config).",
-    )
-    parser.add_argument(
         "--plugin-search-path",
         type=Path,
         action="append",
@@ -548,8 +543,6 @@ def main() -> int:
         plugin_args = [f"--datasets={args.datasets}"]
         if args.sdk_config:
             plugin_args.insert(0, args.sdk_config)
-        if args.transport:
-            plugin_args.append(f"--transport={args.transport}")
         plugins = [
             PluginConfig(
                 plugin_name=PLUGIN_NAME,
@@ -691,7 +684,7 @@ def main() -> int:
         _die(
             f"{type(exc).__name__}: {exc}\n"
             "  If this is a plugin/SDK error: run ./src/plugins/sharpa_avatar/install.sh "
-            "with AVATAR_SDK_ROOT or /opt/avatar-sdk present.\n"
+            "with the SDK installed under /opt/avatar-sdk.\n"
             "  If CloudXR failed: python -m isaacteleop.cloudxr.service start "
             "and source ~/.cloudxr/run/cloudxr.env, or keep the sample's default launcher."
         )
