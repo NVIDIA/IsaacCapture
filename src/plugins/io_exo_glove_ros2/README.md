@@ -18,8 +18,8 @@ Bridges an exoskeleton glove's ROS 2 (Humble) driver into Isaac Teleop's generic
 ```
 Exoskeleton ROS 2 driver (sensor_msgs/msg/JointState, already retargeted to a
 dexterous hand's URDF joint names, radians)
-  --/io_teleop/joint_cmd_finger_left-->  ┐
-  --/io_teleop/joint_cmd_finger_right--> ┤
+  --/io_teleop/Wuji_Hand/joint_cmd_finger_left-->  ┐
+  --/io_teleop/Wuji_Hand/joint_cmd_finger_right--> ┤
                                           ▼
                         io_exo_glove_ros2_plugin (rclcpp node)
                           left  -> JointStateOutputT -> SchemaPusher(collection "exo_glove_left")
@@ -105,11 +105,11 @@ source ~/.cloudxr/run/cloudxr.env
 # Point at a config file, and/or override a single key for one run:
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
     --config=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.yaml \
-    --left-topic=/io_teleop/joint_cmd_finger_left
+    --left-topic=/io_teleop/Wuji_Hand/joint_cmd_finger_left
 ```
 
 `--help` lists all flags. Everything from `--ros-args` onwards is forwarded to ROS 2 untouched
-(remappings, parameter files, logging), e.g.
+(remappings, parameter files, logging), apart from the launcher-owned `--plugin-root-id=...`, e.g.
 `... --ros-args --log-level io_exo_glove_ros2_plugin:=debug`.
 
 When the plugin is launched by the framework rather than by hand, it is started from the
@@ -127,7 +127,7 @@ PluginConfig(
     plugin_name="io_exo_glove_ros2",
     plugin_root_id="io_exo_glove_ros2",
     search_paths=[install_dir / "plugins"],
-    plugin_args=["--left-topic=/io_teleop/joint_cmd_finger_left"],
+    plugin_args=["--left-topic=/io_teleop/Wuji_Hand/joint_cmd_finger_left"],
 )
 ```
 
@@ -141,8 +141,10 @@ collection ids there must match `left_collection_id` / `right_collection_id` abo
 
 - Each hand gets its own OpenXR tensor collection (`SchemaPusher` instance) so the two sides can
   be tracked, recorded, and retargeted independently.
-- The `--plugin-root-id=...` argument injected by the `PluginManager` is accepted and ignored; this
-  plugin publishes under the fixed collection ids from its config file.
+- The `--plugin-root-id=...` argument injected by the `PluginManager` is dropped wherever it appears
+  -- including after `--ros-args`, where the launcher appends it -- because ROS 2 rejects unknown
+  arguments inside the `--ros-args` section and startup would fail. This plugin does not use the id:
+  it publishes under the fixed collection ids from its config file.
 - `JointState.header.stamp` is used as the raw device clock when the driver sets it (non-zero);
   otherwise the local monotonic clock is used for both timestamps, per `SchemaPusher`'s documented
   fallback convention.

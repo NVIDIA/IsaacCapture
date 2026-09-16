@@ -15,8 +15,8 @@
 # Run the plugin with --print-config to see which file was loaded and the effective values.
 
 # ROS 2 topics carrying sensor_msgs/msg/JointState, published by the exoskeleton driver.
-left_topic: "/io_teleop/joint_cmd_finger_left"
-right_topic: "/io_teleop/joint_cmd_finger_right"
+left_topic: "/io_teleop/Wuji_Hand/joint_cmd_finger_left"
+right_topic: "/io_teleop/Wuji_Hand/joint_cmd_finger_right"
 
 # OpenXR tensor collection ids this plugin pushes to. These must match the collection_id used by
 # the consumer side (JointStateTracker / JointStateSource), so changing them means changing the

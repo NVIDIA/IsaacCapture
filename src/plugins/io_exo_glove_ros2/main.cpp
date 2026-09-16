@@ -75,16 +75,33 @@ try
     // Arguments handed to ROS: everything this plugin does not consume itself.
     std::vector<std::string> ros_args{ argv[0] };
 
+    bool in_ros_args = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
 
+        // Injected by the PluginManager for every plugin it launches, and appended after this
+        // plugin's own arguments -- so it can land after --ros-args too. It must never be forwarded
+        // to ROS: an unknown token inside the --ros-args section makes rclcpp::init() throw, which
+        // would abort startup.
+        if (arg.rfind("--plugin-root-id=", 0) == 0)
+        {
+            continue;
+        }
+
         if (arg == "--ros-args")
         {
-            // ROS 2 owns the remainder (remappings, parameter files, logging): forward it verbatim
-            // and stop looking for our own flags.
-            ros_args.insert(ros_args.end(), argv + i, argv + argc);
-            break;
+            // ROS 2 owns the remainder (remappings, parameter files, logging): forward it untouched
+            // from here on -- minus the launcher-owned flag dropped above -- and stop looking for our
+            // own flags.
+            in_ros_args = true;
+            ros_args.push_back(arg);
+            continue;
+        }
+        if (in_ros_args)
+        {
+            ros_args.push_back(arg);
+            continue;
         }
         if (arg == "--help" || arg == "-h")
         {
@@ -134,11 +151,6 @@ try
                 return fail_empty_flag(argv[0], "right-collection-id");
             }
             cli.right_collection_id = *value;
-        }
-        else if (arg.rfind("--plugin-root-id=", 0) == 0)
-        {
-            // Injected by the PluginManager for every plugin it launches; unused by this transport
-            // bridge (which publishes under fixed collection ids) but must not be an error.
         }
         else
         {
