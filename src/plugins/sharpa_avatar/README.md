@@ -18,40 +18,52 @@ gloves -> avatar_hand_plugin -> TeleopSession -> viser and haptics
 
 ## Prerequisites
 
-- Linux x86_64 (Ubuntu 22.04 or 24.04)
+- Linux x86_64 (Ubuntu 22.04)
 - A built Isaac Teleop checkout
-- An Avatar SDK package from Sharpa, extracted to a local directory
 - Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
 
-The SDK is distributed separately because it is not publicly downloadable. It
-does not need to be installed as a system package: the plugin installer stages
-the required headers, libraries, and runtime data from the extracted SDK tree.
-Those files remain outside the git repository.
+The installer retrieves the production `avatar-sdk` package, currently pinned
+to `1.7.3-17`, from Sharpa's signed production APT repository. It never selects
+the `avatar-sdk-dev` or `avatar-sdk-beta` channels. The SDK remains external under
+`/opt/avatar-sdk`; its headers, libraries, and data are not copied into this
+repository or the plugin installation.
 
 The plugin talks to the gloves directly, so do not run `avatar-backend`, Avatar
 Desktop, or `avatar_hand_tracker_printer` at the same time.
 
 ## Install
 
-On a development machine where the SDK package is already available at
-`/opt/avatar-sdk`, run this from the Isaac Teleop root:
+Run this from the Isaac Teleop root:
 
 ```bash
 ./src/plugins/sharpa_avatar/install.sh
 ```
 
-To use an SDK package extracted elsewhere, point the installer at its root:
+If `/opt/avatar-sdk` is absent, the installer configures the same production
+APT channel used by the Sharpa host application and installs the pinned SDK.
+To install only that dependency, run:
 
 ```bash
-AVATAR_SDK_ROOT=/path/to/avatar-sdk ./src/plugins/sharpa_avatar/install.sh
+./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 ```
 
-The SDK package must provide `include/avatar_sdk/AvatarSDK.h`, `lib/`,
-`share/sdk_config.json`, `share/hand_fk`, and `share/wave-sdk`. The source-tree
-layout `src/hand_fk/data` is also accepted for the hand FK data. The installer
-copies these files into the gitignored plugin vendor directory, then builds the
-plugin and places its executable, configuration, and runtime dependencies under
-`install/`.
+If a development or beta SDK is already installed, the dependency installer
+stops instead of replacing it implicitly. Remove that package explicitly before
+installing production. The plugin build accepts an existing SDK under `/opt` but
+prints its version and warns when its `BUILD_TYPE` is not `Production`.
+
+Install the device rules once on the host, then unplug and reconnect the glove
+or dongle:
+
+```bash
+./src/plugins/sharpa_avatar/install_udev_rules.sh
+```
+
+udev does not run inside containers, so this command must run on the host.
+The plugin follows the Sharpa host application layout and uses the SDK,
+configuration, and runtime assets directly from `/opt/avatar-sdk`. Transport
+selection, including wired Ethernet, is controlled by
+`/opt/avatar-sdk/share/sdk_config.json`.
 
 ## Run the sample
 
@@ -75,7 +87,6 @@ joint streams. Pass `--no-viz` for terminal and haptic only.
 Useful options:
 
 ```text
---transport=wired             use wired Ethernet instead of the USB dongle
 --no-haptic                   disable pinch feedback
 --no-viz                      terminal + haptic only (no browser view)
 --host / --port               viser bind (default 127.0.0.1:8080)
@@ -106,7 +117,8 @@ wrist source, the sample places both skeletons in a stable local display frame.
 
 | Symptom | Resolution |
 |---|---|
-| Avatar SDK headers are not found | Extract the Sharpa-provided SDK package and set `AVATAR_SDK_ROOT` to its root |
+| Avatar SDK installation fails | Check access to Sharpa's production APT endpoint and rerun `install_avatar_sdk.sh` |
+| USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
 | CMake 3.24 or newer is required | Install a newer CMake in the Isaac Teleop environment and rerun `install.sh` |
 | `No module named isaacteleop` | Activate the Isaac Teleop environment and install its wheel |
 | `No module named viser` | Run `uv pip install viser` in the same environment |

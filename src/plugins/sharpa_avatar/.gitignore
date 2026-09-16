@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Staged by vendor_avatar_sdk.sh / install.sh — do not commit the SDK.
+# Never commit SDK files left by earlier local workflows.
 vendor/avatar-sdk/

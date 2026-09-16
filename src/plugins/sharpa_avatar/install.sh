@@ -2,147 +2,110 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Install the Sharpa Avatar glove plugin.
-#
-# Two steps: (1) stage the Avatar SDK the plugin links against (from
-# AVATAR_SDK_ROOT, a path argument, or /opt/avatar-sdk), (2) configure, build,
-# and install the plugin target. The SDK is not committed; re-runs reuse the
-# extracted vendor copy.
-#
-# Usage:
-#   ./install.sh [--build-dir DIR] [isaac-teleop-root] [avatar-sdk-root]
-#
-# Env:
-#   AVATAR_SDK_ROOT  skip discovery and use this installed SDK tree
-#                    (must contain include/avatar_sdk/AvatarSDK.h + lib/).
-#   CMAKE            cmake executable (must be 3.24+; Ubuntu 22.04 apt is 3.22).
+# Configure, build, and install the Sharpa Avatar plugin.
 
 set -euo pipefail
 
 build_dir=""
 isaac_root=""
-sdk_root=""
+
+usage() {
+  cat <<EOF
+Usage: $0 [--build-dir DIR] [isaac-teleop-root]
+
+Options:
+  --build-dir DIR  CMake build directory (default: <isaac-root>/build).
+  -h, --help       Show this help.
+EOF
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-dir)
-      build_dir="${2:?--build-dir requires a non-empty path}"
+      build_dir="${2:?--build-dir requires a path}"
       shift 2
       ;;
     -h | --help)
-      cat <<EOF
-Usage: $0 [--build-dir DIR] [isaac-teleop-root] [avatar-sdk-root]
-
-Stages the Avatar SDK (gitignored), then builds and installs the glove plugin.
-
-Options:
-  --build-dir DIR   CMake build directory (default: <isaac-root>/build).
-  -h, --help        Show this help.
-EOF
+      usage
       exit 0
       ;;
     -*)
-      echo "Unknown option: $1" >&2
-      exit 1
+      die "Unknown option: $1"
       ;;
     *)
-      if [[ -z "$isaac_root" ]]; then
-        isaac_root="$1"
-      elif [[ -z "$sdk_root" ]]; then
-        sdk_root="$1"
-      else
-        echo "Too many arguments" >&2
-        exit 1
-      fi
+      [[ -z "$isaac_root" ]] || die "Only one Isaac Teleop root may be specified."
+      isaac_root="$1"
       shift
       ;;
   esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ISAAC_ROOT="${isaac_root:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-BUILD_DIR="${build_dir:-$ISAAC_ROOT/build}"
-if [[ "$BUILD_DIR" != /* ]]; then
-  BUILD_DIR="$PWD/$BUILD_DIR"
-fi
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+isaac_root="${isaac_root:-$(cd "$script_dir/../../.." && pwd)}"
+build_dir="${build_dir:-$isaac_root/build}"
 
-if [[ -z "$sdk_root" ]]; then
-  sdk_root="${AVATAR_SDK_ROOT:-}"
-fi
-
-cmake_major_minor() {
-  "$1" --version 2>/dev/null | awk 'NR==1 {
-    for (i = 1; i <= NF; i++) {
-      if ($i ~ /^[0-9]+\.[0-9]+/) {
-        split($i, p, ".")
-        printf "%d %d", p[1], p[2]
-        exit
-      }
-    }
-  }'
-}
-
-cmake_at_least_3_24() {
-  local ver
-  ver="$(cmake_major_minor "$1")"
-  [[ -n "$ver" ]] || return 1
-  local major minor
-  read -r major minor <<<"$ver"
-  ((major > 3)) || ((major == 3 && minor >= 24))
-}
-
-resolve_cmake() {
-  local candidate
-  for candidate in \
-    "${CMAKE:-}" \
-    "$ISAAC_ROOT/.venv/bin/cmake" \
-    "$(command -v cmake || true)"
-  do
-    if [[ -n "$candidate" && -x "$candidate" ]] && cmake_at_least_3_24 "$candidate"; then
-      echo "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-VENDOR_SCRIPT="$SCRIPT_DIR/vendor_avatar_sdk.sh"
-VENDOR_ROOT="$SCRIPT_DIR/vendor/avatar-sdk"
-
-echo "==> Staging Avatar SDK"
-if [[ -x "$VENDOR_SCRIPT" ]]; then
-  if [[ -n "$sdk_root" ]]; then
-    "$VENDOR_SCRIPT" "$sdk_root"
+[[ -f /opt/avatar-sdk/include/avatar_sdk/AvatarSDK.h ]] || {
+  if [[ ! -e /opt/avatar-sdk ]]; then
+    echo "Avatar SDK is not installed; installing the official package."
+    "$script_dir/install_avatar_sdk.sh"
   else
-    "$VENDOR_SCRIPT"
+    die "Avatar SDK installation under /opt/avatar-sdk is incomplete. Re-run install_avatar_sdk.sh."
   fi
-else
-  echo "vendor_avatar_sdk.sh not found next to install.sh" >&2
-  exit 1
-fi
-
-[[ -f "$VENDOR_ROOT/include/avatar_sdk/AvatarSDK.h" ]] || {
-  echo "Avatar SDK not staged at $VENDOR_ROOT" >&2
-  echo "Install the SDK (typically /opt/avatar-sdk) or set AVATAR_SDK_ROOT." >&2
-  exit 1
 }
 
-CMAKE_BIN="$(resolve_cmake || true)"
-if [[ -z "$CMAKE_BIN" ]]; then
-  echo "ERROR: Isaac Teleop needs CMake 3.24+ (this host has $(cmake --version 2>/dev/null | head -1 || echo 'no cmake'))." >&2
-  echo "Ubuntu 22.04 apt cmake is 3.22. From the Isaac Teleop venv:" >&2
-  echo "  source \"$ISAAC_ROOT/.venv/bin/activate\"" >&2
-  echo "  pip install 'cmake>=3.24'" >&2
-  echo "Then re-run:  $0" >&2
-  exit 1
+[[ -f /opt/avatar-sdk/include/avatar_sdk/AvatarSDK.h ]] \
+  || die "Avatar SDK header not found after installation."
+[[ -f /opt/avatar-sdk/lib/libavatar_sdk.so || -f /opt/avatar-sdk/lib/libavatar_sdk_wrapper.so ]] \
+  || die "Avatar SDK library not found under /opt/avatar-sdk/lib."
+[[ -f /opt/avatar-sdk/share/sdk_config.json ]] \
+  || die "Avatar SDK configuration not found at /opt/avatar-sdk/share/sdk_config.json."
+
+if [[ -f /opt/avatar-sdk/share/Version ]]; then
+  sdk_version="$(awk -F= '$1 == "VERSION" { print $2 }' /opt/avatar-sdk/share/Version)"
+  sdk_build_type="$(awk -F= '$1 == "BUILD_TYPE" { print $2 }' /opt/avatar-sdk/share/Version)"
+  echo "==> Found Avatar SDK ${sdk_version:-unknown} (${sdk_build_type:-unknown})"
+  if [[ "$sdk_build_type" != "Production" ]]; then
+    echo "WARNING: using an existing non-production SDK; install_avatar_sdk.sh only installs production 1.7.3." >&2
+  fi
 fi
 
-echo "==> Building avatar_hand_plugin (cmake=$CMAKE_BIN)"
-"$CMAKE_BIN" -B "$BUILD_DIR" -S "$ISAAC_ROOT" -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_PLUGINS=ON \
-  -DBUILD_PLUGIN_SHARPA_AVATAR=ON \
-  -DAVATAR_SDK_ROOT="$VENDOR_ROOT"
-"$CMAKE_BIN" --build "$BUILD_DIR" --target avatar_hand_plugin avatar_hand_tracker_printer --parallel
-"$CMAKE_BIN" --install "$BUILD_DIR" --component avatar
+cmake_bin="${CMAKE:-cmake}"
+command -v "$cmake_bin" >/dev/null 2>&1 || die "CMake was not found: $cmake_bin"
 
-install_prefix="$(awk '/^CMAKE_INSTALL_PREFIX:PATH=/{sub(/^[^=]*=/, ""); print; exit}' "$BUILD_DIR/CMakeCache.txt")"
-echo "==> Done: $install_prefix/plugins/sharpa_avatar/avatar_hand_plugin"
+echo "==> Configuring Sharpa Avatar plugin"
+"$cmake_bin" -B "$build_dir" -S "$isaac_root" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_PLUGINS=ON \
+  -DBUILD_PLUGIN_SHARPA_AVATAR=ON
+
+echo "==> Building Sharpa Avatar plugin"
+"$cmake_bin" --build "$build_dir" \
+  --target avatar_hand_plugin avatar_hand_tracker_printer \
+  --parallel
+
+install_prefix="$(awk -F= '/^CMAKE_INSTALL_PREFIX:PATH=/{print $2; exit}' "$build_dir/CMakeCache.txt")"
+legacy_lib_dir="$install_prefix/lib"
+if [[ -e "$legacy_lib_dir/libavatar_sdk.so" ]]; then
+  echo "==> Removing SDK libraries installed by the legacy vendor flow"
+  shopt -s nullglob
+  legacy_sdk_files=(
+    "$legacy_lib_dir"/libavatar_sdk*.so*
+    "$legacy_lib_dir"/libcasadi*.so*
+    "$legacy_lib_dir"/libipopt*.so*
+    "$legacy_lib_dir"/libsipopt*.so*
+    "$legacy_lib_dir"/libcoinmumps*.so*
+    "$legacy_lib_dir"/libcoinmetis*.so*
+  )
+  shopt -u nullglob
+  rm -f "${legacy_sdk_files[@]}"
+fi
+
+echo "==> Installing Sharpa Avatar plugin"
+"$cmake_bin" --install "$build_dir" --component avatar
+
+echo "==> Installed: $install_prefix/plugins/sharpa_avatar/avatar_hand_plugin"

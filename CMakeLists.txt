@@ -202,7 +202,7 @@ if(BUILD_PLUGINS)
     if(BUILD_PLUGIN_WUJI_GLOVE)
         add_subdirectory(src/plugins/wuji_glove)
     endif()
-    # Gated: requires the Avatar SDK (set AVATAR_SDK_ROOT or run src/plugins/sharpa_avatar/install.sh).
+    # Gated: requires the Avatar SDK under /opt/avatar-sdk.
     if(BUILD_PLUGIN_SHARPA_AVATAR)
         add_subdirectory(src/plugins/sharpa_avatar)
     endif()

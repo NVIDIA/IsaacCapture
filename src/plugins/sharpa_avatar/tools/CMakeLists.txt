@@ -13,9 +13,6 @@ target_link_libraries(avatar_hand_tracker_printer
 set_target_properties(avatar_hand_tracker_printer PROPERTIES
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
-  BUILD_WITH_INSTALL_RPATH NO
-  SKIP_BUILD_RPATH NO
-  BUILD_RPATH "${_ISAAC_AVATAR_BUILD_RPATH_STR}"
   INSTALL_RPATH "$ORIGIN/../../${CMAKE_INSTALL_LIBDIR}"
 )
 

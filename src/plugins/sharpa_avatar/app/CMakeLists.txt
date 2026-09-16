@@ -11,22 +11,13 @@ target_link_libraries(avatar_hand_plugin
 )
 
 set_target_properties(avatar_hand_plugin PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_AVATAR_PLUGIN_BUILD_DIR}"
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
-  BUILD_WITH_INSTALL_RPATH NO
-  SKIP_BUILD_RPATH NO
-  BUILD_RPATH "${_ISAAC_AVATAR_BUILD_RPATH_STR}"
   INSTALL_RPATH "$ORIGIN/../../${CMAKE_INSTALL_LIBDIR}"
 )
 
 install(TARGETS avatar_hand_plugin
   RUNTIME DESTINATION plugins/sharpa_avatar
-  COMPONENT avatar
-)
-
-install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../plugin.yaml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../README.md"
-  DESTINATION plugins/sharpa_avatar
   COMPONENT avatar
 )
