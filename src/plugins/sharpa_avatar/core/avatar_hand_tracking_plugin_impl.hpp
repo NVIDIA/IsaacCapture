@@ -31,6 +31,23 @@ namespace plugins
 namespace avatar
 {
 
+// Process-wide ownership guard for the single-instance Avatar SDK. The token
+// acquires the guard on construction (throws if another owner already holds it)
+// and releases it on destruction, so a throwing AvatarSdkSession constructor
+// cannot leak the guard.
+class SdkGuardToken
+{
+public:
+    SdkGuardToken();
+    ~SdkGuardToken() noexcept;
+
+    SdkGuardToken(const SdkGuardToken&) = delete;
+    SdkGuardToken& operator=(const SdkGuardToken&) = delete;
+
+private:
+    bool m_held = false;
+};
+
 class AvatarSdkSession
 {
 public:
@@ -43,6 +60,8 @@ public:
     ::avatar::AvatarSDK& get();
 
 private:
+    // Declared first: acquire the guard before SDK init, release it last.
+    SdkGuardToken m_guard;
     bool m_initialized = false;
 };
 

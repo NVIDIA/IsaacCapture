@@ -55,6 +55,7 @@ constexpr size_t kJointFlatbufferSize = 4096;
 constexpr auto kAvatarDataTimeout = std::chrono::seconds(10);
 constexpr auto kOpenXRRetryInterval = std::chrono::seconds(10);
 constexpr char kAvatarSdkConfigPath[] = "/opt/avatar-sdk/share/sdk_config.json";
+// Owned exclusively by SdkGuardToken; do not touch it elsewhere.
 std::atomic<bool> g_avatar_sdk_in_use{ false };
 
 // Maps the 26 OpenXR XrHandJointEXT slots onto Avatar HUMAN landmark indices.
@@ -120,30 +121,36 @@ const std::array<int, XR_HAND_JOINT_COUNT_EXT>& openxr_to_avatar_map()
 static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }, { -0.1f, 0.02f, -0.02f } };
 static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
 
-AvatarSdkSession::AvatarSdkSession(const std::string& config_path)
+SdkGuardToken::SdkGuardToken()
 {
     bool expected = false;
     if (!g_avatar_sdk_in_use.compare_exchange_strong(expected, true))
     {
         throw std::runtime_error("Only one AvatarTracker may own the process-wide Avatar SDK");
     }
+    m_held = true;
+}
 
-    const std::string effective_path = config_path.empty() ? kAvatarSdkConfigPath : config_path;
-    try
-    {
-        const auto error = ::avatar::AvatarSDK::get_instance().initialize(effective_path);
-        if (error != ::avatar::ErrorCode::SUCCESS)
-        {
-            throw std::runtime_error("Avatar SDK initialize failed, error code: " +
-                                     std::to_string(static_cast<int>(error)));
-        }
-        m_initialized = true;
-    }
-    catch (...)
+SdkGuardToken::~SdkGuardToken() noexcept
+{
+    if (m_held)
     {
         g_avatar_sdk_in_use.store(false);
-        throw;
     }
+}
+
+AvatarSdkSession::AvatarSdkSession(const std::string& config_path)
+{
+    // m_guard already acquired the process-wide SDK ownership; if initialize()
+    // throws, m_guard's destructor releases it -- no manual cleanup needed.
+    const std::string effective_path = config_path.empty() ? kAvatarSdkConfigPath : config_path;
+    const auto error = ::avatar::AvatarSDK::get_instance().initialize(effective_path);
+    if (error != ::avatar::ErrorCode::SUCCESS)
+    {
+        throw std::runtime_error("Avatar SDK initialize failed, error code: " +
+                                 std::to_string(static_cast<int>(error)));
+    }
+    m_initialized = true;
 }
 
 AvatarSdkSession::~AvatarSdkSession() noexcept
@@ -158,8 +165,8 @@ AvatarSdkSession::~AvatarSdkSession() noexcept
         {
             // Destructors must not propagate vendor exceptions.
         }
-        g_avatar_sdk_in_use.store(false);
     }
+    // m_guard releases the process-wide SDK ownership flag automatically.
 }
 
 ::avatar::AvatarSDK& AvatarSdkSession::get()
