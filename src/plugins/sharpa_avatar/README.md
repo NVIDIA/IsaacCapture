@@ -22,9 +22,10 @@ gloves -> avatar_hand_plugin -> TeleopSession -> viser and haptics
 - A built Isaac Teleop checkout
 - Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
 
-The installer retrieves the latest production `avatar-sdk` package from
-Sharpa's signed production APT repository. It follows production updates
-without selecting the `avatar-sdk-dev` or `avatar-sdk-beta` channels. The SDK
+The installer retrieves a pinned production `avatar-sdk` version (`1.7.3-17`)
+from Sharpa's signed production APT repository, without selecting the
+`avatar-sdk-dev` or `avatar-sdk-beta` channels. To move to another release,
+bump `production_version` in `install_avatar_sdk.sh`. The SDK
 remains external under `/opt/avatar-sdk`; its headers, libraries, and data are
 not copied into this repository or the plugin installation.
 
@@ -40,7 +41,7 @@ Run this from the Isaac Teleop root:
 ```
 
 If `/opt/avatar-sdk` is absent, the installer configures the same production
-APT channel used by the Sharpa host application and installs its latest SDK.
+APT channel used by the Sharpa host application and installs the pinned SDK.
 To install only that dependency, run:
 
 ```bash

@@ -7,12 +7,14 @@
 set -euo pipefail
 
 # Match the production host application's repository. APT verifies its signed
-# metadata, and this installer additionally pins the key and production package channel.
+# metadata, and this installer additionally pins the key, channel, and exact version.
 apt_base_url="http://118.196.115.252:8081/repository"
 key_url="$apt_base_url/raw-releases/gpg-keys/apt-releases.gpg"
 expected_fingerprints=$'80D634617D407A87CF54136D1594113827B5B686\nF9A50A81FE8797F953DB24E1938548788D899BCC'
 keyring="/etc/apt/keyrings/sharpa-avatar-sdk.gpg"
 source_list="/etc/apt/sources.list.d/sharpa-avatar-sdk.list"
+# Pinned production SDK package version for reproducible installs.
+production_version="1.7.3-17"
 
 die() {
   echo "ERROR: $*" >&2
@@ -25,7 +27,7 @@ require_command() {
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Usage: $0"
-  echo "Installs the latest production avatar-sdk from Sharpa's signed APT repository."
+  echo "Installs the pinned production avatar-sdk ($production_version) from Sharpa's signed APT repository."
   exit 0
 fi
 [[ $# -eq 0 ]] || die "Unknown argument: $1"
@@ -78,10 +80,12 @@ apt_source_options=(
   -o Dir::Etc::sourceparts="-"
 )
 
-echo "==> Installing avatar-sdk"
+echo "==> Installing avatar-sdk $production_version"
 "${sudo_cmd[@]}" apt-get update "${apt_source_options[@]}" -o APT::Get::List-Cleanup="0"
 
-"${sudo_cmd[@]}" apt-get install -y "${apt_source_options[@]}" avatar-sdk
+# --allow-downgrades so re-running always converges on the pinned version even
+# if a newer avatar-sdk is already installed.
+"${sudo_cmd[@]}" apt-get install -y --allow-downgrades "${apt_source_options[@]}" "avatar-sdk=$production_version"
 
 version_file="/opt/avatar-sdk/share/Version"
 [[ -f "$version_file" ]] || die "Installed SDK is missing $version_file."
@@ -89,5 +93,9 @@ installed_version="$(awk -F= '$1 == "VERSION" { print $2 }' "$version_file")"
 installed_build_type="$(awk -F= '$1 == "BUILD_TYPE" { print $2 }' "$version_file")"
 [[ -n "$installed_version" && "$installed_build_type" == "Production" ]] \
   || die "Expected a production Avatar SDK, found ${installed_version:-unknown} ${installed_build_type:-unknown}."
+
+installed_package_version="$(dpkg-query -W -f='${Version}' avatar-sdk 2>/dev/null || true)"
+[[ "$installed_package_version" == "$production_version" ]] \
+  || die "Expected avatar-sdk $production_version, but ${installed_package_version:-none} is installed."
 
 echo "==> Avatar SDK production $installed_version installed at /opt/avatar-sdk"
