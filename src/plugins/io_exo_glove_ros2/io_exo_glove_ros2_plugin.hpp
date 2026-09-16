@@ -39,8 +39,8 @@ class IoExoGloveRos2Plugin : public rclcpp::Node
 public:
     struct Options
     {
-        std::string left_topic = "/io_teleop/Wuji_Hand/joint_cmd_finger_left";
-        std::string right_topic = "/io_teleop/Wuji_Hand/joint_cmd_finger_right";
+        std::string left_topic = "/io_teleop/joint_cmd_finger_left";
+        std::string right_topic = "/io_teleop/joint_cmd_finger_right";
         std::string left_collection_id = "exo_glove_left";
         std::string right_collection_id = "exo_glove_right";
     };

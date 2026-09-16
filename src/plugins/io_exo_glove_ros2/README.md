@@ -18,8 +18,8 @@ Bridges an exoskeleton glove's ROS 2 (Humble) driver into Isaac Teleop's generic
 ```
 Exoskeleton ROS 2 driver (sensor_msgs/msg/JointState, already retargeted to a
 dexterous hand's URDF joint names, radians)
-  --/io_teleop/Wuji_Hand/joint_cmd_finger_left-->  ┐
-  --/io_teleop/Wuji_Hand/joint_cmd_finger_right--> ┤
+  --/io_teleop/joint_cmd_finger_left-->  ┐
+  --/io_teleop/joint_cmd_finger_right--> ┤
                                           ▼
                         io_exo_glove_ros2_plugin (rclcpp node)
                           left  -> JointStateOutputT -> SchemaPusher(collection "exo_glove_left")
@@ -52,8 +52,8 @@ Topics and collection ids live in `config/io_exo_glove_ros2.yaml`, **not** in th
 file and restart the plugin, with no rebuild and no recompilation of the header defaults.
 
 ```yaml
-left_topic: "/io_teleop/Wuji_Hand/joint_cmd_finger_left"
-right_topic: "/io_teleop/Wuji_Hand/joint_cmd_finger_right"
+left_topic: "/io_teleop/joint_cmd_finger_left"
+right_topic: "/io_teleop/joint_cmd_finger_right"
 left_collection_id: "exo_glove_left"
 right_collection_id: "exo_glove_right"
 ```
@@ -105,7 +105,7 @@ source ~/.cloudxr/run/cloudxr.env
 # Point at a config file, and/or override a single key for one run:
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
     --config=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.yaml \
-    --left-topic=/io_teleop/Wuji_Hand/joint_cmd_finger_left
+    --left-topic=/io_teleop/joint_cmd_finger_left
 ```
 
 `--help` lists all flags. Everything from `--ros-args` onwards is forwarded to ROS 2 untouched
@@ -127,7 +127,7 @@ PluginConfig(
     plugin_name="io_exo_glove_ros2",
     plugin_root_id="io_exo_glove_ros2",
     search_paths=[install_dir / "plugins"],
-    plugin_args=["--left-topic=/io_teleop/Wuji_Hand/joint_cmd_finger_left"],
+    plugin_args=["--left-topic=/io_teleop/joint_cmd_finger_left"],
 )
 ```
 
