@@ -129,20 +129,35 @@ AvatarSdkSession::AvatarSdkSession(const std::string& config_path)
     }
 
     const std::string effective_path = config_path.empty() ? kAvatarSdkConfigPath : config_path;
-    const auto error = ::avatar::AvatarSDK::get_instance().initialize(effective_path);
-    if (error != ::avatar::ErrorCode::SUCCESS)
+    try
+    {
+        const auto error = ::avatar::AvatarSDK::get_instance().initialize(effective_path);
+        if (error != ::avatar::ErrorCode::SUCCESS)
+        {
+            throw std::runtime_error("Avatar SDK initialize failed, error code: " +
+                                     std::to_string(static_cast<int>(error)));
+        }
+        m_initialized = true;
+    }
+    catch (...)
     {
         g_avatar_sdk_in_use.store(false);
-        throw std::runtime_error("Avatar SDK initialize failed, error code: " + std::to_string(static_cast<int>(error)));
+        throw;
     }
-    m_initialized = true;
 }
 
-AvatarSdkSession::~AvatarSdkSession()
+AvatarSdkSession::~AvatarSdkSession() noexcept
 {
     if (m_initialized)
     {
-        ::avatar::AvatarSDK::get_instance().destroy();
+        try
+        {
+            ::avatar::AvatarSDK::get_instance().destroy();
+        }
+        catch (...)
+        {
+            // Destructors must not propagate vendor exceptions.
+        }
         g_avatar_sdk_in_use.store(false);
     }
 }
@@ -152,21 +167,25 @@ AvatarSdkSession::~AvatarSdkSession()
     return ::avatar::AvatarSDK::get_instance();
 }
 
-GloveState::~GloveState()
+GloveState::~GloveState() noexcept
 {
     reset();
 }
 
-void GloveState::reset()
+void GloveState::reset() noexcept
 {
-    if (device)
+    try
     {
-        if (started)
+        if (device && started)
         {
             device->stop();
         }
-        device->destroy();
     }
+    catch (...)
+    {
+        // Reset remains safe when called from GloveState's destructor.
+    }
+    // AvatarSDK owns and destroys its cached devices with the SDK session.
     device.reset();
     started = false;
     last_successful_fetch = {};

@@ -11,6 +11,7 @@ target_link_libraries(avatar_hand_tracker_printer
 )
 
 set_target_properties(avatar_hand_tracker_printer PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_AVATAR_PLUGIN_BUILD_DIR}"
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
   INSTALL_RPATH "$ORIGIN/../../${CMAKE_INSTALL_LIBDIR}"

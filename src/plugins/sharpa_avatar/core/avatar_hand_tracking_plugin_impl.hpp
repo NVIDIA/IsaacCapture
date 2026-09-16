@@ -35,7 +35,7 @@ class AvatarSdkSession
 {
 public:
     explicit AvatarSdkSession(const std::string& config_path);
-    ~AvatarSdkSession();
+    ~AvatarSdkSession() noexcept;
 
     AvatarSdkSession(const AvatarSdkSession&) = delete;
     AvatarSdkSession& operator=(const AvatarSdkSession&) = delete;
@@ -48,13 +48,13 @@ private:
 
 struct GloveState
 {
-    ~GloveState();
+    ~GloveState() noexcept;
 
     GloveState() = default;
     GloveState(const GloveState&) = delete;
     GloveState& operator=(const GloveState&) = delete;
 
-    void reset();
+    void reset() noexcept;
 
     ::avatar::DevicePtr device;
     std::vector<::avatar::Pose> landmarks;

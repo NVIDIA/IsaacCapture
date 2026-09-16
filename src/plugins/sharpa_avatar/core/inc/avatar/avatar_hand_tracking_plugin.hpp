@@ -63,6 +63,7 @@ public:
     AvatarTracker(AvatarTracker&&) = delete;
     AvatarTracker& operator=(AvatarTracker&&) = delete;
 
+    // Concurrent update calls are serialized; getters return locked data snapshots.
     void update();
 
     std::vector<AvatarLandmark> get_left_landmarks() const;
