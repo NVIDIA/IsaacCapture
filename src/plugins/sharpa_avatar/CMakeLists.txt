@@ -15,9 +15,9 @@ if(NOT EXISTS "${_AVATAR_SDK_INCLUDE_DIR}/avatar_sdk/AvatarSDK.h")
     "Run src/plugins/sharpa_avatar/install_avatar_sdk.sh.")
 endif()
 
-# Current production packages expose avatar_sdk; wrapper is a legacy fallback.
+# Only the production package's libavatar_sdk.so is supported.
 find_library(_AVATAR_SDK_LIBRARY
-  NAMES avatar_sdk avatar_sdk_wrapper
+  NAMES avatar_sdk
   PATHS "${_AVATAR_SDK_LIBRARY_DIR}"
   NO_DEFAULT_PATH
   NO_CACHE
