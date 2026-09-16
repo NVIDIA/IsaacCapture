@@ -60,8 +60,8 @@ build_dir="${build_dir:-$isaac_root/build}"
 
 [[ -f /opt/avatar-sdk/include/avatar_sdk/AvatarSDK.h ]] \
   || die "Avatar SDK header not found after installation."
-[[ -f /opt/avatar-sdk/lib/libavatar_sdk.so || -f /opt/avatar-sdk/lib/libavatar_sdk_wrapper.so ]] \
-  || die "Avatar SDK library not found under /opt/avatar-sdk/lib."
+[[ -f /opt/avatar-sdk/lib/libavatar_sdk.so ]] \
+  || die "Avatar SDK library libavatar_sdk.so not found under /opt/avatar-sdk/lib."
 [[ -f /opt/avatar-sdk/share/sdk_config.json ]] \
   || die "Avatar SDK configuration not found at /opt/avatar-sdk/share/sdk_config.json."
 
