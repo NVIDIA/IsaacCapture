@@ -73,7 +73,7 @@ void ensure_env_set(const char* env_name, const std::string& default_value)
 // overwrite=0, so an operator who exports it explicitly -- including to "0" -- wins.
 void opt_in_to_meta_body_tracking()
 {
-    setenv("NV_CXR_ENABLE_NON_CONFORMANT_META_BODY_TRACKING", "1", 0 /* do not overwrite */);
+    setenv("NV_CXR_ENABLE_NON_CONFORMANT_WEBXR_BODY_TRACKING", "1", 0 /* do not overwrite */);
 }
 
 // Ensure required environment variables are set before xrCreateInstance.

@@ -218,7 +218,7 @@ class CloudXRService:
         # shared ~/.cloudxr/run/cloudxr.env, which every CloudXR application
         # sources: opting all of them in is not ours to decide. setdefault, so
         # an operator who exports it explicitly -- including to "0" -- wins.
-        worker_env.setdefault("NV_CXR_ENABLE_NON_CONFORMANT_META_BODY_TRACKING", "1")
+        worker_env.setdefault("NV_CXR_ENABLE_NON_CONFORMANT_WEBXR_BODY_TRACKING", "1")
 
         runtime_mod = resolve_cloudxr_runtime_module()
         sdk_dir = get_sdk_path()
