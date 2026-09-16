@@ -12,8 +12,8 @@ SPDX-License-Identifier: Apache-2.0
   official package under `/opt/avatar-sdk`; CMake consumes that fixed host
   layout directly. Do not copy, patch, or package SDK files, and do not
   advertise extracted SDK trees as supported.
-- Keep the dependency installer on the production `avatar-sdk` package and its
-  reviewed version; never substitute the `-dev` or `-beta` package channels.
+- Install the latest candidate of the production `avatar-sdk` package; pin the
+  channel, not a release number, and never substitute `-dev` or `-beta`.
 - Keep installer responsibilities separate: SDK/APT in
   `install_avatar_sdk.sh`, host device permissions in
   `install_udev_rules.sh`, and plugin build/install orchestration in

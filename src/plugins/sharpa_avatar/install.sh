@@ -70,7 +70,7 @@ if [[ -f /opt/avatar-sdk/share/Version ]]; then
   sdk_build_type="$(awk -F= '$1 == "BUILD_TYPE" { print $2 }' /opt/avatar-sdk/share/Version)"
   echo "==> Found Avatar SDK ${sdk_version:-unknown} (${sdk_build_type:-unknown})"
   if [[ "$sdk_build_type" != "Production" ]]; then
-    echo "WARNING: using an existing non-production SDK; install_avatar_sdk.sh only installs production 1.7.3." >&2
+    echo "WARNING: using an existing non-production SDK; install_avatar_sdk.sh only installs the production channel." >&2
   fi
 fi
 
