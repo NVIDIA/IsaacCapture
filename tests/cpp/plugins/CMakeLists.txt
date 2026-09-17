@@ -16,3 +16,7 @@ endif()
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
+
+if(BUILD_PLUGIN_REALHAND_FFG_GLOVE)
+    add_subdirectory(realhand_ffg_glove)
+endif()
