@@ -66,6 +66,7 @@ Table of Contents
    device/body_tracking
    device/haptic_feedback
    device/manus
+   device/realhand_ffg_glove
    device/oak
    device/oglo
    device/wuji_glove

@@ -130,6 +130,52 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "WujiHandRetargeterConfig",
         "wuji",
     ),
+    # .realhand (P7 arm and L6/O6/L20 hands)
+    "P7ControllerPoseRetargeter": (
+        ".realhand.arm",
+        "P7ControllerPoseRetargeter",
+        "retargeters-lite",
+    ),
+    "P7HandPoseRetargeter": (
+        ".realhand.arm",
+        "P7HandPoseRetargeter",
+        "retargeters-lite",
+    ),
+    "P7WorkspacePoseConfig": (
+        ".realhand.arm",
+        "P7WorkspacePoseConfig",
+        "retargeters-lite",
+    ),
+    "RealHandHandTrackingRetargeter": (
+        ".realhand.hand",
+        "RealHandHandTrackingRetargeter",
+        None,
+    ),
+    "RealHandHandTrackingRetargeterConfig": (
+        ".realhand.hand",
+        "RealHandHandTrackingRetargeterConfig",
+        None,
+    ),
+    "ControllerTriggerRealHandRetargeter": (
+        ".realhand.hand",
+        "ControllerTriggerRealHandRetargeter",
+        None,
+    ),
+    "ControllerTriggerRealHandRetargeterConfig": (
+        ".realhand.hand",
+        "ControllerTriggerRealHandRetargeterConfig",
+        None,
+    ),
+    "RealHandFFGGloveRetargeter": (
+        ".realhand.realhand_ffg_glove",
+        "RealHandFFGGloveRetargeter",
+        None,
+    ),
+    "RealHandFFGGloveRetargeterConfig": (
+        ".realhand.realhand_ffg_glove",
+        "RealHandFFGGloveRetargeterConfig",
+        None,
+    ),
     # .joint_space (generic joint-space devices: leader arms, exoskeletons, ...)
     "JointStateRetargeter": (
         ".joint_space.joint_state_retargeter",
@@ -256,6 +302,16 @@ __all__ = [
     # Wuji hand retargeters (require wuji extra: wuji-sdk[retarget])
     "WujiHandRetargeter",
     "WujiHandRetargeterConfig",
+    # RealHand P7 arm and L6/O6/L20 hand retargeters
+    "P7ControllerPoseRetargeter",
+    "P7HandPoseRetargeter",
+    "P7WorkspacePoseConfig",
+    "RealHandHandTrackingRetargeter",
+    "RealHandHandTrackingRetargeterConfig",
+    "ControllerTriggerRealHandRetargeter",
+    "ControllerTriggerRealHandRetargeterConfig",
+    "RealHandFFGGloveRetargeter",
+    "RealHandFFGGloveRetargeterConfig",
     # Generic joint-space device retargeters (leader arms, exoskeletons, ...)
     "JointStateRetargeter",
     "JointStateRetargeterConfig",
