@@ -14,11 +14,28 @@ Usage (from the Isaac Teleop root, after ``src/plugins/sharpa_avatar/install.sh`
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
+from isaacteleop.cloudxr import CloudXRLauncher
+from isaacteleop.retargeting_engine.deviceio_source_nodes import (
+    HandsSource,
+    JointStateSource,
+)
+from isaacteleop.retargeting_engine.interface import OutputCombiner
+from isaacteleop.retargeting_engine.tensor_types import (
+    HandInputIndex,
+    HandJointIndex,
+    NUM_HAND_JOINTS,
+)
+from isaacteleop.teleop_session_manager import (
+    PluginConfig,
+    TeleopSession,
+    TeleopSessionConfig,
+)
 
 PLUGIN_NAME = "avatar_hand_plugin"
 PLUGIN_ROOT_ID = "sharpa_avatar"
@@ -27,8 +44,7 @@ AVATAR_RAW_LEFT_COLLECTION_ID = "avatar_raw_left"
 AVATAR_RAW_RIGHT_COLLECTION_ID = "avatar_raw_right"
 AVATAR_ROBOT_LEFT_COLLECTION_ID = "avatar_robot_left"
 AVATAR_ROBOT_RIGHT_COLLECTION_ID = "avatar_robot_right"
-NUM_AVATAR_JOINTS = 22
-AVATAR_JOINT_NAMES = [f"joint_{i}" for i in range(NUM_AVATAR_JOINTS)]
+DEFAULT_SDK_CONFIG_PATH = Path("/opt/avatar-sdk/share/sdk_config.json")
 DEFAULT_DATASETS = "human,raw,robot,haptic"
 APP_NAME = "SharpaAvatarSample"
 FPS = 30.0
@@ -40,15 +56,8 @@ MAX_DISTANCE_M = 0.028
 MIN_DISTANCE_M = 0.008
 PINCH_DEADBAND = 0.35
 
-WRIST = 1
-THUMB = (2, 3, 4, 5)
-INDEX = (6, 7, 8, 9, 10)
-MIDDLE = (11, 12, 13, 14, 15)
-RING = (16, 17, 18, 19, 20)
-LITTLE = (21, 22, 23, 24, 25)
 
-
-def _finger_chain(root: int, joints: tuple[int, ...]) -> list[tuple[int, int]]:
+def _finger_chain(root: int, *joints: int) -> list[tuple[int, int]]:
     chain = [(root, joints[0])]
     for a, b in zip(joints[:-1], joints[1:]):
         chain.append((a, b))
@@ -56,17 +65,50 @@ def _finger_chain(root: int, joints: tuple[int, ...]) -> list[tuple[int, int]]:
 
 
 HAND_BONES = (
-    _finger_chain(WRIST, THUMB)
-    + _finger_chain(WRIST, INDEX)
-    + _finger_chain(WRIST, MIDDLE)
-    + _finger_chain(WRIST, RING)
-    + _finger_chain(WRIST, LITTLE)
+    _finger_chain(
+        HandJointIndex.WRIST,
+        HandJointIndex.THUMB_METACARPAL,
+        HandJointIndex.THUMB_PROXIMAL,
+        HandJointIndex.THUMB_DISTAL,
+        HandJointIndex.THUMB_TIP,
+    )
+    + _finger_chain(
+        HandJointIndex.WRIST,
+        HandJointIndex.INDEX_METACARPAL,
+        HandJointIndex.INDEX_PROXIMAL,
+        HandJointIndex.INDEX_INTERMEDIATE,
+        HandJointIndex.INDEX_DISTAL,
+        HandJointIndex.INDEX_TIP,
+    )
+    + _finger_chain(
+        HandJointIndex.WRIST,
+        HandJointIndex.MIDDLE_METACARPAL,
+        HandJointIndex.MIDDLE_PROXIMAL,
+        HandJointIndex.MIDDLE_INTERMEDIATE,
+        HandJointIndex.MIDDLE_DISTAL,
+        HandJointIndex.MIDDLE_TIP,
+    )
+    + _finger_chain(
+        HandJointIndex.WRIST,
+        HandJointIndex.RING_METACARPAL,
+        HandJointIndex.RING_PROXIMAL,
+        HandJointIndex.RING_INTERMEDIATE,
+        HandJointIndex.RING_DISTAL,
+        HandJointIndex.RING_TIP,
+    )
+    + _finger_chain(
+        HandJointIndex.WRIST,
+        HandJointIndex.LITTLE_METACARPAL,
+        HandJointIndex.LITTLE_PROXIMAL,
+        HandJointIndex.LITTLE_INTERMEDIATE,
+        HandJointIndex.LITTLE_DISTAL,
+        HandJointIndex.LITTLE_TIP,
+    )
 )
 HAND_COLOURS = {
     "left": (0.30, 0.85, 1.00),
     "right": (1.00, 0.65, 0.30),
 }
-NUM_HAND_JOINTS = 26
 # Display-only: no headset, both gloves share the OpenXR origin. Split
 # left/right and stand fingers up (Avatar local +X is not OpenXR -Z).
 # Coordinates are MuJoCo Z-up before the viser Y-up permute.
@@ -81,75 +123,18 @@ def _die(message: str, code: int = 2) -> None:
     raise SystemExit(code)
 
 
-def _import_teleop():
-    try:
-        from isaacteleop.cloudxr import CloudXRLauncher
-        from isaacteleop.retargeting_engine.deviceio_source_nodes import (
-            HandsSource,
-            JointStateSource,
-        )
-        from isaacteleop.retargeting_engine.interface import OutputCombiner
-        from isaacteleop.retargeting_engine.tensor_types import (
-            HandInputIndex,
-            HandJointIndex,
-        )
-        from isaacteleop.teleop_session_manager import (
-            PluginConfig,
-            TeleopSession,
-            TeleopSessionConfig,
-        )
-    except ImportError as exc:
-        _die(
-            "Isaac Teleop public APIs are missing "
-            f"({exc}). Activate the Isaac Teleop venv and install the wheel:\n"
-            "  pip install 'isaacteleop[retargeters,cloudxr]' "
-            "--find-links=./install/wheels/ --no-index --force-reinstall"
-        )
-    return (
-        CloudXRLauncher,
-        HandsSource,
-        JointStateSource,
-        OutputCombiner,
-        HandInputIndex,
-        HandJointIndex,
-        PluginConfig,
-        TeleopSession,
-        TeleopSessionConfig,
-    )
-
-
-def _import_viser():
-    try:
-        import viser
-    except ImportError as exc:
-        _die(
-            "viser is required for the hand-shape view "
-            f"({exc}). This Isaac Teleop venv has no pip; install with:\n"
-            "  uv pip install viser\n"
-            "  .venv/bin/python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py\n"
-            "Or pass --no-viz for terminal + haptic only."
-        )
-    return viser
-
-
 def plugin_search_paths() -> list[Path]:
-    """Directories that contain ``sharpa_avatar/avatar_hand_plugin``.
-
-    ``src/plugins`` is not used: it has ``plugin.yaml`` but no binary, and the
-    plugin manager last-write-wins, so it would exec ``./avatar_hand_plugin``
-    from the source tree and fail immediately.
-    """
+    """Installed roots that contain ``sharpa_avatar/avatar_hand_plugin``."""
     here = Path(__file__).resolve()
-    roots = [Path.cwd(), *here.parents]
-    candidates: list[Path] = []
-    for root in roots:
-        candidates.extend(
-            (
-                root / "plugins",
-                root / "install" / "plugins",
-                root / "build" / "src" / "plugins",
-            )
-        )
+    candidates = [Path.cwd() / "install" / "plugins"]
+    plugin_dir = here.parent.parent
+    plugins_root = plugin_dir.parent
+    if (
+        here.parent.name == "tools"
+        and plugin_dir.name == PLUGIN_ROOT_ID
+        and (plugin_dir / PLUGIN_NAME).is_file()
+    ):
+        candidates.append(plugins_root)
     seen: set[Path] = set()
     out: list[Path] = []
     for path in candidates:
@@ -167,13 +152,29 @@ def _plugin_installed(search_paths: list[Path]) -> bool:
     return any((path / PLUGIN_ROOT_ID / PLUGIN_NAME).is_file() for path in search_paths)
 
 
+def _sdk_joint_names(path: Path) -> tuple[list[str], list[str]]:
+    config = json.loads(path.read_text(encoding="utf-8"))
+    raw_names = config["raw_joint_names"]
+    robot_names = config["robot_joint_names"]
+    if not isinstance(raw_names, list) or not isinstance(robot_names, list):
+        raise ValueError(f"{path} joint-name entries must be lists")
+    if not all(isinstance(name, str) for name in raw_names + robot_names):
+        raise ValueError(f"{path} contains non-string joint names")
+    return list(raw_names), list(robot_names)
+
+
 def _xr_pos_to_mj(p: np.ndarray) -> np.ndarray:
     # OpenXR Y-up, -Z forward → MuJoCo Z-up (Rx+90): (x, y, z) -> (x, -z, y).
     return np.array([p[0], -p[2], p[1]], dtype=np.float64)
 
 
 def _anchor_joint(positions: list[np.ndarray | None]) -> np.ndarray | None:
-    for idx in (WRIST, 0, MIDDLE[0], INDEX[0]):
+    for idx in (
+        HandJointIndex.WRIST,
+        HandJointIndex.PALM,
+        HandJointIndex.MIDDLE_METACARPAL,
+        HandJointIndex.INDEX_METACARPAL,
+    ):
         if positions[idx] is not None:
             return positions[idx]
     for pos in positions:
@@ -185,7 +186,12 @@ def _anchor_joint(positions: list[np.ndarray | None]) -> np.ndarray | None:
 def _upright_rotation(centered: list[np.ndarray | None]) -> np.ndarray:
     """Map wrist→middle onto +Z so the hand stands up in any incoming frame."""
     tip = None
-    for idx in (MIDDLE[-1], MIDDLE[0], INDEX[-1], INDEX[0]):
+    for idx in (
+        HandJointIndex.MIDDLE_TIP,
+        HandJointIndex.MIDDLE_METACARPAL,
+        HandJointIndex.INDEX_TIP,
+        HandJointIndex.INDEX_METACARPAL,
+    ):
         if centered[idx] is not None:
             tip = centered[idx]
             break
@@ -197,8 +203,8 @@ def _upright_rotation(centered: list[np.ndarray | None]) -> np.ndarray:
         return np.eye(3)
     z_axis = z_axis / norm_z
     x_ref = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-    index_j = centered[INDEX[0]]
-    little_j = centered[LITTLE[0]]
+    index_j = centered[HandJointIndex.INDEX_METACARPAL]
+    little_j = centered[HandJointIndex.LITTLE_METACARPAL]
     if index_j is not None and little_j is not None:
         x_ref = np.asarray(index_j - little_j, dtype=np.float64)
     x_axis = x_ref - float(np.dot(x_ref, z_axis)) * z_axis
@@ -284,6 +290,25 @@ class _HandViz:
         return n
 
 
+def _start_viser(args):
+    import viser
+
+    server = viser.ViserServer(host=args.host, port=args.port)
+    server.scene.set_up_direction("+y")
+    server.scene.add_grid(
+        name="/grid",
+        width=2.0,
+        height=2.0,
+        plane="xz",
+        cell_size=0.1,
+    )
+    return (
+        server,
+        _HandViz(server, "hand_left", HAND_COLOURS["left"]),
+        _HandViz(server, "hand_right", HAND_COLOURS["right"]),
+    )
+
+
 def _hand_points(group, hand_input_index, *, side: str, upright: bool):
     pts = np.zeros((NUM_HAND_JOINTS, 3), dtype=np.float32)
     valid_mask = np.zeros(NUM_HAND_JOINTS, dtype=bool)
@@ -325,42 +350,28 @@ def _fmt_optional(group, *, kind: str, hand_input_index) -> str:
 
 
 def _build_haptic_pipeline(hands, mapping, sinks, hands_source_cls) -> None:
-    try:
-        from isaacteleop.haptic_devices.glove import haptic_glove_device
-        from isaacteleop.retargeters.tactile_retargeters import (
-            TactileVectorToFingerPower,
-        )
-        from isaacteleop.retargeting_engine.deviceio_source_nodes import HapticSink
-        from isaacteleop.retargeting_engine.interface import BaseRetargeter
-        from isaacteleop.retargeting_engine.interface.retargeter_core_types import (
-            ComputeContext,
-            RetargeterIO,
-            RetargeterIOType,
-        )
-        from isaacteleop.retargeting_engine.interface.tensor_group_type import (
-            OptionalType,
-        )
-        from isaacteleop.retargeting_engine.tensor_types import (
-            FingerIndex,
-            HandInput,
-            HandInputIndex,
-            HandJointIndex,
-            NUM_HAPTIC_FINGERS,
-            TactileVector,
-        )
-    except ImportError as exc:
-        _die(
-            "Pinch haptic needs isaacteleop haptic / retargeter extras "
-            f"({exc}). Install 'isaacteleop[retargeters]' or pass --no-haptic."
-        )
+    from isaacteleop.haptic_devices.glove import haptic_glove_device
+    from isaacteleop.retargeters.tactile_retargeters import (
+        TactileVectorToFingerPower,
+    )
+    from isaacteleop.retargeting_engine.deviceio_source_nodes import HapticSink
+    from isaacteleop.retargeting_engine.interface import BaseRetargeter
+    from isaacteleop.retargeting_engine.interface.retargeter_core_types import (
+        ComputeContext,
+        RetargeterIO,
+        RetargeterIOType,
+    )
+    from isaacteleop.retargeting_engine.interface.tensor_group_type import (
+        OptionalType,
+    )
+    from isaacteleop.retargeting_engine.tensor_types import (
+        FingerIndex,
+        HandInput,
+        NUM_HAPTIC_FINGERS,
+        TactileVector,
+    )
 
-    try:
-        device = haptic_glove_device(AVATAR_GLOVE_HAPTIC_COLLECTION_ID)
-    except Exception as exc:  # noqa: BLE001
-        _die(
-            "Could not create the public haptic glove device "
-            f"({type(exc).__name__}: {exc}). Upgrade isaacteleop or pass --no-haptic."
-        )
+    device = haptic_glove_device(AVATAR_GLOVE_HAPTIC_COLLECTION_ID)
 
     finger_tip_joints = {
         FingerIndex.INDEX: HandJointIndex.INDEX_TIP,
@@ -427,18 +438,6 @@ def _build_haptic_pipeline(hands, mapping, sinks, hands_source_cls) -> None:
 
 
 def main() -> int:
-    (
-        CloudXRLauncher,
-        HandsSource,
-        JointStateSource,
-        OutputCombiner,
-        HandInputIndex,
-        _HandJointIndex,
-        PluginConfig,
-        TeleopSession,
-        TeleopSessionConfig,
-    ) = _import_teleop()
-
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -472,8 +471,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--sdk-config",
-        default="",
-        help="Optional sdk_config.json passed to the plugin.",
+        type=Path,
+        default=None,
+        help=f"sdk_config.json for joint names and the plugin (default: {DEFAULT_SDK_CONFIG_PATH}).",
     )
     parser.add_argument(
         "--datasets",
@@ -506,24 +506,42 @@ def main() -> int:
             "Sharpa Avatar plugin binary was not found under "
             f"{PLUGIN_ROOT_ID}/{PLUGIN_NAME}.\n"
             "  Build it with:  ./src/plugins/sharpa_avatar/install.sh\n"
-            "  That installs install/plugins/sharpa_avatar/avatar_hand_plugin "
-            "(do not point at src/plugins — that tree has plugin.yaml only).\n"
+            "  That installs install/plugins/sharpa_avatar/avatar_hand_plugin.\n"
             "  Or pass --plugin-search-path to the directory that contains "
             "sharpa_avatar/avatar_hand_plugin."
         )
 
+    raw_joint_names, robot_joint_names = _sdk_joint_names(
+        args.sdk_config or DEFAULT_SDK_CONFIG_PATH
+    )
     hands = HandsSource(name="hands")
     joint_sources = [
         JointStateSource(
             name=name,
             collection_id=collection_id,
-            joint_names=AVATAR_JOINT_NAMES,
+            joint_names=joint_names,
         )
-        for name, collection_id in (
-            ("avatar_raw_left", AVATAR_RAW_LEFT_COLLECTION_ID),
-            ("avatar_raw_right", AVATAR_RAW_RIGHT_COLLECTION_ID),
-            ("avatar_robot_left", AVATAR_ROBOT_LEFT_COLLECTION_ID),
-            ("avatar_robot_right", AVATAR_ROBOT_RIGHT_COLLECTION_ID),
+        for name, collection_id, joint_names in (
+            (
+                "avatar_raw_left",
+                AVATAR_RAW_LEFT_COLLECTION_ID,
+                raw_joint_names,
+            ),
+            (
+                "avatar_raw_right",
+                AVATAR_RAW_RIGHT_COLLECTION_ID,
+                raw_joint_names,
+            ),
+            (
+                "avatar_robot_left",
+                AVATAR_ROBOT_LEFT_COLLECTION_ID,
+                robot_joint_names,
+            ),
+            (
+                "avatar_robot_right",
+                AVATAR_ROBOT_RIGHT_COLLECTION_ID,
+                robot_joint_names,
+            ),
         )
     ]
     mapping = {
@@ -541,8 +559,8 @@ def main() -> int:
     plugins = []
     if args.launch_plugin:
         plugin_args = [f"--datasets={args.datasets}"]
-        if args.sdk_config:
-            plugin_args.insert(0, args.sdk_config)
+        if args.sdk_config is not None:
+            plugin_args.insert(0, str(args.sdk_config))
         plugins = [
             PluginConfig(
                 plugin_name=PLUGIN_NAME,
@@ -559,30 +577,9 @@ def main() -> int:
         plugins=plugins,
     )
 
-    viser = None
-    server = None
+    _server = None
     viz_left = None
     viz_right = None
-    if args.viz:
-        viser = _import_viser()
-        try:
-            server = viser.ViserServer(host=args.host, port=args.port)
-            server.scene.set_up_direction("+y")
-            server.scene.add_grid(
-                name="/grid",
-                width=2.0,
-                height=2.0,
-                plane="xz",
-                cell_size=0.1,
-            )
-            viz_left = _HandViz(server, "hand_left", HAND_COLOURS["left"])
-            viz_right = _HandViz(server, "hand_right", HAND_COLOURS["right"])
-        except Exception as exc:  # noqa: BLE001
-            _die(
-                "Could not start the viser server "
-                f"({type(exc).__name__}: {exc}). Pass --no-viz for terminal only."
-            )
-
     step_period = 1.0 / max(args.hz, 1.0)
     print_period = (1.0 / args.print_hz) if args.print_hz > 0 else None
     next_print = time.monotonic()
@@ -612,82 +609,70 @@ def main() -> int:
         print("  viser:   off (--no-viz); terminal + haptic only. Ctrl+C to exit.")
     print("=" * 72)
 
-    try:
-        with CloudXRLauncher.launch_context(args), TeleopSession(config) as session:
-            while True:
-                result = session.step()
-                n_l = n_r = 0
-                if viz_left is not None and viz_right is not None:
-                    pts, mask, n_l = _hand_points(
-                        result.get("hand_left"),
-                        HandInputIndex,
-                        side="left",
-                        upright=upright,
-                    )
-                    viz_left.update(pts, mask)
-                    pts, mask, n_r = _hand_points(
-                        result.get("hand_right"),
-                        HandInputIndex,
-                        side="right",
-                        upright=upright,
-                    )
-                    viz_right.update(pts, mask)
-                else:
-                    left = result.get("hand_left")
-                    right = result.get("hand_right")
-                    if left is not None and not left.is_none:
-                        n_l = int(np.asarray(left[HandInputIndex.JOINT_VALID]).sum())
-                    if right is not None and not right.is_none:
-                        n_r = int(np.asarray(right[HandInputIndex.JOINT_VALID]).sum())
-
-                now = time.monotonic()
-                if print_period is not None and now >= next_print:
-                    next_print = now + print_period
-                    print(
-                        f"[{session.get_elapsed_time():6.1f}s] "
-                        f"HUMAN L={_fmt_optional(result.get('hand_left'), kind='hand', hand_input_index=HandInputIndex)}"
-                        f"({n_l}) | "
-                        f"R={_fmt_optional(result.get('hand_right'), kind='hand', hand_input_index=HandInputIndex)}"
-                        f"({n_r})\n"
-                        f"           RAW   L={_fmt_optional(result.get('raw_left'), kind='joints', hand_input_index=HandInputIndex)} | "
-                        f"R={_fmt_optional(result.get('raw_right'), kind='joints', hand_input_index=HandInputIndex)}\n"
-                        f"           ROBOT L={_fmt_optional(result.get('robot_left'), kind='joints', hand_input_index=HandInputIndex)} | "
-                        f"R={_fmt_optional(result.get('robot_right'), kind='joints', hand_input_index=HandInputIndex)}"
-                    )
-
-                any_online = any(
-                    g is not None and not g.is_none
-                    for g in (
-                        result.get("hand_left"),
-                        result.get("hand_right"),
-                        result.get("raw_left"),
-                        result.get("raw_right"),
-                        result.get("robot_left"),
-                        result.get("robot_right"),
-                    )
+    with CloudXRLauncher.launch_context(args), TeleopSession(config) as session:
+        if args.viz:
+            _server, viz_left, viz_right = _start_viser(args)
+        while True:
+            result = session.step()
+            n_l = n_r = 0
+            if viz_left is not None and viz_right is not None:
+                pts, mask, n_l = _hand_points(
+                    result.get("hand_left"),
+                    HandInputIndex,
+                    side="left",
+                    upright=upright,
                 )
-                if not any_online and (now - last_offline_hint) >= 5.0:
-                    last_offline_hint = now
-                    print(
-                        "  (waiting for glove data — plugin/CloudXR should start "
-                        "with this process; gloves must be on; do not also run "
-                        "avatar-backend or avatar_hand_tracker_printer)",
-                        flush=True,
-                    )
-                time.sleep(step_period)
-    except KeyboardInterrupt:
-        print("\nExiting.")
-        return 0
-    except SystemExit:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        _die(
-            f"{type(exc).__name__}: {exc}\n"
-            "  If this is a plugin/SDK error: run ./src/plugins/sharpa_avatar/install.sh "
-            "with the SDK installed under /opt/avatar-sdk.\n"
-            "  If CloudXR failed: python -m isaacteleop.cloudxr.service start "
-            "and source ~/.cloudxr/run/cloudxr.env, or keep the sample's default launcher."
-        )
+                viz_left.update(pts, mask)
+                pts, mask, n_r = _hand_points(
+                    result.get("hand_right"),
+                    HandInputIndex,
+                    side="right",
+                    upright=upright,
+                )
+                viz_right.update(pts, mask)
+            else:
+                left = result.get("hand_left")
+                right = result.get("hand_right")
+                if left is not None and not left.is_none:
+                    n_l = int(np.asarray(left[HandInputIndex.JOINT_VALID]).sum())
+                if right is not None and not right.is_none:
+                    n_r = int(np.asarray(right[HandInputIndex.JOINT_VALID]).sum())
+
+            now = time.monotonic()
+            if print_period is not None and now >= next_print:
+                next_print = now + print_period
+                print(
+                    f"[{session.get_elapsed_time():6.1f}s] "
+                    f"HUMAN L={_fmt_optional(result.get('hand_left'), kind='hand', hand_input_index=HandInputIndex)}"
+                    f"({n_l}) | "
+                    f"R={_fmt_optional(result.get('hand_right'), kind='hand', hand_input_index=HandInputIndex)}"
+                    f"({n_r})\n"
+                    f"           RAW   L={_fmt_optional(result.get('raw_left'), kind='joints', hand_input_index=HandInputIndex)} | "
+                    f"R={_fmt_optional(result.get('raw_right'), kind='joints', hand_input_index=HandInputIndex)}\n"
+                    f"           ROBOT L={_fmt_optional(result.get('robot_left'), kind='joints', hand_input_index=HandInputIndex)} | "
+                    f"R={_fmt_optional(result.get('robot_right'), kind='joints', hand_input_index=HandInputIndex)}"
+                )
+
+            any_online = any(
+                g is not None and not g.is_none
+                for g in (
+                    result.get("hand_left"),
+                    result.get("hand_right"),
+                    result.get("raw_left"),
+                    result.get("raw_right"),
+                    result.get("robot_left"),
+                    result.get("robot_right"),
+                )
+            )
+            if not any_online and (now - last_offline_hint) >= 5.0:
+                last_offline_hint = now
+                print(
+                    "  (waiting for glove data — plugin/CloudXR should start "
+                    "with this process; gloves must be on; do not also run "
+                    "avatar-backend or avatar_hand_tracker_printer)",
+                    flush=True,
+                )
+            time.sleep(step_period)
     return 0
 
 

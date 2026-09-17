@@ -9,6 +9,11 @@ description: >
   Haptic → HapticCommandReaderTracker on collection id avatar_glove_haptic
   (pair with HapticGloveDevice / PushTensorHapticDevice on the Teleop side).
 command: "./avatar_hand_plugin"
+# The Avatar SDK is an external APT asset. Point the plugin at its sdk_config.json
+# here: the file fixes human landmark order (for the OpenXR hand mapping) and the
+# raw/robot joint names, so it is the single place to edit for a non-default SDK.
+args:
+  - "/opt/avatar-sdk/share/sdk_config.json"
 version: "1.1.0"
 devices:
   - path: "/hand/left"

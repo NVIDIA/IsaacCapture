@@ -123,6 +123,14 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         throw std::runtime_error("AvatarHandPlugin: --datasets must enable at least one of human,raw,robot,haptic");
     }
 
+    // Supplied by plugin.yaml's `args`. Required rather than defaulted: the file
+    // defines human landmark order and the raw/robot joint names, so a wrong or
+    // missing path has to fail loudly instead of degrading to an empty mapping.
+    if (config.sdk_config_path.empty())
+    {
+        throw std::runtime_error("AvatarHandPlugin: no sdk_config.json path given; set it in plugin.yaml's args");
+    }
+
     return config;
 }
 

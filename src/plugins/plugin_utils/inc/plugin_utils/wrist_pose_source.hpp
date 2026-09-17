@@ -9,13 +9,26 @@
 #include <deviceio_trackers/controller_tracker.hpp>
 #include <openxr/openxr.h>
 #include <oxr_utils/oxr_session_handles.hpp>
+#include <oxr_utils/pose_conversions.hpp>
 
 #include <XR_MNDX_xdev_space.h>
+#include <array>
+#include <cstddef>
 #include <memory>
 #include <vector>
 
 namespace plugin_utils
 {
+
+/** @brief Which hand a wrist pose belongs to. */
+enum class WristSide
+{
+    Left = 0,
+    Right = 1,
+};
+
+//! Number of hands a wrist source serves; WristSide order matches array indices.
+inline constexpr size_t kSideCount = 2;
 
 /** @brief Which device provides the wrist pose. */
 enum class WristSourceMode
@@ -34,14 +47,16 @@ struct WristSourceConfig
     // glove, so each plugin supplies its own calibrated pair (see
     // kLeft/kRightAimToWrist in wuji_glove_plugin.cpp and
     // kLeft/kRightHandOffset in manus_hand_tracking_plugin.cpp).
-    XrPosef left_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    XrPosef right_aim_to_wrist{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+    // Indexed by WristSide so the two hands are a table lookup, not a branch.
+    // Defaults to the identity pose: XrPosef is a C struct with no default member
+    // initializers, so `XrPosef{}` would give an all-zero, non-unit quaternion.
+    std::array<XrPosef, kSideCount> aim_to_wrist = { oxr_utils::identity_posef(), oxr_utils::identity_posef() };
 };
 
 /** @brief One wrist query result, in the session base space. */
 struct WristSample
 {
-    XrPosef pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+    XrPosef pose = oxr_utils::identity_posef();
     bool valid = false; //!< Pose usable (may be the cached last good pose).
     bool tracked = false; //!< Source actively tracked this frame.
 };
@@ -94,13 +109,13 @@ public:
      * Call from the thread that pumps the DeviceIOSession (the trackers'
      * queries are not synchronized with concurrent update() calls).
      */
-    WristSample query(bool is_left, XrTime time);
+    WristSample query(WristSide side, XrTime time);
 
 private:
     void initialize_xdev_hand_trackers();
     void cleanup_xdev_hand_trackers();
-    bool query_xdev(bool is_left, XrTime time, XrPosef& out_pose, bool& out_tracked);
-    bool query_controller(bool is_left, XrPosef& out_pose, bool& out_tracked);
+    bool query_xdev(WristSide side, XrTime time, XrPosef& out_pose, bool& out_tracked);
+    bool query_controller(WristSide side, XrPosef& out_pose, bool& out_tracked);
 
     WristSourceConfig m_config;
     core::OpenXRSessionHandles m_handles;
@@ -109,16 +124,14 @@ private:
 
     struct HandState
     {
-        XrPosef last_pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+        XrPosef last_pose = oxr_utils::identity_posef();
         bool has_pose = false;
     };
-    HandState m_left;
-    HandState m_right;
+    std::array<HandState, kSideCount> m_hand_state;
 
     // Optical hand tracking via XR_MNDX_xdev_space.
     XrXDevListMNDX m_xdev_list = XR_NULL_HANDLE;
-    XrHandTrackerEXT m_native_left_hand_tracker = XR_NULL_HANDLE;
-    XrHandTrackerEXT m_native_right_hand_tracker = XR_NULL_HANDLE;
+    std::array<XrHandTrackerEXT, kSideCount> m_native_hand_tracker{};
     bool m_xdev_available = false;
 
     PFN_xrCreateXDevListMNDX m_pfn_create_xdev_list = nullptr;
