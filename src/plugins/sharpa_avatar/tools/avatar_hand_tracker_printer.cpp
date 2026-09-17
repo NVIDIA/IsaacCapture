@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -37,6 +38,14 @@ void on_signal(int signal)
     {
         g_stop_requested.store(true, std::memory_order_relaxed);
     }
+}
+
+// Same default SDK root as the Python tools: AVATAR_SDK_ROOT, else the host path.
+std::string default_sdk_config_path()
+{
+    const char* sdk_root = std::getenv("AVATAR_SDK_ROOT");
+    return std::string(sdk_root != nullptr && sdk_root[0] != '\0' ? sdk_root : "/opt/avatar-sdk") +
+           "/share/sdk_config.json";
 }
 
 AvatarPluginConfig parse_args(int argc, char** argv)
@@ -158,8 +167,8 @@ try
     const AvatarPluginConfig config = parse_args(argc, argv);
 
     std::cout << "Avatar Hand Tracker Printer starting (config: "
-              << (config.sdk_config_path.empty() ? "/opt/avatar-sdk/share/sdk_config.json" : config.sdk_config_path)
-              << ")" << std::endl;
+              << (config.sdk_config_path.empty() ? default_sdk_config_path() : config.sdk_config_path) << ")"
+              << std::endl;
     std::cout << "Expected HUMAN landmark count: " << kAvatarHumanLandmarkCount << std::endl;
 
     AvatarTracker tracker(config);

@@ -110,10 +110,6 @@ public:
     AvatarSdkSession& operator=(const AvatarSdkSession&) = delete;
 
     ::avatar::AvatarSDK& get();
-    const std::string& config_path() const;
-
-private:
-    std::string m_config_path;
 };
 
 struct GloveState

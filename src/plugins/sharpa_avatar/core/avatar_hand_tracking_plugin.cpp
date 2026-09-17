@@ -6,7 +6,6 @@
 #include "avatar_glove_collection.hpp"
 
 #include <flatbuffers/flatbuffers.h>
-#include <nlohmann/json.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/math.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -18,7 +17,6 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -203,8 +201,38 @@ constexpr std::string_view error_name(::avatar::ErrorCode error)
     return "UNRECOGNIZED_ERROR";
 }
 
-// Exact `human_joint_names` spellings from sdk_config.json. Null slots have no
-// Avatar HUMAN counterpart and must remain invalid.
+// Human landmark snapshot copied verbatim from the pinned production SDK
+// (avatar-sdk 1.7.3-17 share/sdk_config.json); refresh together with the package pin.
+constexpr std::array<const char*, 25> kHumanJointNames = {
+    "WRIST",
+    "right_thumb_CMC_FE_link",
+    "right_thumb_CMC_AA_link",
+    "right_thumb_MCP_FE_link",
+    "right_thumb_MCP_AA_link",
+    "right_thumb_IP_link",
+    "right_thumb_virtualtip",
+    "right_index_MCP_AA_link",
+    "right_index_MCP_FE_link",
+    "right_index_PIP_link",
+    "right_index_DIP_link",
+    "right_index_virtualtip",
+    "right_middle_MCP_AA_link",
+    "right_middle_MCP_FE_link",
+    "right_middle_PIP_link",
+    "right_middle_DIP_link",
+    "right_middle_virtualtip",
+    "right_ring_MCP_AA_link",
+    "right_ring_MCP_FE_link",
+    "right_ring_PIP_link",
+    "right_ring_DIP_link",
+    "right_ring_virtualtip",
+    "right_pinky_MCP_AA_link",
+    "right_pinky_MCP_FE_link",
+    "right_pinky_virtualtip",
+};
+
+// Exact `human_joint_names` spellings for each OpenXR hand slot. Null slots have
+// no Avatar HUMAN counterpart and must remain invalid.
 constexpr std::array<const char*, XR_HAND_JOINT_COUNT_EXT> kOpenXRSlotSources = {
     nullptr,
     "WRIST",
@@ -234,28 +262,22 @@ constexpr std::array<const char*, XR_HAND_JOINT_COUNT_EXT> kOpenXRSlotSources = 
     "right_pinky_virtualtip",
 };
 
-std::unordered_map<std::string, size_t> load_human_landmark_indices(const std::string& config_path)
+std::unordered_map<std::string, size_t> load_human_landmark_indices()
 {
-    std::ifstream file(config_path);
-    if (!file)
-    {
-        throw std::runtime_error("Cannot open Avatar SDK config: " + config_path);
-    }
-
-    const auto names = nlohmann::json::parse(file).at("human_joint_names").get<std::vector<std::string>>();
     std::unordered_map<std::string, size_t> indices;
-    for (size_t i = 0; i < names.size(); ++i)
+    for (size_t i = 0; i < kHumanJointNames.size(); ++i)
     {
-        if (!indices.emplace(names[i], i).second)
+        if (!indices.emplace(kHumanJointNames[i], i).second)
         {
-            throw std::runtime_error("Duplicate human landmark name in Avatar SDK config: " + names[i]);
+            throw std::runtime_error(std::string("Duplicate human landmark in the SDK name snapshot: ") +
+                                     kHumanJointNames[i]);
         }
     }
     for (const char* source : kOpenXRSlotSources)
     {
         if (source != nullptr && indices.find(source) == indices.end())
         {
-            throw std::runtime_error("Avatar SDK config is missing human landmark: " + std::string(source));
+            throw std::runtime_error("SDK name snapshot is missing human landmark: " + std::string(source));
         }
     }
     return indices;
@@ -269,9 +291,9 @@ static constexpr XrPosef kLeftHandOffset = { { -0.70710678f, -0.5f, 0.0f, 0.5f }
 static constexpr XrPosef kRightHandOffset = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } };
 
 AvatarSdkSession::AvatarSdkSession(const std::string& config_path)
-    : m_config_path(config_path.empty() ? AVATAR_SDK_CONFIG_PATH : config_path)
 {
-    const auto error = ::avatar::AvatarSDK::get_instance().initialize(m_config_path);
+    const std::string sdk_config = config_path.empty() ? AVATAR_SDK_CONFIG_PATH : config_path;
+    const auto error = ::avatar::AvatarSDK::get_instance().initialize(sdk_config);
     if (error != ::avatar::ErrorCode::SUCCESS)
     {
         throw std::runtime_error("Avatar SDK initialize failed: " + std::string(error_name(error)) + " (" +
@@ -294,11 +316,6 @@ AvatarSdkSession::~AvatarSdkSession() noexcept
 ::avatar::AvatarSDK& AvatarSdkSession::get()
 {
     return ::avatar::AvatarSDK::get_instance();
-}
-
-const std::string& AvatarSdkSession::config_path() const
-{
-    return m_config_path;
 }
 
 GloveState::~GloveState() noexcept
@@ -332,7 +349,7 @@ AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(con
               << " haptic=" << (m_config.haptic ? "on" : "off") << std::endl;
     if (m_config.human)
     {
-        m_landmark_index = load_human_landmark_indices(m_sdk.config_path());
+        m_landmark_index = load_human_landmark_indices();
     }
     try_connect_missing_gloves();
     initialize_openxr();

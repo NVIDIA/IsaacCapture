@@ -7,14 +7,16 @@ add_executable(avatar_hand_tracker_printer
 
 target_link_libraries(avatar_hand_tracker_printer
   PRIVATE
-    avatar_plugin_core
+    isaac::avatar_plugin
 )
 
 set_target_properties(avatar_hand_tracker_printer PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${_AVATAR_PLUGIN_BUILD_DIR}"
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
-  INSTALL_RPATH "$ORIGIN/../../${CMAKE_INSTALL_LIBDIR}"
+  BUILD_RPATH "${_AVATAR_SDK_LIBRARY_DIR}"
+  # All in-tree libraries are static; libavatar_sdk.so is the only shared dependency.
+  INSTALL_RPATH "${_AVATAR_SDK_LIBRARY_DIR}"
 )
 
 install(TARGETS avatar_hand_tracker_printer
