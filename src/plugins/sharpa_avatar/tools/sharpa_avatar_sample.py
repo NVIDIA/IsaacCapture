@@ -14,7 +14,7 @@ Usage (from the Isaac Teleop root, after ``src/plugins/sharpa_avatar/install.sh`
 from __future__ import annotations
 
 import argparse
-import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -44,7 +44,59 @@ AVATAR_RAW_LEFT_COLLECTION_ID = "avatar_raw_left"
 AVATAR_RAW_RIGHT_COLLECTION_ID = "avatar_raw_right"
 AVATAR_ROBOT_LEFT_COLLECTION_ID = "avatar_robot_left"
 AVATAR_ROBOT_RIGHT_COLLECTION_ID = "avatar_robot_right"
-DEFAULT_SDK_CONFIG_PATH = Path("/opt/avatar-sdk/share/sdk_config.json")
+# Joint names copied verbatim from the pinned production SDK
+# (avatar-sdk 1.7.3-17 share/sdk_config.json); refresh together with the package pin.
+RAW_JOINT_NAMES = (
+    "thumb_CMC_FE",
+    "thumb_CMC_AA",
+    "thumb_MCP_FE",
+    "thumb_MCP_AA",
+    "thumb_IP",
+    "index_MCP_AA",
+    "index_MCP_FE",
+    "index_PIP",
+    "index_DIP",
+    "middle_MCP_AA",
+    "middle_MCP_FE",
+    "middle_PIP",
+    "middle_DIP",
+    "ring_MCP_AA",
+    "ring_MCP_FE",
+    "ring_PIP",
+    "ring_DIP",
+    "pinky_MCP_AA",
+    "pinky_MCP_FE",
+    "pinky_DIP1",
+    "pinky_DIP2",
+    "pinky_DIP3",
+)
+ROBOT_JOINT_NAMES = (
+    "thumb_CMC_FE",
+    "thumb_CMC_AA",
+    "thumb_MCP_FE",
+    "thumb_MCP_AA",
+    "thumb_IP",
+    "index_MCP_FE",
+    "index_MCP_AA",
+    "index_PIP",
+    "index_DIP",
+    "middle_MCP_FE",
+    "middle_MCP_AA",
+    "middle_PIP",
+    "middle_DIP",
+    "ring_MCP_FE",
+    "ring_MCP_AA",
+    "ring_PIP",
+    "ring_DIP",
+    "pinky_CMC",
+    "pinky_MCP_FE",
+    "pinky_MCP_AA",
+    "pinky_PIP",
+    "pinky_DIP",
+)
+# SDK root for the --sdk-config default; AVATAR_SDK_ROOT overrides the host default.
+_SDK_ROOT = Path(os.environ.get("AVATAR_SDK_ROOT", "/opt/avatar-sdk"))
+DEFAULT_SDK_CONFIG_PATH = _SDK_ROOT / "share/sdk_config.json"
 DEFAULT_DATASETS = "human,raw,robot,haptic"
 APP_NAME = "SharpaAvatarSample"
 FPS = 30.0
@@ -150,17 +202,6 @@ def plugin_search_paths() -> list[Path]:
 
 def _plugin_installed(search_paths: list[Path]) -> bool:
     return any((path / PLUGIN_ROOT_ID / PLUGIN_NAME).is_file() for path in search_paths)
-
-
-def _sdk_joint_names(path: Path) -> tuple[list[str], list[str]]:
-    config = json.loads(path.read_text(encoding="utf-8"))
-    raw_names = config["raw_joint_names"]
-    robot_names = config["robot_joint_names"]
-    if not isinstance(raw_names, list) or not isinstance(robot_names, list):
-        raise ValueError(f"{path} joint-name entries must be lists")
-    if not all(isinstance(name, str) for name in raw_names + robot_names):
-        raise ValueError(f"{path} contains non-string joint names")
-    return list(raw_names), list(robot_names)
 
 
 def _xr_pos_to_mj(p: np.ndarray) -> np.ndarray:
@@ -473,7 +514,7 @@ def main() -> int:
         "--sdk-config",
         type=Path,
         default=None,
-        help=f"sdk_config.json for joint names and the plugin (default: {DEFAULT_SDK_CONFIG_PATH}).",
+        help=f"sdk_config.json forwarded to the plugin (default: {DEFAULT_SDK_CONFIG_PATH}).",
     )
     parser.add_argument(
         "--datasets",
@@ -511,36 +552,33 @@ def main() -> int:
             "sharpa_avatar/avatar_hand_plugin."
         )
 
-    raw_joint_names, robot_joint_names = _sdk_joint_names(
-        args.sdk_config or DEFAULT_SDK_CONFIG_PATH
-    )
     hands = HandsSource(name="hands")
     joint_sources = [
         JointStateSource(
             name=name,
             collection_id=collection_id,
-            joint_names=joint_names,
+            joint_names=list(joint_names),
         )
         for name, collection_id, joint_names in (
             (
                 "avatar_raw_left",
                 AVATAR_RAW_LEFT_COLLECTION_ID,
-                raw_joint_names,
+                RAW_JOINT_NAMES,
             ),
             (
                 "avatar_raw_right",
                 AVATAR_RAW_RIGHT_COLLECTION_ID,
-                raw_joint_names,
+                RAW_JOINT_NAMES,
             ),
             (
                 "avatar_robot_left",
                 AVATAR_ROBOT_LEFT_COLLECTION_ID,
-                robot_joint_names,
+                ROBOT_JOINT_NAMES,
             ),
             (
                 "avatar_robot_right",
                 AVATAR_ROBOT_RIGHT_COLLECTION_ID,
-                robot_joint_names,
+                ROBOT_JOINT_NAMES,
             ),
         )
     ]

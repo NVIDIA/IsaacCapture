@@ -8,6 +8,8 @@ add_library(avatar_plugin_core STATIC
   inc/avatar/cli.hpp
 )
 
+add_library(isaac::avatar_plugin ALIAS avatar_plugin_core)
+
 target_include_directories(avatar_plugin_core
   INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
@@ -22,16 +24,15 @@ target_link_libraries(avatar_plugin_core
   PUBLIC
     AvatarSDK::AvatarSDK
     OpenXR::openxr_loader
-  PRIVATE
-    Teleop::openxr_extensions
     Teleop::plugin_utils
     deviceio::deviceio_session
     deviceio::deviceio_trackers
-    isaacteleop_schema
-    nlohmann_json::nlohmann_json
     oxr::oxr_core
     oxr::oxr_utils
     pusherio::pusherio
+  PRIVATE
+    Teleop::openxr_extensions
+    isaacteleop_schema
 )
 
 set_target_properties(avatar_plugin_core PROPERTIES

@@ -22,12 +22,12 @@ gloves -> avatar_hand_plugin -> TeleopSession -> viser and haptics
 - A built Isaac Teleop checkout
 - Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
 
-The installer retrieves a pinned production `avatar-sdk` version (`1.7.3-17`)
-from Sharpa's signed production APT repository, without selecting the
-`avatar-sdk-dev` or `avatar-sdk-beta` channels. To move to another release,
-bump `production_version` in `install_avatar_sdk.sh`. The SDK
-remains external under `/opt/avatar-sdk`; its headers, libraries, and data are
-not copied into this repository or the plugin installation.
+The installer retrieves a pinned production `avatar-sdk` version from Sharpa's
+signed production APT repository, without selecting the `avatar-sdk-dev` or
+`avatar-sdk-beta` channels. To move to another release, bump
+`production_version` in `install_avatar_sdk.sh`. The SDK remains external; its
+headers, libraries, and data are not copied into this repository or the plugin
+installation.
 
 The plugin talks to the gloves directly, so do not run `avatar-backend`, Avatar
 Desktop, or `avatar_hand_tracker_printer` at the same time.
@@ -40,9 +40,10 @@ Run this from the Isaac Teleop root:
 ./src/plugins/sharpa_avatar/install.sh
 ```
 
-If `/opt/avatar-sdk` is absent, the installer configures the same production
-APT channel used by the Sharpa host application and installs the pinned SDK.
-To install only that dependency, run:
+If the SDK is absent from the default root (`/opt/avatar-sdk`), the installer
+configures the same production APT channel used by the Sharpa host application
+and installs the pinned SDK. With a custom `AVATAR_SDK_ROOT`, the tree must
+already be complete. To install only that dependency, run:
 
 ```bash
 ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
@@ -50,8 +51,16 @@ To install only that dependency, run:
 
 If a development or beta SDK is already installed, the dependency installer
 stops instead of replacing it implicitly. Remove that package explicitly before
-installing production. The plugin build accepts an existing SDK under `/opt` but
-prints its version and warns when its `BUILD_TYPE` is not `Production`.
+installing production. `install.sh` and CMake verify the SDK by calling
+`install_avatar_sdk.sh --check`: the default root must hold the pinned
+production package, while a custom root is checked for a complete tree and only
+warns on a non-production build.
+
+CMake is Linux-only for this plugin. The SDK root comes from
+`-DAVATAR_SDK_ROOT`, then `$AVATAR_SDK_ROOT`, then `/opt/avatar-sdk`.
+`-DBUILD_PLUGIN_SHARPA_AVATAR=ON` without a usable SDK under the selected root
+skips the plugin and the rest of Isaac Teleop still configures. `install.sh`
+installs the SDK first, then configures with that flag.
 
 Install the device rules once on the host, then unplug and reconnect the glove
 or dongle:
@@ -62,9 +71,10 @@ or dongle:
 
 udev does not run inside containers, so this command must run on the host.
 The plugin follows the Sharpa host application layout and uses the SDK,
-configuration, and runtime assets directly from `/opt/avatar-sdk`. Transport
-selection, including wired Ethernet, is controlled by
-`/opt/avatar-sdk/share/sdk_config.json`.
+configuration, and runtime assets directly from the selected SDK root
+(`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). Transport selection, including
+wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`; the sample
+and `avatar_hand_tracker_printer` default to the same root.
 
 ## Run the sample
 
@@ -119,6 +129,8 @@ wrist source, the sample places both skeletons in a stable local display frame.
 | Symptom | Resolution |
 |---|---|
 | Avatar SDK installation fails | Check access to Sharpa's production APT endpoint and rerun `install_avatar_sdk.sh` |
+| CMake skipped the Sharpa Avatar plugin | The SDK is missing; run `install_avatar_sdk.sh` and reconfigure, or use `install.sh` |
+| CMake rejected the Avatar SDK | Install the pinned production package with `install_avatar_sdk.sh`, or point `AVATAR_SDK_ROOT` at a complete SDK tree |
 | USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
 | CMake 3.24 or newer is required | Install a newer CMake in the Isaac Teleop environment and rerun `install.sh` |
 | `No module named isaacteleop` | Activate the Isaac Teleop environment and install its wheel |

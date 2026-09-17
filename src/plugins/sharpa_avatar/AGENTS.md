@@ -9,18 +9,19 @@ SPDX-License-Identifier: Apache-2.0
 [`AGENTS.md`](../../../AGENTS.md).
 
 - **Keep the Avatar SDK external.** `install_avatar_sdk.sh` installs the
-  official package under `/opt/avatar-sdk`; CMake consumes that fixed host
-  layout directly. Do not copy, patch, or package SDK files, and do not
-  advertise extracted SDK trees as supported.
-- Install the pinned production `avatar-sdk` package version from the signed
-  production channel, and never substitute `-dev` or `-beta`. `install.sh`
-  and CMake must refuse any other installed package rather than warn and
-  continue. Read `production_version` from `install_avatar_sdk.sh`; do not
-  duplicate that string. Pin the dpkg package version and
-  `BUILD_TYPE=Production`, not the `VERSION=` field in `share/Version`.
-- Linux only. `BUILD_PLUGIN_SHARPA_AVATAR=ON` with no usable SDK under
-  `/opt/avatar-sdk` skips this plugin; it must not `FATAL_ERROR` the rest of
-  the tree. Pin checks run only after that layout is present.
+  official package under `/opt/avatar-sdk`; the build consumes the selected
+  SDK root in place (`-DAVATAR_SDK_ROOT` > `$AVATAR_SDK_ROOT` >
+  `/opt/avatar-sdk`). Do not copy, patch, or package SDK files.
+- Install the pinned production `avatar-sdk` package from the signed production
+  channel, and never substitute `-dev` or `-beta`. Do not parse or duplicate
+  `production_version`: `install.sh` and CMake call
+  `install_avatar_sdk.sh --check`, which holds the default root to the full pin
+  (layout, `BUILD_TYPE=Production`, dpkg package version) and layout-checks a
+  custom root, where a non-production build only warns. Do not pin `VERSION=`
+  from `share/Version`; the dpkg package version is authoritative.
+- Linux only. `BUILD_PLUGIN_SHARPA_AVATAR=ON` with no usable SDK under the
+  selected root skips this plugin; it must not `FATAL_ERROR` the rest of the
+  tree. The SDK check runs only after that layout is present.
 - APT signing keys: require the pinned fingerprints to be present. Do not
   demand exact set equality (extra fingerprints from key rotation are allowed).
 - Keep installer responsibilities separate: SDK/APT in
@@ -39,8 +40,11 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
-- Resolve HUMAN-to-OpenXR landmarks from `human_joint_names`; do not hard-code
-  SDK array indices or fill unsupported OpenXR slots with neighbouring poses.
+- Resolve HUMAN-to-OpenXR landmarks from the in-repo name snapshot copied from
+  the pinned production SDK; do not read joint names from `sdk_config.json` at
+  runtime, hard-code SDK array indices, or fill unsupported OpenXR slots with
+  neighbouring poses. Refresh the snapshots (HUMAN in core, RAW/ROBOT in the
+  sample) together with the package pin.
 - When reconciling the maintained feature branch, use it as the baseline and
   retain local divergence only for an explicit API or correctness requirement.
 - **Sample lives in `tools/`, not `examples/`.** Path is
