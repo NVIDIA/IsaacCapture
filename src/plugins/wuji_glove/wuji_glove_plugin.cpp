@@ -256,8 +256,10 @@ WujiGlovePlugin::WujiGlovePlugin(const std::string& plugin_root_id) noexcept(fal
     // wrist-source queries, and the XrTime base.
     plugin_utils::WristSourceConfig wrist_config;
     wrist_config.mode = wrist_source_mode_from_env();
-    wrist_config.left_aim_to_wrist = pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_LEFT", kLeftAimToWrist);
-    wrist_config.right_aim_to_wrist = pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_RIGHT", kRightAimToWrist);
+    wrist_config.aim_to_wrist[static_cast<size_t>(plugin_utils::WristSide::Left)] =
+        pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_LEFT", kLeftAimToWrist);
+    wrist_config.aim_to_wrist[static_cast<size_t>(plugin_utils::WristSide::Right)] =
+        pose_from_env("WUJI_GLOVE_AIM_TO_WRIST_RIGHT", kRightAimToWrist);
     auto wrist_requirements = plugin_utils::WristPoseSource::collect_requirements(wrist_config.mode);
 
     std::vector<std::shared_ptr<core::ITracker>> trackers = wrist_requirements.trackers;
@@ -574,7 +576,8 @@ void WujiGlovePlugin::pump_hand(std::unique_ptr<plugin_utils::HandInjector>& inj
     plugin_utils::WristSample wrist;
     if (m_wrist_source)
     {
-        wrist = m_wrist_source->query(hand == XR_HAND_LEFT_EXT, time);
+        wrist = m_wrist_source->query(
+            hand == XR_HAND_LEFT_EXT ? plugin_utils::WristSide::Left : plugin_utils::WristSide::Right, time);
     }
 
     std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints = frame.joints;

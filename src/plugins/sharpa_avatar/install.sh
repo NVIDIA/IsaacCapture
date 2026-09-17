@@ -65,14 +65,19 @@ build_dir="${build_dir:-$isaac_root/build}"
 [[ -f /opt/avatar-sdk/share/sdk_config.json ]] \
   || die "Avatar SDK configuration not found at /opt/avatar-sdk/share/sdk_config.json."
 
-if [[ -f /opt/avatar-sdk/share/Version ]]; then
-  sdk_version="$(awk -F= '$1 == "VERSION" { print $2 }' /opt/avatar-sdk/share/Version)"
-  sdk_build_type="$(awk -F= '$1 == "BUILD_TYPE" { print $2 }' /opt/avatar-sdk/share/Version)"
-  echo "==> Found Avatar SDK ${sdk_version:-unknown} (${sdk_build_type:-unknown})"
-  if [[ "$sdk_build_type" != "Production" ]]; then
-    echo "WARNING: using an existing non-production SDK; install_avatar_sdk.sh only installs the production channel." >&2
-  fi
-fi
+version_file="/opt/avatar-sdk/share/Version"
+[[ -f "$version_file" ]] || die "Installed SDK is missing $version_file."
+production_version="$(awk -F= '/^production_version=/{ gsub(/"/, "", $2); print $2; exit }' \
+  "$script_dir/install_avatar_sdk.sh")"
+[[ -n "$production_version" ]] || die "Could not read production_version from install_avatar_sdk.sh."
+sdk_version="$(awk -F= '$1 == "VERSION" { print $2 }' "$version_file")"
+sdk_build_type="$(awk -F= '$1 == "BUILD_TYPE" { print $2 }' "$version_file")"
+installed_package_version="$(dpkg-query -W -f='${Version}' avatar-sdk 2>/dev/null || true)"
+echo "==> Found Avatar SDK ${sdk_version:-unknown} (${sdk_build_type:-unknown})"
+[[ -n "$sdk_version" && "$sdk_build_type" == "Production" ]] \
+  || die "Expected a production Avatar SDK, found ${sdk_version:-unknown} ${sdk_build_type:-unknown}. Run install_avatar_sdk.sh."
+[[ "$installed_package_version" == "$production_version" ]] \
+  || die "Expected avatar-sdk $production_version, but ${installed_package_version:-none} is installed. Run install_avatar_sdk.sh."
 
 cmake_bin="${CMAKE:-cmake}"
 command -v "$cmake_bin" >/dev/null 2>&1 || die "CMake was not found: $cmake_bin"
@@ -89,21 +94,7 @@ echo "==> Building Sharpa Avatar plugin"
   --parallel
 
 install_prefix="$(awk -F= '/^CMAKE_INSTALL_PREFIX:PATH=/{print $2; exit}' "$build_dir/CMakeCache.txt")"
-legacy_lib_dir="$install_prefix/lib"
-if [[ -e "$legacy_lib_dir/libavatar_sdk.so" ]]; then
-  echo "==> Removing SDK libraries installed by the legacy vendor flow"
-  shopt -s nullglob
-  legacy_sdk_files=(
-    "$legacy_lib_dir"/libavatar_sdk*.so*
-    "$legacy_lib_dir"/libcasadi*.so*
-    "$legacy_lib_dir"/libipopt*.so*
-    "$legacy_lib_dir"/libsipopt*.so*
-    "$legacy_lib_dir"/libcoinmumps*.so*
-    "$legacy_lib_dir"/libcoinmetis*.so*
-  )
-  shopt -u nullglob
-  rm -f "${legacy_sdk_files[@]}"
-fi
+[[ -n "$install_prefix" ]] || die "Could not read CMAKE_INSTALL_PREFIX from $build_dir/CMakeCache.txt."
 
 echo "==> Installing Sharpa Avatar plugin"
 "$cmake_bin" --install "$build_dir" --component avatar
