@@ -64,7 +64,6 @@ set_target_properties(AvatarSDK::AvatarSDK PROPERTIES
 
 add_subdirectory(core)
 add_subdirectory(app)
-add_subdirectory(tools)
 
 configure_file(plugin.yaml.in "${CMAKE_CURRENT_BINARY_DIR}/plugin.yaml" @ONLY)
 

@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaacteleop-examples-sharpa-avatar"
+version = "0.0.0"  # Internal example - not versioned
+description = "Sharpa Avatar glove TeleopSession sample with viser and pinch haptic"
+requires-python = ">=3.11,<3.14"
+# No version on isaacteleop: the example runs against the one next to it -- this
+# checkout, or the wheel install_python_example() pins into the installed copy.
+dependencies = [
+    "isaacteleop[cloudxr]",
+    "numpy>=1.23.0",
+    "viser>=0.2.0",
+]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# sharpa_avatar -- see the packaging rules in examples/README.md.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaacteleop_examples/sharpa_avatar"]
+sources = ["python"]
+
+[tool.uv.sources]
+# Editable, so edits under src/python/ need no rebuild. Dropped from the
+# installed copy, which has no repo above it.
+isaacteleop = { path = "../..", editable = true }

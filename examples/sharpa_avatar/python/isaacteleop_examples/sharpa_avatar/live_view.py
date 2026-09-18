@@ -1,14 +1,15 @@
-#!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Sharpa Avatar sample: public TeleopSession APIs + viser hand view + pinch haptic.
+"""Live visualization of Sharpa Avatar gloves through TeleopSession.
 
-Single entry point. Starts CloudXR and ``avatar_hand_plugin`` unless you opt out.
-Does not import plugin C++ classes or the Sharpa desktop application.
+Starts CloudXR and ``avatar_hand_plugin`` unless you opt out. Pinch a fingertip
+toward the thumb to vibrate that finger. Does not import plugin C++ classes or
+the Sharpa desktop application.
 
-Usage (from the Isaac Teleop root, after ``src/plugins/sharpa_avatar/install.sh``)::
+Usage (after ``src/plugins/sharpa_avatar/install.sh``)::
 
-    python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
+    uv pip install -e ./examples/sharpa_avatar
+    python -m isaacteleop_examples.sharpa_avatar
 """
 
 from __future__ import annotations
@@ -108,6 +109,10 @@ MAX_DISTANCE_M = 0.028
 MIN_DISTANCE_M = 0.008
 PINCH_DEADBAND = 0.35
 
+# Six levels up is the tree root -- the checkout, or the install prefix
+# when running from install/examples/.
+_TREE_ROOT = Path(__file__).resolve().parents[5]
+
 
 def _finger_chain(root: int, *joints: int) -> list[tuple[int, int]]:
     chain = [(root, joints[0])]
@@ -177,21 +182,14 @@ def _die(message: str, code: int = 2) -> None:
 
 def plugin_search_paths() -> list[Path]:
     """Installed roots that contain ``sharpa_avatar/avatar_hand_plugin``."""
-    here = Path(__file__).resolve()
-    candidates = [Path.cwd() / "install" / "plugins"]
-    plugin_dir = here.parent.parent
-    plugins_root = plugin_dir.parent
-    if (
-        here.parent.name == "tools"
-        and plugin_dir.name == PLUGIN_ROOT_ID
-        and (plugin_dir / PLUGIN_NAME).is_file()
-    ):
-        candidates.append(plugins_root)
+    candidates = (
+        _TREE_ROOT / "plugins",
+        _TREE_ROOT / "install" / "plugins",
+    )
     seen: set[Path] = set()
     out: list[Path] = []
     for path in candidates:
-        binary = path / PLUGIN_ROOT_ID / PLUGIN_NAME
-        if not binary.is_file():
+        if not (path / PLUGIN_ROOT_ID / PLUGIN_NAME).is_file():
             continue
         resolved = path.resolve()
         if resolved not in seen:
@@ -707,8 +705,7 @@ def main() -> int:
                 print(
                     "  (waiting for glove data — plugin/CloudXR should start "
                     "with this process; gloves must be on; do not also run "
-                    "avatar-backend or avatar_hand_tracker_printer)",
-                    flush=True,
+                    "avatar-backend or Avatar Desktop)"
                 )
             time.sleep(step_period)
     return 0

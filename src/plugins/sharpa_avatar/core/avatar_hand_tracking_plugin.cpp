@@ -793,14 +793,13 @@ void AvatarTracker::inject_hand_data()
             return;
         }
 
+        // No optical/controller wrist: inject wrist-relative at identity with
+        // VALID-only flags so HandsSource still has a skeleton to draw.
         const plugin_utils::WristSample wrist = m_wrist_source->query(wrist_side(side), time);
-        if (!wrist.valid)
-        {
-            return;
-        }
+        const XrPosef root = wrist.valid ? wrist.pose : oxr_utils::identity_posef();
 
         XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
-        map_landmarks_to_openxr(landmarks, wrist.pose, wrist.tracked, joints);
+        map_landmarks_to_openxr(landmarks, root, wrist.valid && wrist.tracked, joints);
 
         plugin_utils::HandInjector* injector = m_injectors[side_index(side)].get();
         if (injector != nullptr)

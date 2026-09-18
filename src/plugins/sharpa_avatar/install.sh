@@ -82,7 +82,7 @@ echo "==> Configuring Sharpa Avatar plugin"
 
 echo "==> Building Sharpa Avatar plugin"
 "$cmake_bin" --build "$build_dir" \
-  --target avatar_hand_plugin avatar_hand_tracker_printer \
+  --target avatar_hand_plugin \
   --parallel
 
 install_prefix="$(awk -F= '/^CMAKE_INSTALL_PREFIX:PATH=/{print $2; exit}' "$build_dir/CMakeCache.txt")"
