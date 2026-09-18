@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rig
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sharpa Avatar visualization example
+# Sharpa Avatar Visualization Example
 
 Live OpenXR hands from Sharpa Avatar gloves in the browser, plus pinch haptic.
 CloudXR and `avatar_hand_plugin` start with the example unless you opt out.
