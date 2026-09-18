@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rig
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sharpa Avatar glove
+# Sharpa Avatar Glove
 
 C++ plugin that connects Sharpa Avatar gloves to Isaac Teleop. It publishes
 OpenXR hand poses and glove joint state, and consumes inbound haptic commands.
