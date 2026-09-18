@@ -5,16 +5,18 @@ SPDX-License-Identifier: Apache-2.0
 
 # Sharpa Avatar glove
 
-This plugin connects Sharpa Avatar gloves to Isaac Teleop. It publishes
-hand poses and glove joint data through the standard Isaac Teleop interfaces,
-and forwards haptic commands to the glove motors.
+C++ plugin that connects Sharpa Avatar gloves to Isaac Teleop. It publishes
+OpenXR hand poses and glove joint state, and consumes inbound haptic commands.
 
-The accompanying sample shows both hands in a viser browser view. Bringing a
-fingertip close to the thumb vibrates that finger:
+The plugin talks to the gloves directly, so do not run `avatar-backend` or
+Avatar Desktop at the same time.
 
 ```text
-gloves -> avatar_hand_plugin -> TeleopSession -> viser and haptics
+gloves -> avatar_hand_plugin -> OpenXR / DeviceIO
 ```
+
+The visualization example is separate:
+[`examples/sharpa_avatar`](../../../examples/sharpa_avatar/README.md).
 
 ## Prerequisites
 
@@ -28,9 +30,6 @@ signed production APT repository, without selecting the `avatar-sdk-dev` or
 `production_version` in `install_avatar_sdk.sh`. The SDK remains external; its
 headers, libraries, and data are not copied into this repository or the plugin
 installation.
-
-The plugin talks to the gloves directly, so do not run `avatar-backend`, Avatar
-Desktop, or `avatar_hand_tracker_printer` at the same time.
 
 ## Install
 
@@ -73,43 +72,15 @@ udev does not run inside containers, so this command must run on the host.
 The plugin follows the Sharpa host application layout and uses the SDK,
 configuration, and runtime assets directly from the selected SDK root
 (`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). Transport selection, including
-wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`; the sample
-and `avatar_hand_tracker_printer` default to the same root.
+wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`.
 
-## Run the sample
+## Run
 
-Install the small Python-only sample dependencies once:
-
-```bash
-uv pip install viser numpy
-```
-
-Then launch the sample from the repository root:
+`TeleopSession` launches the installed binary through `plugin.yaml`. To start
+it yourself after CloudXR is up:
 
 ```bash
-.venv/bin/python src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
-```
-
-The command starts CloudXR and the glove plugin, serves a viser view at
-http://127.0.0.1:8080, and enables pinch feedback. The left hand is cyan and
-the right hand is orange. The terminal also reports the 22-DoF RAW and ROBOT
-joint streams. Pass `--no-viz` for terminal and haptic only.
-
-Useful options:
-
-```text
---no-haptic                   disable pinch feedback
---no-viz                      terminal + haptic only (no browser view)
---host / --port               viser bind (default 127.0.0.1:8080)
---no-launch-plugin            connect to an already running plugin
---no-launch-cloudxr-runtime   connect to an already running CloudXR runtime
---world-frame                 display the unmodified OpenXR poses
-```
-
-Run the installed copy with:
-
-```bash
-.venv/bin/python install/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py
+./install/plugins/sharpa_avatar/avatar_hand_plugin
 ```
 
 ## Published data
@@ -121,8 +92,9 @@ Run the installed copy with:
 | `avatar_robot_left`, `avatar_robot_right` | ROBOT 22-DoF joint state |
 | `avatar_glove_haptic` | Per-finger vibration commands |
 
-The gloves do not provide a world-space wrist pose. Without another tracked
-wrist source, the sample places both skeletons in a stable local display frame.
+The gloves do not provide a world-space wrist pose. Downstream consumers that
+need a display frame (the example) place both skeletons locally; a headset
+wrist source is used when one is available.
 
 ## Troubleshooting
 
@@ -133,9 +105,6 @@ wrist source, the sample places both skeletons in a stable local display frame.
 | CMake rejected the Avatar SDK | Install the pinned production package with `install_avatar_sdk.sh`, or point `AVATAR_SDK_ROOT` at a complete SDK tree |
 | USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
 | CMake 3.24 or newer is required | Install a newer CMake in the Isaac Teleop environment and rerun `install.sh` |
-| `No module named isaacteleop` | Activate the Isaac Teleop environment and install its wheel |
-| `No module named viser` | Run `uv pip install viser` in the same environment |
-| Plugin binary is not found | Run `install.sh`, or pass `--plugin-search-path install/plugins` |
+| Plugin binary is not found | Run `install.sh` |
 | Hand and joint streams stay offline | Power on the gloves and stop any other process using the Avatar SDK |
 | No vibration | Keep `haptic` in `--datasets` and close a fingertip toward the thumb |
-| CloudXR cannot start | Source `~/.cloudxr/run/cloudxr.env`, or allow the sample to launch CloudXR |

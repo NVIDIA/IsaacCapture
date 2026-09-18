@@ -37,6 +37,9 @@ SPDX-License-Identifier: Apache-2.0
   category table must not have a same-named private duplicate.
 - Use `plugin_utils::WristPoseSource` for world-space wrist placement. Do not
   copy the Manus/XDev/controller fallback implementation into this plugin.
+  When that query is invalid (no headset optical pose and no controller),
+  still inject HUMAN at identity with VALID-only flags; do not skip
+  `HandInjector::push`. HandsSource/`live_view` otherwise stay empty.
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
@@ -44,9 +47,11 @@ SPDX-License-Identifier: Apache-2.0
   the pinned production SDK; do not read joint names from `sdk_config.json` at
   runtime, hard-code SDK array indices, or fill unsupported OpenXR slots with
   neighbouring poses. Refresh the snapshots (HUMAN in core, RAW/ROBOT in the
-  sample) together with the package pin.
+  example) together with the package pin.
 - When reconciling the maintained feature branch, use it as the baseline and
   retain local divergence only for an explicit API or correctness requirement.
-- **Sample lives in `tools/`, not `examples/`.** Path is
-  `src/plugins/sharpa_avatar/tools/sharpa_avatar_sample.py` (ticket #9). Do not
-  put it back under `examples/sharpa_avatar`.
+- Keep this plugin tree C++-only (`core/` + `app/`). The TeleopSession sample
+  lives at `examples/sharpa_avatar/` (`live_view.py`) and runs as
+  `python -m isaacteleop_examples.sharpa_avatar`. Do not put Python samples
+  under `src/plugins/sharpa_avatar/`, and do not add SDK-only diagnostic
+  printers that bypass Isaac Teleop.

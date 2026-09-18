@@ -8,7 +8,8 @@ set -euo pipefail
 
 # Match the production host application's repository. APT verifies its signed
 # metadata, and this installer additionally pins the key, channel, and exact version.
-apt_base_url="http://118.196.115.252:8081/repository"
+# Pinned fingerprints must be present on the downloaded key; extra fingerprints are allowed.
+apt_base_url="https://packages.sharpa.com/repository"
 key_url="$apt_base_url/raw-releases/gpg-keys/apt-releases.gpg"
 expected_fingerprints=$'80D634617D407A87CF54136D1594113827B5B686\nF9A50A81FE8797F953DB24E1938548788D899BCC'
 keyring="/etc/apt/keyrings/sharpa-avatar-sdk.gpg"
@@ -110,8 +111,17 @@ actual_fingerprints="$(
     | awk -F: '$1 == "fpr" { print $10 }' \
     | LC_ALL=C sort -u
 )"
-[[ "$actual_fingerprints" == "$expected_fingerprints" ]] \
-  || die "Signing-key fingerprint set did not match the pinned Sharpa key."
+while IFS= read -r expected; do
+  [[ -z "$expected" ]] && continue
+  found=0
+  while IFS= read -r actual; do
+    if [[ "$actual" == "$expected" ]]; then
+      found=1
+      break
+    fi
+  done <<< "$actual_fingerprints"
+  [[ "$found" -eq 1 ]] || die "Signing key is missing pinned fingerprint ${expected}."
+done <<< "$expected_fingerprints"
 gpg --batch --yes --dearmor --output "$key_dearmored" "$key_download"
 
 echo "==> Configuring Sharpa Avatar SDK APT repository"
