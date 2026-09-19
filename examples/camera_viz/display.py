@@ -22,10 +22,23 @@ from placements import yaw_quat
 _MAILBOX_SLOTS = 7
 
 
+# display.xr.system_wait_seconds default: block in xrGetSystem until the
+# headset shows up. CloudXR brings the runtime up long before the operator
+# has the Quest on their head, so failing fast (VizSessionConfig's own
+# default of 0) just means losing the race and re-running. Matches
+# isaacteleop.viz.robot.session.WAIT_FOR_HEADSET.
+#
+# The cost: VizSession.create holds the GIL through the wait, so Ctrl-C is
+# queued and not delivered until a headset connects. Set this to a positive
+# number of seconds (or pass --xr-wait) to get a bounded wait back.
+WAIT_FOR_HEADSET = -1
+
+
 def make_session(
     cfg: dict,
     mode_override: Optional[str] = None,
     required_extensions: Optional[List[str]] = None,
+    xr_wait_override: Optional[int] = None,
 ) -> viz.VizSession:
     display = cfg.get("display", {})
     # --mode overrides display.mode when given.
@@ -41,6 +54,12 @@ def make_session(
         x = display.get("xr", {})
         session_cfg.xr_near_z = float(x.get("near_z", 0.05))
         session_cfg.xr_far_z = float(x.get("far_z", 100.0))
+        wait = (
+            xr_wait_override
+            if xr_wait_override is not None
+            else int(x.get("system_wait_seconds", WAIT_FOR_HEADSET))
+        )
+        session_cfg.xr_system_wait_seconds = wait
     else:
         raise ValueError(
             f"camera_viz: display.mode must be window|xr, got {mode_str!r}"
