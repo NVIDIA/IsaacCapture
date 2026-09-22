@@ -63,18 +63,6 @@ constexpr XrHandEXT xr_hand(::avatar::DeviceSide side)
     return XR_HAND_LEFT_EXT;
 }
 
-constexpr plugin_utils::WristSide wrist_side(::avatar::DeviceSide side)
-{
-    switch (side)
-    {
-    case ::avatar::DeviceSide::LEFT:
-        return plugin_utils::WristSide::Left;
-    case ::avatar::DeviceSide::RIGHT:
-        return plugin_utils::WristSide::Right;
-    }
-    return plugin_utils::WristSide::Left;
-}
-
 size_t joint_category_index(::avatar::DeviceDataCategory category)
 {
     switch (category)
@@ -359,8 +347,8 @@ void AvatarTracker::initialize_openxr()
 {
     plugin_utils::WristSourceConfig wrist_config;
     wrist_config.mode = plugin_utils::WristSourceMode::Auto;
-    wrist_config.aim_to_wrist[static_cast<size_t>(plugin_utils::WristSide::Left)] = kLeftHandOffset;
-    wrist_config.aim_to_wrist[static_cast<size_t>(plugin_utils::WristSide::Right)] = kRightHandOffset;
+    wrist_config.left_aim_to_wrist = kLeftHandOffset;
+    wrist_config.right_aim_to_wrist = kRightHandOffset;
     auto wrist_requirements = plugin_utils::WristPoseSource::collect_requirements(wrist_config.mode);
 
     std::vector<std::shared_ptr<core::ITracker>> trackers = wrist_requirements.trackers;
@@ -578,32 +566,6 @@ GloveState& AvatarTracker::glove(::avatar::DeviceSide side)
     return m_gloves[side_index(side)];
 }
 
-std::vector<AvatarLandmark> AvatarTracker::get_landmarks(::avatar::DeviceSide side) const
-{
-    const auto& source = glove(side).landmarks;
-    std::vector<AvatarLandmark> landmarks;
-    landmarks.reserve(source.size());
-    for (const auto& landmark : source)
-    {
-        landmarks.push_back({ .position = { landmark.position.x, landmark.position.y, landmark.position.z },
-                              .orientation = { landmark.orientation.w, landmark.orientation.x, landmark.orientation.y,
-                                               landmark.orientation.z } });
-    }
-    return landmarks;
-}
-
-AvatarJointFrame AvatarTracker::get_joint_frame(::avatar::DeviceSide side, ::avatar::DeviceDataCategory category) const
-{
-    const GloveState& state = glove(side);
-    const ::avatar::AvatarDataFrame& frame = cached_joint_frame(state, category);
-    if (frame.payload_case() != payload_case(category))
-    {
-        return {};
-    }
-    const ::avatar::Hand& hand = hand_payload(frame, category);
-    return { hand.joint.name, hand.joint.position };
-}
-
 void AvatarTracker::update()
 {
     try_connect_missing_gloves();
@@ -795,7 +757,7 @@ void AvatarTracker::inject_hand_data()
 
         // No optical/controller wrist: inject wrist-relative at identity with
         // VALID-only flags so HandsSource still has a skeleton to draw.
-        const plugin_utils::WristSample wrist = m_wrist_source->query(wrist_side(side), time);
+        const plugin_utils::WristSample wrist = m_wrist_source->query(side == ::avatar::DeviceSide::LEFT, time);
         const XrPosef root = wrist.valid ? wrist.pose : oxr_utils::identity_posef();
 
         XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];

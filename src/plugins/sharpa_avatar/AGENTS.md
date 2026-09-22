@@ -32,7 +32,9 @@ SPDX-License-Identifier: Apache-2.0
 - Do not mutate loader environment variables or SDK configuration at runtime.
   Runtime paths come from the selected SDK root and its `sdk_config.json`.
 - Carry Avatar SDK enums such as `DeviceSide` and `DeviceDataCategory` through
-  plugin internals; do not encode sides or categories as strings or booleans.
+  plugin internals; convert only at an existing external API boundary.
+- Adapt this plugin to shared APIs; do not refactor other plugins or shared
+  modules solely to change this plugin's internal representation.
 - Keep shared enum iteration tables in one scope; a public `kDeviceSides` or
   category table must not have a same-named private duplicate.
 - Use `plugin_utils::WristPoseSource` for world-space wrist placement. Do not
