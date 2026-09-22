@@ -162,7 +162,6 @@ MENAGERIE_COMMIT = "8161bba264d7fa7c99ca301e91e7fb44737676ad"
 REBOT_MODEL_DIR = "seeed_rebot_devarm"
 REBOT_SCENE_FILE = "scene_rebot.xml"
 _REBOT_WRAPPERS = (REBOT_SCENE_FILE, "rebot_arm.xml", "rebot_gripper.xml")
-REBOT_CACHE_ENV_VAR = "ISAACCAPTURE_REBOT_ASSETS"
 
 #: sha256 over the sorted ``"<name> <sha256>\n"`` lines of everything fetched from
 #: Menagerie -- 117 files, so one constant rather than a table nobody reads. Content, not
@@ -182,14 +181,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _cache_dir(name: str, override: str = "") -> Path:
-    if override:
-        dest = Path(override)
-    else:
-        root = os.environ.get("XDG_CACHE_HOME", "").strip() or str(
-            Path.home() / ".cache"
-        )
-        dest = Path(root) / "isaaccapture" / name
+def _cache_dir(name: str) -> Path:
+    root = os.environ.get("XDG_CACHE_HOME", "").strip() or str(Path.home() / ".cache")
+    dest = Path(root) / "isaaccapture" / name
     dest.mkdir(parents=True, exist_ok=True)
     return dest
 
@@ -262,10 +256,8 @@ def _menagerie_rebot_files() -> tuple[str, ...]:
 def _rebot_cached_digest(dest: Path) -> str | None:
     """The manifest digest of what is already in ``dest``, or ``None`` if it cannot be read.
 
-    Derived from the directory and never from the network: REBOT_CACHE_ENV_VAR exists so a
-    host with no route to GitHub can be pointed at a pre-populated cache, and that cache has
-    to be checkable there. The tracked wrappers are excluded because they are package data,
-    not fetched, and so are not in the manifest.
+    Read only local files so cached assets can be validated offline. Tracked wrappers
+    are package data, not fetched assets, and are excluded from the manifest.
     """
     wrappers = set(_REBOT_WRAPPERS)
     lines = []
@@ -289,9 +281,7 @@ def ensure_rebot_devarm_rs_scene() -> Path:
         RuntimeError: If the fetched set does not hash to :data:`REBOT_MANIFEST_SHA256`.
         OSError: If the files cannot be fetched or written.
     """
-    dest = _cache_dir(
-        "rebot-devarm-rs-assets", os.environ.get(REBOT_CACHE_ENV_VAR, "").strip()
-    )
+    dest = _cache_dir("rebot-devarm-rs-assets")
     _copy_wrappers(dest, _REBOT_WRAPPERS)
 
     marker = dest / ".fetch_complete"

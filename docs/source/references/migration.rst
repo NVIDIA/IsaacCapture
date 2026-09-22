@@ -106,3 +106,9 @@ matching -- the logger is created, and nothing ever logs to it:
 
    -logging.getLogger("isaacteleop.cloudxr").setLevel(logging.DEBUG)
    +logging.getLogger("isaaccapture.cloudxr").setLevel(logging.DEBUG)
+
+The asset cache
+---------------
+
+The SO101 and reBot asset-directory overrides have been removed. The
+``ISAAC_TELEOP_*`` runtime switches keep their names.
