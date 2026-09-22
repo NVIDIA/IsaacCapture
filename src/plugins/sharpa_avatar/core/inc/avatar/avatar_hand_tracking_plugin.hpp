@@ -73,33 +73,6 @@ struct AvatarPluginConfig
     bool haptic = true;
 };
 
-struct AvatarPoint
-{
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-};
-
-struct AvatarQuaternion
-{
-    float w = 1.0f;
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-};
-
-struct AvatarLandmark
-{
-    AvatarPoint position;
-    AvatarQuaternion orientation;
-};
-
-struct AvatarJointFrame
-{
-    std::vector<std::string> names;
-    std::vector<float> positions;
-};
-
 class AvatarSdkSession
 {
 public:
@@ -136,9 +109,6 @@ public:
     explicit AvatarTracker(AvatarPluginConfig config = {});
 
     void update();
-
-    std::vector<AvatarLandmark> get_landmarks(DeviceSide side) const;
-    AvatarJointFrame get_joint_frame(DeviceSide side, DeviceDataCategory category) const;
 
 private:
     static constexpr std::size_t kAvatarFingerCount = 5;
