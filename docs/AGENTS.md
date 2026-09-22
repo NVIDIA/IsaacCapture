@@ -83,3 +83,8 @@ the table has no description column, so a capability claim enters `modes` only i
 device page documents it, links belong in the Details panel, and the sentence itself is
 dropped. The build keeps `company` that narrow by rejecting every field but `name`, `logo`,
 and `logo_dark`.
+
+## Removing cache overrides
+
+Document the default cache location and migration impact without advertising
+alternative ways to override the cache directory.
