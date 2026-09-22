@@ -153,10 +153,6 @@ SO_ARM_ASSETS: tuple[tuple[str, str, str], ...] = GHOST_ASSETS + SO101_ARM_ASSET
 SCENE_FILE = "scene.xml"
 _WRAPPERS = (SCENE_FILE, "follower_arm.xml", "leader_gripper.xml")
 
-#: Overrides where the assets are cached. Point it at a pre-populated directory on a host
-#: with no route to GitHub.
-CACHE_ENV_VAR = "ISAACCAPTURE_SO101_ASSETS"
-
 #: The reBot DevArm, RobStride build, from MuJoCo Menagerie. Upstream derives it from the
 #: same Seeed URDF LeRobot's IK solves against and validates against it link by link, and
 #: builds it around RS-06/RS-00 actuators -- so it is the RS arm, not the Damiao one, whose
@@ -186,8 +182,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _cache_dir(env_var: str, name: str) -> Path:
-    override = os.environ.get(env_var, "").strip()
+def _cache_dir(name: str, override: str = "") -> Path:
     if override:
         dest = Path(override)
     else:
@@ -239,7 +234,7 @@ def ensure_so101_scene() -> Path:
         RuntimeError: If a download's checksum does not match :data:`SO_ARM_ASSETS`.
         OSError: If the files cannot be fetched or written.
     """
-    dest = _cache_dir(CACHE_ENV_VAR, "so101-assets")
+    dest = _cache_dir("so101-assets")
     _copy_wrappers(dest, _WRAPPERS)
 
     marker = dest / ".fetch_complete"
@@ -294,7 +289,9 @@ def ensure_rebot_devarm_rs_scene() -> Path:
         RuntimeError: If the fetched set does not hash to :data:`REBOT_MANIFEST_SHA256`.
         OSError: If the files cannot be fetched or written.
     """
-    dest = _cache_dir(REBOT_CACHE_ENV_VAR, "rebot-devarm-rs-assets")
+    dest = _cache_dir(
+        "rebot-devarm-rs-assets", os.environ.get(REBOT_CACHE_ENV_VAR, "").strip()
+    )
     _copy_wrappers(dest, _REBOT_WRAPPERS)
 
     marker = dest / ".fetch_complete"
