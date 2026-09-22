@@ -89,6 +89,12 @@ Generated today
    * - ``se3_tracker``
      - ``Se3Tracker``
      - Overrides ``class``; the default would give ``Se3TrackerTracker``
+   * - ``soma_body_joint_rotations_v0``
+     - ``SomaBodyJointRotationsV0Tracker``
+     - SOMA v0 body joint rotations with 77 controls for the 78-joint skeleton; defined against SOMA-X v0.3.1
+   * - ``soma_body_joint_poses_v0``
+     - ``SomaBodyJointPosesV0Tracker``
+     - Evaluated SOMA v0 positions and orientations for the same 77 public joints
    * - ``oglo_tactile``
      - ``OgloTactileTracker``
      - MCAP channels are ``oglo``/``oglo_tracked``, so ``channel`` is overridden

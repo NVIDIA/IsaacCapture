@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "pose.fbs";
+include "soma_body_common_v0.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+struct SomaBodyJointPoseV0 {
+    pose: Pose;
+    is_valid: bool;
+}
+
+// Fixed-size evaluated SOMA body joint-pose array in SomaBodyJointV0 order.
+struct SomaBodyJointPoseArrayV0 {
+    values: [SomaBodyJointPoseV0:77];
+}
+
+// Evaluated SOMA full-body joint-pose transport schema v0.
+//
+// Defined and verified against SOMA-X v0.3.1 and its v0.3 pose interface.
+// Every position and orientation is global within the payload reference frame.
+// Positions are meters in a right-handed frame with +Y up and +Z forward.
+// Orientations are unit XYZW quaternions. The virtual Root is omitted.
+table SomaBodyJointPosesV0 {
+    joint_poses: SomaBodyJointPoseArrayV0 (id: 0);
+}
+
+table SomaBodyJointPosesV0Record {
+    data: SomaBodyJointPosesV0 (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SomaBodyJointPosesV0Record;

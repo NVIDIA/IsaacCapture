@@ -84,6 +84,18 @@ from ._schema import (
     BodyJoints,
     FullBodyPose,
     FullBodyPoseRecord,
+    # Shared SOMA types.
+    SomaJointRotationV0,
+    # SOMA body joint-rotation v0 types.
+    SomaBodyJointV0,
+    SomaBodyJointRotationArrayV0,
+    SomaBodyJointRotationsV0,
+    SomaBodyJointRotationsV0Record,
+    # SOMA evaluated body joint-pose v0 types.
+    SomaBodyJointPoseV0,
+    SomaBodyJointPoseArrayV0,
+    SomaBodyJointPosesV0,
+    SomaBodyJointPosesV0Record,
 )
 
 # Deprecated aliases, resolved lazily via __getattr__ so accessing them emits a
@@ -189,4 +201,16 @@ __all__ = [
     "BodyJoints",
     "FullBodyPose",
     "FullBodyPoseRecord",
+    # Shared SOMA types.
+    "SomaJointRotationV0",
+    # SOMA body joint-rotation v0 types.
+    "SomaBodyJointV0",
+    "SomaBodyJointRotationArrayV0",
+    "SomaBodyJointRotationsV0",
+    "SomaBodyJointRotationsV0Record",
+    # SOMA evaluated body joint-pose v0 types.
+    "SomaBodyJointPoseV0",
+    "SomaBodyJointPoseArrayV0",
+    "SomaBodyJointPosesV0",
+    "SomaBodyJointPosesV0Record",
 ]

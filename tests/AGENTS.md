@@ -63,6 +63,9 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
    as before (e.g. viz tests require `BUILD_VIZ`).
 4. Do **not** colocate new pytest/Catch2 trees under `src/` or `examples/`.
 
+- FlatBuffers generated `VT_*` constants are vtable offsets, not schema field
+  IDs. Compare them with `(field_id + 2) * 2`, as the existing schema tests do.
+
 ## Out of scope here
 
 - Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.

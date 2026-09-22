@@ -25,6 +25,7 @@ from .source_lookup import find_sources
 from .key_event_testing import FakeKeyEventSource
 from .joint_state_source import JointStateSource
 from .full_body_source import FullBodySource
+from .soma_body_source import SomaBodyRepresentation, SomaBodySource
 from .message_channel_source import MessageChannelSource
 from .message_channel_sink import MessageChannelSink
 from .message_channel_config import (
@@ -41,6 +42,8 @@ from .deviceio_tensor_types import (
     KeyboardOutputTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
+    SomaBodyJointRotationsV0TrackedType,
+    SomaBodyJointPosesV0TrackedType,
     DeviceIOHeadPoseTracked,
     DeviceIOHandPoseTracked,
     DeviceIOControllerSnapshotTracked,
@@ -48,6 +51,8 @@ from .deviceio_tensor_types import (
     DeviceIOKeyboardOutputTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
+    DeviceIOSomaBodyJointRotationsV0Tracked,
+    DeviceIOSomaBodyJointPosesV0Tracked,
     MessageChannelMessagesTrackedType,
     MessageChannelConnectionStatus,
     MessageChannelStatusType,
@@ -74,6 +79,8 @@ __all__ = [
     "FakeKeyEventSource",
     "JointStateSource",
     "FullBodySource",
+    "SomaBodySource",
+    "SomaBodyRepresentation",
     "MessageChannelSource",
     "MessageChannelSink",
     "MessageChannelConfig",
@@ -87,6 +94,8 @@ __all__ = [
     "KeyboardOutputTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
+    "SomaBodyJointRotationsV0TrackedType",
+    "SomaBodyJointPosesV0TrackedType",
     "MessageChannelMessagesTrackedType",
     "MessageChannelConnectionStatus",
     "MessageChannelStatusType",
@@ -97,6 +106,8 @@ __all__ = [
     "DeviceIOKeyboardOutputTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
+    "DeviceIOSomaBodyJointRotationsV0Tracked",
+    "DeviceIOSomaBodyJointPosesV0Tracked",
     "DeviceIOMessageChannelMessagesTracked",
     "MessageChannelMessagesTrackedGroup",
     "MessageChannelStatusGroup",

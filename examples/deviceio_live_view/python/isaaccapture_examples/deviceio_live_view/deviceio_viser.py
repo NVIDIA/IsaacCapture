@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""DeviceIO-to-viser helpers for the live human-tracking viewer.
+"""DeviceIO-to-viser rendering helpers for the live human-tracking viewer.
 
-Pipeline builder: ``build_all_human_pipeline``.
-
-Viz classes: ``HandViz``, ``ControllerViz``, ``FullBodyViz``, ``HeadViz``,
+Viz classes: ``HandViz``, ``ControllerViz``, ``BodyViz``, ``HeadViz``,
 ``HumanDeviceIOViz``.
 
 Rendering helpers: ``HAND_BONES``, ``BODY_BONES``, ``controller_state``.
@@ -14,23 +12,17 @@ Rendering helpers: ``HAND_BONES``, ``BODY_BONES``, ``controller_state``.
 import numpy as np
 import viser
 
-from isaaccapture.retargeting_engine.deviceio_source_nodes import (
-    ControllersSource,
-    FullBodySource,
-    HandsSource,
-    HeadSource,
-)
-from isaaccapture.retargeting_engine.interface import OutputCombiner
 from isaaccapture.retargeting_engine.tensor_types import HandInputIndex
 from isaaccapture.retargeting_engine.tensor_types.indices import (
-    BodyJointIndex,
     ControllerInputIndex,
-    FullBodyInputIndex,
     HeadInputIndex,
 )
 
-HANDS_CHANNEL = "hands"
-BODY_JOINT_NAMES = [joint.name for joint in BodyJointIndex]
+from .body_pipeline import BodyViewLayout
+from .full_body_pose import FULL_BODY_POSE_BONES, FULL_BODY_POSE_LAYOUT
+
+BODY_JOINT_NAMES = list(FULL_BODY_POSE_LAYOUT.joint_names)
+BODY_BONES = FULL_BODY_POSE_BONES
 
 # ---------------------------------------------------------------------------
 # Color palette shared across all viz scripts
@@ -110,61 +102,6 @@ def setup_scene(server) -> GroundGrid:
     return GroundGrid(server, grid)
 
 
-def build_all_human_pipeline():
-    """Wire every human-related DeviceIO source into one pipeline."""
-    hands = HandsSource(name=HANDS_CHANNEL)
-    head = HeadSource(name="head")
-    controllers = ControllersSource(name="controllers")
-    full_body = FullBodySource(name="full_body")
-    return OutputCombiner(
-        {
-            "hand_left": hands.output(HandsSource.LEFT),
-            "hand_right": hands.output(HandsSource.RIGHT),
-            "head": head.output("head"),
-            "controller_left": controllers.output(ControllersSource.LEFT),
-            "controller_right": controllers.output(ControllersSource.RIGHT),
-            "full_body": full_body.output(FullBodySource.FULL_BODY),
-        }
-    )
-
-
-# PICO body-joint connectivity (parent → child) for skeleton rendering.
-# Indices follow BodyJointIndex: 0=PELVIS, 1/2=LEFT/RIGHT_HIP, 3/6/9=SPINE1/2/3,
-# 4/5=LEFT/RIGHT_KNEE, 7/8=LEFT/RIGHT_ANKLE, 10/11=LEFT/RIGHT_FOOT, 12=NECK,
-# 13/14=LEFT/RIGHT_COLLAR, 15=HEAD, 16/17=LEFT/RIGHT_SHOULDER,
-# 18/19=LEFT/RIGHT_ELBOW, 20/21=LEFT/RIGHT_WRIST, 22/23=LEFT/RIGHT_HAND — 24 total.
-BODY_BONES: tuple[tuple[int, int], ...] = (
-    # Trunk and spine
-    (0, 1),
-    (0, 2),
-    (0, 3),
-    (3, 6),
-    (6, 9),
-    (9, 12),
-    (12, 15),
-    # Left leg
-    (1, 4),
-    (4, 7),
-    (7, 10),
-    # Right leg
-    (2, 5),
-    (5, 8),
-    (8, 11),
-    # Left arm
-    (12, 13),
-    (13, 16),
-    (16, 18),
-    (18, 20),
-    (20, 22),
-    # Right arm
-    (12, 14),
-    (14, 17),
-    (17, 19),
-    (19, 21),
-    (21, 23),
-)
-
-
 # OpenXR hand-joint connectivity (parent → child) for skeleton rendering.
 # Indices follow XR_HAND_JOINT_*_EXT: 0=PALM, 1=WRIST, thumb has 4 joints
 # (no intermediate), the other 4 fingers have 5 joints each — 26 total.
@@ -209,10 +146,14 @@ def _bone_segments(positions: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
-def _valid_bone_segments(positions: np.ndarray, valid: np.ndarray) -> np.ndarray:
+def _valid_bone_segments(
+    positions: np.ndarray,
+    valid: np.ndarray,
+    bones: tuple[tuple[int, int], ...] = BODY_BONES,
+) -> np.ndarray:
     """Return (N, 2, 3) segment array for body bones whose both endpoints are valid."""
     segments: list[np.ndarray] = []
-    for a, b in BODY_BONES:
+    for a, b in bones:
         if valid[a] and valid[b]:
             segments.append(np.stack([positions[a], positions[b]], axis=0))
     if not segments:
@@ -428,22 +369,23 @@ class ControllerViz:
             self.ray.colors = np.zeros((0, 2, 3), dtype=np.float32)
 
 
-class FullBodyViz:
-    """Viser handles for full-body skeleton (joint cloud + skeleton segments)."""
+class BodyViz:
+    """Viser handles for a body skeleton (joint cloud + skeleton segments)."""
 
-    def __init__(self, server: viser.ViserServer):
+    def __init__(self, server: viser.ViserServer, layout: BodyViewLayout):
+        self.layout = layout
         self.color = np.array(TRACKED_COLOR, dtype=np.float32)
-        zero_pts = np.zeros((len(BODY_JOINT_NAMES), 3), dtype=np.float32)
+        zero_pts = np.zeros((len(layout.joint_names), 3), dtype=np.float32)
         zero_segs = np.zeros((0, 2, 3), dtype=np.float32)
 
         self.points = server.scene.add_point_cloud(
-            name="/full_body/joints",
+            name="/body/joints",
             points=zero_pts,
-            colors=np.tile(self.color, (len(BODY_JOINT_NAMES), 1)),
+            colors=np.tile(self.color, (len(layout.joint_names), 1)),
             point_size=0.01,
         )
         self.bones = server.scene.add_line_segments(
-            name="/full_body/bones",
+            name="/body/bones",
             points=zero_segs,
             colors=np.zeros((0, 2, 3), dtype=np.float32),
             line_width=2.0,
@@ -451,9 +393,11 @@ class FullBodyViz:
 
     def update(self, positions: np.ndarray | None, valid: np.ndarray | None) -> None:
         if positions is None or valid is None:
-            zero_pts = np.zeros((len(BODY_JOINT_NAMES), 3), dtype=np.float32)
+            zero_pts = np.zeros((len(self.layout.joint_names), 3), dtype=np.float32)
             self.points.points = zero_pts
-            self.points.colors = np.tile(INVALID_COLOR, (len(BODY_JOINT_NAMES), 1))
+            self.points.colors = np.tile(
+                INVALID_COLOR, (len(self.layout.joint_names), 1)
+            )
             self.bones.points = np.zeros((0, 2, 3), dtype=np.float32)
             self.bones.colors = np.zeros((0, 2, 3), dtype=np.float32)
             return
@@ -466,7 +410,7 @@ class FullBodyViz:
         point_colors[~valid_bool] = INVALID_COLOR
         self.points.colors = point_colors
 
-        segs = _valid_bone_segments(positions, valid_bool)
+        segs = _valid_bone_segments(positions, valid_bool, self.layout.bones)
         self.bones.points = segs
         self.bones.colors = np.tile(self.color, (segs.shape[0], 2, 1))
 
@@ -515,14 +459,20 @@ class HumanDeviceIOViz:
     Inactive or absent trackers are hidden instead of drawn in the invalid color.
     """
 
-    def __init__(self, server: viser.ViserServer, ground: GroundGrid | None = None):
+    def __init__(
+        self,
+        server: viser.ViserServer,
+        ground: GroundGrid | None = None,
+        body_layout: BodyViewLayout = FULL_BODY_POSE_LAYOUT,
+    ):
         self._ground = ground
+        self._body_layout = body_layout
         self.hand_left = HandViz(server, "hand_left", LEFT_COLOR)
         self.hand_right = HandViz(server, "hand_right", RIGHT_COLOR)
         self.head = HeadViz(server)
         self.controller_left = ControllerViz(server, "controller_left", LEFT_COLOR)
         self.controller_right = ControllerViz(server, "controller_right", RIGHT_COLOR)
-        self.full_body = FullBodyViz(server)
+        self.body = BodyViz(server, body_layout)
 
     def _update_hand_if_active(self, viz: HandViz, hand) -> bool:
         if hand.is_none:
@@ -551,34 +501,32 @@ class HumanDeviceIOViz:
         viz.update(state)
         return True
 
-    def _update_full_body_if_active(self, full_body) -> tuple[bool, int]:
-        if full_body.is_none:
-            self.full_body.points.visible = False
-            self.full_body.bones.visible = False
+    def _update_body_if_active(self, body) -> tuple[bool, int]:
+        if body.is_none:
+            self.body.points.visible = False
+            self.body.bones.visible = False
             return False, 0
 
         positions = np.asarray(
-            full_body[FullBodyInputIndex.JOINT_POSITIONS], dtype=np.float32
+            body[self._body_layout.positions_index], dtype=np.float32
         )
-        valid = np.asarray(full_body[FullBodyInputIndex.JOINT_VALID], dtype=np.uint8)
+        valid = np.asarray(body[self._body_layout.valid_index], dtype=np.uint8)
         n_valid = int(np.count_nonzero(valid))
         if n_valid == 0:
-            self.full_body.points.visible = False
-            self.full_body.bones.visible = False
+            self.body.points.visible = False
+            self.body.bones.visible = False
             return False, 0
 
-        self.full_body.points.visible = True
-        self.full_body.bones.visible = True
-        self.full_body.update(positions, valid)
+        self.body.points.visible = True
+        self.body.bones.visible = True
+        self.body.update(positions, valid)
         if self._ground is not None:
             self._ground.follow(positions, valid)
         return True, n_valid
 
     def update(self, result) -> dict[str, bool | int]:
         """Update every tracker; hide inactive ones. Returns active flags."""
-        full_body_active, full_body_joints = self._update_full_body_if_active(
-            result["full_body"]
-        )
+        body_active, body_joints = self._update_body_if_active(result["body"])
         return {
             "hand_left": self._update_hand_if_active(
                 self.hand_left, result["hand_left"]
@@ -593,6 +541,6 @@ class HumanDeviceIOViz:
             "controller_right": self._update_controller_if_active(
                 self.controller_right, result["controller_right"]
             ),
-            "full_body_active": full_body_active,
-            "full_body_joints": full_body_joints,
+            "body_active": body_active,
+            "body_joints": body_joints,
         }

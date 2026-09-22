@@ -22,6 +22,8 @@ from isaaccapture.schema import (
     KeyboardOutput,
     JointStateOutput,
     FullBodyPose,
+    SomaBodyJointPosesV0,
+    SomaBodyJointRotationsV0,
     MessageChannelMessagesTracked,
 )
 
@@ -113,6 +115,18 @@ class FullBodyPoseTrackedType(_PayloadTensorType):
     """
 
     _payload_cls = FullBodyPose
+
+
+class SomaBodyJointRotationsV0TrackedType(_PayloadTensorType):
+    """SomaBodyJointRotationsV0 payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointRotationsV0
+
+
+class SomaBodyJointPosesV0TrackedType(_PayloadTensorType):
+    """SomaBodyJointPosesV0 payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointPosesV0
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -212,6 +226,22 @@ def DeviceIOFullBodyPoseTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_full_body_pose",
         [FullBodyPoseTrackedType("full_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointRotationsV0Tracked() -> TensorGroupType:
+    """SOMA V0 body controls, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_rotations_v0",
+        [SomaBodyJointRotationsV0TrackedType("soma_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointPosesV0Tracked() -> TensorGroupType:
+    """Evaluated SOMA V0 body poses, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_poses_v0",
+        [SomaBodyJointPosesV0TrackedType("soma_body_tracked")],
     )
 
 

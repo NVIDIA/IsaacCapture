@@ -17,6 +17,11 @@ Source Nodes
 * ``JointStateSource`` -- provides name-keyed joint positions from a generic joint-space device
   (leader arm, exoskeleton, ...). See :doc:`joint_space`.
 * ``FullBodySource`` -- provides full-body pose (e.g. Pico tracking).
+* ``SomaBodySource`` -- polls either a typed ``SomaBodyJointRotationsV0`` or
+  ``SomaBodyJointPosesV0`` payload from a configured publisher collection. It
+  runs upstream FK for rotations or directly maps evaluated poses, then emits
+  an optional ``SomaBodyInput`` containing the 77 global SOMA joint poses.
+  See :doc:`/device/trackers` and :code-file:`examples/deviceio_live_view/README.md`.
 
 Available Retargeters
 ---------------------

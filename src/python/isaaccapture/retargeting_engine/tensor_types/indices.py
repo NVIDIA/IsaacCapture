@@ -21,6 +21,7 @@ from .standard_types import (
     ControllerInput,
     Generic3AxisPedalInput,
     FullBodyInput,
+    SomaBodyInput,
 )
 
 
@@ -46,6 +47,9 @@ Generic3AxisPedalInputIndex: Any = _create_index_enum(
 )
 FullBodyInputIndex: Any = _create_index_enum(
     "FullBodyInputIndex", FullBodyInput(), "body_"
+)
+SomaBodyInputIndex: Any = _create_index_enum(
+    "SomaBodyInputIndex", SomaBodyInput(), "soma_body_"
 )
 
 
