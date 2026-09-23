@@ -1842,6 +1842,7 @@ async def run_oob_connect(
         try:
             await forward_task
         except Exception:
+            # Keep cancellation as the outcome even if forwarding failed.
             pass
         await asyncio.to_thread(_adb_forward_remove, _CDP_LOCAL_PORT)
         raise
