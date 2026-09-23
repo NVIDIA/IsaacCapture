@@ -30,10 +30,30 @@ import { createInterface } from 'readline';
 import { HeadsetControlChannel, type StreamConfig } from './controlChannel';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-// tests/python/core/cloudxr/ is its own uv project (see its pyproject.toml - the same one
-// CTest invokes via `uv run --extra dev pytest`), not the repo root's ad-hoc dev .venv,
-// which is gitignored and doesn't exist in CI.
-const SERVER_DIR = path.join(REPO_ROOT, 'tests', 'python', 'core', 'cloudxr');
+const SERVER_SCRIPT = path.join(
+  REPO_ROOT,
+  'tests',
+  'python',
+  'core',
+  'cloudxr',
+  'oob_hub_test_server.py'
+);
+
+// Safety net for afterEach cleanup: every hub PID spawned goes in here and comes out once
+// confirmed exited. If a test's afterEach is ever skipped (a Jest hook-ordering edge case,
+// not something this file's own control flow can prevent), this file's own `exit` handler
+// below still reaps anything left over when the worker process itself is about to end -
+// process.on('exit') callbacks must be synchronous, so SIGKILL (not SIGTERM) is used here.
+const spawnedPids = new Set<number>();
+process.on('exit', () => {
+  for (const pid of spawnedPids) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already gone - nothing to clean up.
+    }
+  }
+});
 
 /** Spawns the real hub server and resolves once it reports the port it's listening on. */
 function startHub(): Promise<{
@@ -42,14 +62,12 @@ function startHub(): Promise<{
   nextLine: () => Promise<string>;
 }> {
   return new Promise((resolve, reject) => {
-    // `uv run` is a wrapper that spawns its own `python3` child rather than exec'ing into
-    // it, so killing just this process leaves that child running. `detached: true` makes
-    // this process its own process group leader (on Linux); killing the whole group
-    // (negative pid) in the caller's cleanup takes the python3 child down with it.
-    const proc = spawn('uv', ['run', '--extra', 'dev', 'python3', 'oob_hub_test_server.py'], {
-      cwd: SERVER_DIR,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
+    // Plain `python3`, stdlib only (see oob_hub_test_server.py's own docstring) - no venv,
+    // no third-party install step, so this runs on any CI runner that has Python at all.
+    const proc = spawn('python3', [SERVER_SCRIPT], { stdio: ['ignore', 'pipe', 'pipe'] });
+    if (proc.pid) spawnedPids.add(proc.pid);
+    proc.once('exit', () => {
+      if (proc.pid) spawnedPids.delete(proc.pid);
     });
     const rl = createInterface({ input: proc.stdout! });
     // Lines from the Python process arrive on their own schedule, but a test calls
@@ -95,12 +113,12 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
   afterEach(async () => {
     channel?.dispose();
-    // Wait for the process group to actually exit rather than firing SIGTERM and hoping -
+    // Wait for the process to actually exit rather than firing a signal and hoping -
     // otherwise a slow-to-die process from one test could still be shutting down when the
     // next test (or the suite) starts.
     if (hub?.proc.pid) {
       const exited = new Promise(resolve => hub.proc.once('exit', resolve));
-      process.kill(-hub.proc.pid, 'SIGTERM');
+      hub.proc.kill('SIGTERM');
       await exited;
     }
   });
