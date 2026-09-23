@@ -20,7 +20,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace plugins
@@ -144,7 +143,6 @@ private:
     std::optional<core::XrTimeConverter> m_time_converter;
     std::array<std::array<std::unique_ptr<core::SchemaPusher>, 2>, 2> m_joint_pushers;
     std::unique_ptr<plugin_utils::WristPoseSource> m_wrist_source;
-    std::unordered_map<std::string, std::size_t> m_landmark_index;
 
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;

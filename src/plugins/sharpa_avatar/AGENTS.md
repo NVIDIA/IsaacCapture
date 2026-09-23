@@ -22,6 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 - Linux only. `BUILD_PLUGIN_SHARPA_AVATAR=ON` with no usable SDK under the
   selected root skips this plugin; it must not `FATAL_ERROR` the rest of the
   tree. The SDK check runs only after that layout is present.
+- After rebasing, verify the root option is still gated through
+  `src/plugins/CMakeLists.txt`; defining the option alone does not create the
+  `avatar_hand_plugin` target.
 - APT signing keys: require the pinned fingerprints to be present. Do not
   demand exact set equality (extra fingerprints from key rotation are allowed).
 - Keep installer responsibilities separate: SDK/APT in
@@ -45,11 +48,11 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
-- Resolve HUMAN-to-OpenXR landmarks from the in-repo name snapshot copied from
-  the pinned production SDK; do not read joint names from `sdk_config.json` at
-  runtime, hard-code SDK array indices, or fill unsupported OpenXR slots with
-  neighbouring poses. Refresh the snapshots (HUMAN in core, RAW/ROBOT in the
-  example) together with the package pin.
+- Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
+  production SDK's landmark order. Do not read joint names from
+  `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring
+  poses. Refresh that table and the example's RAW/ROBOT name snapshots together
+  with the package pin.
 - When reconciling the maintained feature branch, use it as the baseline and
   retain local divergence only for an explicit API or correctness requirement.
 - Keep this plugin tree C++-only (`core/` + `app/`). The TeleopSession sample

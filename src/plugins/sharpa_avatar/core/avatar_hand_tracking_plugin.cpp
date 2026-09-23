@@ -19,10 +19,10 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -189,87 +189,12 @@ constexpr std::string_view error_name(::avatar::ErrorCode error)
     return "UNRECOGNIZED_ERROR";
 }
 
-// Human landmark snapshot copied verbatim from the pinned production SDK
-// (avatar-sdk 1.7.3-17 share/sdk_config.json); refresh together with the package pin.
-constexpr std::array<const char*, 25> kHumanJointNames = {
-    "WRIST",
-    "right_thumb_CMC_FE_link",
-    "right_thumb_CMC_AA_link",
-    "right_thumb_MCP_FE_link",
-    "right_thumb_MCP_AA_link",
-    "right_thumb_IP_link",
-    "right_thumb_virtualtip",
-    "right_index_MCP_AA_link",
-    "right_index_MCP_FE_link",
-    "right_index_PIP_link",
-    "right_index_DIP_link",
-    "right_index_virtualtip",
-    "right_middle_MCP_AA_link",
-    "right_middle_MCP_FE_link",
-    "right_middle_PIP_link",
-    "right_middle_DIP_link",
-    "right_middle_virtualtip",
-    "right_ring_MCP_AA_link",
-    "right_ring_MCP_FE_link",
-    "right_ring_PIP_link",
-    "right_ring_DIP_link",
-    "right_ring_virtualtip",
-    "right_pinky_MCP_AA_link",
-    "right_pinky_MCP_FE_link",
-    "right_pinky_virtualtip",
+// OpenXR slot -> HUMAN landmark index for avatar-sdk 1.7.3-17. Unsupported
+// palm and little-finger intermediate/distal slots remain invalid.
+constexpr std::array<std::optional<size_t>, XR_HAND_JOINT_COUNT_EXT> kOpenXRSlotSourceIndices = {
+    std::nullopt, 0,  1,  3,  5,  6,  7,  8,  9,  10, 11,           12,           13,
+    14,           15, 16, 17, 18, 19, 20, 21, 22, 23, std::nullopt, std::nullopt, 24,
 };
-
-// Exact `human_joint_names` spellings for each OpenXR hand slot. Null slots have
-// no Avatar HUMAN counterpart and must remain invalid.
-constexpr std::array<const char*, XR_HAND_JOINT_COUNT_EXT> kOpenXRSlotSources = {
-    nullptr,
-    "WRIST",
-    "right_thumb_CMC_FE_link",
-    "right_thumb_MCP_FE_link",
-    "right_thumb_IP_link",
-    "right_thumb_virtualtip",
-    "right_index_MCP_AA_link",
-    "right_index_MCP_FE_link",
-    "right_index_PIP_link",
-    "right_index_DIP_link",
-    "right_index_virtualtip",
-    "right_middle_MCP_AA_link",
-    "right_middle_MCP_FE_link",
-    "right_middle_PIP_link",
-    "right_middle_DIP_link",
-    "right_middle_virtualtip",
-    "right_ring_MCP_AA_link",
-    "right_ring_MCP_FE_link",
-    "right_ring_PIP_link",
-    "right_ring_DIP_link",
-    "right_ring_virtualtip",
-    "right_pinky_MCP_AA_link",
-    "right_pinky_MCP_FE_link",
-    nullptr,
-    nullptr,
-    "right_pinky_virtualtip",
-};
-
-std::unordered_map<std::string, size_t> load_human_landmark_indices()
-{
-    std::unordered_map<std::string, size_t> indices;
-    for (size_t i = 0; i < kHumanJointNames.size(); ++i)
-    {
-        if (!indices.emplace(kHumanJointNames[i], i).second)
-        {
-            throw std::runtime_error(std::string("Duplicate human landmark in the SDK name snapshot: ") +
-                                     kHumanJointNames[i]);
-        }
-    }
-    for (const char* source : kOpenXRSlotSources)
-    {
-        if (source != nullptr && indices.find(source) == indices.end())
-        {
-            throw std::runtime_error("SDK name snapshot is missing human landmark: " + std::string(source));
-        }
-    }
-    return indices;
-}
 
 } // anonymous namespace
 
@@ -325,6 +250,9 @@ void GloveState::reset() noexcept
         // Reset remains safe when called from GloveState's destructor.
     }
     // AvatarSDK owns and destroys its cached devices with the SDK session.
+    landmarks.clear();
+    raw_frame = {};
+    robot_frame = {};
     device.reset();
     last_successful_fetch.reset();
 }
@@ -335,10 +263,6 @@ AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(con
     std::cout << "[Avatar] datasets: human=" << (m_config.human ? "on" : "off")
               << " raw=" << (m_config.raw ? "on" : "off") << " robot=" << (m_config.robot ? "on" : "off")
               << " haptic=" << (m_config.haptic ? "on" : "off") << std::endl;
-    if (m_config.human)
-    {
-        m_landmark_index = load_human_landmark_indices();
-    }
     try_connect_missing_gloves();
     initialize_openxr();
 }
@@ -498,9 +422,6 @@ void AvatarTracker::refresh_data()
         }
         if (!state.device->get_device_info().online)
         {
-            state.landmarks.clear();
-            state.raw_frame = {};
-            state.robot_frame = {};
             state.reset();
             continue;
         }
@@ -709,18 +630,12 @@ void AvatarTracker::map_landmarks_to_openxr(const std::vector<::avatar::Pose>& l
     for (uint32_t j = 0; j < XR_HAND_JOINT_COUNT_EXT; ++j)
     {
         out_joints[j] = { 0 };
-        const char* source = kOpenXRSlotSources[j];
-        if (source == nullptr)
+        const std::optional<size_t> source_index = kOpenXRSlotSourceIndices[j];
+        if (!source_index || *source_index >= landmarks.size())
         {
             continue;
         }
-
-        const auto source_it = m_landmark_index.find(source);
-        if (source_it == m_landmark_index.end() || source_it->second >= landmarks.size())
-        {
-            continue;
-        }
-        const auto& lp = landmarks[source_it->second];
+        const auto& lp = landmarks[*source_index];
 
         XrPosef local_pose;
         local_pose.position.x = lp.position.x;
