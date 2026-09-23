@@ -41,8 +41,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # ==============================================================================
 # All Python-related configurations should reference this variable.
 # To change the Python version, only modify this line:
-set(ISAAC_TELEOP_PYTHON_VERSION "3.11" CACHE STRING "Python version for Isaac Teleop")
-set(ISAAC_TELEOP_PYTHON_VERSION_MIN "3.11")
+set(ISAAC_TELEOP_PYTHON_VERSION "3.10" CACHE STRING "Python version for Isaac Teleop")
+set(ISAAC_TELEOP_PYTHON_VERSION_MIN "3.10")
 set(ISAAC_TELEOP_PYTHON_VERSION_MAX_EXCLUSIVE "3.14")
 message(STATUS "Configuring for Python ${ISAAC_TELEOP_PYTHON_VERSION}")
 # ==============================================================================
