@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections import deque
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ def _service_for_status(tmp_path):
     service = object.__new__(CloudXRService)
     service._oob_lock = threading.Lock()
     service._oob_snapshot = None
+    service._oob_updates = deque(maxlen=128)
     service._oob_status_path = tmp_path / "run" / "oob_status.json"
     service._oob_session_id = "test-session"
     service._fatal_error = None
@@ -42,6 +44,9 @@ def test_status_file_is_atomic_and_bound_to_session(tmp_path):
     assert status["runtimePid"] == os.getpid()
     assert status["health"] == "degraded"
     assert not service._oob_status_path.with_suffix(".json.tmp").exists()
+    assert service.oob_status() == status
+    assert service.drain_oob_updates() == [status]
+    assert service.drain_oob_updates() == []
     assert service.oob_status() == status
     service.health_check()
 

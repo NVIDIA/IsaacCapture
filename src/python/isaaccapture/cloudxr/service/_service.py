@@ -15,6 +15,7 @@ import concurrent.futures
 # shutdown" once interpreter finalization has begun — so import it here, while
 # the main thread still can, rather than from the proxy thread mid-teardown.
 import concurrent.futures.thread  # noqa: F401
+from collections import deque
 import logging
 import json
 import uuid
@@ -176,6 +177,7 @@ class CloudXRService:
         self._stop_lock = threading.RLock()
         self._oob_lock = threading.Lock()
         self._oob_snapshot: dict | None = None
+        self._oob_updates: deque[dict] = deque(maxlen=128)
         self._oob_session_id = uuid.uuid4().hex
         self._fatal_error: Exception | None = None
         self._fatal_supervisor: threading.Thread | None = None
@@ -378,6 +380,7 @@ class CloudXRService:
         }
         with self._oob_lock:
             self._oob_snapshot = payload
+            self._oob_updates.append(payload)
             try:
                 self._oob_status_path.parent.mkdir(parents=True, exist_ok=True)
                 temporary = self._oob_status_path.with_suffix(".json.tmp")
@@ -394,6 +397,13 @@ class CloudXRService:
         """Return the latest lifecycle snapshot without touching the WSS event loop."""
         with self._oob_lock:
             return dict(self._oob_snapshot) if self._oob_snapshot else None
+
+    def drain_oob_updates(self) -> list[dict]:
+        """Return transition snapshots for the foreground CLI, in order."""
+        with self._oob_lock:
+            updates = list(self._oob_updates)
+            self._oob_updates.clear()
+        return updates
 
     def _on_oob_fatal(self, error: Exception) -> None:
         """Transfer fatal teardown to a thread that can safely join WSS."""

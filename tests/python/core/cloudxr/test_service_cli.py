@@ -4,7 +4,7 @@
 """Tests for the `python -m isaaccapture.cloudxr.service` CLI."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -54,6 +54,99 @@ class TestRunFlags:
     def test_accept_eula_is_never_baked_into_the_unit(self):
         """Acceptance is a marker file written at install time, not a unit flag."""
         assert "--accept-eula" not in cli._run_flags(_run_args(accept_eula=True))
+
+
+class TestOobConsoleReporter:
+    def test_absent_headset_is_visible_but_rate_limited(self):
+        now = [0.0]
+        reporter = cli._OobConsoleReporter(clock=lambda: now[0])
+        waiting = {
+            "health": "degraded",
+            "state": "WAITING_FOR_ADB",
+            "reason": "Waiting for selected headset",
+            "selectedSerial": None,
+            "adbReady": False,
+        }
+        assert reporter.observe({**waiting, "health": "starting"}) == []
+        assert reporter.observe(waiting) == [
+            "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
+        ]
+        now[0] = 5
+        assert reporter.observe(waiting) == []
+        now[0] = 61
+        assert reporter.observe(waiting) == [
+            "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
+        ]
+
+    def test_ready_loss_and_reconnection_are_reported(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        ready = {
+            "health": "degraded",
+            "state": "PREPARING_DEVICE",
+            "reason": "Preparing selected headset",
+            "selectedSerial": "HMD-1",
+            "adbReady": True,
+        }
+        first = reporter.observe(ready)
+        assert any("HMD detected (serial HMD-1)" in line for line in first)
+        assert reporter.observe(ready) == []
+        lost = {**ready, "state": "WAITING_FOR_ADB", "adbReady": False}
+        assert any("connection lost" in line for line in reporter.observe(lost))
+        assert any(
+            "HMD reconnected (serial HMD-1)" in line for line in reporter.observe(ready)
+        )
+
+    def test_phase_failure_and_health_transitions(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {"selectedSerial": "HMD-1", "adbReady": True, "health": "degraded"}
+        assert any(
+            "USB reverse rules" in line
+            for line in reporter.observe({**base, "state": "REBUILDING_USB"})
+        )
+        assert reporter.observe({**base, "state": "REBUILDING_USB"}) == []
+        failure = {**base, "state": "DEGRADED", "reason": "coturn is not listening"}
+        assert reporter.observe(failure) == [
+            "[setup-oob] OOB recovery delayed: coturn is not listening"
+        ]
+        assert reporter.observe(failure) == []
+        browser = {**base, "health": "browser_ready", "state": "ACTIVE"}
+        assert reporter.observe(browser) == [
+            "[setup-oob] OOB browser ready; waiting for OpenXR stream."
+        ]
+        assert reporter.observe({**browser, "health": "active"}) == [
+            "[setup-oob] OOB stream active with fresh client metrics."
+        ]
+
+    def test_foreground_run_prints_queued_lifecycle_after_banner(
+        self, tmp_path, capsys
+    ):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.drain_oob_updates.side_effect = [
+            [
+                {"health": "starting", "state": "WAITING_FOR_ADB"},
+                {
+                    "health": "degraded",
+                    "state": "WAITING_FOR_ADB",
+                    "selectedSerial": None,
+                    "adbReady": False,
+                },
+            ],
+            [],
+        ]
+        args = _run_args(
+            setup_oob=True, usb_local=True, cloudxr_install_dir=str(tmp_path)
+        )
+        with (
+            patch.object(cli, "_oob_preflight", return_value=None),
+            patch.object(cli, "CloudXRService", return_value=service),
+            patch.object(cli, "_print_service_summary") as summary,
+            patch.object(cli.time, "sleep", side_effect=KeyboardInterrupt),
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                cli._cmd_run(args)
+        summary.assert_called_once()
+        assert capsys.readouterr().out.count("No USB-attached HMD detected") == 1
 
 
 class TestStartEula:

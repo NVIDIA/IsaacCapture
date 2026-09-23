@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from ._service import CloudXRService
 
@@ -310,6 +311,82 @@ def _print_service_summary(
     )
 
 
+class _OobConsoleReporter:
+    """Turn lifecycle snapshots into sparse, actionable launcher messages."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._last_emitted: dict[str, float] = {}
+        self._adb_ready = False
+        self._ever_ready = False
+        self._last_health: str | None = None
+
+    def observe(self, snapshot: dict) -> list[str]:
+        """Return messages for a new snapshot, with repeated states limited."""
+        health = snapshot.get("health")
+        if health == "starting":
+            return []
+        state = snapshot.get("state")
+        reason = snapshot.get("reason") or "unknown reason"
+        serial = snapshot.get("selectedSerial")
+        ready = bool(snapshot.get("adbReady"))
+        messages: list[str] = []
+
+        def emit(key: str, message: str, interval: float = 30.0) -> None:
+            now = self._clock()
+            if now - self._last_emitted.get(key, float("-inf")) >= interval:
+                self._last_emitted[key] = now
+                messages.append(f"[setup-oob] {message}")
+
+        if ready and not self._adb_ready:
+            verb = "reconnected" if self._ever_ready else "detected"
+            emit(
+                "adb-ready",
+                f"USB-attached HMD {verb} (serial {serial}); continuing OOB setup.",
+                0,
+            )
+            self._ever_ready = True
+        elif not ready and self._adb_ready:
+            emit(
+                "adb-lost",
+                "USB-attached HMD connection lost; waiting for the selected headset.",
+                0,
+            )
+        self._adb_ready = ready
+
+        if state == "WAITING_FOR_ADB" and not ready:
+            if serial is None and not any(
+                word in reason.lower()
+                for word in ("unauthorized", "offline", "multiple")
+            ):
+                emit(
+                    "no-hmd",
+                    "No USB-attached HMD detected; connect a headset to continue.",
+                    60,
+                )
+            else:
+                emit(f"adb-wait:{reason}", f"Waiting for USB-attached HMD: {reason}")
+        elif state == "PREPARING_DEVICE" and ready:
+            emit("prepare", f"Preparing headset {serial} for OOB setup.")
+        elif state == "REBUILDING_USB":
+            emit("usb", "Configuring USB reverse rules and TURN.")
+        elif state == "AUTOMATING_BROWSER":
+            emit("browser", "Opening headset browser and connecting OOB client.")
+        elif state == "VERIFYING_BROWSER":
+            emit("verify", "Waiting for headset browser health report.")
+        elif state == "DEGRADED":
+            emit(f"failure:{reason}", f"OOB recovery delayed: {reason}")
+        elif health == "fatal":
+            emit("fatal", f"OOB stopped: {reason}", 0)
+
+        if health == "browser_ready" and self._last_health != health:
+            emit("browser-ready", "OOB browser ready; waiting for OpenXR stream.")
+        elif health == "active" and self._last_health != health:
+            emit("active", "OOB stream active with fresh client metrics.")
+        self._last_health = health
+        return messages
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run the service in the foreground until interrupted."""
     if args.usb_local and not args.setup_oob:
@@ -348,6 +425,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
             include_oob=True,
         )
         _out_interactive("\033[33mKeep this terminal open, Ctrl+C to terminate.\033[0m")
+        reporter = (
+            _OobConsoleReporter()
+            if args.setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
+            else None
+        )
+
+        def report_oob_updates() -> None:
+            if reporter is not None:
+                for snapshot in service.drain_oob_updates():
+                    for message in reporter.observe(snapshot):
+                        _out(message)
+
+        report_oob_updates()
 
         stop = False
 
@@ -360,6 +450,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGTERM, on_signal)
 
         while not stop:
+            report_oob_updates()
             service.health_check()
             time.sleep(0.1)
 
