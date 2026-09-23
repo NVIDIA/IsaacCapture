@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -32,6 +33,8 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
 
     async def lifecycle_run():
         events.append("lifecycle started")
+        logging.getLogger("oob-teleop-lifecycle").info("lifecycle test transition")
+        logging.getLogger("oob-teleop-hub").info("hub test registration")
         try:
             await pending.wait()
         finally:
@@ -68,7 +71,7 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
     ):
         task = asyncio.create_task(
             wss.run(
-                None,
+                tmp_path / "wss.log",
                 stop,
                 setup_oob=True,
                 usb_local=True,
@@ -87,6 +90,8 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
         await task
     assert events.index("lifecycle stopped") < events.index("https stopped")
     assert events.index("https stopped") < events.index("wss closed")
+    assert "lifecycle test transition" in (tmp_path / "wss.log").read_text()
+    assert "hub test registration" in (tmp_path / "wss.log").read_text()
 
 
 @pytest.mark.asyncio

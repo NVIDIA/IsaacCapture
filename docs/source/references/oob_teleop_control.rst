@@ -275,6 +275,22 @@ mode, ``active`` additionally requires ``streamStatus=true`` and fresh
 post-CONNECT client metrics; coturn listening and ADB rules alone are only
 TURN prerequisites.
 
+If CONNECT was dispatched but a fresh browser report has not arrived, the
+lifecycle remains degraded in ``VERIFYING_BROWSER`` and continues probing
+without clicking CONNECT again. A lost browser/control connection, a broken
+device-side prerequisite, or cable reconnection starts a new automation
+attempt. The browser bundle must implement ``healthProbe`` / ``healthReport``;
+an older non-empty ``TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js`` is not replaced
+automatically. OOB startup checks for the protocol and fails with an asset
+diagnostic if the local bundle is too old. For source-tree testing, run
+``npm run build`` in ``deps/cloudxr/webxr_client`` and point
+``TELEOP_WEB_CLIENT_STATIC_DIR`` at its ``build`` directory before starting
+the service. USB-local static responses use ``Cache-Control: no-store``;
+the lifecycle also clears this UI origin's browser storage once per selected
+headset session. Before each local-client CONNECT, CDP reloads the page with
+HTTP caching disabled so a previously cached ``bundle.js`` cannot mask the
+updated client.
+
 The same redacted lifecycle snapshot appears in ``service status``, through
 ``CloudXRLauncher.oob_status()``, and at
 ``<cloudxr-install-dir>/run/oob_status.json``. A normal shutdown removes the

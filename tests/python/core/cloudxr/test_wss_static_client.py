@@ -68,6 +68,7 @@ async def test_bundle_resolves_under_client_prefix(static_dir: Path) -> None:
     response = await _get(static_dir, "/client/bundle.js")
     assert response.status_code == 200
     assert response.headers["Content-Type"] == "application/javascript; charset=utf-8"
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 @pytest.mark.asyncio

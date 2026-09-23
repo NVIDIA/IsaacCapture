@@ -411,6 +411,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                     {
                         "Content-Type": content_type or "application/octet-stream",
                         "Content-Length": str(len(body)),
+                        "Cache-Control": "no-store",
                         **CORS_HEADERS,
                     }
                 ),
@@ -647,7 +648,9 @@ async def run(
         if host_client or usb_local:
             from .oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
 
-            _host_client_static_dir = require_web_client_static_dir()
+            _host_client_static_dir = require_web_client_static_dir(
+                require_health_probe=setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
+            )
 
         http_handler = _make_http_handler(
             backend_host, backend_port, hub=hub, static_dir=_host_client_static_dir
@@ -682,7 +685,10 @@ async def run(
             try:
                 if usb_local:
                     https_thread, https_server = start_usb_local_https_server(
-                        require_web_client_static_dir(),
+                        require_web_client_static_dir(
+                            require_health_probe=setup_oob
+                            and not os.getenv("TELEOP_OOB_HUB_ONLY")
+                        ),
                         cert_file=cert_paths.cert_file,
                         key_file=cert_paths.key_file,
                         port=usb_ui_port(),

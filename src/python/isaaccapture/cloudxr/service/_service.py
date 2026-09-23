@@ -162,7 +162,9 @@ class CloudXRService:
         if self._usb_local or self._host_client:
             from ..oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
 
-            require_web_client_static_dir()
+            require_web_client_static_dir(
+                require_health_probe=setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
+            )
 
         self._runtime_proc: subprocess.Popen | None = None
         self._wss_thread: threading.Thread | None = None

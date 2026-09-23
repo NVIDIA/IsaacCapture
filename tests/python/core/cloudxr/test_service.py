@@ -72,6 +72,21 @@ class TestServiceConstruction:
                 )
             mocks["popen"].assert_not_called()
 
+    def test_oob_rejects_incompatible_webxr_bundle_before_runtime_spawn(self, tmp_path):
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch(
+                "isaacteleop.cloudxr.oob_teleop_env.require_web_client_static_dir",
+                side_effect=RuntimeError("lacks the OOB healthProbe"),
+            ) as require_static,
+        ):
+            with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            require_static.assert_called_once_with(require_health_probe=True)
+            mocks["popen"].assert_not_called()
+
     def test_construction_stores_parameters(self, tmp_path):
         """Constructor stores install_dir, env_config, device_profile, and accept_eula."""
         with mock_service_deps(tmp_path, ready=True):

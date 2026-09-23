@@ -504,6 +504,220 @@ async def test_cable_loss_and_same_serial_replug_rebuilds_every_rule_and_reconne
     assert not any(status["health"] == "fatal" for status in hub.statuses)
 
 
+@pytest.mark.parametrize("late_health_report", [False, True])
+async def test_replug_connect_is_not_repeated_while_waiting_for_browser_or_stream(
+    late_health_report,
+):
+    """A successful CDP click is not a retry trigger when OOB proof is slow."""
+    hub = FakeHub()
+    probe_calls = []
+
+    async def snapshot():
+        return {
+            "headsets": [
+                {
+                    "clientId": client,
+                    # The replug page models a baseline client: it reports
+                    # streamStatus but never understands healthProbe.
+                    "streaming": client == "replug-page" and not late_health_report,
+                    "lastMetricsAt": None,
+                }
+                for client in ("initial-page", "replug-page")
+            ]
+        }
+
+    async def probe(generation, after, **_kwargs):
+        probe_calls.append(generation)
+        if generation == 1:
+            return {"clientId": "initial-page"}
+        if generation == 2 and late_health_report and probe_calls.count(2) >= 3:
+            return {"clientId": "replug-page"}
+        return None
+
+    hub.get_snapshot = snapshot
+    hub.probe_browser = probe
+    ready = AdbDevices((("original", "device"),))
+    observations = iter(
+        [ready, ready, ready, AdbDevices(()), ready, ready, ready, ready, ready]
+    )
+    clicks = []
+    ticks = [0]
+
+    async def sleep(_):
+        ticks[0] += 1
+        if ticks[0] == 9:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=sleep,
+        host_listener_probe=lambda _: True,
+    )
+
+    async def noop():
+        return False
+
+    async def connect(**_kwargs):
+        clicks.append(lifecycle.selected)
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            side_effect=lambda: next(observations),
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            return_value=AdbReverseProbe(True, ()),
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            side_effect=connect,
+        ),
+        patch.object(lifecycle, "_prepare_device", new=noop),
+        patch.object(lifecycle, "_ensure_coturn", new=noop),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert clicks == ["original", "original"]
+    assert lifecycle.generation == 2
+    assert probe_calls.count(2) >= 3
+    assert hub.statuses[-1]["turnEndToEndHealthy"] is False
+    if late_health_report:
+        assert hub.statuses[-1]["health"] == "browser_ready"
+    else:
+        assert hub.statuses[-1]["state"] == "VERIFYING_BROWSER"
+        assert hub.statuses[-1]["connectDispatched"] is True
+        assert hub.statuses[-1]["health"] == "degraded"
+
+
+async def test_registered_browser_disconnect_triggers_new_connect():
+    hub = FakeHub()
+    hub.probe_browser = lambda *_args: asyncio.sleep(0, result={"clientId": "new-page"})
+    ready = AdbDevices((("original", "device"),))
+    ticks = [0]
+    clicks = []
+
+    async def sleep(_):
+        ticks[0] += 1
+        if ticks[0] == 2:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._selected_once = True
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "old-page"
+
+    async def connect(**_kwargs):
+        clicks.append(lifecycle.selected)
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            side_effect=connect,
+        ),
+        patch.object(lifecycle, "_prepare_device", new=lambda: asyncio.sleep(0)),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert clicks == ["original"]
+    assert lifecycle.browser_client == "new-page"
+    assert hub.statuses[-1]["health"] == "browser_ready"
+
+
+async def test_missing_reverse_rule_during_probe_wait_triggers_rebuild():
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+    ticks = [0]
+    rebuilds = []
+
+    async def sleep(_):
+        ticks[0] += 1
+        if ticks[0] == 2:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._selected_once = True
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.connect_dispatched = True
+    lifecycle.browser_probe_after = 0.0
+
+    async def noop():
+        return False
+
+    async def rebuild():
+        rebuilds.append(True)
+
+    async def automate():
+        lifecycle.connect_dispatched = True
+
+    with (
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            return_value=AdbReverseProbe(True, (3478,)),
+        ),
+        patch.object(lifecycle, "_ensure_coturn", new=noop),
+        patch.object(lifecycle, "_prepare_device", new=noop),
+        patch.object(lifecycle, "_rebuild_usb", new=rebuild),
+        patch.object(lifecycle, "_automate", new=automate),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert rebuilds == [True]
+    assert any("USB reverse rules missing" in s["reason"] for s in hub.statuses)
+
+
 async def test_prepare_wakes_each_attempt_but_clears_cache_once():
     lifecycle = OobLifecycle(
         hub=FakeHub(),

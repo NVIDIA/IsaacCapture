@@ -95,6 +95,7 @@ class OobLifecycle:
         self.last_metrics_at: float | None = None
         self.last_stream_at: float | None = None
         self.connect_at: float | None = None
+        self.browser_probe_after: float | None = None
         self.last_adb_at: float | None = None
         self.last_network_at: float | None = None
         self.last_rules_at: float | None = None
@@ -326,8 +327,10 @@ class OobLifecycle:
         await self._stop_monitor()
         self.generation += 1
         self.browser_ready = False
+        self.browser_client = None
         self.connect_dispatched = False
         before = time.time()
+        self.browser_probe_after = before
         await self._publish(
             "degraded",
             "AUTOMATING_BROWSER",
@@ -354,11 +357,26 @@ class OobLifecycle:
             reverseRulesVerified=self.usb_local,
             turnPrerequisitesReady=self.usb_local,
         )
-        report = await self.hub.probe_browser(self.generation, before)
+        await self._verify_browser()
+
+    async def _verify_browser(self) -> None:
+        """Wait for OOB proof after CONNECT without repeating the click on timeout."""
+        if self.monitor is not None and self.monitor.done():
+            raise adb.OobAdbError("CDP monitor ended")
+        assert self.browser_probe_after is not None
+        report = await self.hub.probe_browser(self.generation, self.browser_probe_after)
         if report is None:
-            raise adb.OobAdbError(
-                "Browser did not register and answer a fresh OOB health probe"
+            await self._publish(
+                "degraded",
+                "VERIFYING_BROWSER",
+                "CONNECT dispatched; waiting for fresh browser health report",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=self.usb_local,
+                turnPrerequisitesReady=self.usb_local,
+                connectDispatched=True,
             )
+            return
         self.browser_client = report["clientId"]
         self.browser_ready = True
         self.last_browser_at = time.time()
@@ -423,6 +441,24 @@ class OobLifecycle:
             turnEndToEndHealthy=self.usb_local and health == "active",
         )
 
+    async def _check_usb_prerequisites(self) -> None:
+        """Rebuild on a real TURN or reverse-rule loss, even before OOB proof."""
+        if not self.usb_local:
+            return
+        restarted = await self._ensure_coturn()
+        verification = await asyncio.to_thread(
+            adb.probe_adb_reverse_rules,
+            [usb_ui_port(), self.resolved_port, usb_backend_port(), self.turn_port],
+        )
+        if not verification.adb_available:
+            raise adb.OobAdbError("ADB unavailable while verifying reverse rules")
+        if verification.missing_ports:
+            raise adb.OobAdbError(
+                f"USB reverse rules missing: {verification.missing_ports}"
+            )
+        if restarted:
+            raise adb.OobAdbError("coturn restarted; renewing browser connection")
+
     async def run(self) -> None:
         token = adb.SELECTED_ADB_SERIAL.set(self.selected) if self.selected else None
         try:
@@ -469,6 +505,8 @@ class OobLifecycle:
                 if not selected_ready:
                     await self._stop_monitor()
                     self.browser_ready = False
+                    self.connect_dispatched = False
+                    self.browser_client = None
                     self._ready_count = 0
                     states = dict(devices.devices)
                     if len(ready) > 1 and self.selected is None:
@@ -496,6 +534,8 @@ class OobLifecycle:
                 if network.state is adb.HeadsetNetworkState.ADB_UNAVAILABLE:
                     await self._stop_monitor()
                     self.browser_ready = False
+                    self.connect_dispatched = False
+                    self.browser_client = None
                     await self._publish(
                         "degraded",
                         "WAITING_FOR_ADB",
@@ -511,6 +551,8 @@ class OobLifecycle:
                 ):
                     await self._stop_monitor()
                     self.browser_ready = False
+                    self.connect_dispatched = False
+                    self.browser_client = None
                     await self._publish(
                         "degraded",
                         "PREPARING_DEVICE",
@@ -543,6 +585,7 @@ class OobLifecycle:
                 if (
                     self.clock() >= self.episode_start + self.config.timeout_sec
                     and not self.browser_ready
+                    and not self.connect_dispatched
                 ):
                     await self._publish(
                         "degraded",
@@ -554,33 +597,14 @@ class OobLifecycle:
                     await self.sleep(self.config.interval_sec)
                     continue
                 try:
+                    if self.browser_ready or self.connect_dispatched:
+                        await self._check_usb_prerequisites()
                     if self.browser_ready:
                         if self.monitor is not None and self.monitor.done():
                             raise adb.OobAdbError("CDP monitor ended")
-                        if self.usb_local:
-                            restarted = await self._ensure_coturn()
-                            verification = await asyncio.to_thread(
-                                adb.probe_adb_reverse_rules,
-                                [
-                                    usb_ui_port(),
-                                    self.resolved_port,
-                                    usb_backend_port(),
-                                    self.turn_port,
-                                ],
-                            )
-                            if not verification.adb_available:
-                                raise adb.OobAdbError(
-                                    "ADB unavailable while verifying reverse rules"
-                                )
-                            if verification.missing_ports:
-                                raise adb.OobAdbError(
-                                    f"USB reverse rules missing: {verification.missing_ports}"
-                                )
-                            if restarted:
-                                raise adb.OobAdbError(
-                                    "coturn restarted; renewing browser connection"
-                                )
                         await self._observe_stream()
+                    elif self.connect_dispatched:
+                        await self._verify_browser()
                     else:
                         self.attempts += 1
                         await self._publish(
@@ -603,6 +627,8 @@ class OobLifecycle:
                 except Exception as exc:
                     await self._stop_monitor()
                     self.browser_ready = False
+                    self.connect_dispatched = False
+                    self.browser_client = None
                     reason = (
                         "Recovery attempt timed out"
                         if isinstance(exc, TimeoutError)

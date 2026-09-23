@@ -195,7 +195,7 @@ _REQUIRED_WEB_CLIENT_ASSETS = ("index.html", "bundle.js")
 _OPTIONAL_WEB_CLIENT_ASSETS = ("bundle.emulator.js",)
 
 
-def require_web_client_static_dir() -> Path:
+def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path:
     """Ensure web client static assets exist under :func:`resolve_web_client_static_dir`.
 
     Creates the directory if needed. If ``index.html``, ``bundle.js``, or
@@ -203,7 +203,9 @@ def require_web_client_static_dir() -> Path:
     Isaac Teleop client URLs (emulator bundle is optional on older releases).
 
     Idempotent: safe to call from both :class:`~.launcher.CloudXRLauncher` and ``wss.run``
-    (second call skips network when files are present).
+    (second call skips network when files are present). OOB automation requires
+    the current browser health protocol; a non-empty older cache is not a
+    compatible substitute.
 
     Raises:
         RuntimeError: If the path is invalid or downloads/final validation fail.
@@ -247,7 +249,124 @@ def require_web_client_static_dir() -> Path:
         fp = p / name
         if not fp.is_file() or fp.stat().st_size == 0:
             raise RuntimeError(f"Web client file missing or empty after fetch: {fp}")
+    if require_health_probe:
+        bundle = p / "bundle.js"
+        try:
+            bundle_bytes = bundle.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"Cannot read WebXR bundle {bundle}: {exc}") from exc
+        if b"healthProbe" not in bundle_bytes or b"healthReport" not in bundle_bytes:
+            raise RuntimeError(
+                f"WebXR bundle {bundle} lacks the OOB healthProbe/healthReport "
+                "protocol. Build deps/cloudxr/webxr_client with `npm run build` "
+                "and set TELEOP_WEB_CLIENT_STATIC_DIR to its build directory. "
+                "An older non-empty static cache is not replaced automatically."
+            )
     return p
+
+
+def _wait_for_port(host: str, port: int, timeout: float) -> bool:
+    """Return ``True`` once *host:port* accepts a TCP connection, else ``False``."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def _usb_local_static_handler_class(
+    static_root: Path,
+) -> type[http.server.SimpleHTTPRequestHandler]:
+    """Return a :class:`~http.server.SimpleHTTPRequestHandler` subclass rooted at *static_root*."""
+    root = str(static_root.resolve())
+
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        """HTTP request handler pinned to the resolved *static_root* directory."""
+
+        def __init__(self, *args, **kwargs):
+            """Initialise with *directory* forced to *root*."""
+            super().__init__(*args, directory=root, **kwargs)
+
+        def log_message(self, fmt: str, *args) -> None:
+            """Redirect access log lines to the module ``debug`` logger."""
+            log.debug("%s - %s", self.address_string(), fmt % args)
+
+        def end_headers(self) -> None:
+            """Require a fresh UI and bundle after a developer rebuild."""
+            self.send_header("Cache-Control", "no-store")
+            super().end_headers()
+
+    return _Handler
+
+
+def start_usb_local_https_server(
+    static_root: Path,
+    *,
+    cert_file: Path,
+    key_file: Path,
+    port: int | None = None,
+    host: str = "127.0.0.1",
+    ready_timeout: float = 15.0,
+) -> tuple[threading.Thread, http.server.ThreadingHTTPServer]:
+    """Serve *static_root* over HTTPS using the same PEM as the WSS proxy.
+
+    When *port* is ``None`` (the default) the bind port is resolved via
+    :func:`usb_ui_port` (env-overridable through ``USB_UI_PORT``).
+
+    *host* controls the bind address: ``"127.0.0.1"`` (default) for USB-local
+    mode where the headset reaches the PC via ``adb reverse``; ``"0.0.0.0"``
+    for ``--host-client`` WiFi/LAN mode where the headset connects directly.
+    """
+    if port is None:
+        port = usb_ui_port()
+    handler_cls = _usb_local_static_handler_class(static_root)
+    httpd = http.server.ThreadingHTTPServer((host, port), handler_cls)
+    httpd.daemon_threads = True
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(str(cert_file), str(key_file))
+    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+
+    thread = threading.Thread(
+        target=httpd.serve_forever, name="usb-local-https", daemon=True
+    )
+    thread.start()
+    log.info(
+        "Static HTTPS server starting — waiting up to %.0fs for :%d",
+        ready_timeout,
+        port,
+    )
+    probe_host = "127.0.0.1" if host == "0.0.0.0" else host
+    if not _wait_for_port(probe_host, port, ready_timeout):
+        try:
+            httpd.shutdown()
+        finally:
+            httpd.server_close()
+        thread.join(timeout=2.0)
+        raise RuntimeError(
+            f"Static HTTPS server did not accept connections on {host}:{port} "
+            f"within {ready_timeout:.0f}s"
+        )
+    log.info("Static HTTPS server ready on https://%s:%d", host, port)
+    return thread, httpd
+
+
+def stop_usb_local_https_server(
+    thread: threading.Thread | None,
+    httpd: http.server.ThreadingHTTPServer | None,
+) -> None:
+    """Shut down the thread HTTP server from :func:`start_usb_local_https_server`."""
+    if httpd is not None:
+        try:
+            httpd.shutdown()
+        finally:
+            httpd.server_close()
+    if thread is not None:
+        thread.join(timeout=5.0)
+    log.info("Static HTTPS server stopped")
 
 
 def web_client_base_override_from_env() -> str | None:

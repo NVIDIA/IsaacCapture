@@ -1450,7 +1450,9 @@ def clear_headset_browser_cache(*, usb_local: bool) -> int:
         _adb_forward_remove(_CDP_LOCAL_PORT)
 
 
-async def _cdp_session_click_connect(ws_url: str) -> None:
+async def _cdp_session_click_connect(
+    ws_url: str, *, refresh_static_assets: bool = False
+) -> None:
     """Open a single CDP session and click the CONNECT button.
 
     Handles the self-signed cert interstitial before looking for the button:
@@ -1540,6 +1542,23 @@ async def _cdp_session_click_connect(ws_url: str) -> None:
                     },
                 )
                 await asyncio.sleep(3.0)
+
+        if refresh_static_assets:
+            # The source build can replace bundle.js at the same URL. Chromium
+            # may reuse its old HTTP cache even after Storage.clearDataForOrigin;
+            # reload this tab with caching disabled before clicking CONNECT.
+            try:
+                await send(ws, "Network.enable")
+                await send(ws, "Network.setCacheDisabled", {"cacheDisabled": True})
+                await send(ws, "Page.reload", {"ignoreCache": True})
+                log.info("CDP: reloaded local WebXR page bypassing HTTP cache")
+                await asyncio.sleep(1.0)
+            except Exception as exc:
+                log.warning(
+                    "CDP: cache-bypassing reload unavailable (%s); browser health "
+                    "probe will still verify the client",
+                    exc,
+                )
 
         # ---- bring tab to foreground so WebXR requestSession() succeeds ------
         # WebXR requires the page to be visible; Page.bringToFront activates the tab.
@@ -1932,7 +1951,9 @@ async def run_oob_connect(
         # --- Step 4: cert interstitial + bring to front + readiness + click --
         # _cdp_session_click_connect polls the DOM for document.readyState +
         # #startButton (up to 10s) so no fixed page-init sleep is needed here.
-        await _cdp_session_click_connect(ws_url)
+        await _cdp_session_click_connect(
+            ws_url, refresh_static_assets=usb_local or host_client
+        )
 
         # --- Step 5: background monitor for mid-stream error banners ---------
         # Keep the adb forward alive; the monitor tears it down on exit.

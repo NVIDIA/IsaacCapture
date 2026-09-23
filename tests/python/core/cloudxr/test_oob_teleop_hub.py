@@ -107,6 +107,28 @@ async def test_headset_register_hello_and_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_baseline_client_can_register_stream_without_health_probe_reply() -> None:
+    """The pre-healthProbe client still sends its existing OOB messages."""
+    hub = OOBControlHub()
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+    await ws.inject(
+        json.dumps({"type": "streamStatus", "payload": {"streaming": True}})
+    )
+    await asyncio.sleep(0)
+
+    state = await hub.get_snapshot()
+    assert state["headsets"][0]["streaming"] is True
+    assert await hub.probe_browser(1, 0, timeout=0.02) is None
+    assert any(msg["type"] == "healthProbe" for msg in _loads_sent(ws))
+    assert (await hub.get_snapshot())["headsets"][0]["streaming"] is True
+    await ws.end_stream()
+    await task
+
+
+@pytest.mark.asyncio
 async def test_generation_probe_requires_matching_fresh_client() -> None:
     hub = OOBControlHub()
     ws = QueueWS()

@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cloudxr_py_test_ns import oob_teleop_adb as adb_module
 from cloudxr_py_test_ns.oob_teleop_adb import (
     OobAdbError,
     adb_automation_failure_hint,
@@ -60,6 +62,53 @@ def test_oob_adb_automation_message() -> None:
 def test_oob_adb_automation_message_empty_detail() -> None:
     msg = oob_adb_automation_message(2, "", "")
     assert "no output from adb" in msg
+
+
+@pytest.mark.asyncio
+async def test_local_client_reloads_without_http_cache_before_connect() -> None:
+    """The updated local bundle is fetched even if this URL was cached before."""
+
+    class FakeCDP:
+        def __init__(self) -> None:
+            self.methods: list[str] = []
+            self.last: dict = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send(self, raw: str) -> None:
+            self.last = json.loads(raw)
+            self.methods.append(self.last["method"])
+
+        async def recv(self) -> str:
+            result = {}
+            if self.last["method"] == "Runtime.evaluate":
+                expression = self.last["params"]["expression"]
+                if "details-button" in expression:
+                    value = False
+                elif "document.readyState" in expression:
+                    value = {"state": "ready", "x": 12, "y": 34}
+                elif "const btnText" in expression:
+                    value = {"btnText": "DISCONNECT", "errorText": None}
+                else:
+                    value = None
+                result = {"result": {"value": value}}
+            return json.dumps({"id": self.last["id"], "result": result})
+
+    cdp = FakeCDP()
+    with patch("websockets.asyncio.client.connect", return_value=cdp):
+        await adb_module._cdp_session_click_connect(
+            "ws://test", refresh_static_assets=True
+        )
+    assert cdp.methods.index("Network.setCacheDisabled") < cdp.methods.index(
+        "Page.reload"
+    )
+    assert cdp.methods.index("Page.reload") < cdp.methods.index(
+        "Input.dispatchMouseEvent"
+    )
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb.shutil.which", return_value="/usr/bin/adb")
