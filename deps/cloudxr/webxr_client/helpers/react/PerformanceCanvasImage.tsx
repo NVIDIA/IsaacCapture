@@ -34,8 +34,8 @@
 
 import { ReadonlySignal } from '@preact/signals-react';
 import { useFrame } from '@react-three/fiber';
-import { Image } from '@react-three/uikit';
-import React, { useRef, useState, useEffect } from 'react';
+import { Image, type VanillaImage } from '@react-three/uikit';
+import React, { useEffect, useRef } from 'react';
 import { CanvasTexture } from 'three';
 
 /** Canvas resolution (pixels). High values keep text sharp when the texture is scaled to the display size. */
@@ -128,15 +128,13 @@ export function PerformanceCanvasImage({
   sessionQuality,
 }: PerformanceCanvasImageProps) {
   /** Ref for the uikit Image; we set .texture.value on it to use our CanvasTexture. */
-  const imageRef = useRef<{ texture: { value: CanvasTexture | undefined } } | null>(null);
+  const imageRef = useRef<VanillaImage | null>(null);
   /** Offscreen canvas we draw into each frame. */
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Cached 2D context for the canvas (avoids getContext('2d') every frame). */
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   /** Three.js texture wrapping the canvas; needsUpdate = true each frame after drawing. */
   const textureRef = useRef<CanvasTexture | null>(null);
-  const [textureReady, setTextureReady] = useState(false);
-
   /** Create the offscreen canvas and CanvasTexture once on mount; dispose on unmount. */
   useEffect(() => {
     const canvas = document.createElement('canvas');
@@ -147,32 +145,26 @@ export function PerformanceCanvasImage({
     const tex = new CanvasTexture(canvas);
     tex.matrixAutoUpdate = false;
     textureRef.current = tex;
-    setTextureReady(true);
     return () => {
+      if (imageRef.current?.texture.value === tex) imageRef.current.texture.value = undefined;
       tex.dispose();
       textureRef.current = null;
       canvasRef.current = null;
       ctxRef.current = null;
-      setTextureReady(false);
     };
   }, []);
 
-  /** Assign our texture to the uikit Image via ref (avoids src stringification). */
-  useEffect(() => {
-    if (!textureReady || !textureRef.current || !imageRef.current) return;
-    const img = imageRef.current;
-    img.texture.value = textureRef.current;
-    return () => {
-      if (img) img.texture.value = undefined;
-    };
-  }, [textureReady]);
-
-  /** Every frame: clear canvas, draw three vertically-stacked metric cards. */
+  /** Every frame: keep the image bound, then draw the quality and metric cards. */
   useFrame(() => {
     const canvas = canvasRef.current;
     const texture = textureRef.current;
     const ctx = ctxRef.current;
     if (!canvas || !texture || !ctx) return;
+    // UIKit's asynchronous src loader can clear a texture assigned once in an
+    // effect. Restore it when that happens, including after remounts.
+    if (imageRef.current && imageRef.current.texture.value !== texture) {
+      imageRef.current.texture.value = texture;
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const {
