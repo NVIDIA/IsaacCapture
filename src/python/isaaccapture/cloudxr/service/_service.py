@@ -361,6 +361,7 @@ class CloudXRService:
                         if current.get("sessionId") == self._oob_session_id:
                             self._oob_status_path.unlink(missing_ok=True)
                     except FileNotFoundError:
+                        # Another shutdown path may already have removed the file.
                         pass
                     except (OSError, ValueError) as exc:
                         logger.warning(

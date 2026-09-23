@@ -864,3 +864,58 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
         "Recovery attempt timed out" in status["reason"] for status in hub.statuses
     )
     assert ["adb", "forward", "--remove", "tcp:9223"] in calls
+
+
+async def test_timeout_after_connect_click_does_not_dispatch_again():
+    hub = FakeHub()
+    hub.probe_browser = lambda *_args: asyncio.sleep(0, result=None)
+    ready = AdbDevices((("original", "device"),))
+    ticks = 0
+    clicks = []
+
+    async def stop_after_verification(_):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 3:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(0.02, 0.001),
+        sleep=stop_after_verification,
+    )
+    lifecycle.selected = "original"
+    lifecycle._selected_once = True
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+
+    async def connect(*, on_dispatched, **_kwargs):
+        clicks.append(True)
+        on_dispatched()
+        await asyncio.sleep(0.1)
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(lifecycle, "_prepare_device", new=lambda: asyncio.sleep(0)),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            side_effect=connect,
+        ),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert len(clicks) == 1
+    assert lifecycle.connect_dispatched
+    assert any(s["state"] == "VERIFYING_BROWSER" for s in hub.statuses)

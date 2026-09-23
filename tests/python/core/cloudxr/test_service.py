@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import types
@@ -324,7 +325,16 @@ class TestCleanupStaleRuntime:
             os.path.join(run_dir, name)
             for name in ("ipc_cloudxr", "runtime_started", "cloudxr.pid")
         ]
-        for path in paths:
+        # A stale IPC endpoint is a closed Unix socket, not a regular file.
+        cwd = os.getcwd()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            os.chdir(run_dir)
+            sock.bind("ipc_cloudxr")
+        finally:
+            os.chdir(cwd)
+            sock.close()
+        for path in paths[1:]:
             Path(path).touch()
         return run_dir, paths
 

@@ -99,10 +99,15 @@ async def test_local_client_reloads_without_http_cache_before_connect() -> None:
             return json.dumps({"id": self.last["id"], "result": result})
 
     cdp = FakeCDP()
+    dispatched = []
     with patch("websockets.asyncio.client.connect", return_value=cdp):
         await adb_module._cdp_session_click_connect(
-            "ws://test", refresh_static_assets=True
+            "ws://test",
+            refresh_static_assets=True,
+            on_dispatched=lambda: dispatched.append(list(cdp.methods)),
         )
+    assert len(dispatched) == 1
+    assert dispatched[0][-1] == "Input.dispatchMouseEvent"
     assert cdp.methods.index("Network.setCacheDisabled") < cdp.methods.index(
         "Page.reload"
     )

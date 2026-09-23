@@ -171,6 +171,7 @@ class OobLifecycle:
             try:
                 await self.monitor
             except (asyncio.CancelledError, Exception):
+                # Shutdown must continue even if the monitor already failed.
                 pass
             self.monitor = None
         if self.selected and had_monitor:
@@ -204,6 +205,7 @@ class OobLifecycle:
             try:
                 await task
             except Exception:
+                # Preserve the original cancellation after the ADB task settles.
                 pass
             raise
 
@@ -340,14 +342,20 @@ class OobLifecycle:
             reverseRulesVerified=self.usb_local,
             turnPrerequisitesReady=self.usb_local,
         )
+
+        def on_dispatched() -> None:
+            self.connect_at = time.time()
+            self.connect_dispatched = True
+
         self.monitor = await adb.run_oob_connect(
             resolved_port=self.resolved_port,
             timeout=min(self.config.timeout_sec, 15.0),
             usb_local=self.usb_local,
             host_client=self.host_client,
+            on_dispatched=on_dispatched,
         )
-        self.connect_at = time.time()
-        self.connect_dispatched = True
+        if not self.connect_dispatched:
+            on_dispatched()
         await self._publish(
             "degraded",
             "VERIFYING_BROWSER",
@@ -627,8 +635,18 @@ class OobLifecycle:
                 except Exception as exc:
                     await self._stop_monitor()
                     self.browser_ready = False
-                    self.connect_dispatched = False
                     self.browser_client = None
+                    if self.connect_dispatched and isinstance(exc, TimeoutError):
+                        await self._publish(
+                            "degraded",
+                            "VERIFYING_BROWSER",
+                            "CONNECT dispatched; waiting for fresh browser health report",
+                            adbReady=True,
+                            networkPresent=True,
+                        )
+                        await self.sleep(self.config.interval_sec)
+                        continue
+                    self.connect_dispatched = False
                     reason = (
                         "Recovery attempt timed out"
                         if isinstance(exc, TimeoutError)
