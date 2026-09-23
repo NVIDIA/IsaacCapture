@@ -30,30 +30,10 @@ import { createInterface } from 'readline';
 import { HeadsetControlChannel, type StreamConfig } from './controlChannel';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-const SERVER_SCRIPT = path.join(
-  REPO_ROOT,
-  'tests',
-  'python',
-  'core',
-  'cloudxr',
-  'oob_hub_test_server.py'
-);
-
-// Safety net for afterEach cleanup: every hub PID spawned goes in here and comes out once
-// confirmed exited. If a test's afterEach is ever skipped (a Jest hook-ordering edge case,
-// not something this file's own control flow can prevent), this file's own `exit` handler
-// below still reaps anything left over when the worker process itself is about to end -
-// process.on('exit') callbacks must be synchronous, so SIGKILL (not SIGTERM) is used here.
-const spawnedPids = new Set<number>();
-process.on('exit', () => {
-  for (const pid of spawnedPids) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already gone - nothing to clean up.
-    }
-  }
-});
+// tests/python/core/cloudxr/ is its own uv project (see its pyproject.toml - the same one
+// CTest invokes via `uv run --extra dev pytest`), not the repo root's ad-hoc dev .venv,
+// which is gitignored and doesn't exist in CI.
+const SERVER_DIR = path.join(REPO_ROOT, 'tests', 'python', 'core', 'cloudxr');
 
 /** Spawns the real hub server and resolves once it reports the port it's listening on. */
 function startHub(): Promise<{
@@ -62,12 +42,14 @@ function startHub(): Promise<{
   nextLine: () => Promise<string>;
 }> {
   return new Promise((resolve, reject) => {
-    // Plain `python3`, stdlib only (see oob_hub_test_server.py's own docstring) - no venv,
-    // no third-party install step, so this runs on any CI runner that has Python at all.
-    const proc = spawn('python3', [SERVER_SCRIPT], { stdio: ['ignore', 'pipe', 'pipe'] });
-    if (proc.pid) spawnedPids.add(proc.pid);
-    proc.once('exit', () => {
-      if (proc.pid) spawnedPids.delete(proc.pid);
+    // `uv run` is a wrapper that spawns its own `python3` child rather than exec'ing into
+    // it, so killing just this process leaves that child running. `detached: true` makes
+    // this process its own process group leader (on Linux); killing the whole group
+    // (negative pid) in the caller's cleanup takes the python3 child down with it.
+    const proc = spawn('uv', ['run', '--extra', 'dev', 'python3', 'oob_hub_test_server.py'], {
+      cwd: SERVER_DIR,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     });
     const rl = createInterface({ input: proc.stdout! });
     // Lines from the Python process arrive on their own schedule, but a test calls
@@ -75,44 +57,26 @@ function startHub(): Promise<{
     // `waiters` buffers a nextLine() call that arrived before its line did. Each line
     // resolves at most one waiter (FIFO), so this never double-delivers a line.
     const pending: string[] = [];
-    const waiters: Array<{ resolve: (line: string) => void; reject: (error: Error) => void }> = [];
-    // If the process dies before a pending nextLine() gets its line, that waiter would
-    // otherwise hang forever (only a Jest timeout would surface it, with no stderr) -
-    // once set, every future and in-flight nextLine() rejects immediately with this instead.
-    let terminalError: Error | undefined;
+    const waiters: Array<(line: string) => void> = [];
 
     rl.on('line', line => {
       const waiter = waiters.shift();
-      if (waiter) waiter.resolve(line);
+      if (waiter) waiter(line);
       else pending.push(line);
     });
 
     const nextLine = (): Promise<string> =>
-      new Promise((res, rej) => {
-        if (terminalError) {
-          rej(terminalError);
-          return;
-        }
+      new Promise(res => {
         const line = pending.shift();
         if (line !== undefined) res(line);
-        else waiters.push({ resolve: res, reject: rej });
+        else waiters.push(res);
       });
 
     let stderr = '';
     proc.stderr!.on('data', chunk => {
       stderr += String(chunk);
     });
-
-    const fail = (error: Error) => {
-      if (terminalError) return;
-      terminalError = error;
-      for (const waiter of waiters.splice(0)) waiter.reject(error);
-      reject(error);
-    };
-    proc.once('error', fail);
-    proc.once('close', (code, signal) => {
-      fail(new Error(`Hub process closed (code ${code}, signal ${signal})\nstderr: ${stderr}`));
-    });
+    proc.on('error', reject);
 
     nextLine().then(readyLine => {
       const match = /^READY (\d+)$/.exec(readyLine);
@@ -131,12 +95,12 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
   afterEach(async () => {
     channel?.dispose();
-    // Wait for the process to actually exit rather than firing a signal and hoping -
+    // Wait for the process group to actually exit rather than firing SIGTERM and hoping -
     // otherwise a slow-to-die process from one test could still be shutting down when the
     // next test (or the suite) starts.
     if (hub?.proc.pid) {
       const exited = new Promise(resolve => hub.proc.once('exit', resolve));
-      hub.proc.kill('SIGTERM');
+      process.kill(-hub.proc.pid, 'SIGTERM');
       await exited;
     }
   });
@@ -146,21 +110,11 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
     const configs: Array<{ config: StreamConfig; version: number }> = [];
     const connectionChanges: boolean[] = [];
-    // The hub stores the headset (and so prints SNAPSHOT) before it sends `hello` back, so
-    // awaiting only the SNAPSHOT line does not guarantee the client has processed `hello`
-    // yet - wait for onConfig itself rather than racing it.
-    let resolveGotConfig: () => void;
-    const gotConfig = new Promise<void>(res => {
-      resolveGotConfig = res;
-    });
 
     channel = new HeadsetControlChannel({
       url: `ws://127.0.0.1:${hub.port}`,
       deviceLabel: 'jest-test',
-      onConfig: (config, configVersion) => {
-        configs.push({ config, version: configVersion });
-        resolveGotConfig();
-      },
+      onConfig: (config, configVersion) => configs.push({ config, version: configVersion }),
       onConnectionChange: connected => connectionChanges.push(connected),
     });
     channel.connect();
@@ -178,8 +132,6 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
       streamingSince: null,
       deviceLabel: 'jest-test',
     });
-
-    await gotConfig;
 
     // The client side agrees: onConnectionChange(true) fired (WebSocket opened) and
     // onConfig fired once with the hub's `hello` payload (empty config, version 0 - the
