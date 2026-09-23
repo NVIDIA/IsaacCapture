@@ -117,6 +117,37 @@ class TestOobConsoleReporter:
             "[setup-oob] OOB stream active with fresh client metrics."
         ]
 
+    def test_quick_replug_reports_each_reentered_phase(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {"health": "degraded", "selectedSerial": "HMD-1", "adbReady": True}
+        phases = (
+            ("PREPARING_DEVICE", "Preparing headset HMD-1"),
+            ("REBUILDING_USB", "Configuring USB reverse rules"),
+            ("AUTOMATING_BROWSER", "Opening headset browser"),
+            ("VERIFYING_BROWSER", "Waiting for headset browser"),
+        )
+        for state, expected in phases:
+            snapshot = {**base, "state": state}
+            assert any(expected in line for line in reporter.observe(snapshot))
+            assert reporter.observe(snapshot) == []
+
+        lost = {**base, "state": "WAITING_FOR_ADB", "adbReady": False}
+        assert any("connection lost" in line for line in reporter.observe(lost))
+        for state, expected in phases:
+            snapshot = {**base, "state": state}
+            assert any(expected in line for line in reporter.observe(snapshot))
+            assert reporter.observe(snapshot) == []
+
+        same_stage_new_generation = {
+            **base,
+            "state": "VERIFYING_BROWSER",
+            "generation": 2,
+        }
+        assert any(
+            "Waiting for headset browser" in line
+            for line in reporter.observe(same_stage_new_generation)
+        )
+
     def test_foreground_run_prints_queued_lifecycle_after_banner(
         self, tmp_path, capsys
     ):

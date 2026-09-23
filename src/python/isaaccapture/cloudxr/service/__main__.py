@@ -320,6 +320,7 @@ class _OobConsoleReporter:
         self._adb_ready = False
         self._ever_ready = False
         self._last_health: str | None = None
+        self._last_stage: tuple | None = None
 
     def observe(self, snapshot: dict) -> list[str]:
         """Return messages for a new snapshot, with repeated states limited."""
@@ -330,6 +331,8 @@ class _OobConsoleReporter:
         reason = snapshot.get("reason") or "unknown reason"
         serial = snapshot.get("selectedSerial")
         ready = bool(snapshot.get("adbReady"))
+        stage = (state, snapshot.get("episodeStartedAt"), snapshot.get("generation"))
+        entered_stage = stage != self._last_stage
         messages: list[str] = []
 
         def emit(key: str, message: str, interval: float = 30.0) -> None:
@@ -366,14 +369,14 @@ class _OobConsoleReporter:
                 )
             else:
                 emit(f"adb-wait:{reason}", f"Waiting for USB-attached HMD: {reason}")
-        elif state == "PREPARING_DEVICE" and ready:
-            emit("prepare", f"Preparing headset {serial} for OOB setup.")
-        elif state == "REBUILDING_USB":
-            emit("usb", "Configuring USB reverse rules and TURN.")
-        elif state == "AUTOMATING_BROWSER":
-            emit("browser", "Opening headset browser and connecting OOB client.")
-        elif state == "VERIFYING_BROWSER":
-            emit("verify", "Waiting for headset browser health report.")
+        elif state == "PREPARING_DEVICE" and ready and entered_stage:
+            emit("prepare", f"Preparing headset {serial} for OOB setup.", 0)
+        elif state == "REBUILDING_USB" and entered_stage:
+            emit("usb", "Configuring USB reverse rules and TURN.", 0)
+        elif state == "AUTOMATING_BROWSER" and entered_stage:
+            emit("browser", "Opening headset browser and connecting OOB client.", 0)
+        elif state == "VERIFYING_BROWSER" and entered_stage:
+            emit("verify", "Waiting for headset browser health report.", 0)
         elif state == "DEGRADED":
             emit(f"failure:{reason}", f"OOB recovery delayed: {reason}")
         elif health == "fatal":
@@ -384,6 +387,7 @@ class _OobConsoleReporter:
         elif health == "active" and self._last_health != health:
             emit("active", "OOB stream active with fresh client metrics.")
         self._last_health = health
+        self._last_stage = stage
         return messages
 
 
