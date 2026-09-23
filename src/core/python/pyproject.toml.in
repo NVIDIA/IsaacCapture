@@ -17,7 +17,7 @@ name = "isaaccapture"
 version = "@ISAAC_TELEOP_PYPROJECT_VERSION@"
 description = "Isaac Teleop - Teleoperation with Device I/O"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
     {name = "NVIDIA"}
