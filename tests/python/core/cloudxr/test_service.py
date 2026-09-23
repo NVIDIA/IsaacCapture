@@ -47,7 +47,7 @@ class TestServiceConstruction:
         with (
             mock_service_deps(tmp_path, ready=True) as mocks,
             patch(
-                "isaacteleop.cloudxr.oob_teleop_adb.require_adb_on_path",
+                "isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path",
                 side_effect=RuntimeError("adb missing"),
             ),
         ):
@@ -59,10 +59,10 @@ class TestServiceConstruction:
         """A missing TURN binary is a host setup failure, not a retry episode."""
         with (
             mock_service_deps(tmp_path, ready=True) as mocks,
-            patch("isaacteleop.cloudxr.oob_teleop_env.require_web_client_static_dir"),
-            patch("isaacteleop.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch("isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
             patch(
-                "isaacteleop.cloudxr.oob_teleop_adb.require_coturn_available",
+                "isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available",
                 side_effect=RuntimeError("coturn missing"),
             ),
         ):
@@ -76,7 +76,7 @@ class TestServiceConstruction:
         with (
             mock_service_deps(tmp_path, ready=True) as mocks,
             patch(
-                "isaacteleop.cloudxr.oob_teleop_env.require_web_client_static_dir",
+                "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
                 side_effect=RuntimeError("lacks the OOB healthProbe"),
             ) as require_static,
         ):

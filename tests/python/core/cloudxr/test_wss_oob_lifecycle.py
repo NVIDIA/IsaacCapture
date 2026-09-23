@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from isaacteleop.cloudxr import wss
-from isaacteleop.cloudxr.oob_teleop_lifecycle import RecoveryConfig
+from isaaccapture.cloudxr import wss
+from isaaccapture.cloudxr.oob_teleop_lifecycle import RecoveryConfig
 
 
 @pytest.mark.asyncio
@@ -53,19 +53,19 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
         ),
         patch.object(wss, "build_ssl_context", return_value=object()),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_env.require_web_client_static_dir",
+            "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
             return_value=tmp_path,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_env.start_usb_local_https_server",
+            "isaaccapture.cloudxr.oob_teleop_env.start_usb_local_https_server",
             side_effect=lambda *a, **kw: (events.append("https started"), object()),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_env.stop_usb_local_https_server",
+            "isaaccapture.cloudxr.oob_teleop_env.stop_usb_local_https_server",
             side_effect=lambda *a: events.append("https stopped"),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.OobLifecycle",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
             return_value=lifecycle,
         ) as factory,
     ):
@@ -112,7 +112,7 @@ async def test_hub_only_creates_no_lifecycle(monkeypatch):
             return_value=SimpleNamespace(cert_file="c", key_file="k"),
         ),
         patch.object(wss, "build_ssl_context", return_value=object()),
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.OobLifecycle") as factory,
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle") as factory,
     ):
         task = asyncio.create_task(wss.run(None, stop, setup_oob=True))
         await asyncio.sleep(0)

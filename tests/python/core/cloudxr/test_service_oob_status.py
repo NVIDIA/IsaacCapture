@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from isaacteleop.cloudxr.oob_teleop_lifecycle import DeviceReplacedError
-from isaacteleop.cloudxr.launcher import CloudXRLauncher
-from isaacteleop.cloudxr.service import CloudXRService
+from isaaccapture.cloudxr.oob_teleop_lifecycle import DeviceReplacedError
+from isaaccapture.cloudxr.launcher import CloudXRLauncher
+from isaaccapture.cloudxr.service import CloudXRService
 
 
 def _service_for_status(tmp_path):
@@ -95,7 +95,7 @@ def test_attached_launcher_rejects_stale_writer_or_runtime(tmp_path):
             {"schemaVersion": 1, "writerPid": 999999999, "runtimePid": os.getpid()}
         )
     )
-    with patch("isaacteleop.cloudxr.launcher.is_runtime_live", return_value=True):
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=True):
         assert launcher.oob_status() is None
         path.write_text(
             json.dumps(

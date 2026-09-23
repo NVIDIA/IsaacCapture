@@ -42,6 +42,9 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 
 - Each leaf directory has its own `pyproject.toml` so `uv run` resolves deps
   locally (mujoco pins, asyncio, cupy extras, grounding/wuji extras).
+- After updating CloudXR import or mock-patch paths for the `isaaccapture`
+  package, run `ruff format` on the touched tests; longer paths can change
+  multiline layout.
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
 - Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or

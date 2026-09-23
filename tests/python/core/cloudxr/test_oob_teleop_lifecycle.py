@@ -11,15 +11,15 @@ from unittest.mock import patch
 
 import pytest
 
-from isaacteleop.cloudxr import oob_teleop_adb as adb
-from isaacteleop.cloudxr.oob_teleop_adb import (
+from isaaccapture.cloudxr import oob_teleop_adb as adb
+from isaaccapture.cloudxr.oob_teleop_adb import (
     AdbDevices,
     AdbReverseProbe,
     HeadsetNetworkProbe,
     HeadsetNetworkState,
 )
-from isaacteleop.cloudxr.oob_teleop_env import resolve_oob_recovery_config
-from isaacteleop.cloudxr.oob_teleop_lifecycle import (
+from isaaccapture.cloudxr.oob_teleop_env import resolve_oob_recovery_config
+from isaaccapture.cloudxr.oob_teleop_lifecycle import (
     DeviceReplacedError,
     OobLifecycle,
     RecoveryConfig,
@@ -92,7 +92,7 @@ async def test_absent_headset_keeps_observing_after_episode_expires(monkeypatch)
         sleep=sleep,
     )
     with patch(
-        "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
         return_value=AdbDevices(()),
     ):
         with pytest.raises(asyncio.CancelledError):
@@ -127,7 +127,7 @@ async def test_selected_serial_replacement_is_terminal(monkeypatch):
         on_fatal=fatals.append,
     )
     with patch(
-        "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
         side_effect=lambda: next(devices),
     ):
         with pytest.raises(DeviceReplacedError, match="DEVICE_REPLACED"):
@@ -160,7 +160,7 @@ async def test_explicit_serial_replacement_is_terminal_after_selection(monkeypat
         sleep=no_wait,
     )
     with patch(
-        "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
         side_effect=lambda: next(devices),
     ):
         with pytest.raises(DeviceReplacedError):
@@ -189,11 +189,11 @@ async def test_extra_ready_device_does_not_change_pinned_target():
     lifecycle._selected_once = True
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_adb.subprocess.run",
+            "isaaccapture.cloudxr.oob_teleop_adb.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0, "device", ""),
         ) as command,
         patch.object(adb, "_adb_run", side_effect=ORIGINAL_ADB_RUN),
@@ -240,11 +240,11 @@ async def test_same_serial_replug_stays_pinned(monkeypatch):
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             side_effect=devices,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch.object(lifecycle, "_automate", new=automate),
@@ -289,15 +289,16 @@ async def test_late_coturn_fault_opens_new_episode():
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb._run_adb", return_value=output
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value=output,
         ),
         patch.object(lifecycle, "_ensure_coturn", new=restarted),
     ):
@@ -337,11 +338,11 @@ async def test_wifi_restoration_reopens_expired_episode():
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch.object(lifecycle, "_prepare_device", new=noop),
@@ -379,9 +380,11 @@ async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failur
         return True
 
     with (
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
             return_value=listing,
         ),
         patch.object(lifecycle, "_ensure_coturn", new=coturn),
@@ -402,7 +405,7 @@ async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failur
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run",
             side_effect=fail_third,
         ),
         patch.object(lifecycle, "_ensure_coturn", new=coturn),
@@ -465,20 +468,22 @@ async def test_cable_loss_and_same_serial_replug_rebuilds_every_rule_and_reconne
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             side_effect=lambda: next(observations),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
             return_value="rules",
         ),
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
             return_value=AdbReverseProbe(True, ()),
         ),
         patch.object(lifecycle, "_prepare_device", new=noop),
@@ -568,19 +573,19 @@ async def test_replug_connect_is_not_repeated_while_waiting_for_browser_or_strea
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             side_effect=lambda: next(observations),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
             return_value=AdbReverseProbe(True, ()),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
             side_effect=connect,
         ),
         patch.object(lifecycle, "_prepare_device", new=noop),
@@ -635,15 +640,15 @@ async def test_registered_browser_disconnect_triggers_new_connect():
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
             side_effect=connect,
         ),
         patch.object(lifecycle, "_prepare_device", new=lambda: asyncio.sleep(0)),
@@ -695,15 +700,15 @@ async def test_missing_reverse_rule_during_probe_wait_triggers_rebuild():
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
             return_value=AdbReverseProbe(True, (3478,)),
         ),
         patch.object(lifecycle, "_ensure_coturn", new=noop),
@@ -729,10 +734,10 @@ async def test_prepare_wakes_each_attempt_but_clears_cache_once():
     )
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"
         ) as awake,
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.clear_headset_browser_cache"
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.clear_headset_browser_cache"
         ) as cache,
     ):
         await lifecycle._prepare_device()
@@ -759,7 +764,9 @@ async def test_host_listener_failure_rolls_back_without_starting_turn():
         return subprocess.CompletedProcess(args, 0, "", "")
 
     with (
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
         patch.object(lifecycle, "_ensure_coturn") as coturn,
     ):
         with pytest.raises(Exception, match="Host listener on tcp:49100"):
@@ -791,7 +798,9 @@ async def test_cancellation_mid_rebuild_rolls_back_owned_rules():
         return True
 
     with (
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
         patch.object(lifecycle, "_ensure_coturn", new=coturn),
     ):
         with pytest.raises(asyncio.CancelledError):
@@ -837,14 +846,16 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
 
     with (
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
             return_value=ready,
         ),
         patch(
-            "isaacteleop.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
             return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
         ),
-        patch("isaacteleop.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
         patch.object(lifecycle, "_prepare_device", new=slow_prepare),
     ):
         with pytest.raises(asyncio.CancelledError):
