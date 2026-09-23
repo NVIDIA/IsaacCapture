@@ -33,6 +33,9 @@ import subprocess
 import sys
 import time
 import urllib.request
+from contextvars import ContextVar
+from dataclasses import dataclass
+from enum import Enum
 from .oob_teleop_env import (
     default_web_client_origin,
     parse_env_port,
@@ -49,6 +52,47 @@ log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_adb")
 
 class OobAdbError(Exception):
     """``--setup-oob`` adb step failed; ``str(exception)`` is formatted for users (print without traceback)."""
+
+
+SELECTED_ADB_SERIAL: ContextVar[str | None] = ContextVar(
+    "selected_adb_serial", default=None
+)
+
+
+def _adb_run(args: list[str], **kwargs):
+    """Apply the lifecycle's pinned serial to commands, including ``to_thread`` calls."""
+    serial = SELECTED_ADB_SERIAL.get()
+    if serial and args[0] == "adb" and args[1] != "devices" and "-s" not in args:
+        args = ["adb", "-s", serial, *args[1:]]
+    return subprocess.run(args, check=kwargs.pop("check", False), **kwargs)
+
+
+@dataclass(frozen=True)
+class AdbDevices:
+    devices: tuple[tuple[str, str], ...]
+    diagnostic: str = ""
+
+    @property
+    def ready(self) -> tuple[str, ...]:
+        return tuple(serial for serial, state in self.devices if state == "device")
+
+
+def enumerate_adb_devices() -> AdbDevices:
+    """Enumerate every transport so selection can distinguish replacement."""
+    try:
+        proc = _adb_run(
+            ["adb", "devices"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return AdbDevices((), str(exc))
+    if proc.returncode:
+        return AdbDevices((), _adb_output_text(proc))
+    devices = []
+    for line in (proc.stdout or "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2:
+            devices.append((parts[0], parts[1]))
+    return AdbDevices(tuple(devices))
 
 
 def _adb_output_text(proc: subprocess.CompletedProcess[str]) -> str:
@@ -117,7 +161,7 @@ def _run_adb(label: str, args: list[str], *, timeout: float = 5.0) -> str | None
     helper failed without needing the raw command.
     """
     try:
-        proc = subprocess.run(
+        proc = _adb_run(
             args,
             capture_output=True,
             text=True,
@@ -138,6 +182,71 @@ def _run_adb(label: str, args: list[str], *, timeout: float = 5.0) -> str | None
     return proc.stdout or ""
 
 
+class HeadsetNetworkState(Enum):
+    """Result of a headset network probe over ADB."""
+
+    ADB_UNAVAILABLE = "adb_unavailable"
+    NO_NETWORK = "no_network"
+    NETWORK_PRESENT = "network_present"
+
+
+@dataclass(frozen=True)
+class HeadsetNetworkProbe:
+    state: HeadsetNetworkState
+    interfaces: tuple[tuple[str, str], ...] = ()
+    diagnostic: str = ""
+
+
+def probe_headset_network(*, serial: str | None = None) -> HeadsetNetworkProbe:
+    """Keep an ADB transport failure distinct from an empty IP listing."""
+    command = [
+        "adb",
+        *(["-s", serial] if serial else []),
+        "shell",
+        "ip",
+        "-o",
+        "-4",
+        "addr",
+        "show",
+    ]
+    try:
+        proc = _adb_run(command, capture_output=True, text=True, timeout=5, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return HeadsetNetworkProbe(
+            HeadsetNetworkState.ADB_UNAVAILABLE, diagnostic=str(exc)
+        )
+    if proc.returncode:
+        return HeadsetNetworkProbe(
+            HeadsetNetworkState.ADB_UNAVAILABLE,
+            diagnostic=(
+                proc.stderr or proc.stdout or f"adb exited {proc.returncode}"
+            ).strip(),
+        )
+    interfaces = _parse_non_loopback_interfaces(proc.stdout or "")
+    state = (
+        HeadsetNetworkState.NETWORK_PRESENT
+        if interfaces
+        else HeadsetNetworkState.NO_NETWORK
+    )
+    return HeadsetNetworkProbe(state, tuple(interfaces))
+
+
+def _parse_non_loopback_interfaces(text: str) -> list[tuple[str, str]]:
+    """Parse non-loopback IPv4 addresses from ``ip -o -4 addr show``."""
+    out: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[1] == "lo":
+            continue
+        try:
+            idx = parts.index("inet")
+        except ValueError:
+            continue
+        if idx + 1 < len(parts):
+            out.append((parts[1], parts[idx + 1].split("/")[0]))
+    return out
+
+
 def headset_non_loopback_interfaces() -> list[tuple[str, str]]:
     """Return ``(iface, ipv4)`` for each non-loopback interface with an address.
 
@@ -145,31 +254,7 @@ def headset_non_loopback_interfaces() -> list[tuple[str, str]]:
     an empty list when the command fails (no device, adb broken, etc.) — the
     caller decides whether that's fatal.
     """
-    text = _run_adb(
-        "ip addr show",
-        ["adb", "shell", "ip", "-o", "-4", "addr", "show"],
-    )
-    if text is None:
-        return []
-    out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        # Example: "20: wlan0    inet 10.0.0.42/24 brd 10.0.0.255 scope global wlan0"
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        iface = parts[1]
-        if iface == "lo":
-            continue
-        # Find the "inet <addr>/<cidr>" pair wherever it lands.
-        try:
-            idx = parts.index("inet")
-        except ValueError:
-            continue
-        if idx + 1 >= len(parts):
-            continue
-        addr = parts[idx + 1].split("/")[0]
-        out.append((iface, addr))
-    return out
+    return list(probe_headset_network().interfaces)
 
 
 def require_headset_non_loopback_network() -> None:
@@ -185,7 +270,12 @@ def require_headset_non_loopback_network() -> None:
     mode — the kernel short-circuits loopback regardless of source — but
     the interface must *exist* for WebRTC's enumeration to be non-empty.
     """
-    ifaces = headset_non_loopback_interfaces()
+    probe = probe_headset_network()
+    if probe.state is HeadsetNetworkState.ADB_UNAVAILABLE:
+        raise OobAdbError(
+            f"ADB unavailable while checking headset network: {probe.diagnostic}"
+        )
+    ifaces = probe.interfaces
     if not ifaces:
         raise OobAdbError(
             "--usb-local requires Wi-Fi associated on the headset throughout the session.\n\n"
@@ -216,15 +306,19 @@ async def monitor_headset_wifi(*, poll_seconds: float = 5.0) -> None:
     # headset_non_loopback_interfaces() shells out to `adb`, which is sync;
     # run off-loop so the event loop isn't blocked for the duration of the
     # subprocess (up to a few hundred ms).
-    had = bool(await asyncio.to_thread(headset_non_loopback_interfaces))
+    previous = (await asyncio.to_thread(probe_headset_network)).state
     while True:
         try:
             await asyncio.sleep(poll_seconds)
         except asyncio.CancelledError:
             return
-        ifaces = await asyncio.to_thread(headset_non_loopback_interfaces)
-        has = bool(ifaces)
-        if had and not has:
+        current = (await asyncio.to_thread(probe_headset_network)).state
+        if current is HeadsetNetworkState.ADB_UNAVAILABLE:
+            continue
+        if (
+            previous is HeadsetNetworkState.NETWORK_PRESENT
+            and current is HeadsetNetworkState.NO_NETWORK
+        ):
             log.warning(
                 "Headset network interface dropped — WebRTC will fail until it reconnects"
             )
@@ -236,7 +330,7 @@ async def monitor_headset_wifi(*, poll_seconds: float = 5.0) -> None:
                 "(no internet needed); WebRTC will recover.\033[0m\n",
                 file=sys.stderr,
             )
-        had = has
+        previous = current
 
 
 def headset_wakefulness() -> str:
@@ -269,7 +363,7 @@ def assert_headset_awake(*, timeout: float = 15.0) -> None:
         return
 
     try:
-        subprocess.run(
+        _adb_run(
             ["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
             capture_output=True,
             text=True,
@@ -306,7 +400,7 @@ def assert_headset_awake(*, timeout: float = 15.0) -> None:
 def adb_device_state() -> str:
     """Return ``adb get-state`` (lowercased), or ``""`` if adb is unreachable."""
     try:
-        proc = subprocess.run(
+        proc = _adb_run(
             ["adb", "get-state"],
             capture_output=True,
             text=True,
@@ -336,7 +430,7 @@ def assert_adb_device_online() -> None:
     if "offline" in state:
         log.warning("adb device offline — attempting `adb reconnect`")
         try:
-            subprocess.run(
+            _adb_run(
                 ["adb", "reconnect"],
                 capture_output=True,
                 text=True,
@@ -370,21 +464,20 @@ def assert_adb_device_online() -> None:
     )
 
 
-def assert_exactly_one_adb_device() -> None:
-    """Pin a single adb device for the rest of this process.
+def assert_exactly_one_adb_device() -> str:
+    """Return the selected ready serial for explicit ``-s`` commands.
 
     Resolution order:
 
     1. ``ANDROID_SERIAL`` (the standard adb env var) names the serial to
-       use. We confirm it is currently in ``device`` state; subsequent
-       ``adb`` invocations inherit ``ANDROID_SERIAL`` from the
-       environment automatically, so no callsite needs ``-s``.
+       use. We confirm it is currently in ``device`` state. Callers carry
+       the returned serial into every device command via ``-s``.
     2. No env var: exactly one device must be in ``device`` state. More
        than one is fatal — the operator must either unplug the extras or
        set ``ANDROID_SERIAL=<serial>`` to disambiguate.
     """
     try:
-        proc = subprocess.run(
+        proc = _adb_run(
             ["adb", "devices"],
             capture_output=True,
             text=True,
@@ -426,8 +519,6 @@ def assert_exactly_one_adb_device() -> None:
         )
 
     # If the operator pinned a specific device, validate it is ready and stop.
-    # ANDROID_SERIAL is already inherited by every `adb` subprocess we spawn,
-    # so we don't need to re-export it — just confirm the serial is online.
     requested = os.environ.get("ANDROID_SERIAL", "").strip()
     if requested:
         if requested not in ready:
@@ -439,7 +530,7 @@ def assert_exactly_one_adb_device() -> None:
                 f"or set it to one of the serials above."
             )
         log.info("adb device pinned via ANDROID_SERIAL=%s", requested)
-        return
+        return requested
 
     if len(ready) > 1:
         listed = ", ".join(ready)
@@ -450,6 +541,7 @@ def assert_exactly_one_adb_device() -> None:
             "ANDROID_SERIAL=<serial> to pin the one you want, then retry. "
             f"({MANUAL_FALLBACK_HINT})"
         )
+    return ready[0]
 
 
 def build_teleop_url(
@@ -634,9 +726,7 @@ def open_url_on_headset(url: str) -> tuple[int, str]:
         redact_control_token(" ".join(shlex.quote(c) for c in full)),
     )
     try:
-        proc = subprocess.run(
-            full, capture_output=True, text=True, timeout=30, check=False
-        )
+        proc = _adb_run(full, capture_output=True, text=True, timeout=30, check=False)
     except subprocess.TimeoutExpired as e:
         partial = (
             (e.stderr or e.stdout or b"")
@@ -676,6 +766,32 @@ def run_adb_headset_bookmark(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class AdbReverseProbe:
+    adb_available: bool
+    missing_ports: tuple[int, ...]
+
+
+def probe_adb_reverse_rules(expected_ports: list[int]) -> AdbReverseProbe:
+    """Distinguish ADB failure from an online device with missing rules."""
+    output = _run_adb("adb reverse --list", ["adb", "reverse", "--list"])
+    if output is None:
+        return AdbReverseProbe(False, tuple(expected_ports))
+    listed: set[tuple[str, str]] = set()
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 3:
+            listed.add((parts[1], parts[2]))
+    return AdbReverseProbe(
+        True,
+        tuple(
+            port
+            for port in expected_ports
+            if (f"tcp:{port}", f"tcp:{port}") not in listed
+        ),
+    )
+
+
 def verify_adb_reverse_rules(expected_ports: list[int]) -> list[int]:
     """Return ports from *expected_ports* that are not in ``adb reverse --list``.
 
@@ -683,18 +799,7 @@ def verify_adb_reverse_rules(expected_ports: list[int]) -> list[int]:
     adbd or transient ``offline`` can evict it moments later. If adb is itself
     unreachable, treat all expected as missing so the warning fires.
     """
-    text = _run_adb("adb reverse --list", ["adb", "reverse", "--list"])
-    if text is None:
-        return list(expected_ports)
-    listed: set[int] = set()
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        m = re.match(r"^tcp:(\d+)$", parts[1])
-        if m:
-            listed.add(int(m.group(1)))
-    return [p for p in expected_ports if p not in listed]
+    return list(probe_adb_reverse_rules(expected_ports).missing_ports)
 
 
 def setup_adb_reverse_ports(proxy_port: int | None = None) -> None:
@@ -718,7 +823,7 @@ def setup_adb_reverse_ports(proxy_port: int | None = None) -> None:
     ports = [resolved_proxy_port, usb_backend_port()]
     for port in ports:
         try:
-            subprocess.run(
+            _adb_run(
                 ["adb", "reverse", f"tcp:{port}", f"tcp:{port}"],
                 capture_output=True,
                 text=True,
@@ -741,7 +846,7 @@ def teardown_adb_reverse_ports(proxy_port: int | None = None) -> None:
     resolved_proxy_port = wss_proxy_port() if proxy_port is None else proxy_port
     ports = [resolved_proxy_port, usb_backend_port()]
     for port in ports:
-        subprocess.run(
+        _adb_run(
             ["adb", "reverse", "--remove", f"tcp:{port}"],
             capture_output=True,
             text=True,
@@ -763,7 +868,7 @@ def setup_adb_reverse_turn(turn_port: int) -> None:
     """
     assert_adb_device_online()
     try:
-        subprocess.run(
+        _adb_run(
             ["adb", "reverse", f"tcp:{turn_port}", f"tcp:{turn_port}"],
             capture_output=True,
             text=True,
@@ -781,7 +886,7 @@ def setup_adb_reverse_turn(turn_port: int) -> None:
 
 def teardown_adb_reverse_turn(turn_port: int) -> None:
     """Remove the TURN ``adb reverse`` rule."""
-    subprocess.run(
+    _adb_run(
         ["adb", "reverse", "--remove", f"tcp:{turn_port}"],
         capture_output=True,
         text=True,
@@ -1138,7 +1243,7 @@ def _discover_devtools_socket() -> str | None:
 
 def _adb_forward_cdp(socket_name: str, local_port: int) -> None:
     assert_adb_device_online()
-    subprocess.run(
+    _adb_run(
         ["adb", "forward", f"tcp:{local_port}", f"localabstract:{socket_name}"],
         capture_output=True,
         text=True,
@@ -1149,11 +1254,11 @@ def _adb_forward_cdp(socket_name: str, local_port: int) -> None:
 
 
 def _adb_forward_remove(local_port: int) -> None:
-    subprocess.run(
+    _adb_run(
         ["adb", "forward", "--remove", f"tcp:{local_port}"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=2,
         check=False,
     )
 

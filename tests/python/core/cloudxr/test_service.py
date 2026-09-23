@@ -42,6 +42,36 @@ _windows_skip = pytest.mark.skipif(
 class TestServiceConstruction:
     """Tests for CloudXRService construction (which starts the runtime)."""
 
+    def test_embedded_oob_preflight_fails_before_runtime_spawn(self, tmp_path):
+        """Embedded startup validates host ADB without requiring a headset."""
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch(
+                "isaacteleop.cloudxr.oob_teleop_adb.require_adb_on_path",
+                side_effect=RuntimeError("adb missing"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="adb missing"):
+                CloudXRService(install_dir=str(tmp_path), setup_oob=True)
+            mocks["popen"].assert_not_called()
+
+    def test_embedded_usb_preflight_checks_coturn_before_runtime_spawn(self, tmp_path):
+        """A missing TURN binary is a host setup failure, not a retry episode."""
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch("isaacteleop.cloudxr.oob_teleop_env.require_web_client_static_dir"),
+            patch("isaacteleop.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch(
+                "isaacteleop.cloudxr.oob_teleop_adb.require_coturn_available",
+                side_effect=RuntimeError("coturn missing"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="coturn missing"):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            mocks["popen"].assert_not_called()
+
     def test_construction_stores_parameters(self, tmp_path):
         """Constructor stores install_dir, env_config, device_profile, and accept_eula."""
         with mock_service_deps(tmp_path, ready=True):

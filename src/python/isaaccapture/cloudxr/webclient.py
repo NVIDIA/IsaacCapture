@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .oob_teleop_adb import (
     OobAdbError,
+    SELECTED_ADB_SERIAL,
     adb_automation_failure_hint,
     assert_exactly_one_adb_device,
     assert_headset_awake,
@@ -184,6 +185,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Resolve the client URL and open it on the headset. Returns an exit code."""
     args = _parse_args(argv)
+    token = None
 
     try:
         url, source = resolve_client_url(args.client_url)
@@ -191,28 +193,34 @@ def main(argv: list[str] | None = None) -> int:
         # we have actually validated, and so failures surface without a banner.
         if not args.print_only:
             require_adb_on_path()
-            assert_exactly_one_adb_device()
+            token = SELECTED_ADB_SERIAL.set(assert_exactly_one_adb_device())
             assert_headset_awake()
     except (OobAdbError, RuntimeError, ValueError) as exc:
+        if token is not None:
+            SELECTED_ADB_SERIAL.reset(token)
         print(f"\n{exc}\n", file=sys.stderr)
         return 1
 
-    print_summary(url=url, source=source, probe_device=not args.print_only)
+    try:
+        print_summary(url=url, source=source, probe_device=not args.print_only)
 
-    if args.print_only:
+        if args.print_only:
+            return 0
+
+        rc, diag = open_url_on_headset(url)
+        if rc != 0:
+            print(f"  {_paint(sys.stdout, '31', '✖')} adb failed\n")
+            print(
+                oob_adb_automation_message(rc, diag, adb_automation_failure_hint(diag)),
+                file=sys.stderr,
+            )
+            return 1
+
+        print(f"  {_paint(sys.stdout, '32', '✔')} opened on headset\n")
         return 0
-
-    rc, diag = open_url_on_headset(url)
-    if rc != 0:
-        print(f"  {_paint(sys.stdout, '31', '✖')} adb failed\n")
-        print(
-            oob_adb_automation_message(rc, diag, adb_automation_failure_hint(diag)),
-            file=sys.stderr,
-        )
-        return 1
-
-    print(f"  {_paint(sys.stdout, '32', '✔')} opened on headset\n")
-    return 0
+    finally:
+        if token is not None:
+            SELECTED_ADB_SERIAL.reset(token)
 
 
 if __name__ == "__main__":

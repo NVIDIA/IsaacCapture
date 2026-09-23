@@ -814,6 +814,33 @@ class CloudXRLauncher:
                 f"The CloudXR runtime serving {self._run_dir} has stopped"
             )
 
+    def oob_status(self) -> dict | None:
+        """Return the OOB lifecycle status for owned or attached services."""
+        if self._service is not None:
+            return self._service.oob_status()
+        import json  # noqa: PLC0415
+
+        try:
+            status = json.loads(
+                (Path(self._run_dir) / "oob_status.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        if not isinstance(status, dict) or status.get("schemaVersion") != 1:
+            return None
+        if not is_runtime_live(self._run_dir):
+            return None
+        writer_pid = status.get("writerPid")
+        runtime_pid = status.get("runtimePid")
+        if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
+            return None
+        try:
+            os.kill(writer_pid, 0)
+            os.kill(runtime_pid, 0)
+        except (OSError, ValueError):
+            return None
+        return status
+
     @property
     def wss_log_path(self) -> Path | None:
         """Path to the WSS proxy log file, or ``None`` if there is none."""

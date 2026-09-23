@@ -74,6 +74,8 @@ export class HeadsetControlChannel {
   // the hub stays in sync after a WS drop and so we don't lose an event
   // fired before the WS finished its handshake.
   private lastStreamStatus: boolean | null = null;
+  private lastMetricsAt: number | null = null;
+  private metricCadences: string[] = [];
 
   constructor(private readonly opts: ControlChannelOptions) {}
 
@@ -187,6 +189,22 @@ export class HeadsetControlChannel {
       if (payload.config != null && typeof payload.configVersion === 'number') {
         this.opts.onConfig(payload.config as StreamConfig, payload.configVersion as number);
       }
+    } else if (type === 'healthProbe') {
+      if (typeof payload.probeId !== 'string' || typeof payload.lifecycleGeneration !== 'number')
+        return;
+      this.ws?.send(
+        JSON.stringify({
+          type: 'healthReport',
+          payload: {
+            probeId: payload.probeId,
+            lifecycleGeneration: payload.lifecycleGeneration,
+            pageTimestamp: Date.now(),
+            streamStatus: this.lastStreamStatus === true,
+            lastMetricsAt: this.lastMetricsAt,
+            metricCadences: this.metricCadences,
+          },
+        })
+      );
     } else if (type === 'error') {
       console.warn('[ControlChannel] Hub error:', payload);
     }
@@ -202,6 +220,8 @@ export class HeadsetControlChannel {
       const t = Date.now();
       for (const { cadence, metrics } of snapshots) {
         if (Object.keys(metrics).length === 0) continue;
+        this.lastMetricsAt = t;
+        if (!this.metricCadences.includes(cadence)) this.metricCadences.push(cadence);
         this.ws.send(
           JSON.stringify({
             type: 'clientMetrics',

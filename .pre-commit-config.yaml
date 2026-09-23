@@ -24,6 +24,8 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-toml
       - id: end-of-file-fixer
+        # This LFS SVG is an asset; rewriting its final byte creates a new LFS object.
+        exclude: ^docs/source/_static/camera-viz-controls\.svg$
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
       - id: debug-statements

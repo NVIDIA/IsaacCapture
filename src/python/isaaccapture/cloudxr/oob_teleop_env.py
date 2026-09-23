@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import socket
@@ -31,6 +32,26 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
+
+
+def resolve_oob_recovery_config():
+    """Resolve and validate the bounded recovery cadence once at startup."""
+    from .oob_teleop_lifecycle import RecoveryConfig  # noqa: PLC0415
+
+    def positive(name: str, default: float) -> float:
+        raw = os.environ.get(name)
+        try:
+            value = default if raw is None else float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a positive finite number") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        return value
+
+    return RecoveryConfig(
+        timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
+        interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
+    )
 
 
 def versioned_web_client_url(version: str) -> str:

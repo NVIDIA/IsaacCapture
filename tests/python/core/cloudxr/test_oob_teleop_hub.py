@@ -107,6 +107,57 @@ async def test_headset_register_hello_and_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generation_probe_requires_matching_fresh_client() -> None:
+    hub = OOBControlHub()
+    ws = QueueWS()
+    handler = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+    registered_at = (await hub.get_snapshot())["headsets"][0]["registeredAt"] / 1000
+    assert await hub.probe_browser(1, registered_at + 1, timeout=0.02) is None
+
+    pending = asyncio.create_task(hub.probe_browser(2, registered_at - 1, timeout=0.2))
+    for _ in range(10):
+        await asyncio.sleep(0)
+        probes = [msg for msg in _loads_sent(ws) if msg["type"] == "healthProbe"]
+        if probes:
+            break
+    assert probes
+    probe = probes[-1]["payload"]
+    await ws.inject(
+        json.dumps(
+            {"type": "healthReport", "payload": {**probe, "lifecycleGeneration": 1}}
+        )
+    )
+    await asyncio.sleep(0)
+    assert not pending.done()
+    await ws.inject(
+        json.dumps({"type": "healthReport", "payload": {**probe, "probeId": "old"}})
+    )
+    await asyncio.sleep(0)
+    assert not pending.done()
+    await ws.inject(
+        json.dumps(
+            {
+                "type": "clientMetrics",
+                "payload": {"cadence": "network", "metrics": {"rtt": 1}},
+            }
+        )
+    )
+    await ws.inject(json.dumps({"type": "healthReport", "payload": probe}))
+    report = await pending
+    assert report is not None
+    assert report["lastMetricsAt"] is not None
+    state = await hub.get_snapshot()
+    assert state["headsets"][0]["lastSeenAt"] is not None
+    assert state["headsets"][0]["lastMetricsAt"] is not None
+    await hub.set_lifecycle_snapshot({"health": "browser_ready"})
+    assert (await hub.get_snapshot())["lifecycle"]["health"] == "browser_ready"
+    await ws.end_stream()
+    await handler
+
+
+@pytest.mark.asyncio
 async def test_register_rejects_bad_token() -> None:
     hub = OOBControlHub(control_token="ok")
     ws = QueueWS()

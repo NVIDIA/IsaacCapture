@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -459,20 +460,104 @@ def test_setup_adb_reverse_turn_offline_short_circuits(
 
 import asyncio  # noqa: E402
 
-from cloudxr_py_test_ns.oob_teleop_adb import monitor_headset_wifi  # noqa: E402
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    HeadsetNetworkProbe,
+    HeadsetNetworkState,
+    monitor_headset_wifi,
+    probe_headset_network,
+    SELECTED_ADB_SERIAL,
+)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "state"),
+    [
+        (
+            0,
+            "20: wlan0 inet 10.0.0.1/24 scope global wlan0",
+            HeadsetNetworkState.NETWORK_PRESENT,
+        ),
+        (0, "1: lo inet 127.0.0.1/8 scope host lo", HeadsetNetworkState.NO_NETWORK),
+        (0, "", HeadsetNetworkState.NO_NETWORK),
+        (1, "", HeadsetNetworkState.ADB_UNAVAILABLE),
+    ],
+)
+def test_network_probe_preserves_adb_outcome(returncode, stdout, state):
+    proc = subprocess.CompletedProcess(
+        [], returncode, stdout, "device offline" if returncode else ""
+    )
+    with patch("cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", return_value=proc):
+        result = probe_headset_network(serial="headset-1")
+    assert result.state is state
+    assert bool(result.interfaces) is (state is HeadsetNetworkState.NETWORK_PRESENT)
+
+
+def test_network_probe_uses_selected_serial():
+    proc = subprocess.CompletedProcess([], 0, "", "")
+    with patch(
+        "cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", return_value=proc
+    ) as run:
+        token = SELECTED_ADB_SERIAL.set("pinned")
+        try:
+            probe_headset_network()
+        finally:
+            SELECTED_ADB_SERIAL.reset(token)
+    assert run.call_args.args[0][:3] == ["adb", "-s", "pinned"]
+
+
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError("adb"), subprocess.TimeoutExpired("adb", 5)]
+)
+def test_network_probe_transport_exceptions(error):
+    with patch("cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", side_effect=error):
+        assert probe_headset_network().state is HeadsetNetworkState.ADB_UNAVAILABLE
+
+
+async def test_wifi_monitor_ignores_adb_disconnect(capsys):
+    present = HeadsetNetworkProbe(
+        HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+    )
+    unavailable = HeadsetNetworkProbe(HeadsetNetworkState.ADB_UNAVAILABLE)
+    sequence = [present, unavailable, present]
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            side_effect=lambda: sequence.pop(0) if sequence else present,
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
+    ):
+        task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        await task
+    assert "Wi-Fi dropped" not in capsys.readouterr().err
 
 
 async def test_monitor_headset_wifi_warns_on_drop(capsys) -> None:
     # Sequence: had ifaces → still ifaces → drops → still dropped.
-    seq = [
-        [("wlan0", "10.0.0.1")],
-        [("wlan0", "10.0.0.1")],
-        [],
-        [],
-    ]
-    with patch(
-        "cloudxr_py_test_ns.oob_teleop_adb.headset_non_loopback_interfaces",
-        side_effect=lambda: seq.pop(0) if seq else [],
+    present = HeadsetNetworkProbe(
+        HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+    )
+    absent = HeadsetNetworkProbe(HeadsetNetworkState.NO_NETWORK)
+    seq = [present, present, absent, absent]
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            side_effect=lambda: seq.pop(0) if seq else absent,
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
     ):
         task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
         # Poll for the warning rather than racing a fixed sleep budget. On
@@ -497,9 +582,19 @@ async def test_monitor_headset_wifi_warns_on_drop(capsys) -> None:
 
 
 async def test_monitor_headset_wifi_silent_when_steady(capsys) -> None:
-    with patch(
-        "cloudxr_py_test_ns.oob_teleop_adb.headset_non_loopback_interfaces",
-        return_value=[("wlan0", "10.0.0.1")],
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(
+                HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+            ),
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
     ):
         task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
         await asyncio.sleep(0.02)
