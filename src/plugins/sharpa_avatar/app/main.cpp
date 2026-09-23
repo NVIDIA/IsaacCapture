@@ -9,8 +9,10 @@
 //   ./avatar_hand_plugin [sdk_config.json] [--datasets=human,raw,robot,haptic]
 //
 // The CloudXR runtime must be running and its environment sourced first:
-//   python -m isaacteleop.cloudxr
+//   python -m isaacteleop.cloudxr.service run
 //   source ~/.cloudxr/run/cloudxr.env
+
+#include "cli.hpp"
 
 #include <avatar/avatar_hand_tracking_plugin.hpp>
 
@@ -18,7 +20,6 @@
 #include <chrono>
 #include <csignal>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -39,29 +40,6 @@ void signal_handler(int signal)
     {
         g_stop_requested.store(true, std::memory_order_relaxed);
     }
-}
-
-bool starts_with(const std::string& value, const std::string& prefix)
-{
-    return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
-}
-
-std::vector<std::string> split_csv(const std::string& text)
-{
-    std::vector<std::string> out;
-    std::stringstream ss(text);
-    std::string item;
-    while (std::getline(ss, item, ','))
-    {
-        const auto start = item.find_first_not_of(" \t");
-        if (start == std::string::npos)
-        {
-            continue;
-        }
-        const auto end = item.find_last_not_of(" \t");
-        out.push_back(item.substr(start, end - start + 1));
-    }
-    return out;
 }
 
 AvatarPluginConfig parse_args(int argc, char** argv)
@@ -123,14 +101,6 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         throw std::runtime_error("AvatarHandPlugin: --datasets must enable at least one of human,raw,robot,haptic");
     }
 
-    // Supplied by plugin.yaml's `args`. Required rather than defaulted: the file
-    // defines human landmark order and the raw/robot joint names, so a wrong or
-    // missing path has to fail loudly instead of degrading to an empty mapping.
-    if (config.sdk_config_path.empty())
-    {
-        throw std::runtime_error("AvatarHandPlugin: no sdk_config.json path given; set it in plugin.yaml's args");
-    }
-
     return config;
 }
 
@@ -142,10 +112,11 @@ try
     std::cout << "Avatar Hand Plugin starting..." << std::endl;
 
     const AvatarPluginConfig config = parse_args(argc, argv);
+    AvatarTracker tracker(config);
+
+    // Avatar SDK initialization changes process signal handlers.
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
-
-    AvatarTracker tracker(config);
 
     std::cout << "Plugin running. Press Ctrl+C to stop." << std::endl;
 
