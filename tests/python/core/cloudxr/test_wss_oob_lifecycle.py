@@ -33,8 +33,13 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
 
     async def lifecycle_run():
         events.append("lifecycle started")
-        logging.getLogger("oob-teleop-lifecycle").info("lifecycle test transition")
-        logging.getLogger("oob-teleop-hub").info("hub test registration")
+        # Match the package loggers that WSS forwards into its session file.
+        logging.getLogger("isaaccapture.cloudxr.oob_teleop_lifecycle").info(
+            "lifecycle test transition"
+        )
+        logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub").info(
+            "hub test registration"
+        )
         try:
             await pending.wait()
         finally:
