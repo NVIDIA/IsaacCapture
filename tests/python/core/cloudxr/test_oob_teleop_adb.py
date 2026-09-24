@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,6 +26,26 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
     require_coturn_available,
     run_adb_headset_bookmark,
 )
+
+
+@pytest.mark.asyncio
+async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
+    """A dropped CDP connection removes its forward without blocking WSS."""
+    loop_thread = threading.get_ident()
+    cleanup_calls: list[tuple[int, int]] = []
+
+    def remove_forward(port: int) -> None:
+        cleanup_calls.append((port, threading.get_ident()))
+
+    with (
+        patch("websockets.asyncio.client.connect", side_effect=OSError("CDP closed")),
+        patch.object(adb_module, "_adb_forward_remove", side_effect=remove_forward),
+    ):
+        await adb_module._monitor_teleop_error_banner("ws://test", 9222)
+
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0][0] == 9222
+    assert cleanup_calls[0][1] != loop_thread
 
 
 @pytest.fixture(autouse=True)
@@ -511,8 +533,6 @@ def test_setup_adb_reverse_turn_offline_short_circuits(
 
 # WiFi-drop monitor (H6) -----------------------------------------------------
 
-
-import asyncio  # noqa: E402
 
 from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
     HeadsetNetworkProbe,

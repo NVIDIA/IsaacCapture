@@ -2080,4 +2080,4 @@ async def _monitor_teleop_error_banner(ws_url: str, local_port: int) -> None:
         # WS drop, CDP error, etc. — expected at tab close; log and exit quietly.
         log.info("monitor: exiting (%s)", exc)
     finally:
-        _adb_forward_remove(local_port)
+        await asyncio.to_thread(_adb_forward_remove, local_port)
