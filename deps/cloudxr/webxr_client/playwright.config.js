@@ -35,14 +35,26 @@ module.exports = defineConfig({
   reporter: [['line']],
   timeout: 60000,
 
-  // Builds and serves CloudXRComponentTest.html on :8083 before tests run, and tears it down
-  // after - same page/port `npm run dev-server:component-mock` serves for manual use.
-  webServer: {
-    command: 'npm run dev-server:component-mock',
-    url: 'http://localhost:8083/CloudXRComponentTest.html',
-    reuseExistingServer: !process.env.CI,
-    timeout: 60000,
-  },
+  // Builds and serves both mock targets before tests run, tearing them down after:
+  //  - CloudXRComponentTest.html on :8083 (dev-server:component-mock) - the purpose-built
+  //    scripted test harness page.
+  //  - the real App.tsx on :8082 (dev-server:app-mock) - the actual production UI against
+  //    MockCloudXR via the build-time @nvidia/cloudxr alias, for tests that need the real
+  //    settings panel / CloudXRUI, not a scripted harness.
+  webServer: [
+    {
+      command: 'npm run dev-server:component-mock',
+      url: 'http://localhost:8083/CloudXRComponentTest.html',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60000,
+    },
+    {
+      command: 'npm run dev-server:app-mock',
+      url: 'http://localhost:8082/',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60000,
+    },
+  ],
 
   use: {
     baseURL: 'http://localhost:8083',
