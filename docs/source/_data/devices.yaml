@@ -244,6 +244,33 @@ devices:
         - One BLE device per glove
         - Plugin off by default — enable at build time
 
+  - id: wuji-glove
+    name: WUJI Glove
+    url: https://wuji.tech/en/glove
+    group: peripheral
+    modes: High-fidelity hand tracking
+    since: main
+    company:
+      name: WUJI Technology
+      logo: wuji.svg
+      logo_dark: wuji-dark.svg
+    details:
+      setup:
+        - label: WUJI Glove docs
+          doc: /device/wuji_glove
+        - label: WUJI Glove Plugin
+          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/wuji_glove
+        - label: WUJI Hand retargeting
+          doc: /references/retargeting/wuji
+      requirements:
+        - Linux, x86_64 or aarch64
+        - wuji_sdk C SDK v2026.7.14
+        - Glove on the same LAN as the plugin host
+      acquire:
+        - label: wuji.tech
+          url: https://wuji.tech/en/
+        - email: sales@wuji.tech
+
   - id: noitom
     name: Noitom Robotics Motion Capture
     url: https://www.noitomrobotics.com

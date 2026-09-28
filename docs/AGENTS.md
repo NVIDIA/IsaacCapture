@@ -29,7 +29,8 @@ receives pushes.
 Images follow `.gitattributes` like everything else, Git LFS included. A checkout without
 LFS holds pointer text and Sphinx copies it into the site verbatim, so a page that looks
 right locally can still ship broken artwork. Commit artwork together with the page or data
-that references it.
+that references it. Stage new artwork with a plain `git add` before running pre-commit:
+`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob.
 
 ## Never wrap styled layout in `.. container::`
 
