@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=ec4b8e38" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=04dcff72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Out-of-Band Teleop Control" href="oob_teleop_control.html" />
+    <link rel="next" title="Rig Launcher" href="rig.html" />
     <link rel="prev" title="MCAP Recording &amp; Replay" href="mcap_record_replay.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.5.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -372,13 +372,12 @@
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -466,10 +465,10 @@ client locally (<code class="docutils literal notranslate"><span class="pre">--h
 </nav>
 <section id="start-the-service">
 <h2>Start the service<a class="headerlink" href="#start-the-service" title="Link to this heading">#</a></h2>
-<p>With the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> package installed (including the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra,
-see <a class="reference internal" href="../getting_started/quick_start.html#install-isaaccapture-pip-package"><span class="std std-ref">2. Install the isaaccapture pip package</span></a>), start the service. The first run
+<p>With the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> package installed (including the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra,
+see <a class="reference internal" href="../getting_started/quick_start.html#install-isaacteleop-pip-package"><span class="std std-ref">2. Install the isaacteleop pip package</span></a>), start the service. The first run
 downloads the CloudXR Web Client SDK:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">start</span></code> detaches the service from your terminal: it keeps running when the
@@ -492,8 +491,8 @@ container entrypoint wants. <code class="docutils literal notranslate"><span cla
 </figure>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr</span></code> still works and is equivalent to
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">run</span></code>. It warns on startup and is
+<p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr</span></code> still works and is equivalent to
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr.service</span> <span class="pre">run</span></code>. It warns on startup and is
 removed in Isaac Teleop 1.7.</p>
 </div>
 <p>Take note of the <code class="docutils literal notranslate"><span class="pre">source</span> <span class="pre">~/.cloudxr/run/cloudxr.env</span></code> path in the output. You
@@ -502,7 +501,7 @@ will need it in <a class="reference internal" href="#load-cloudxr-environment-va
 <section id="manage-the-service">
 <h2>Manage the service<a class="headerlink" href="#manage-the-service" title="Link to this heading">#</a></h2>
 <p>Every command below is a subcommand of
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr.service</span></code>.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 25.0%" />
@@ -586,7 +585,7 @@ while setting those modes up for the first time.</p>
 <h2>Re-open the client on the headset<a class="headerlink" href="#re-open-the-client-on-the-headset" title="Link to this heading">#</a></h2>
 <p>If the headset browser is closed or navigated away, re-open the client from
 another terminal without restarting the service:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.webclient
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.webclient
 </pre></div>
 </div>
 <p>This opens the versioned client over USB <code class="docutils literal notranslate"><span class="pre">adb</span></code> with this host’s <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>
@@ -614,14 +613,14 @@ application started from that terminal connects to the running runtime.</p>
 <p>Make sure to run the rest of the commands in the same terminal. If you have
 to open a new terminal, source the CloudXR environment variables again.</p>
 </div>
-<p>Applications that embed <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code> — the teleop examples — do this
-for themselves and need no sourcing.</p>
+<p>Applications that embed <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code> — the teleop examples, the rig
+launcher — do this for themselves and need no sourcing.</p>
 </section>
 <section id="run-teleop-examples-against-the-service">
 <h2>Run teleop examples against the service<a class="headerlink" href="#run-teleop-examples-against-the-service" title="Link to this heading">#</a></h2>
 <p>Nothing to pass. The examples under <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> attach to
 whatever runtime is serving, so with a service running they use it:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
 </pre></div>
 </div>
@@ -648,7 +647,7 @@ container’s main process it would exit immediately and take the runtime with
 it; <code class="docutils literal notranslate"><span class="pre">run</span></code> stays in the foreground where signals reach it and the runtime’s
 lifetime is the container’s. This is what <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/runtime/entrypoint.sh</span></code>
 does:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">exec</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">exec</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>run
 </pre></div>
 </div>
 <p>Nothing can answer an EULA prompt without a terminal, so accept it up front —
@@ -690,8 +689,8 @@ reports the ones that would have changed, and uses the running configuration.</p
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
   NV_DEVICE_PROFILE: auto-native requested, Quest3 in effect
   Restart the service to apply it:
-    python -m isaaccapture.cloudxr.service stop
-    python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
+    python -m isaacteleop.cloudxr.service stop
+    python -m isaacteleop.cloudxr.service start --cloudxr-env-config ./custom.env
   Continuing with the running configuration in 5s — press any key to abort.
 </pre></div>
 </div>
@@ -722,7 +721,7 @@ them to <code class="docutils literal notranslate"><span class="pre">--cloudxr-e
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP</span></code></p></td>
 <td><p>unset (auto on Orin)</p></td>
-<td><p>Select the experimental package (<code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr_exp</span></code>).
+<td><p>Select the experimental package (<code class="docutils literal notranslate"><span class="pre">isaacteleop.cloudxr_exp</span></code>).
 <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP=0</span></code> forces the stable runtime on Orin;
 <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP=1</span></code> forces the experimental package elsewhere
 (launcher fails if it is missing).</p></td>
@@ -753,7 +752,7 @@ yet. Check, in order:</p>
 <ol class="arabic simple">
 <li><p>A client is connected. The headset must have loaded the web client and
 clicked CONNECT; until then there is no system to return.</p></li>
-<li><p>The device profile matches the device. <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span>
+<li><p>The device profile matches the device. <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr.service</span>
 <span class="pre">status</span></code> prints the profile the running service was started with.</p></li>
 <li><p>The application is talking to the runtime you think it is. Applications that
 do not embed <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code> need <code class="docutils literal notranslate"><span class="pre">source</span> <span class="pre">~/.cloudxr/run/cloudxr.env</span></code>
@@ -793,11 +792,11 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
       </div>
     </a>
     <a class="right-next"
-       href="oob_teleop_control.html"
+       href="rig.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Out-of-Band Teleop Control</p>
+        <p class="prev-next-title">Rig Launcher</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -917,7 +916,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

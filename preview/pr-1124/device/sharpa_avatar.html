@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=ec4b8e38" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=04dcff72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.5.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -372,13 +372,12 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -497,7 +496,7 @@ retargeter consumes.</p>
 <ul class="simple">
 <li><p><strong>Linux x86_64</strong> (tested on Ubuntu 22.04).</p></li>
 <li><p><strong>Pinned production Avatar SDK</strong> (<code class="docutils literal notranslate"><span class="pre">avatar-sdk</span></code> 1.7.3-17) from Sharpa’s
-signed APT repository. The install script retrieves it; do not substitute
+signed APT repository. <code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> retrieves it; do not substitute
 <code class="docutils literal notranslate"><span class="pre">avatar-sdk-dev</span></code> or <code class="docutils literal notranslate"><span class="pre">avatar-sdk-beta</span></code>.</p></li>
 <li><p><strong>Sharpa Avatar gloves</strong> powered and connected over USB. Transport settings
 are selected in <code class="docutils literal notranslate"><span class="pre">&lt;sdk-root&gt;/share/sdk_config.json</span></code> (default root
@@ -511,15 +510,18 @@ into this repository or the plugin install prefix.</p>
 </section>
 <section id="installation">
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
-<p>From the Isaac Teleop root, <code class="docutils literal notranslate"><span class="pre">install.sh</span></code> checks (and if needed installs)
-the pinned production SDK, then configures, builds, and installs the plugin:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install.sh
+<p>Install the pinned production SDK first if it is not already present:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 </pre></div>
 </div>
-<p>Pass <code class="docutils literal notranslate"><span class="pre">--build-dir</span> <span class="pre">&lt;path&gt;</span></code> to reuse a non-default CMake build directory.
-<code class="docutils literal notranslate"><span class="pre">AVATAR_SDK_ROOT</span></code> (or <code class="docutils literal notranslate"><span class="pre">-DAVATAR_SDK_ROOT</span></code>) selects a non-default SDK
-tree; that tree must already be complete. To install only the SDK:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_avatar_sdk.sh
+<p>Then use the canonical top-level CMake workflow from the Isaac Teleop root.
+<code class="docutils literal notranslate"><span class="pre">-DAVATAR_SDK_ROOT</span></code> selects a non-default SDK tree; that tree must already
+be complete:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DBUILD_PLUGIN_SHARPA_AVATAR<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DAVATAR_SDK_ROOT<span class="o">=</span>/opt/avatar-sdk
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel
+cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code> without a usable SDK under the selected
@@ -638,7 +640,8 @@ frame. Pass <code class="docutils literal notranslate"><span class="pre">--world
 </tr>
 <tr class="row-odd"><td><p>CMake skipped the plugin</p></td>
 <td><p>The SDK is missing under the selected root. Run
-<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> (or <code class="docutils literal notranslate"><span class="pre">install.sh</span></code>) and reconfigure.</p></td>
+<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> and reconfigure with
+<code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code>.</p></td>
 </tr>
 <tr class="row-even"><td><p>CMake rejected the Avatar SDK</p></td>
 <td><p>Install the pinned production package, or point <code class="docutils literal notranslate"><span class="pre">AVATAR_SDK_ROOT</span></code>
@@ -650,7 +653,7 @@ at a complete SDK tree. A <code class="docutils literal notranslate"><span class
 the glove.</p></td>
 </tr>
 <tr class="row-even"><td><p>Plugin binary is not found</p></td>
-<td><p>Run <code class="docutils literal notranslate"><span class="pre">install.sh</span></code>. The example looks under
+<td><p>Build and install through the top-level CMake workflow. The example looks under
 <code class="docutils literal notranslate"><span class="pre">install/plugins/sharpa_avatar/</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p>HUMAN / RAW / ROBOT stay offline</p></td>
@@ -828,7 +831,7 @@ is subject to its own license; this project does not redistribute it.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

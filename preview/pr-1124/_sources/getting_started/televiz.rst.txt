@@ -4,7 +4,7 @@
 Televiz
 =======
 
-Televiz (``isaaccapture.viz``) is the visualization module for Isaac Teleop. It composites what the
+Televiz (``isaacteleop.viz``) is the visualization module for Isaac Teleop. It composites what the
 operator sees — camera and sensor feeds, plus 3D rendered content such as gsplat or nvblox — and
 presents it in stereo to an XR headset over :doc:`CloudXR </references/cloudxr>`. Desktop-window and
 offscreen output are also available, mainly for development and debugging.
@@ -24,18 +24,18 @@ Python API, which mirrors the C++ names one-to-one — see `C++ API`_.
 Installation
 ------------
 
-Televiz ships inside the ``isaaccapture`` wheel — install it from PyPI:
+Televiz ships inside the ``isaacteleop`` wheel — install it from PyPI:
 
 .. code-block:: bash
 
-   pip install isaaccapture
+   pip install isaacteleop
 
 The published wheels (Linux x86_64 / aarch64, CPython 3.11–3.13) bundle the compiled
-``isaaccapture.viz`` module, so **no source build is required**. Verify with:
+``isaacteleop.viz`` module, so **no source build is required**. Verify with:
 
 .. code-block:: python
 
-   import isaaccapture.viz as televiz
+   import isaacteleop.viz as televiz
 
 You only need to :doc:`build from source </getting_started/build_from_source/index>` when
 developing Isaac Teleop itself — that build enables Televiz automatically when Vulkan and the
@@ -70,7 +70,7 @@ A session holds **either** one ``ProjectionLayer`` **or** any number of texture 
 
 All symbols are imported from the top-level module::
 
-   import isaaccapture.viz as televiz
+   import isaacteleop.viz as televiz
 
 Display modes
 -------------
@@ -100,7 +100,7 @@ A minimal offscreen render-and-readback (no GPU display, no headset):
 .. code-block:: python
 
    import cupy as cp
-   import isaaccapture.viz as televiz
+   import isaacteleop.viz as televiz
 
    viz_cfg = televiz.VizSessionConfig()
    viz_cfg.mode = televiz.DisplayMode.kOffscreen
@@ -126,21 +126,6 @@ A minimal offscreen render-and-readback (no GPU display, no headset):
 For a window or headset, set ``mode`` to ``DisplayMode.kWindow`` or ``DisplayMode.kXr`` instead. The
 layer setup is identical; you just drive a frame loop (see `Frame loop`_) rather than the one-shot
 ``readback_to_host()``, which is offscreen-only.
-
-.. _orin-openxr-composition:
-
-.. note::
-
-   **Jetson Orin, XR.** The default ``openxr_composition = True`` path presents a solid
-   color, or black, in place of the submitted image. Until this is addressed in a future
-   release, set ``openxr_composition = False`` so Televiz composites the quad itself:
-
-   .. code-block:: python
-
-      layer_cfg.openxr_composition = False
-
-   Cylinder and equirect layers cannot opt out. In :doc:`/references/camera_streaming` the
-   same switch is YAML ``compositor: televiz`` (quads only).
 
 Session configuration
 ---------------------
@@ -237,8 +222,7 @@ Three consequences, in rough order of how often they bite:
 ``QuadLayer`` is the one layer with a choice, which is why ``openxr_composition`` and
 ``generate_mipmaps`` appear on its config and on no other. Set ``openxr_composition = False`` to
 draw the quad with Televiz's built-in compositor instead, where 3D-placed quads depth-test against
-each other in a shared render target — the way out of the no-depth constraint above, and the
-setting to use on Jetson Orin in XR (see :ref:`Jetson Orin, XR <orin-openxr-composition>`). Cylinder and
+each other in a shared render target — the way out of the no-depth constraint above. Cylinder and
 equirect layers have no such switch: they exist only as native runtime layers, and therefore only in
 XR. Window and offscreen modes always use the built-in compositor.
 
@@ -349,8 +333,7 @@ because the quad is the only layer that can be drawn either way:
    * - ``openxr_composition``
      - ``True``
      - ``True`` = the OpenXR runtime composites the quad, ``False`` = Televiz's built-in
-       compositor. On Jetson Orin in XR, set ``False`` (see :ref:`Jetson Orin, XR <orin-openxr-composition>`).
-       See `Composition model`_.
+       compositor. See `Composition model`_.
 
 Its placement is a ``QuadLayerPlacement`` — a ``pose`` plus ``size_meters``. It is optional:
 a quad with no placement fills the window in window mode.
@@ -625,10 +608,10 @@ extensions automatically), then pass the handles through:
 
 .. code-block:: python
 
-   import isaaccapture.viz as televiz
-   from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
-   from isaaccapture.deviceio import DeviceIOSession
-   from isaaccapture.oxr import OpenXRSessionHandles
+   import isaacteleop.viz as televiz
+   from isaacteleop.teleop_session_manager import TeleopSession, TeleopSessionConfig
+   from isaacteleop.deviceio import DeviceIOSession
+   from isaacteleop.oxr import OpenXRSessionHandles
 
    viz_cfg = televiz.VizSessionConfig()
    viz_cfg.mode = televiz.DisplayMode.kXr
@@ -711,7 +694,7 @@ Data types
 C++ API
 -------
 
-Televiz is a C++ library; ``isaaccapture.viz`` is a thin pybind11 binding over it. The Python and C++
+Televiz is a C++ library; ``isaacteleop.viz`` is a thin pybind11 binding over it. The Python and C++
 APIs share the same type and method names (``VizSession``, ``QuadLayer``, ``submit``,
 ``set_placement``, ``DisplayMode::kXr``, …), so everything on this page maps directly to C++. All
 symbols live in ``namespace viz``, and headers use nested include paths::

@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=ec4b8e38" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=04dcff72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.5.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -372,13 +372,12 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -443,8 +442,8 @@ teleoperation data.</p></li>
 <li><p><strong>Teams building on Isaac Teleop</strong> — Robot makers shipping teleoperation in their own
 product, and labs collecting data.</p></li>
 </ul>
-<section class="eco-section" id="supported-devices-11">
-<span id="supported-devices"></span><h2>Supported Devices <span class="eco-count">11</span><a class="headerlink" href="#supported-devices-11" title="Link to this heading">#</a></h2>
+<section class="eco-section" id="supported-devices-10">
+<span id="supported-devices"></span><h2>Supported Devices <span class="eco-count">10</span><a class="headerlink" href="#supported-devices-10" title="Link to this heading">#</a></h2>
 <p>A standardized device interface removes custom integrations and their maintenance. Input
 modes determine which retargeters and control schemes are available.
 <a class="reference internal" href="../device/add_device.html"><span class="doc">Add a new device →</span></a></p>
@@ -528,26 +527,6 @@ modes determine which retargeters and control schemes are available.
 <p class="device-panel-line"><a class="reference external" href="tel:+19095692774">+1 (909) 569-2774</a></p>
 </div>
 <p class="device-panel-foot"><span class="device-since"><span class="device-since-label">Since</span><a class="device-since-branch reference external" href="https://github.com/NVIDIA/IsaacTeleop/releases/tag/v1.3.131" rel="noopener noreferrer" target="_blank">v1.3.131</a></span>
-</p>
-</div>
-<p class="device-name"><a class="reference external" href="https://www.vive.com/us/accessory/vive-ultimate-tracker/" rel="noopener noreferrer" target="_blank">VIVE Ultimate Tracker<span class="eco-link-external-label"> (external)</span></a></p>
-<p class="device-modes" data-label="Input modes">Motion capture, body tracking</p>
-<div class="device-action"><details class="device-disclosure" name="isaac-teleop-device"><summary aria-controls="device-vive-ultimate-tracker-details" class="device-toggle"><span class="device-toggle-label">Details</span><span class="device-toggle-label is-open">Close</span></summary>
-</details>
-</div>
-<div class="device-panel" id="device-vive-ultimate-tracker-details"><p class="device-panel-head"><img alt="HTC VIVE" class="only-light" src="../_images/htc-vive.png" /><img alt="HTC VIVE" class="only-dark pst-js-only" src="../_images/htc-vive-dark.png" /></p>
-<div class="device-panel-col"><h4 class="device-panel-heading">Set up</h4>
-<p class="device-panel-line"><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/vive_se3_tracker" rel="noopener noreferrer" target="_blank">VIVE Tracker Plugin</a></p>
-<p class="device-panel-line"><a class="reference external" href="https://github.com/ViveRoboticsSoftware/vive-ultimate-tracker-sdk/blob/main/VIVE-Ultimate-Tracker-SDK-Guide-EN.md" rel="noopener noreferrer" target="_blank">Developer Guide<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg><span class="eco-link-external-label"> (external)</span></a></p>
-</div>
-<div class="device-panel-col"><h4 class="device-panel-heading">Requirements</h4>
-<p class="device-panel-line"><a class="reference external" href="https://github.com/ViveRoboticsSoftware/vivehub-linux" rel="noopener noreferrer" target="_blank">VIVE Hub on Linux v1.0.1+<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg><span class="eco-link-external-label"> (external)</span></a></p>
-<p class="device-panel-line"><a class="reference external" href="https://github.com/ViveRoboticsSoftware/vive-ultimate-tracker-sdk" rel="noopener noreferrer" target="_blank">VIVE Ultimate Tracker SDK v0.0.1+<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg><span class="eco-link-external-label"> (external)</span></a></p>
-</div>
-<div class="device-panel-col"><h4 class="device-panel-heading">Acquire</h4>
-<p class="device-panel-line"><a class="reference external" href="https://www.vive.com/us/accessory/vive-ultimate-tracker/" rel="noopener noreferrer" target="_blank">vive.com<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg><span class="eco-link-external-label"> (external)</span></a></p>
-</div>
-<p class="device-panel-foot"><span class="device-since"><a class="device-since-branch is-main reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main" rel="noopener noreferrer" target="_blank">main</a></span>
 </p>
 </div>
 <p class="device-group">Standalone Input Devices</p>
@@ -802,7 +781,7 @@ rolling basis and will be in touch if we see an opportunity to work more closely
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-devices-11">Supported Devices <span class="eco-count">11</span></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-devices-10">Supported Devices <span class="eco-count">10</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-factory-3">Data Factory <span class="eco-count">3</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloud-infrastructure-1">Cloud Infrastructure <span class="eco-count">1</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#become-part-of-isaac-teleop">Become Part of Isaac Teleop</a></li>
@@ -888,7 +867,7 @@ rolling basis and will be in touch if we see an opportunity to work more closely
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

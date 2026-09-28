@@ -1,0 +1,160 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+camera_viz XR controller bindings. Kept in sync with
+examples/camera_viz/controls/bindings.py, which is the source of truth.
+
+Deliberately uses no *-opacity, no gradients and no nested transforms: SVG
+rasterisers outside the browser drop or mis-compose all three, so avoiding them
+means the file can be proofed by rendering it before it ships.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 730" width="1200" height="730" font-family="DejaVu Sans, Verdana, Helvetica, sans-serif">
+<rect x="0" y="0" width="1200" height="730" rx="18" fill="#101318"/>
+<rect x="0.75" y="0.75" width="1198.5" height="728.5" rx="17.5" fill="none" stroke="#232a33" stroke-width="1.5"/>
+<text x="600.0" y="62.0" font-size="27" fill="#ffffff" font-weight="700" text-anchor="middle">camera_viz &#8212; XR controller bindings</text>
+<rect x="566" y="78" width="68" height="3" rx="1.5" fill="#76b900"/>
+<text x="465.3" y="158.0" font-size="17" fill="#e6eaee" font-weight="700" text-anchor="middle" letter-spacing="1.1">LEFT</text>
+<rect x="370" y="171" width="190" height="2" rx="1" fill="#2b333d"/>
+<rect x="440" y="171" width="50" height="2" rx="1" fill="#76b900"/>
+<text x="734.7" y="158.0" font-size="17" fill="#e6eaee" font-weight="700" text-anchor="middle" letter-spacing="1.1">RIGHT</text>
+<rect x="640" y="171" width="190" height="2" rx="1" fill="#2b333d"/>
+<rect x="710" y="171" width="50" height="2" rx="1" fill="#76b900"/>
+<!-- LEFT CONTROLLER: dark charcoal disc, white grip angled down-outward, trigger on the inner side -->
+<path d="M 490,410 C 505,416 512,430 510,446 C 506,462 492,468 478,458 L 470,440 L 480,412 Z" fill="#eef2f5" stroke="#c3cad1" stroke-width="2.4" stroke-linejoin="round"/>
+<path d="M 407.9,284.6 C 388,390 372,490 359.1,587.5 C 356.2,609.3 366,631.5 383.5,630 C 401,628.5 416.7,624.9 424.9,604.5 C 459,520 501,400 528.1,315.4 Z" fill="#f1f4f7" stroke="#c3cad1" stroke-width="2.4" stroke-linejoin="round"/>
+<path d="M 438,430 C 424,500 411,556 401,600" fill="none" stroke="#dde4ea" stroke-width="2" stroke-linecap="round"/>
+<circle cx="466" cy="310" r="112.5" fill="#1c2025"/>
+<circle cx="466" cy="306" r="112" fill="#2d3238"/>
+<circle cx="466" cy="302" r="104" fill="#3c4147"/>
+<path d="M 366,273 A 104 104 0 0 1 447,200" fill="none" stroke="#4f555d" stroke-width="3" stroke-linecap="round"/>
+<circle cx="400" cy="356" r="13" fill="#cfd6dd"/>
+<rect x="393.5" y="350.5" width="13" height="2.2" rx="1.1" fill="#14171b"/>
+<rect x="393.5" y="355.0" width="13" height="2.2" rx="1.1" fill="#14171b"/>
+<rect x="393.5" y="359.5" width="13" height="2.2" rx="1.1" fill="#14171b"/>
+<circle cx="412" cy="280" r="28" fill="#22262b"/>
+<circle cx="412" cy="280" r="24" fill="#191d21"/>
+<circle cx="412" cy="280" r="24.5" fill="none" stroke="#2e343a" stroke-width="3.5" stroke-dasharray="3.5 4"/>
+<circle cx="411" cy="276" r="16" fill="#33383f"/>
+<circle cx="407" cy="272" r="6" fill="#464d55"/>
+<circle cx="412" cy="280" r="34" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<circle cx="498" cy="282" r="22" fill="#aab3bc"/>
+<circle cx="498" cy="280" r="19.5" fill="#dfe5ea"/>
+<circle cx="498" cy="282" r="28" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<text x="498.0" y="288.5" font-size="18" fill="#14171b" font-weight="700" text-anchor="middle">Y</text>
+<circle cx="466" cy="352" r="22" fill="#aab3bc"/>
+<circle cx="466" cy="350" r="19.5" fill="#dfe5ea"/>
+<circle cx="466" cy="352" r="28" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<text x="466.0" y="358.5" font-size="18" fill="#14171b" font-weight="700" text-anchor="middle">X</text>
+<!-- RIGHT CONTROLLER -->
+<path d="M 710,410 C 695,416 688,430 690,446 C 694,462 708,468 722,458 L 730,440 L 720,412 Z" fill="#eef2f5" stroke="#c3cad1" stroke-width="2.4" stroke-linejoin="round"/>
+<path d="M 792.1,284.6 C 812,390 828,490 840.9,587.5 C 843.8,609.3 834,631.5 816.5,630 C 799,628.5 783.3,624.9 775.1,604.5 C 741,520 699,400 671.9,315.4 Z" fill="#f1f4f7" stroke="#c3cad1" stroke-width="2.4" stroke-linejoin="round"/>
+<path d="M 762,430 C 776,500 789,556 799,600" fill="none" stroke="#dde4ea" stroke-width="2" stroke-linecap="round"/>
+<circle cx="734" cy="310" r="112.5" fill="#1c2025"/>
+<circle cx="734" cy="306" r="112" fill="#2d3238"/>
+<circle cx="734" cy="302" r="104" fill="#3c4147"/>
+<path d="M 834,273 A 104 104 0 0 0 753,200" fill="none" stroke="#4f555d" stroke-width="3" stroke-linecap="round"/>
+<circle cx="800" cy="356" r="13" fill="#cfd6dd"/>
+<circle cx="788" cy="280" r="28" fill="#22262b"/>
+<circle cx="788" cy="280" r="24" fill="#191d21"/>
+<circle cx="788" cy="280" r="24.5" fill="none" stroke="#2e343a" stroke-width="3.5" stroke-dasharray="3.5 4"/>
+<circle cx="789" cy="276" r="16" fill="#33383f"/>
+<circle cx="793" cy="272" r="6" fill="#464d55"/>
+<circle cx="788" cy="280" r="34" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<circle cx="702" cy="282" r="22" fill="#aab3bc"/>
+<circle cx="702" cy="280" r="19.5" fill="#dfe5ea"/>
+<circle cx="702" cy="282" r="28" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<text x="702.0" y="288.5" font-size="18" fill="#14171b" font-weight="700" text-anchor="middle">B</text>
+<circle cx="734" cy="352" r="22" fill="#aab3bc"/>
+<circle cx="734" cy="350" r="19.5" fill="#dfe5ea"/>
+<circle cx="734" cy="352" r="28" fill="none" stroke="#76b900" stroke-width="2.8"/>
+<text x="734.0" y="358.5" font-size="18" fill="#14171b" font-weight="700" text-anchor="middle">A</text>
+<!-- leader lines -->
+<path d="M 378,280 L 296,280 L 296,246 L 276,246" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="276.0" cy="246.0" r="3.4" fill="#76b900"/>
+<path d="M 475,298 L 430,330 L 314,330 L 314,467 L 276,467" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="276.0" cy="467.0" r="3.4" fill="#76b900"/>
+<path d="M 446,372 L 424,384 L 336,384 L 336,627 L 276,627" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="276.0" cy="627.0" r="3.4" fill="#76b900"/>
+<path d="M 822,280 L 904,280 L 904,246 L 924,246" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="924.0" cy="246.0" r="3.4" fill="#76b900"/>
+<path d="M 725,298 L 770,330 L 886,330 L 886,467 L 924,467" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="924.0" cy="467.0" r="3.4" fill="#76b900"/>
+<path d="M 754,372 L 776,384 L 864,384 L 864,627 L 924,627" fill="none" stroke="#76b900" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="924.0" cy="627.0" r="3.4" fill="#76b900"/>
+<rect x="20" y="120" width="256" height="252" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="20" y="136" width="3" height="220" rx="1.5" fill="#76b900"/>
+<text x="44.0" y="152.0" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">THUMBSTICK</text>
+<text x="44.0" y="182.0" font-size="21" fill="#ffffff" font-weight="700">shape params</text>
+<text x="44.0" y="208.0" font-size="15" fill="#8b939d">depend on the active shape</text>
+<text x="44.0" y="255" font-size="16" fill="#cfd6dd">quad</text>
+<path d="M 113,250 L 127,250" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 116,246 L 110,250 L 116,254" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 124,246 L 130,250 L 124,254" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="136.0" y="255" font-size="15" fill="#aeb7c0">size</text>
+<path d="M 196,246 L 196,255" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 192,249 L 196,243 L 200,249" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 192,252 L 196,258 L 200,252" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="208" y="255" font-size="15" fill="#aeb7c0">height</text>
+<rect x="44" y="269" width="208" height="1" fill="#252c35"/>
+<text x="44.0" y="298" font-size="16" fill="#cfd6dd">cylinder</text>
+<path d="M 113,293 L 127,293" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 116,289 L 110,293 L 116,297" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 124,289 L 130,293 L 124,297" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="136.0" y="298" font-size="15" fill="#aeb7c0">arc</text>
+<path d="M 196,289 L 196,298" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 192,292 L 196,286 L 200,292" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 192,295 L 196,301 L 200,295" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="208" y="298" font-size="15" fill="#aeb7c0">height</text>
+<rect x="44" y="312" width="208" height="1" fill="#252c35"/>
+<text x="44.0" y="341" font-size="16" fill="#cfd6dd">equirect</text>
+<path d="M 113,336 L 127,336" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 116,332 L 110,336 L 116,340" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 124,332 L 130,336 L 124,340" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="136.0" y="341" font-size="15" fill="#aeb7c0">h-span</text>
+<path d="M 196,332 L 196,341" stroke="#76b900" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M 192,335 L 196,329 L 200,335" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 192,338 L 196,344 L 200,338" fill="none" stroke="#76b900" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="208" y="341" font-size="15" fill="#aeb7c0">v-span</text>
+<rect x="20" y="402" width="256" height="130" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="20" y="418" width="3" height="98" rx="1.5" fill="#76b900"/>
+<text x="44.0" y="434" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">Y BUTTON</text>
+<text x="44.0" y="464" font-size="21" fill="#ffffff" font-weight="700">reset</text>
+<text x="44.0" y="493" font-size="16" fill="#aeb7c0">back to the YAML values</text>
+<rect x="20" y="562" width="256" height="130" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="20" y="578" width="3" height="98" rx="1.5" fill="#76b900"/>
+<text x="44.0" y="594" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">X BUTTON</text>
+<text x="44.0" y="624" font-size="21" fill="#ffffff" font-weight="700">shape</text>
+<text x="44.0" y="653" font-size="15" fill="#aeb7c0">quad</text>
+<path d="M 83.8,643.5 L 89.3,648 L 83.8,652.5" fill="none" stroke="#76b900" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="97.3" y="653" font-size="15" fill="#aeb7c0">cylinder</text>
+<path d="M 156.4,643.5 L 161.9,648 L 156.4,652.5" fill="none" stroke="#76b900" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="169.9" y="653" font-size="15" fill="#aeb7c0">equirect</text>
+<rect x="924" y="120" width="256" height="252" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="924" y="136" width="3" height="220" rx="1.5" fill="#76b900"/>
+<text x="948" y="150.0" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">THUMBSTICK</text>
+<text x="948" y="178.0" font-size="21" fill="#ffffff" font-weight="700">stereo plane gap</text>
+<text x="948" y="202.0" font-size="15" fill="#8b939d">on equirect it pans the</text>
+<text x="948" y="225.0" font-size="15" fill="#8b939d">panorama instead</text>
+<rect x="948" y="244" width="208" height="1" fill="#252c35"/>
+<text x="948" y="272.0" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">THUMBSTICK CLICK</text>
+<text x="948" y="300.0" font-size="21" fill="#ffffff" font-weight="700">recenter</text>
+<text x="948" y="324.0" font-size="15" fill="#8b939d">aim the surface where</text>
+<text x="948" y="347.0" font-size="15" fill="#8b939d">you are looking</text>
+<rect x="924" y="402" width="256" height="130" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="924" y="418" width="3" height="98" rx="1.5" fill="#76b900"/>
+<text x="948" y="434" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">B BUTTON</text>
+<text x="948" y="464" font-size="21" fill="#ffffff" font-weight="700">mono / stereo</text>
+<text x="948" y="493" font-size="16" fill="#aeb7c0">stereo cameras only</text>
+<rect x="924" y="562" width="256" height="130" rx="12" fill="#191d24" stroke="#272e37" stroke-width="1"/>
+<rect x="924" y="578" width="3" height="98" rx="1.5" fill="#76b900"/>
+<text x="948" y="594" font-size="15" fill="#76b900" font-weight="700" letter-spacing="0.5">A BUTTON</text>
+<text x="948" y="624" font-size="21" fill="#ffffff" font-weight="700">lock mode</text>
+<text x="948" y="653" font-size="15" fill="#aeb7c0">world</text>
+<path d="M 990.7,643.5 L 996.2,648 L 990.7,652.5" fill="none" stroke="#76b900" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1004.2" y="653" font-size="15" fill="#aeb7c0">head</text>
+<path d="M 1044.1,643.5 L 1049.6,648 L 1044.1,652.5" fill="none" stroke="#76b900" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1057.6" y="653" font-size="15" fill="#aeb7c0">gimbal</text>
+<path d="M 1108.9,643.5 L 1114.4,648 L 1108.9,652.5" fill="none" stroke="#76b900" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1122.4" y="653" font-size="15" fill="#aeb7c0">lazy</text>
+</svg>

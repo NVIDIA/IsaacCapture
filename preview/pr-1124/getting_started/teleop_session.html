@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=ec4b8e38" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=04dcff72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.5.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -372,13 +372,12 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -439,7 +438,7 @@ examples more readable by focusing on <strong>what</strong> you want to do rathe
 <strong>how</strong> to set it up.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
-<p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/python/isaaccapture/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
+<p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/python/isaacteleop/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp" rel="noopener noreferrer" target="_blank">DeviceIOSession</a>
 and <a class="reference internal" href="../device/trackers.html"><span class="doc">device trackers</span></a> so that callers don’t need to
@@ -455,13 +454,13 @@ manage them directly:</p>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
 <p>Here’s a minimal example:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TeleopSession</span><span class="p">,</span>
     <span class="n">TeleopSessionConfig</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span>
 
 <span class="c1"># Create source and build pipeline (one GripperRetargeter per side)</span>
 <span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"controllers"</span><span class="p">)</span>
@@ -537,7 +536,7 @@ supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session’s lifetime. Construct handles with
 <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> where each
 argument is a <code class="docutils literal notranslate"><span class="pre">uint64</span></code> handle value.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
 
 <span class="n">handles</span> <span class="o">=</span> <span class="n">OpenXRSessionHandles</span><span class="p">(</span>
     <span class="n">instance_handle</span><span class="p">,</span> <span class="n">session_handle</span><span class="p">,</span> <span class="n">space_handle</span><span class="p">,</span> <span class="n">proc_addr</span>
@@ -561,8 +560,8 @@ of the pipeline: <code class="docutils literal notranslate"><span class="pre">Te
 OpenXR extensions with no extra argument (important for the external-<code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>
 flow). See <a class="reference internal" href="../device/trackers.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
 available vendor ids.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
 
 <span class="c1"># Select the backend on the source; it flows through the pipeline into the session.</span>
 <span class="n">full_body</span> <span class="o">=</span> <span class="n">FullBodySource</span><span class="p">(</span>
@@ -619,7 +618,7 @@ opaque values should provide an equivalent <code class="docutils literal notrans
 with <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code>. Pipelined mode returns a new snapshot of the cached
 output on each <code class="docutils literal notranslate"><span class="pre">step()</span></code> call. Sync mode returns the pipeline result directly,
 matching the historical ownership behavior.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">RetargetingExecutionConfig</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">RetargetingExecutionConfig</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
     <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
@@ -647,7 +646,7 @@ work is coalesced so newer submissions replace older delayed requests.</p>
 thread. IsaacTeleop runs the retarget work on one background worker in
 pipelined mode, but public session state such as <code class="docutils literal notranslate"><span class="pre">frame_count</span></code>,
 <code class="docutils literal notranslate"><span class="pre">last_context</span></code>, and <code class="docutils literal notranslate"><span class="pre">last_step_info</span></code> belongs to the application thread.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DeadlinePacingConfig</span><span class="p">,</span>
     <span class="n">RetargetingExecutionConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -769,11 +768,6 @@ regardless of <code class="docutils literal notranslate"><span class="pre">requi
 <p>Any <code class="docutils literal notranslate"><span class="pre">--plugin-root-id=...</span></code> in <code class="docutils literal notranslate"><span class="pre">plugin_args</span></code> is ignored so that the
 <code class="docutils literal notranslate"><span class="pre">plugin_root_id</span></code> parameter cannot be overridden.</p>
 </div>
-<p>Plugins with device monitoring support appear as providers in the status
-inventory. Other enabled plugins retain their existing launch behavior without
-appearing there. See
-<a class="reference internal" href="../references/device_provider_monitoring.html"><span class="doc">Device provider monitoring</span></a> for status identities, state
-precedence, and plugin integration guidance.</p>
 </section>
 </section>
 <section id="api-reference">
@@ -801,22 +795,16 @@ input specifications for all external (non-DeviceIO) leaf nodes that require
 caller-provided inputs in <code class="docutils literal notranslate"><span class="pre">step()</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">has_external_inputs()</span> <span class="pre">-&gt;</span> <span class="pre">bool</span></code> – Whether this pipeline has external leaf
 nodes that require caller-provided inputs.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">get_status()</span> <span class="pre">-&gt;</span> <span class="pre">StatusSnapshot</span></code> – Return the current immutable provider
-and device snapshot without performing I/O.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">get_provider_status(provider_id)</span> <span class="pre">-&gt;</span> <span class="pre">ProviderStatus</span> <span class="pre">|</span> <span class="pre">None</span></code> – Return one
-cached provider record.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">get_device_status(device_id)</span> <span class="pre">-&gt;</span> <span class="pre">DeviceStatus</span> <span class="pre">|</span> <span class="pre">None</span></code> – Return one cached
-device record.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">get_elapsed_time()</span> <span class="pre">-&gt;</span> <span class="pre">float</span></code> – Get elapsed time since session started.</p></li>
 </ul>
 <p>Example (explicit GraphTime + ExecutionEvents override):</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface.execution_events</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface.execution_events</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">ExecutionEvents</span><span class="p">,</span>
     <span class="n">ExecutionState</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface.retargeter_core_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphTime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface.retargeter_core_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphTime</span>
 
 <span class="n">now_ns</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic_ns</span><span class="p">()</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">(</span>
@@ -1144,7 +1132,7 @@ of input sources.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

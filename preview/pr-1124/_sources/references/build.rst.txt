@@ -57,25 +57,21 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``:
+After building, install the wheel with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   uv pip install isaaccapture --find-links=./install/wheels/ --reinstall
+   uv pip install isaacteleop --find-links=./install/wheels/ --reinstall
 
    # or
-   pip install install/wheels/isaaccapture-*.whl
-
-The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
-in 1.9, so
-``import isaacteleop`` resolves without a second install; see :doc:`migration`.
+   pip install install/wheels/isaacteleop-*.whl
 
 Installing from source with pip (scikit-build-core)
 ---------------------------------------------------
 
 In addition to the classic CMake flow above (which stages the package
 and produces a wheel under ``install/wheels/``), the repository ships a root
-:code-file:`pyproject.toml` that exposes ``isaaccapture`` through the
+:code-file:`pyproject.toml` that exposes ``isaacteleop`` through the
 `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ build backend,
 driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
 
@@ -99,15 +95,15 @@ two build paths therefore never share a directory:
 - **classic CMake** → whatever you pass to ``-B``, ``build/`` by convention.
   ``ISAAC_TELEOP_PYTHON_VERSION`` selects the interpreter (default ``3.11``), and
   changing it on an existing tree is rejected with an error rather than silently
-  reusing the old one — delete the tree to switch versions.
+  reusing the old one — give each version its own directory.
 
   .. code-block:: bash
 
-     cmake -B build                                            # default 3.11
+     cmake -B build
      cmake --build build --parallel
      cmake --install build
 
-     cmake -B build -DISAAC_TELEOP_PYTHON_VERSION=3.12         # after rm -rf build
+     cmake -B build-py3.12 -DISAAC_TELEOP_PYTHON_VERSION=3.12   # a second version
 
 - **pip / scikit-build-core** → ``build-wheel/<cache-tag>/`` (e.g.
   ``build-wheel/cpython-312/``), set by ``build-dir`` in
@@ -124,6 +120,7 @@ Output locations
 After a successful build and install, relative to your build directory:
 
 - **C++ libraries:** ``src/core/`` (and under each module)
+- **Python wheel:** ``wheels/isaacteleop-*.whl``
 - **Examples (binaries):** under ``examples/`` (e.g. ``examples/oxr/cpp/``)
 - **Installed files:** ``install/`` (or your ``CMAKE_INSTALL_PREFIX``)
   - Libraries: ``install/lib/``

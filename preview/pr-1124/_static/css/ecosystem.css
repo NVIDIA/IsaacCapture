@@ -185,8 +185,7 @@
 .device-grid {
     display: grid;
     /* device | input modes | Details button */
-    --device-name-col: 220px;
-    grid-template-columns: var(--device-name-col) 1fr 160px;
+    grid-template-columns: 220px 1fr 160px;
     border-top: 2px solid var(--pst-color-text-base);
 }
 
@@ -332,10 +331,7 @@ html[data-theme="dark"] .device-toggle {
 .device-panel {
     grid-column: 1 / -1;
     display: grid;
-    /* Requirements opens on the same line as the modes column above it, so an open row
-       reads down one edge. The first track is that column plus the cell padding it gains,
-       less the panel padding and the gap it loses: 220px + 1rem - 1.5rem - 2rem. */
-    grid-template-columns: calc(var(--device-name-col) - 2.5rem) 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     /* Row gap only ever applies under a company mark: without one the panel is a
        single row of columns. */
     column-gap: 2rem;
