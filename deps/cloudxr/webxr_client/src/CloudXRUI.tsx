@@ -98,6 +98,10 @@ interface CloudXRUIProps {
   controlPanelPosition?: ControlPanelPosition;
   /** Same layout constants used to compute `position` above. */
   controlPanelLayout?: ControlPanelLayoutOptions;
+  /** When true, the panel continuously follows the headset every frame (resetPanelRelativeToHead
+   * re-runs each frame instead of once) instead of staying at a fixed room position. Dragging is
+   * disabled while this is on - see the Handle's `bind` prop below. */
+  trackHeadset?: boolean;
   /** Computed signal for render FPS text - updates without React re-render */
   renderFpsText?: ReadonlySignal<string>;
   /** Computed signal for pose send FPS text - the rate operator intent reaches the robot */
@@ -274,6 +278,7 @@ export default function CloudXR3DUI({
   position = [1.8, 1.75, -1.3],
   controlPanelPosition = 'center',
   controlPanelLayout = { distance: 1.8, height: 1.85, angleDegrees: 70 },
+  trackHeadset = false,
   rotation = [0, 0, 0], // Note: Y rotation is controlled by face-camera logic
   renderFpsText,
   poseSendFpsText,
@@ -339,16 +344,10 @@ export default function CloudXR3DUI({
   const { camera } = useThree();
 
   /**
-   * Un-hides the panel and repositions it relative to *cam* using the same left/center/right +
+   * The position the panel should have, relative to *cam*, using the same left/center/right +
    * distance/height/angle the initial world-space `position` prop was computed from
-   * (getControlPanelPositionVector, App.tsx's CONTROL_PANEL_LAYOUT) - just re-anchored to the
-   * current head pose instead of the world/tracking origin. There is no way to detect a panel
-   * that's hidden or dragged out of reach (see CloudXR2DUI's panelHiddenAtStart docs) - the drag
-   * handle needed to recover it can itself be unreachable - so this offers a fix instead: the
-   * operator (or the host, via oob_teleop_adb.py's _cdp_send_reset_panel_key synthesizing
-   * RESET_PANEL_KEY over CDP) can always bring the panel back regardless of where it ended up.
-   * The Handle system reads/writes this same groupRef.position, so a normal drag still works
-   * immediately afterward.
+   * (getControlPanelPositionVector, App.tsx's controlPanelLayout) - just re-anchored to the
+   * current head pose instead of the world/tracking origin.
    *
    * *cam*'s yaw is used on the horizontal (XZ) plane only, matching the face-camera effect below
    * - using the raw camera quaternion (which includes pitch) would place the panel above or
@@ -363,11 +362,8 @@ export default function CloudXR3DUI({
    * only place that's guaranteed fresh; a plain useEffect keyed on isXRMode can fire before the
    * first tracked frame lands, reading a stale/default transform instead.
    */
-  const resetPanelRelativeToHead = useCallback(
-    (cam: Camera) => {
-      if (!groupRef.current) {
-        return;
-      }
+  const computeHeadRelativePanelPosition = useCallback(
+    (cam: Camera): Vector3 => {
       const forward = WORLD_FORWARD.clone().applyQuaternion(cam.quaternion);
       forward.y = 0;
       forward.normalize();
@@ -378,17 +374,39 @@ export default function CloudXR3DUI({
         controlPanelLayout
       );
       const horizontalOffset = new Vector3(localX, 0, localZ).applyQuaternion(yawQuat);
-      const target = new Vector3(
+      return new Vector3(
         cam.position.x + horizontalOffset.x,
         panelHeight,
         cam.position.z + horizontalOffset.z
       );
+    },
+    [controlPanelPosition, controlPanelLayout]
+  );
 
+  /**
+   * Un-hides the panel and repositions it via computeHeadRelativePanelPosition. There is no way
+   * to detect a panel that's hidden or dragged out of reach (see CloudXR2DUI's
+   * panelHiddenAtStart docs) - the drag handle needed to recover it can itself be unreachable -
+   * so this offers a fix instead: the operator (or the host, via oob_teleop_adb.py's
+   * _cdp_send_reset_panel_key synthesizing RESET_PANEL_KEY over CDP) can always bring the panel
+   * back regardless of where it ended up. The Handle system reads/writes this same
+   * groupRef.position, so a normal drag still works immediately afterward (unless trackHeadset
+   * is on - see the useFrame block below, which repositions every frame in that mode instead of
+   * calling this once).
+   */
+  const resetPanelRelativeToHead = useCallback(
+    (cam: Camera) => {
+      if (!groupRef.current) {
+        return;
+      }
+      const target = computeHeadRelativePanelPosition(cam);
       groupRef.current.position.copy(target);
       setPanelHidden(false);
       // Logged so a test can assert the panel actually lands near the headset instead of at a
       // fixed world coordinate - see the console lines, not the scene graph, since there's no
-      // other way to observe a Three.js object's world position from outside the page.
+      // other way to observe a Three.js object's world position from outside the page. Not
+      // logged from the continuous trackHeadset path in useFrame below - that would spam the
+      // console every frame instead of marking a discrete reset event.
       console.debug(
         `[CloudXRUI] headset position: (${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)})`
       );
@@ -396,7 +414,7 @@ export default function CloudXR3DUI({
         `[CloudXRUI] panel reset to: (${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
       );
     },
-    [controlPanelPosition, controlPanelLayout]
+    [computeHeadRelativePanelPosition]
   );
 
   useEffect(() => {
@@ -442,6 +460,11 @@ export default function CloudXR3DUI({
     if (needsInitialPlacement.current) {
       resetPanelRelativeToHead(state.camera);
       needsInitialPlacement.current = false;
+    } else if (trackHeadset) {
+      // Continuous version of the same reset: every frame instead of once, and without the
+      // un-hide/logging side effects (calling resetPanelRelativeToHead here would force the
+      // panel visible every frame, defeating the hide-panel button, and would spam the console).
+      groupRef.current.position.copy(computeHeadRelativePanelPosition(state.camera));
     }
     state.camera.getWorldPosition(cameraPositionHelper);
     groupRef.current.getWorldPosition(uiPositionHelper);
@@ -473,13 +496,17 @@ export default function CloudXR3DUI({
         rotation={rotation}
         pointerEventsType={{ deny: 'grab' }}
       >
-        {/* Drag Handle Bar - grab to reposition the panel */}
+        {/* Drag Handle Bar - grab to reposition the panel. bind=false while trackHeadset is on:
+            the panel's position is overwritten every frame in that mode (see useFrame above), so
+            a drag would just get immediately overridden on the next frame anyway - disabling
+            bind makes that explicit instead of visually jittery. */}
         <Handle
           handleRef={handleRef}
           targetRef={groupRef}
           scale={false}
           multitouch={false}
           rotate={false}
+          bind={!trackHeadset}
           apply={applyPositionSkipRotation}
         >
           <mesh

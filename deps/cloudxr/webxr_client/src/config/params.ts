@@ -189,6 +189,14 @@ export const URL_PARAMS: UrlParam[] = [
     description: 'In-XR control panel angle from center for the left/right positions, in degrees.',
   },
   {
+    key: 'controlPanelTrackHeadset',
+    elementId: 'controlPanelTrackHeadset',
+    kind: 'checked',
+    isValid: isBool,
+    description:
+      'Keep the in-XR control panel at a fixed position/rotation relative to the headset instead of the room (true/false).',
+  },
+  {
     key: 'controllerModelVisibility',
     elementId: 'controllerModelVisibility',
     isValid: oneOf('show', 'hide'),

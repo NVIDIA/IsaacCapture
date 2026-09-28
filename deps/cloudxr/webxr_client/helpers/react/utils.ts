@@ -66,6 +66,9 @@ export interface ReactUIConfig {
   controlPanelHeight?: number;
   /** Angle in degrees for left/right positions from center. Overrides the default in ControlPanelLayoutOptions. */
   controlPanelAngleDegrees?: number;
+  /** When true, the control panel continuously follows the headset instead of staying at a
+   * fixed room position; dragging is disabled while this is on. */
+  controlPanelTrackHeadset?: boolean;
   /** When true, the control panel is hidden at immersive XR enter (small “show control panel” control only). */
   panelHiddenAtStart?: boolean;
   /** When true, all WebGL rendering is skipped. */
