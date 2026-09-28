@@ -95,17 +95,16 @@ std::unique_ptr<ITrackerImpl> try_create_full_body_noitom_impl(LiveDeviceIOFacto
     return typed ? factory.create_full_body_tracker_noitom_impl(typed) : nullptr;
 }
 
-<<<<<<< HEAD
 std::unique_ptr<ITrackerImpl> try_create_full_body_xsens_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
 {
     auto* typed = dynamic_cast<const FullBodyTracker*>(&tracker);
     return typed ? factory.create_full_body_tracker_xsens_impl(typed) : nullptr;
-=======
+}
+
 std::unique_ptr<ITrackerImpl> try_create_full_body_meta_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
 {
     auto* typed = dynamic_cast<const FullBodyTracker*>(&tracker);
     return typed ? factory.create_full_body_tracker_meta_impl(typed) : nullptr;
->>>>>>> e3942f591 (feat(deviceio): add Meta full-body tracker vendor (body.quest-cloudxr))
 }
 
 std::unique_ptr<ITrackerImpl> try_create_tensor_push_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)

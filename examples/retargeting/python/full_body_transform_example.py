@@ -29,12 +29,12 @@ import time
 
 import numpy as np
 
-import isaacteleop.deviceio as deviceio
-import isaacteleop.oxr as oxr
-from isaacteleop.cloudxr import CloudXRLauncher
-from isaacteleop.retargeting_engine.deviceio_source_nodes import FullBodySource
-from isaacteleop.retargeting_engine.tensor_types import FullBodyInputIndex
-from isaacteleop.retargeting_engine.utilities import (
+import isaaccapture.deviceio as deviceio
+import isaaccapture.oxr as oxr
+from isaaccapture.cloudxr import CloudXRLauncher
+from isaaccapture.retargeting_engine.deviceio_source_nodes import FullBodySource
+from isaaccapture.retargeting_engine.tensor_types import FullBodyInputIndex
+from isaaccapture.retargeting_engine.utilities import (
     FullBodyTransform,
     SKELETON_PROFILES,
 )
