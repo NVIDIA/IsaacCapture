@@ -56,6 +56,9 @@ import { applyTargetFrameRate } from '../../src/config/frameRate';
 /** Clear color shown in headless mode so it's visually obvious the client is running with rendering suppressed. */
 const HEADLESS_CLEAR_COLOR = 0x00194d;
 
+/** Default for the streamAttachTimeoutMs prop below - see its doc comment. */
+const STREAM_ATTACH_BASE_TIMEOUT_MS = 8000;
+
 /**
  * Props for the CloudXRComponent.
  */
@@ -93,6 +96,18 @@ interface CloudXRComponentProps {
    * falls back to the no-retry behavior: onError + onExitImmersiveXR.
    */
   reconnect?: { maxAttempts?: number; delayMs?: number };
+
+  /**
+   * Base timeout (ms) for detecting "passthrough-only" - a session that entered XR and called
+   * connect() but whose stream never attached (see the stream-attach timer in establishSession).
+   * Independent of `reconnect`: detection always runs, with or without that prop, so a stream
+   * that never attaches is never silently left hanging even with no reconnect configured at all -
+   * only whether the resulting synthetic error gets retried depends on `reconnect`. Doubles on
+   * every reconnect attempt (this value, then x2, then x4, ...) so a connection that's genuinely
+   * just slow, not stuck, gets more time on each retry instead of being cut off at the same fixed
+   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (8000ms).
+   */
+  streamAttachTimeoutMs?: number;
 
   /** Callback fired with the resolved server address after proxy configuration is applied. */
   onServerAddress?: (address: string) => void;
@@ -174,6 +189,7 @@ export default function CloudXRComponent({
   onExitImmersiveXR,
   onSessionReady,
   reconnect,
+  streamAttachTimeoutMs,
   onServerAddress,
   onRenderPerformanceMetrics,
   onStreamingPerformanceMetrics,
@@ -198,8 +214,10 @@ export default function CloudXRComponent({
   // caller that explicitly asks for retry (even as `reconnect={{}}`) gets it.
   const maxReconnectAttempts = reconnect ? (reconnect.maxAttempts ?? 3) : 0;
   const reconnectDelayMs = reconnect?.delayMs ?? 3000;
+  const streamAttachBaseTimeoutMs = streamAttachTimeoutMs ?? STREAM_ATTACH_BASE_TIMEOUT_MS;
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamAttachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Metrics trackers for averaging performance metrics
   // Use prop values if provided, otherwise use defaults
@@ -411,10 +429,22 @@ export default function CloudXRComponent({
               // A successful (re)connect clears the counter, so an unrelated later failure
               // gets its own full budget of attempts rather than inheriting this one's count.
               reconnectAttemptRef.current = 0;
+              if (streamAttachTimerRef.current !== null) {
+                clearTimeout(streamAttachTimerRef.current);
+                streamAttachTimerRef.current = null;
+              }
               console.debug('CloudXR stream started');
               onStatusChange?.(true, 'Connected');
             },
             onStreamStopped: (error?: CloudXR.StreamingError) => {
+              // A real stream-stop (including the synthetic one the attach timer below
+              // dispatches through this same delegate) means we're no longer "waiting to
+              // attach" - clear any pending attach timer so it can't fire again after this
+              // attempt has already been handled.
+              if (streamAttachTimerRef.current !== null) {
+                clearTimeout(streamAttachTimerRef.current);
+                streamAttachTimerRef.current = null;
+              }
               if (error) {
                 // Display user-friendly error message with error code if available
                 const errorMsg = error.code
@@ -582,6 +612,24 @@ export default function CloudXRComponent({
               console.log('CloudXR session connect initiated');
               // Note: The session will transition to Connected state via the onStreamStarted callback
               // Use cxrSession.state to check if streaming has actually started
+
+              // Passthrough-only detection: the session can enter XR and call connect()
+              // successfully while the stream never actually attaches, with no error callback to
+              // signal it - isXRMode alone can't tell that state apart from a slow-but-fine
+              // connect. If onStreamStarted hasn't cleared this by the deadline, dispatch a
+              // synthetic recoverable StreamingError through the same onStreamStopped path a real
+              // one uses, so it gets the same bounded-retry treatment.
+              const attachTimeoutMs = streamAttachBaseTimeoutMs * 2 ** reconnectAttemptRef.current;
+              streamAttachTimerRef.current = setTimeout(() => {
+                streamAttachTimerRef.current = null;
+                console.warn(
+                  `CloudXR stream did not attach within ${attachTimeoutMs}ms ` +
+                    `(attempt ${reconnectAttemptRef.current + 1})`
+                );
+                cloudXRDelegates.onStreamStopped?.({
+                  message: `Stream did not attach within ${attachTimeoutMs}ms`,
+                } as CloudXR.StreamingError);
+              }, attachTimeoutMs);
             } catch (error) {
               onStatusChange?.(false, 'Connection Failed');
               // Report error via callback
@@ -616,6 +664,10 @@ export default function CloudXRComponent({
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
+        if (streamAttachTimerRef.current !== null) {
+          clearTimeout(streamAttachTimerRef.current);
+          streamAttachTimerRef.current = null;
+        }
         if (cxrSessionRef.current) {
           cxrSessionRef.current.disconnect();
           cxrSessionRef.current = null;
@@ -639,6 +691,10 @@ export default function CloudXRComponent({
         if (reconnectTimerRef.current !== null) {
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
+        }
+        if (streamAttachTimerRef.current !== null) {
+          clearTimeout(streamAttachTimerRef.current);
+          streamAttachTimerRef.current = null;
         }
       };
     }
