@@ -161,6 +161,7 @@ export class CloudXR2DUI {
   private controlPanelDistanceInput!: HTMLInputElement;
   private controlPanelHeightInput!: HTMLInputElement;
   private controlPanelAngleDegreesInput!: HTMLInputElement;
+  private controlPanelTrackHeadsetInput!: HTMLInputElement;
   /** Text element displaying proxy configuration help */
   private proxyDefaultText!: HTMLElement;
   /** Device profile warning text */
@@ -488,6 +489,9 @@ export class CloudXR2DUI {
     this.controlPanelAngleDegreesInput = this.getElement<HTMLInputElement>(
       'controlPanelAngleDegrees'
     );
+    this.controlPanelTrackHeadsetInput = this.getElement<HTMLInputElement>(
+      'controlPanelTrackHeadset'
+    );
     this.proxyDefaultText = this.getElement<HTMLElement>('proxyDefaultText');
     this.deviceProfileWarning = this.getElement<HTMLElement>('deviceProfileWarning');
     this.errorMessageBox = this.getElement<HTMLElement>('errorMessageBox');
@@ -574,6 +578,7 @@ export class CloudXR2DUI {
       controlPanelDistance: 1.8,
       controlPanelHeight: 1.85,
       controlPanelAngleDegrees: 70,
+      controlPanelTrackHeadset: false,
       enablePoseSmoothing: true,
       posePredictionFactor: 1.0,
       enableTexSubImage2D: false,
@@ -631,6 +636,7 @@ export class CloudXR2DUI {
       { el: this.controlPanelDistanceInput, key: 'controlPanelDistance' },
       { el: this.controlPanelHeightInput, key: 'controlPanelHeight' },
       { el: this.controlPanelAngleDegreesInput, key: 'controlPanelAngleDegrees' },
+      { el: this.controlPanelTrackHeadsetInput, key: 'controlPanelTrackHeadset' },
       { el: this.referenceSpaceSelect, key: 'referenceSpace' },
       { el: this.xrOffsetXInput, key: 'xrOffsetX' },
       { el: this.xrOffsetYInput, key: 'xrOffsetY' },
@@ -885,6 +891,7 @@ export class CloudXR2DUI {
     addListener(this.controlPanelHeightInput, 'change', updateConfig);
     addListener(this.controlPanelAngleDegreesInput, 'input', updateConfig);
     addListener(this.controlPanelAngleDegreesInput, 'change', updateConfig);
+    addListener(this.controlPanelTrackHeadsetInput, 'change', updateConfig);
     addListener(this.teleopProjectSelect, 'change', () => {
       const value = this.teleopProjectSelect.value;
       if (!value) return;
@@ -1117,6 +1124,7 @@ export class CloudXR2DUI {
         const v = parseFloat(this.controlPanelAngleDegreesInput.value);
         return Number.isFinite(v) ? v : this.getDefaultConfiguration().controlPanelAngleDegrees;
       })(),
+      controlPanelTrackHeadset: this.controlPanelTrackHeadsetInput.checked,
       // Parse media address and port if provided
       mediaAddress: this.mediaAddressInput.value.trim() || undefined,
       mediaPort: (() => {

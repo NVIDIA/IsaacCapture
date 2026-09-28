@@ -179,6 +179,7 @@ function sampleValid(key: string): string {
     headless: 'true',
     streamTestMode: 'warn',
     reconnectEnabled: 'true',
+    controlPanelTrackHeadset: 'true',
   };
   return enums[key] ?? 'x';
 }

@@ -1259,6 +1259,7 @@ function AppContent() {
                   position={controlPanelPositionVector}
                   controlPanelPosition={config?.controlPanelPosition ?? 'right'}
                   controlPanelLayout={controlPanelLayout}
+                  trackHeadset={config?.controlPanelTrackHeadset ?? false}
                   rotation={[0, 0, 0]}
                   renderFpsText={renderFpsText}
                   poseSendFpsText={poseSendFpsText}
