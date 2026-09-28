@@ -26,7 +26,11 @@
  *
  * The most-recently-created mock session is exposed on `window.__mockCloudXRFail`, mirroring
  * cloudxr-js's `window.__cloudxrMockFail` (see src/mocks/ragnarok-mock.ts there), so a
- * Playwright test can force a mid-stream failure from outside the page.
+ * Playwright test can force a mid-stream failure from outside the page. `window.__mockCloudXRConnectDelayMs`,
+ * read once per `createSession()` call (before the real App.tsx ever calls `connect()`), extends
+ * that pattern to hold a session in `Connecting` indefinitely - used to reproduce the
+ * "passthrough-only" gap (session enters XR successfully but the stream never composites, and
+ * the app has no way to tell that apart from a slow-but-fine connect).
  *
  * Imports/re-exports the real SDK's concrete entry file (`@nvidia/cloudxr/build/cloudxr.js`),
  * not the bare `'@nvidia/cloudxr'` specifier: webpack.app-mock.js aliases that bare specifier to
@@ -47,12 +51,16 @@ export function createSession(
   delegates: CloudXR.SessionDelegates
 ): MockCloudXR {
   activeSession = createMockCloudXRSession(options, delegates);
+  if (typeof window !== 'undefined' && window.__mockCloudXRConnectDelayMs !== undefined) {
+    activeSession.connectWait(window.__mockCloudXRConnectDelayMs);
+  }
   return activeSession;
 }
 
 declare global {
   interface Window {
     __mockCloudXRFail?: (message?: string) => void;
+    __mockCloudXRConnectDelayMs?: number;
   }
 }
 
