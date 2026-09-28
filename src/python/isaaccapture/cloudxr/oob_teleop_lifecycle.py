@@ -102,7 +102,7 @@ class OobLifecycle:
         self.connect_at: float | None = None
         self.browser_probe_after: float | None = None
 
-        # Wall-clock timestamps exported in lifecycle status.
+        # Wall-clock status timestamps and latest prerequisite observations.
         self.last_adb_at: float | None = None
         self.last_network_at: float | None = None
         self.last_rules_at: float | None = None
@@ -129,7 +129,7 @@ class OobLifecycle:
         self.attempts = 0
 
     async def _publish(self, health: str, state: str, reason: str, **flags) -> None:
-        # A healthy session failing again starts a fresh, fully budgeted recovery episode.
+        # Failure after a recovered browser/active session gets a fresh retry budget.
         if health == "degraded" and self._last_health in {"browser_ready", "active"}:
             self._restart_episode()
         self._last_health = health
@@ -249,7 +249,7 @@ class OobLifecycle:
         await asyncio.shield(task)
 
     async def _ensure_coturn(self) -> bool:
-        """Ensure the TURN listener is healthy; return whether it was restarted."""
+        """Ensure the TURN listener is healthy; return whether a process was launched."""
         if not self.usb_local or self.turn_port is None:
             return False
         if self.coturn is not None and self.coturn.poll() is None:
@@ -485,9 +485,9 @@ class OobLifecycle:
     async def run(self) -> None:
         """Keep one headset recovered through ADB, browser, and streaming states.
 
-        The first ready headset stays pinned while unrelated devices are ignored. Routine
-        transport and browser failures publish degraded state and retry until cancellation;
-        unexpected implementation failures propagate after owned resources are cleaned up.
+        The first ready headset stays pinned while unrelated devices are ignored. Recoverable
+        failures run bounded retry episodes, then observe until a meaningful change starts a
+        new episode. The loop runs until cancelled and always cleans up its owned resources.
         """
         token = adb.SELECTED_ADB_SERIAL.set(self.selected) if self.selected else None
         try:
@@ -649,7 +649,7 @@ class OobLifecycle:
                     await self.sleep(self.config.interval_sec)
                     continue
                 try:
-                    # ACTIVE and VERIFYING_BROWSER first revalidate their USB substrate.
+                    # In USB-local mode, ACTIVE/VERIFYING_BROWSER revalidate USB first.
                     if self.browser_ready or self.connect_dispatched:
                         await self._check_usb_prerequisites()
                     if self.browser_ready:
@@ -659,7 +659,7 @@ class OobLifecycle:
                     elif self.connect_dispatched:
                         await self._verify_browser()
                     else:
-                        # PREPARING_DEVICE rebuilds USB before AUTOMATING_BROWSER.
+                        # PREPARING_DEVICE wakes, rebuilds only in USB-local mode, then automates.
                         self.attempts += 1
                         await self._publish(
                             "degraded",
