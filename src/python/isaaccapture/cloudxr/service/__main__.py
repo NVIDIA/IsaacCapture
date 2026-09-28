@@ -139,7 +139,7 @@ def _oob_preflight(args: argparse.Namespace) -> str | None:
     ``--host-client``               client served at ``https://<lan>:<port>/client/``
     ``--setup-oob``                 OOB hub + CDP automation; GitHub Pages URL
     ``--setup-oob --host-client``   OOB hub + CDP; client on the WSS proxy
-    ``--setup-oob --usb-local``     OOB hub + CDP; adb-reverse + coturn; /client/ on WSS
+    ``--setup-oob --usb-local``     OOB hub + CDP; adb-reverse + coturn; HTTPS UI on USB_UI_PORT
     ==============================  ==================================================
     """
     from ..oob_teleop_adb import (  # noqa: PLC0415

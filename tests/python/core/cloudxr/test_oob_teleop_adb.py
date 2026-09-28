@@ -9,6 +9,7 @@ import asyncio
 import json
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,26 +27,6 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
     require_coturn_available,
     run_adb_headset_bookmark,
 )
-
-
-@pytest.mark.asyncio
-async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
-    """A dropped CDP connection removes its forward without blocking WSS."""
-    loop_thread = threading.get_ident()
-    cleanup_calls: list[tuple[int, int]] = []
-
-    def remove_forward(port: int) -> None:
-        cleanup_calls.append((port, threading.get_ident()))
-
-    with (
-        patch("websockets.asyncio.client.connect", side_effect=OSError("CDP closed")),
-        patch.object(adb_module, "_adb_forward_remove", side_effect=remove_forward),
-    ):
-        await adb_module._monitor_teleop_error_banner("ws://test", 9222)
-
-    assert len(cleanup_calls) == 1
-    assert cleanup_calls[0][0] == 9222
-    assert cleanup_calls[0][1] != loop_thread
 
 
 @pytest.fixture(autouse=True)
@@ -587,7 +568,7 @@ def test_network_probe_transport_exceptions(error):
         assert probe_headset_network().state is HeadsetNetworkState.ADB_UNAVAILABLE
 
 
-async def test_wifi_monitor_ignores_adb_disconnect(capsys):
+async def test_wifi_monitor_ignores_adb_disconnect(caplog):
     present = HeadsetNetworkProbe(
         HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
     )
@@ -610,10 +591,10 @@ async def test_wifi_monitor_ignores_adb_disconnect(capsys):
         await asyncio.sleep(0.02)
         task.cancel()
         await task
-    assert "Wi-Fi dropped" not in capsys.readouterr().err
+    assert not any("Wi-Fi dropped" in record.message for record in caplog.records)
 
 
-async def test_monitor_headset_wifi_warns_on_drop(capsys) -> None:
+async def test_monitor_headset_wifi_warns_on_drop(caplog) -> None:
     # Sequence: had ifaces → still ifaces → drops → still dropped.
     present = HeadsetNetworkProbe(
         HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
@@ -638,24 +619,23 @@ async def test_monitor_headset_wifi_warns_on_drop(capsys) -> None:
         # Windows, asyncio.sleep resolution (~15ms timer tick) plus to_thread
         # dispatch makes the two loop iterations needed to detect the drop
         # blow past a 50ms budget.
-        out = ""
         for _ in range(200):  # up to ~2s
             await asyncio.sleep(0.01)
-            out += capsys.readouterr().err
-            if "Headset Wi-Fi dropped" in out:
+            if any(
+                "Headset Wi-Fi dropped" in record.message for record in caplog.records
+            ):
                 break
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
-    out += capsys.readouterr().err
-    assert "Headset Wi-Fi dropped" in out
-    # Reason should be spelled out so operators don't think USB-local removed the WiFi requirement.
-    assert "required even in USB-local mode" in out
+    messages = [record.message for record in caplog.records]
+    assert any("Headset Wi-Fi dropped" in message for message in messages)
+    assert any("required even in USB-local mode" in message for message in messages)
 
 
-async def test_monitor_headset_wifi_silent_when_steady(capsys) -> None:
+async def test_monitor_headset_wifi_silent_when_steady(caplog) -> None:
     async def immediate(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
@@ -677,7 +657,7 @@ async def test_monitor_headset_wifi_silent_when_steady(capsys) -> None:
             await task
         except asyncio.CancelledError:
             pass
-    assert capsys.readouterr().err == ""
+    assert not any("Wi-Fi dropped" in record.message for record in caplog.records)
 
 
 # Coturn watchdog (H7) -------------------------------------------------------
@@ -706,7 +686,7 @@ def test_teleop_error_hint(banner: str, needle: str) -> None:
         assert hint == ""
 
 
-async def test_watch_coturn_restarts_once_then_gives_up(capsys) -> None:
+async def test_watch_coturn_restarts_once_then_gives_up(caplog) -> None:
     dead_proc = MagicMock()
     dead_proc.poll.return_value = 1
     dead_proc.returncode = 1
@@ -735,4 +715,33 @@ async def test_watch_coturn_restarts_once_then_gives_up(capsys) -> None:
         await asyncio.wait_for(task, timeout=1.0)
     assert mock_start.call_count == 1
     assert proc_box[0] is new_proc
-    assert "died again" in capsys.readouterr().err
+    assert any("died again" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
+    """A dropped CDP connection removes its forward without blocking WSS."""
+    loop_thread = threading.get_ident()
+    cleanup_calls: list[tuple[int, int]] = []
+
+    def remove_forward(port: int) -> None:
+        cleanup_calls.append((port, threading.get_ident()))
+
+    async def off_loop(fn, *args):
+        # Own the worker so pytest-asyncio does not inherit a pending default
+        # executor thread from the module's other ADB tests.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return await asyncio.get_running_loop().run_in_executor(
+                pool, lambda: fn(*args)
+            )
+
+    with (
+        patch("websockets.asyncio.client.connect", side_effect=OSError("CDP closed")),
+        patch.object(adb_module, "_adb_forward_remove", side_effect=remove_forward),
+        patch.object(adb_module.asyncio, "to_thread", side_effect=off_loop),
+    ):
+        await adb_module._monitor_teleop_error_banner("ws://test", 9222)
+
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0][0] == 9222
+    assert cleanup_calls[0][1] != loop_thread

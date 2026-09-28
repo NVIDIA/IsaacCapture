@@ -30,7 +30,6 @@ import shutil
 import socket
 import stat
 import subprocess
-import sys
 import time
 import urllib.request
 from contextvars import ContextVar
@@ -321,15 +320,9 @@ async def monitor_headset_wifi(*, poll_seconds: float = 5.0) -> None:
             and current is HeadsetNetworkState.NO_NETWORK
         ):
             log.warning(
-                "Headset network interface dropped — WebRTC will fail until it reconnects"
-            )
-            print(
-                "\n\033[33m[runtime] Headset Wi-Fi dropped — required even in "
-                "USB-local mode. No traffic flows over Wi-Fi (everything goes "
-                "over the USB cable via adb reverse), but Chromium's WebRTC "
-                "needs a non-loopback interface for ICE. Reconnect any network "
-                "(no internet needed); WebRTC will recover.\033[0m\n",
-                file=sys.stderr,
+                "Headset Wi-Fi dropped — required even in USB-local mode. "
+                "Chromium's WebRTC needs a non-loopback interface for ICE; "
+                "reconnect any network (no internet needed)."
             )
         previous = current
 
@@ -374,13 +367,11 @@ def assert_headset_awake(*, timeout: float = 15.0) -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    print(
-        "\n\033[33mHeadset appears to be asleep "
-        f"(wakefulness={wake or '?'}).\n"
-        "Please put on the headset, or cover the proximity sensor "
-        "(e.g. with a piece of tape) so the device stays awake.\n"
-        f"Waiting up to {timeout:.0f}s for the device to wake...\033[0m\n",
-        file=sys.stderr,
+    log.warning(
+        "Headset appears asleep (wakefulness=%s). Put it on or cover the "
+        "proximity sensor; waiting up to %.0fs for it to wake.",
+        wake or "?",
+        timeout,
     )
 
     deadline = time.monotonic() + timeout
@@ -1155,20 +1146,14 @@ async def watch_coturn(
             _tail_file(log_path, 20),
         )
         if restarted:
-            print(
-                "\n\033[33m[runtime] coturn died again — leaving down. "
-                f"Inspect {log_path} for the cause.\033[0m\n",
-                file=sys.stderr,
-            )
+            log.error("coturn died again — leaving down. Inspect %s", log_path)
             return
         restarted = True
         new_proc = start_coturn(turn_port, user, credential)
         proc_box[0] = new_proc
         if new_proc is None:
-            print(
-                "\n\033[33m[runtime] coturn died and could not be restarted "
-                "— WebRTC will fail with no relay candidates.\033[0m\n",
-                file=sys.stderr,
+            log.error(
+                "coturn died and could not be restarted — WebRTC has no relay candidates"
             )
             return
         log.info("coturn restarted (pid=%d)", new_proc.pid)
@@ -2064,14 +2049,8 @@ async def _monitor_teleop_error_banner(ws_url: str, local_port: int) -> None:
                 if banner and banner != last_banner:
                     log.warning("Teleop client error: %s", banner)
                     extra = _teleop_error_hint(banner)
-                    # Mirror to stderr so the operator sees mid-stream errors
-                    # in the console, not only in the server log file.
-                    print(
-                        f"\n\033[33mTeleop client error: {banner}\033[0m\n"
-                        + (f"\033[33m  → {extra}\033[0m\n" if extra else ""),
-                        file=sys.stderr,
-                        flush=True,
-                    )
+                    if extra:
+                        log.warning("Teleop client error hint: %s", extra)
                 last_banner = banner
     except asyncio.CancelledError:
         log.info("monitor: cancelled")

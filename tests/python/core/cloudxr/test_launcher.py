@@ -600,7 +600,7 @@ class TestNothingRunning:
 
         assert launcher.owns_runtime is True
         mocks["popen"].assert_called_once()
-        mocks["static_client"].assert_called_once_with()
+        mocks["static_client"].assert_called_once_with(require_health_probe=False)
 
     def test_run_embedded_stops_what_it_started(self, tmp_path):
         with _live(False), mock_service_deps(tmp_path, ready=True) as mocks:

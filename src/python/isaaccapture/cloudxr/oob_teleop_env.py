@@ -5,13 +5,17 @@
 
 from __future__ import annotations
 
+import http.server
 import logging
 import math
 import os
 import re
 import socket
+import ssl
 import subprocess
 import sys
+import threading
+import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
@@ -113,12 +117,16 @@ CHROME_INSPECT_DEVICES_URL = "chrome://inspect/#devices"
 #
 # "USB-local" means: the headset reaches the PC over loopback (127.0.0.1) via
 # ``adb reverse``.  Static assets live under ``TELEOP_WEB_CLIENT_STATIC_DIR`` or
-# default ``~/.cloudxr/static-client`` (downloaded from NVIDIA GitHub Pages if
-# missing) and are served at ``/client/`` on the WSS proxy (``PROXY_PORT``),
-# the same path as ``--host-client``.
+# default ``~/.cloudxr/static-client`` (downloaded from NVIDIA GitHub Pages if missing).
+# Keep this listener, its port resolver, and lifecycle reverse rules together
+# when reconciling hosted-client changes from main. Python serves them over
+# HTTPS on the resolved USB UI port (:func:`usb_ui_port`,
+# default 8080; override via the ``USB_UI_PORT`` env var) with the same PEM as
+# the WSS proxy.
 # ---------------------------------------------------------------------------
 
 USB_HOST = "127.0.0.1"  # serverIP seen by the headset (its own localhost)
+USB_UI_DEFAULT_PORT = 8080  # HTTPS static WebXR UI (loopback)
 USB_BACKEND_DEFAULT_PORT = 49100  # CloudXR backend (webrtc client direct connection)
 USB_TURN_DEFAULT_PORT = 3478  # coturn TURN server port (adb reverse'd to headset)
 USB_TURN_USER = "cloudxr"  # TURN username
@@ -410,6 +418,19 @@ def wss_proxy_port() -> int:
     return WSS_PROXY_DEFAULT_PORT
 
 
+def usb_ui_port() -> int:
+    """TCP port for the USB-local WebXR static HTTPS server.
+
+    Reads the ``USB_UI_PORT`` environment variable if set, else falls back to
+    :data:`USB_UI_DEFAULT_PORT` (8080).  Override this when something else on
+    the host needs port 8080 (e.g. a Viser/Meshcat viewer running alongside).
+    """
+    raw = os.environ.get("USB_UI_PORT", "").strip()
+    if raw:
+        return parse_env_port("USB_UI_PORT", raw)
+    return USB_UI_DEFAULT_PORT
+
+
 def usb_backend_port() -> int:
     """TCP port for the USB-local CloudXR backend (native client direct connection).
 
@@ -595,12 +616,8 @@ def oob_progress(stage: str, msg: str) -> None:
     is in its sequence of steps without these lines competing with the
     success banner (stdout) or error prints (red).
 
-    A print(), deliberately, and one the repo root AGENTS.md names as such:
-    progress lines are terminal UX, not diagnostics. Routing them through a
-    logger puts them behind the console threshold, so an operator who had
-    called set_console_level("warning") -- a supported, public thing to do --
-    lost every phase marker in a sequence that drives adb, coturn and a
-    headset browser in turn. Do not "migrate" this one.
+    This stays a print so progress remains visible when the console log level
+    is set to warning.
     """
     print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
@@ -617,13 +634,14 @@ def print_oob_hub_startup_banner(
         lan_host: PC LAN address (WiFi mode) or ``"127.0.0.1"`` (USB-local mode).
         usb_local: When ``True``, adjust the banner to describe the USB-local
             topology: everything reachable from the headset via ``adb reverse``
-            on loopback; WebXR UI at ``/client/`` on the WSS proxy.
+            on loopback; WebXR UI from ``TELEOP_WEB_CLIENT_STATIC_DIR`` (HTTPS, same PEM as WSS).
         web_client_base: Override the WebXR client base URL in the bookmark.
             When ``None`` (default), uses the versioned GitHub Pages client
-            (WiFi mode) or ``https://localhost:<PROXY_PORT>/client`` (USB-local).
+            (WiFi mode) or the USB-local HTTPS origin (USB-local mode).
             ``TELEOP_WEB_CLIENT_BASE`` env var still takes precedence over this.
     """
     port = wss_proxy_port()
+    ui_port = usb_ui_port()
     backend_port = usb_backend_port()
     turn_port = usb_turn_port()
     token = os.environ.get("CONTROL_TOKEN") or None
@@ -635,7 +653,7 @@ def print_oob_hub_startup_banner(
     if usb_local:
         web_base = (
             os.environ.get("TELEOP_WEB_CLIENT_BASE", "").strip()
-            or f"https://localhost:{port}/client"
+            or f"https://localhost:{ui_port}"
         )
     elif web_client_base is not None:
         web_base = web_client_base
@@ -687,12 +705,13 @@ def print_oob_hub_startup_banner(
     if usb_local:
         print(
             "  USB-local mode: adb reverse active for ports "
-            f"{port}/tcp (WSS + /client/), "
+            f"{ui_port}/tcp (WebXR static UI — HTTPS), "
+            f"{port}/tcp (WSS), "
             f"{backend_port}/tcp (backend), "
             f"{turn_port}/tcp (TURN relay — coturn)."
         )
         print(
-            "  The launcher has started coturn automatically "
+            "  The launcher has started the WebXR static HTTPS server + coturn automatically "
             "(see coturn-cloudxr-3478.log if CONNECT fails)."
         )
     else:
@@ -850,7 +869,7 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
     """Best-effort host preflight (port conflicts + ufw).
 
     In ``--usb-local`` mode this is fail-fast: a port conflict on any of
-    the three required loopback ports (WSS / backend / TURN) raises
+    the four required loopback ports (WSS / UI / backend / TURN) raises
     :class:`RuntimeError` so the launcher exits before sinking time into
     a setup that can't possibly stream. In WiFi mode the same port-busy
     case stays warn-only — the WSS bind will fail loudly on its own with
@@ -872,6 +891,7 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
     if usb_local:
         targets: list[tuple[int, str]] = [
             (wss_proxy_port(), "127.0.0.1"),
+            (usb_ui_port(), "127.0.0.1"),
             (usb_backend_port(), "127.0.0.1"),
             (usb_turn_port(), "127.0.0.1"),
         ]
@@ -885,7 +905,7 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
             raise RuntimeError(
                 f"USB-local: required port(s) {busy} already in use — cannot proceed.\n"
                 f"Kill the holder (`ss -tulpn | grep -E '{ports_re}'`) or override "
-                "via PROXY_PORT / USB_BACKEND_PORT / USB_TURN_PORT, "
+                "via PROXY_PORT / USB_UI_PORT / USB_BACKEND_PORT / USB_TURN_PORT, "
                 "then retry."
             )
         log.warning("preflight: port(s) already in use: %s", busy)

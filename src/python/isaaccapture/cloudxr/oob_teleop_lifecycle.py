@@ -23,7 +23,7 @@ from .oob_teleop_env import (
     usb_ui_port,
 )
 
-log = logging.getLogger("oob-teleop-lifecycle")
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

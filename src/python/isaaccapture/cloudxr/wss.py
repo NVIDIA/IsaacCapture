@@ -598,9 +598,11 @@ async def run(
         # would stack another handler on top and duplicate every line.
         _handler_loggers = [
             log,
-            # Route oob-teleop-adb and oob-teleop-env logs to the same destination
+            # Keep OOB transitions in the per-session log.
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_adb"),
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_env"),
+            logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub"),
+            logging.getLogger("isaaccapture.cloudxr.oob_teleop_lifecycle"),
         ]
         for _attached_log in _handler_loggers:
             if not logging_enabled():
