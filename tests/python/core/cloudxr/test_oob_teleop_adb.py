@@ -836,3 +836,176 @@ async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
     assert len(cleanup_calls) == 1
     assert cleanup_calls[0][0] == 9222
     assert cleanup_calls[0][1] != loop_thread
+
+
+# ============================================================================
+# CDP: _discover_devtools_socket / _close_stale_teleop_tabs
+#
+# _discover_devtools_socket mocks only `_run_adb` (no real device). _close_stale_teleop_tabs
+# drives the real function against a genuine local HTTP server standing in for Chromium's CDP
+# `/json` endpoint - only the two `adb forward` calls either side of it are mocked, since there's
+# no real device - so the tab-matching/close-request logic itself is exercised for real rather
+# than asserted via mocked call arguments.
+# ============================================================================
+
+import http.server  # noqa: E402
+import json  # noqa: E402
+import threading  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from typing import ClassVar  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    _CDP_LOCAL_PORT,
+    _close_stale_teleop_tabs,
+    _discover_devtools_socket,
+)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_prefers_weblayer_over_generic(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @chrome_devtools_remote\n"
+        "1: 00000003 00000000 00010000 0001 01 12346 @weblayer_devtools_remote_777\n"
+    )
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_777"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_falls_back_to_first_candidate(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @some.custom_devtools_remote\n"
+    )
+    assert _discover_devtools_socket() == "some.custom_devtools_remote"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_no_candidates_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @unrelated_socket\n"
+    )
+    assert _discover_devtools_socket() is None
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_adb_unreachable_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = None
+    assert _discover_devtools_socket() is None
+
+
+class _FakeCdpHandler(http.server.BaseHTTPRequestHandler):
+    """Stands in for Chromium's CDP HTTP endpoint: GET /json (tab list) and GET /json/close/<id>."""
+
+    tabs: ClassVar[list[dict]] = []
+    closed_ids: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        if self.path == "/json":
+            body = json.dumps(self.tabs).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/json/close/"):
+            self.closed_ids.append(self.path.removeprefix("/json/close/"))
+            self.send_response(200)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(
+        self, *args
+    ) -> None:  # silence BaseHTTPRequestHandler's request logging
+        pass
+
+
+@contextmanager
+def _fake_cdp_server(tabs: list[dict]):
+    """Serves *tabs* on `_CDP_LOCAL_PORT` for the duration of the block; yields the handler class
+    so the test can inspect `.closed_ids` after."""
+    _FakeCdpHandler.tabs = tabs
+    _FakeCdpHandler.closed_ids = []
+    # Must bind the real _CDP_LOCAL_PORT, not an OS-assigned one: _close_stale_teleop_tabs()
+    # hardcodes that constant internally rather than taking a port parameter.
+    server = http.server.HTTPServer(("localhost", _CDP_LOCAL_PORT), _FakeCdpHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield _FakeCdpHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_closes_only_oob_tabs(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [
+        {"id": "stale-1", "url": "https://headset.local/?oobEnable=1"},
+        {"id": "unrelated", "url": "https://headset.local/some-other-page"},
+        {"id": "stale-2", "url": "https://headset.local/?oobEnable=1&codec=av1"},
+    ]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+
+    assert closed == 2
+    assert sorted(handler.closed_ids) == ["stale-1", "stale-2"]
+    mock_forward.assert_called_once_with("chrome_devtools_remote", _CDP_LOCAL_PORT)
+    mock_remove.assert_called_once_with(_CDP_LOCAL_PORT)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_matches_closes_nothing(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [{"id": "unrelated", "url": "https://headset.local/some-other-page"}]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+
+    assert closed == 0
+    assert handler.closed_ids == []
+    mock_remove.assert_called_once_with(_CDP_LOCAL_PORT)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_devtools_socket_returns_zero(
+    mock_discover: MagicMock,
+) -> None:
+    mock_discover.return_value = None
+    assert _close_stale_teleop_tabs() == 0
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_forward_failure_returns_zero_without_remove(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    """`adb forward` failing means no rule was ever set up - `_adb_forward_remove` (a `--remove`
+    of that rule) is therefore not called, unlike the success-then-cleanup path above."""
+    mock_discover.return_value = "chrome_devtools_remote"
+    mock_forward.side_effect = OobAdbError("adb forward failed")
+    assert _close_stale_teleop_tabs() == 0
+    mock_remove.assert_not_called()
