@@ -136,4 +136,4 @@ To add a new third-party dependency:
 
 3. If you need to preserve a specific version, use the full commit SHA in GIT_TAG
 
-4. Update the [Build from Source](../docs/source/getting_started/build_from_source.rst) doc with any new requirements
+4. Update the [Build from Source](../docs/source/getting_started/build_from_source/index.rst) doc with any new requirements

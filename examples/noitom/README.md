@@ -58,9 +58,9 @@ the standard `full_body` channel, so the generic replay script can play it back:
 ![Noitom MCAP replay](assets/replay.gif)
 
 ```bash
-cd examples/mcap_record_replay/python
-uv sync
-uv run python replay_full_body.py ../../noitom/recordings/noitom_full_body.mcap
+uv pip install -e ./examples/mcap_record_replay
+python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
+  examples/noitom/recordings/noitom_full_body.mcap
 ```
 
 ## Example 2: Teleop
