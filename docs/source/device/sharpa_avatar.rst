@@ -54,7 +54,7 @@ Prerequisites
 
 - **Linux x86_64** (tested on Ubuntu 22.04).
 - **Pinned production Avatar SDK** (``avatar-sdk`` 1.7.3-17) from Sharpa's
-  signed APT repository. The install script retrieves it; do not substitute
+  signed APT repository. ``install_avatar_sdk.sh`` retrieves it; do not substitute
   ``avatar-sdk-dev`` or ``avatar-sdk-beta``.
 - **Sharpa Avatar gloves** powered and connected over USB. Transport settings
   are selected in ``<sdk-root>/share/sdk_config.json`` (default root
@@ -69,20 +69,23 @@ into this repository or the plugin install prefix.
 Installation
 ------------
 
-From the Isaac Teleop root, ``install.sh`` checks (and if needed installs)
-the pinned production SDK, then configures, builds, and installs the plugin:
-
-.. code-block:: bash
-
-   ./src/plugins/sharpa_avatar/install.sh
-
-Pass ``--build-dir <path>`` to reuse a non-default CMake build directory.
-``AVATAR_SDK_ROOT`` (or ``-DAVATAR_SDK_ROOT``) selects a non-default SDK
-tree; that tree must already be complete. To install only the SDK:
+Install the pinned production SDK first if it is not already present:
 
 .. code-block:: bash
 
    ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
+
+Then use the canonical top-level CMake workflow from the Isaac Teleop root.
+``-DAVATAR_SDK_ROOT`` selects a non-default SDK tree; that tree must already
+be complete:
+
+.. code-block:: bash
+
+   cmake -B build \
+      -DBUILD_PLUGIN_SHARPA_AVATAR=ON \
+      -DAVATAR_SDK_ROOT=/opt/avatar-sdk
+   cmake --build build --parallel
+   cmake --install build
 
 ``-DBUILD_PLUGIN_SHARPA_AVATAR=ON`` without a usable SDK under the selected
 root skips this plugin and the rest of Isaac Teleop still configures. See
@@ -199,7 +202,8 @@ Troubleshooting
        ``install_avatar_sdk.sh``.
    * - CMake skipped the plugin
      - The SDK is missing under the selected root. Run
-       ``install_avatar_sdk.sh`` (or ``install.sh``) and reconfigure.
+       ``install_avatar_sdk.sh`` and reconfigure with
+       ``-DBUILD_PLUGIN_SHARPA_AVATAR=ON``.
    * - CMake rejected the Avatar SDK
      - Install the pinned production package, or point ``AVATAR_SDK_ROOT``
        at a complete SDK tree. A ``-dev`` / ``-beta`` package at
@@ -208,7 +212,7 @@ Troubleshooting
      - Run ``install_udev_rules.sh`` on the host, then unplug and reconnect
        the glove.
    * - Plugin binary is not found
-     - Run ``install.sh``. The example looks under
+     - Build and install through the top-level CMake workflow. The example looks under
        ``install/plugins/sharpa_avatar/``.
    * - HUMAN / RAW / ROBOT stay offline
      - Power the gloves, and stop Avatar Desktop, ``avatar-backend``, or

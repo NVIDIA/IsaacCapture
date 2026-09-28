@@ -102,17 +102,21 @@ fi
 
 key_download="$(mktemp)"
 key_dearmored="$(mktemp)"
-trap 'rm -f "$key_download" "$key_dearmored"' EXIT
+key_gnupghome="$(mktemp -d)"
+trap 'rm -rf "$key_download" "$key_dearmored" "$key_gnupghome"' EXIT
 
 echo "==> Downloading Sharpa Avatar SDK signing key"
 curl -fsSL "$key_url" -o "$key_download"
 actual_fingerprints="$(
-  gpg --show-keys --with-colons "$key_download" 2>/dev/null \
-    | awk -F: '$1 == "fpr" { print $10 }' \
+  gpg --batch --homedir "$key_gnupghome" --import "$key_download" 2>/dev/null
+  gpg --batch --homedir "$key_gnupghome" --list-keys --with-colons \
+    | awk -F: '$1 == "pub" { pending=1; next } pending && $1 == "fpr" { print $10; pending=0 }' \
     | LC_ALL=C sort -u
 )"
+expected_key_args=()
 while IFS= read -r expected; do
   [[ -z "$expected" ]] && continue
+  expected_key_args+=("$expected")
   found=0
   while IFS= read -r actual; do
     if [[ "$actual" == "$expected" ]]; then
@@ -122,7 +126,8 @@ while IFS= read -r expected; do
   done <<< "$actual_fingerprints"
   [[ "$found" -eq 1 ]] || die "Signing key is missing pinned fingerprint ${expected}."
 done <<< "$expected_fingerprints"
-gpg --batch --yes --dearmor --output "$key_dearmored" "$key_download"
+gpg --batch --homedir "$key_gnupghome" --yes --export \
+  --output "$key_dearmored" "${expected_key_args[@]}"
 
 echo "==> Configuring Sharpa Avatar SDK APT repository"
 "${sudo_cmd[@]}" install -d -m 0755 /etc/apt/keyrings
@@ -140,7 +145,7 @@ echo "==> Installing avatar-sdk $production_version"
 
 # --allow-downgrades so re-running always converges on the pinned version even
 # if a newer avatar-sdk is already installed.
-"${sudo_cmd[@]}" apt-get install -y --allow-downgrades "${apt_source_options[@]}" "avatar-sdk=$production_version"
+"${sudo_cmd[@]}" apt-get install -y --allow-downgrades "avatar-sdk=$production_version"
 
 check_avatar_sdk "$sdk_default_root"
 
