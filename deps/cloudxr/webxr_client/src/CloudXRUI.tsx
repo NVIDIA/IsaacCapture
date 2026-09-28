@@ -355,11 +355,6 @@ export default function CloudXR3DUI({
     headOffsetRef.current.set(localX, panelHeight, localZ);
   }, [controlPanelPosition, controlPanelLayout]);
 
-  // True for every useFrame tick between a drag's first and last update - see handleApply and
-  // its use in the useFrame block below for why the continuous tracking override must yield to
-  // an in-progress drag instead of fighting it frame-by-frame.
-  const isDraggingHeadOffsetRef = useRef(false);
-
   /**
    * Projects *offset* (see headOffsetRef's doc comment) into world space relative to *cam*.
    *
@@ -384,6 +379,31 @@ export default function CloudXR3DUI({
   }, []);
 
   /**
+   * The one place *offset* actually gets applied to groupRef.position from a head-relative
+   * offset (a discrete event - reset, or a drag's final release - never the continuous
+   * per-frame tracking in useFrame below, which calls worldPositionFromHeadOffset directly and
+   * silently to avoid spamming the console every frame). Logs all three poses in a single line
+   * so a test can assert the panel actually lands near the headset instead of at a fixed world
+   * coordinate - see the console lines, not the scene graph, since there's no other way to
+   * observe a Three.js object's world position from outside the page.
+   */
+  const applyPanelPosition = useCallback(
+    (cam: Camera, offset: Vector3): Vector3 => {
+      const target = worldPositionFromHeadOffset(cam, offset);
+      if (groupRef.current) {
+        groupRef.current.position.copy(target);
+      }
+      console.debug(
+        `[CloudXRUI] headset=(${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)}) ` +
+          `relative=(${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)}) ` +
+          `world=(${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
+      );
+      return target;
+    },
+    [worldPositionFromHeadOffset]
+  );
+
+  /**
    * Un-hides the panel, resets headOffsetRef back to the config-derived default (discarding any
    * drag-derived offset - a reset should mean "back to the configured position", not "keep
    * whatever I last dragged to"), and repositions it via worldPositionFromHeadOffset. There is no
@@ -403,33 +423,23 @@ export default function CloudXR3DUI({
         controlPanelLayout
       );
       headOffsetRef.current.set(localX, panelHeight, localZ);
-      const target = worldPositionFromHeadOffset(cam, headOffsetRef.current);
-      groupRef.current.position.copy(target);
+      applyPanelPosition(cam, headOffsetRef.current);
       setPanelHidden(false);
-      // Logged so a test can assert the panel actually lands near the headset instead of at a
-      // fixed world coordinate - see the console lines, not the scene graph, since there's no
-      // other way to observe a Three.js object's world position from outside the page. Not
-      // logged from the continuous trackHeadset path in useFrame below - that would spam the
-      // console every frame instead of marking a discrete reset event.
-      console.debug(
-        `[CloudXRUI] headset position: (${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)})`
-      );
-      console.debug(
-        `[CloudXRUI] panel reset to: (${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
-      );
     },
-    [controlPanelPosition, controlPanelLayout, worldPositionFromHeadOffset]
+    [controlPanelPosition, controlPanelLayout, applyPanelPosition]
   );
 
   /**
    * Handle's own apply, run at priority -1 (before this component's face-camera/tracking
    * useFrame below, which runs at the default priority 0) every frame a drag is active. Always
    * copies position (matching the original applyPositionSkipRotation it replaces - quaternion is
-   * deliberately never copied, see below). While trackHeadset is on, also converts the dropped
-   * world position back into a head-relative offset on the drag's last update, so the continuous
-   * tracking in useFrame picks up from there instead of snapping back to the old offset; the
-   * isDraggingHeadOffsetRef flag tells that useFrame block to stand down for the drag's duration
-   * instead of fighting it frame-by-frame (Handle's apply already ran this frame, first).
+   * deliberately never copied, see below). While trackHeadset is on, also converts the dragged
+   * world position back into a head-relative offset on every update, not just the last one: the
+   * continuous tracking in useFrame recomputes world position from headOffsetRef using this same
+   * frame's camera pose, so once this runs (first, priority -1) it reproduces the exact position
+   * just set here rather than fighting it - no separate "drag in progress" flag needed to make
+   * the two agree. Logging only happens on state.last, so an active multi-frame drag doesn't
+   * spam the console on every intermediate update.
    *
    * Quaternion is skipped because of a @pmndrs/handle defaultApply quirk: defaultApply copies
    * state.current.quaternion to the target on every drag frame AND on drag release. With
@@ -444,11 +454,6 @@ export default function CloudXR3DUI({
       if (!trackHeadset) {
         return;
       }
-      if (!state.last) {
-        isDraggingHeadOffsetRef.current = true;
-        return;
-      }
-      isDraggingHeadOffsetRef.current = false;
       const forward = WORLD_FORWARD.clone().applyQuaternion(camera.quaternion);
       forward.y = 0;
       forward.normalize();
@@ -459,8 +464,14 @@ export default function CloudXR3DUI({
         target.position.z - camera.position.z
       ).applyQuaternion(yawQuat.clone().invert());
       headOffsetRef.current.set(worldDelta.x, target.position.y, worldDelta.z);
+      if (state.last) {
+        // Re-applies the same position target already holds (from state.current.position above)
+        // - this call exists for its single log line, going through the same applyPanelPosition
+        // every other offset change does, not because the position itself needs recomputing.
+        applyPanelPosition(camera, headOffsetRef.current);
+      }
     },
-    [trackHeadset, camera]
+    [trackHeadset, camera, applyPanelPosition]
   );
 
   useEffect(() => {
@@ -506,15 +517,16 @@ export default function CloudXR3DUI({
     if (needsInitialPlacement.current) {
       resetPanelRelativeToHead(state.camera);
       needsInitialPlacement.current = false;
-    } else if (trackHeadset && !isDraggingHeadOffsetRef.current) {
+    } else if (trackHeadset) {
       // Continuous version of the same reset: every frame instead of once, using whatever
-      // headOffsetRef currently holds (the config default, or wherever the operator last dragged
-      // to - see handleApply), and without the un-hide/logging side effects (calling
-      // resetPanelRelativeToHead here would force the panel visible every frame, defeating the
-      // hide-panel button, and would spam the console). Skipped entirely while a drag is active:
-      // Handle's own apply already ran this frame (priority -1, before this useFrame), and
-      // overwriting its result here would fight the drag instead of letting it own the position
-      // until release.
+      // headOffsetRef currently holds (the config default, or wherever the operator is currently
+      // dragging to - see handleApply, which updates it every frame too, not just on release),
+      // and without the un-hide/logging side effects (calling resetPanelRelativeToHead here would
+      // force the panel visible every frame, defeating the hide-panel button, and would spam the
+      // console). Runs even mid-drag: Handle's own apply already ran this frame (priority -1,
+      // before this useFrame) and updated headOffsetRef from the same camera pose this frame
+      // will use, so recomputing world position from it here reproduces what Handle just set
+      // instead of fighting it.
       groupRef.current.position.copy(
         worldPositionFromHeadOffset(state.camera, headOffsetRef.current)
       );
