@@ -1434,6 +1434,58 @@ limitations under the License.
               </div>
 
               <div class="config-section">
+                <label for="cloudxrReconnectEnabled" class="input-label">Retry on Error</label>
+                <div class="config-text">
+                  <input
+                    type="checkbox"
+                    id="cloudxrReconnectEnabled"
+                    class="config-input"
+                    style="width: auto; margin-right: 0.5em"
+                    aria-label="Retry on error: automatically reconnect a recoverable stream error instead of ending the session"
+                    checked
+                  />
+                  <span
+                    >Automatically reconnect a recoverable stream error instead of ending the
+                    session.</span
+                  >
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrReconnectMaxAttempts" class="input-label"
+                  >Retry Attempts (default: 3)</label
+                >
+                <input
+                  id="cloudxrReconnectMaxAttempts"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Max retry attempts"
+                  spellcheck="false"
+                  value="3"
+                />
+                <div class="config-text">Number of reconnect attempts before giving up.</div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrReconnectDelayMs" class="input-label"
+                  >Retry Wait Time (ms, default: 3000)</label
+                >
+                <input
+                  id="cloudxrReconnectDelayMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="100"
+                  placeholder="Delay before each retry in ms"
+                  spellcheck="false"
+                  value="3000"
+                />
+                <div class="config-text">Delay before each retry attempt, in milliseconds.</div>
+              </div>
+
+              <div class="config-section">
                 <label for="cloudxrAutoRefreshMode" class="input-label"
                   >Auto Refresh on Session End</label
                 >

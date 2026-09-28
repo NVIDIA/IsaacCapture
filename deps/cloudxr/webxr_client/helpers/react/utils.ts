@@ -66,6 +66,12 @@ export interface ReactUIConfig {
   headless?: boolean;
   /** Page-refresh behavior when the XR session ends. See {@link AutoRefreshMode}. */
   autoRefreshMode?: AutoRefreshMode;
+  /** When true, CloudXRComponent retries a recoverable stream error instead of giving up immediately. */
+  reconnectEnabled?: boolean;
+  /** Max retry attempts before giving up. Only used when reconnectEnabled is true. */
+  reconnectMaxAttempts?: number;
+  /** Delay between retry attempts in milliseconds. Only used when reconnectEnabled is true. */
+  reconnectDelayMs?: number;
   /** Active teleop project path (a key path in `TELEOP_PROJECTS`). */
   teleopPath: string;
 }

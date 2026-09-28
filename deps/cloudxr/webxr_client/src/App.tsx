@@ -1188,7 +1188,14 @@ function AppContent() {
                 applicationName={`Isaac Teleop Web Client (${config.teleopPath})`}
                 trackingFrameAdapter={recorder.adaptTrackingFrame}
                 iceServers={iceServersConfig}
-                reconnect={{}}
+                reconnect={
+                  config?.reconnectEnabled
+                    ? {
+                        maxAttempts: config.reconnectMaxAttempts,
+                        delayMs: config.reconnectDelayMs,
+                      }
+                    : undefined
+                }
                 onStatusChange={handleStatusChange}
                 onError={error => {
                   if (cloudXR2DUI) {

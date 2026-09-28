@@ -151,6 +151,8 @@ function sampleValid(key: string): string {
     'xrOffsetZ',
     'mediaPort',
     'streamTestDurationSeconds',
+    'reconnectMaxAttempts',
+    'reconnectDelayMs',
   ]);
   if (numeric.has(key)) return '1';
   const enums: Record<string, string> = {
@@ -170,6 +172,7 @@ function sampleValid(key: string): string {
     panelHiddenAtStart: 'true',
     headless: 'true',
     streamTestMode: 'warn',
+    reconnectEnabled: 'true',
   };
   return enums[key] ?? 'x';
 }

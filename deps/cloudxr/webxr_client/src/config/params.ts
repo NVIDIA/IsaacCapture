@@ -214,6 +214,25 @@ export const URL_PARAMS: UrlParam[] = [
     description: 'Reload page after session ends: never, clean, or any.',
   },
   {
+    key: 'reconnectEnabled',
+    elementId: 'cloudxrReconnectEnabled',
+    kind: 'checked',
+    isValid: isBool,
+    description: 'Retry a recoverable stream error instead of ending the session (true/false).',
+  },
+  {
+    key: 'reconnectMaxAttempts',
+    elementId: 'cloudxrReconnectMaxAttempts',
+    isValid: isNumber,
+    description: 'Max retry attempts before giving up.',
+  },
+  {
+    key: 'reconnectDelayMs',
+    elementId: 'cloudxrReconnectDelayMs',
+    isValid: isNumber,
+    description: 'Delay before each retry attempt, in milliseconds.',
+  },
+  {
     key: 'proxyUrl',
     elementId: 'proxyUrl',
     description: 'Proxy URL for routing (HTTPS); leave empty for direct WSS.',

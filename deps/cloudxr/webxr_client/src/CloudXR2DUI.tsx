@@ -186,6 +186,12 @@ export class CloudXR2DUI {
   private headlessInput!: HTMLInputElement;
   /** When to reload the page after the XR session ends (never / clean / any) */
   private autoRefreshModeSelect!: HTMLSelectElement;
+  /** Retry a recoverable stream error instead of ending the session */
+  private reconnectEnabledInput!: HTMLInputElement;
+  /** Max retry attempts before giving up */
+  private reconnectMaxAttemptsInput!: HTMLInputElement;
+  /** Delay before each retry attempt, in milliseconds */
+  private reconnectDelayMsInput!: HTMLInputElement;
   /** Button that clears stored settings and reloads to defaults. */
   private resetSettingsButton!: HTMLButtonElement;
   /** Container for the runtime-generated URL-parameter help list (optional in markup). */
@@ -489,6 +495,11 @@ export class CloudXR2DUI {
     this.replayPacingSelect = this.getElement<HTMLSelectElement>('replayPacing');
     this.headlessInput = this.getElement<HTMLInputElement>('cloudxrHeadless');
     this.autoRefreshModeSelect = this.getElement<HTMLSelectElement>('cloudxrAutoRefreshMode');
+    this.reconnectEnabledInput = this.getElement<HTMLInputElement>('cloudxrReconnectEnabled');
+    this.reconnectMaxAttemptsInput = this.getElement<HTMLInputElement>(
+      'cloudxrReconnectMaxAttempts'
+    );
+    this.reconnectDelayMsInput = this.getElement<HTMLInputElement>('cloudxrReconnectDelayMs');
     this.teleopModeSubtitle = this.getElement<HTMLElement>('teleopModeSubtitle');
     this.teleopProjectSelect = this.getElement<HTMLSelectElement>('teleopProjectSelect');
     this.resetSettingsButton = this.getElement<HTMLButtonElement>('resetSettingsButton');
@@ -553,6 +564,9 @@ export class CloudXR2DUI {
       streamTestDurationSeconds: 5,
       headless: false,
       autoRefreshMode: 'clean',
+      reconnectEnabled: true,
+      reconnectMaxAttempts: 3,
+      reconnectDelayMs: 3000,
       teleopPath: DEFAULT_TELEOP_PATH,
     };
   }
@@ -599,6 +613,9 @@ export class CloudXR2DUI {
       { el: this.showRecordingControlsSelect, key: 'showRecordingControls' },
       { el: this.replayPacingSelect, key: 'replayPacing' },
       { el: this.autoRefreshModeSelect, key: 'autoRefreshMode' },
+      { el: this.reconnectEnabledInput, key: 'reconnectEnabled' },
+      { el: this.reconnectMaxAttemptsInput, key: 'reconnectMaxAttempts' },
+      { el: this.reconnectDelayMsInput, key: 'reconnectDelayMs' },
     ];
   }
 
@@ -1066,6 +1083,15 @@ export class CloudXR2DUI {
         this.autoRefreshModeSelect.value,
         this.getDefaultConfiguration().autoRefreshMode ?? 'clean'
       ),
+      reconnectEnabled: this.reconnectEnabledInput.checked,
+      reconnectMaxAttempts: (() => {
+        const v = parseInt(this.reconnectMaxAttemptsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().reconnectMaxAttempts;
+      })(),
+      reconnectDelayMs: (() => {
+        const v = parseInt(this.reconnectDelayMsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().reconnectDelayMs;
+      })(),
       panelHiddenAtStart: this.panelHiddenAtStartSelect.value === 'true',
       teleopPath: this.teleopPath,
     };
