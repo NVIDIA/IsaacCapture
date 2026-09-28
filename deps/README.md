@@ -95,6 +95,15 @@ machine and are located via `find_package`.
 - **Build**: Header-only library
 - **License**: BSD-style
 
+### SPDX license list data
+- **Source**: https://github.com/spdx/license-list-data.git
+- **Version**: 31ba1a50e5397e00a304dbadc76531740e89ee48 (v3.29.0)
+- **Purpose**: reference license texts. The SBOM collector names a dependency's
+  license by matching the text that dependency ships against these; nothing from
+  this checkout is redistributed.
+- **Build**: data only, no build step.
+- **License**: CC0-1.0
+
 ### GLM
 - **Source**: https://github.com/g-truc/glm.git
 - **Version**: 1.0.1
