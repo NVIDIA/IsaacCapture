@@ -31,3 +31,14 @@ if (typeof performance !== 'undefined' && typeof performance.mark !== 'function'
   performance.getEntriesByName = () => [];
   performance.getEntriesByType = () => [];
 }
+
+/**
+ * `WebSocket` is a native global on Node 22+ but not on older Node (e.g. Node 20, which
+ * CI's web-client build job currently pins). Suites that talk to a real WebSocket server
+ * (controlChannel.test.ts) need a real client either way, so fill the gap with `ws` rather
+ * than only working on whichever Node happens to be running locally. No-op wherever the
+ * native global already exists.
+ */
+if (typeof WebSocket === 'undefined') {
+  global.WebSocket = require('ws');
+}
