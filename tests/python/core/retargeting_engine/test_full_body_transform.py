@@ -19,19 +19,19 @@ import pytest
 import numpy as np
 import numpy.testing as npt
 
-from isaacteleop.retargeting_engine.interface import TensorGroup
-from isaacteleop.retargeting_engine.interface.tensor_group import OptionalTensorGroup
-from isaacteleop.retargeting_engine.tensor_types import (
+from isaaccapture.retargeting_engine.interface import TensorGroup
+from isaaccapture.retargeting_engine.interface.tensor_group import OptionalTensorGroup
+from isaaccapture.retargeting_engine.tensor_types import (
     FullBodyInput,
     FullBodyInputIndex,
     NUM_BODY_JOINTS,
 )
-from isaacteleop.retargeting_engine.utilities import (
+from isaaccapture.retargeting_engine.utilities import (
     FullBodyTransform,
     correct_body_orientations,
     SKELETON_PROFILES,
 )
-from isaacteleop.retargeting_engine.utilities.full_body_transform import (
+from isaaccapture.retargeting_engine.utilities.full_body_transform import (
     BODY_PARENT_INDICES,
 )
 

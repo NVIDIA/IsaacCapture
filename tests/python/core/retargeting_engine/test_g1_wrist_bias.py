@@ -14,8 +14,8 @@ import math
 
 import pytest
 
-from isaacteleop.retargeters.G1 import WRIST_BIAS_RAD, wrist_bias_for
-from isaacteleop.retargeting_engine.utilities import SKELETON_PROFILES
+from isaaccapture.retargeters.G1 import WRIST_BIAS_RAD, wrist_bias_for
+from isaaccapture.retargeting_engine.utilities import SKELETON_PROFILES
 
 
 class TestPico:
