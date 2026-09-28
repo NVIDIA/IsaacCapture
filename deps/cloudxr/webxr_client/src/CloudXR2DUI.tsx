@@ -548,7 +548,7 @@ export class CloudXR2DUI {
       panelHiddenAtStart: false,
       proxyUrl: '',
       referenceSpaceType: 'auto',
-      controlPanelPosition: 'center',
+      controlPanelPosition: 'right',
       enablePoseSmoothing: true,
       posePredictionFactor: 1.0,
       enableTexSubImage2D: false,

@@ -1046,7 +1046,7 @@ function AppContent() {
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
     () =>
-      getControlPanelPositionVector(config?.controlPanelPosition ?? 'center', CONTROL_PANEL_LAYOUT),
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', CONTROL_PANEL_LAYOUT),
     [config?.controlPanelPosition]
   );
 
@@ -1242,7 +1242,7 @@ function AppContent() {
                   onCountdownDecrease={handleDecreaseCountdown}
                   countdownDisabled={isCountingDown}
                   position={controlPanelPositionVector}
-                  controlPanelPosition={config?.controlPanelPosition ?? 'center'}
+                  controlPanelPosition={config?.controlPanelPosition ?? 'right'}
                   controlPanelLayout={CONTROL_PANEL_LAYOUT}
                   rotation={[0, 0, 0]}
                   renderFpsText={renderFpsText}
