@@ -740,3 +740,160 @@ def test_close_stale_teleop_tabs_forward_failure_returns_zero_without_remove(
     mock_forward.side_effect = OobAdbError("adb forward failed")
     assert _close_stale_teleop_tabs() == 0
     mock_remove.assert_not_called()
+
+
+# ============================================================================
+# CDP: _cdp_session_click_connect
+#
+# Drives the real function against a genuine local CDP WebSocket server (unlike
+# _close_stale_teleop_tabs's HTTP /json above, this function speaks CDP entirely over one
+# WebSocket) - _CdpScript below is a scripted responder standing in for a real Chromium
+# DevTools target, so the cert-interstitial bypass and readiness-poll state machine run for
+# real rather than being asserted via mocked call arguments. Unlike _CDP_LOCAL_PORT above, the
+# WebSocket URL is a plain function argument, so each test gets its own OS-assigned port.
+# ============================================================================
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+from websockets.asyncio.server import serve as ws_serve  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import _cdp_session_click_connect  # noqa: E402
+
+
+class _CdpScript:
+    """Scripted responder for the CDP calls `_cdp_session_click_connect` makes.
+
+    *readiness_states* is consumed one entry per readiness-poll call (repeating the last entry
+    once exhausted). *interstitial_url* starting with `chrome-error:` forces the DOM
+    click-through fallback instead of the primary `Page.navigate` bypass - the same branch
+    condition the real function itself checks.
+    """
+
+    def __init__(
+        self,
+        *,
+        interstitial: bool = False,
+        interstitial_url: str = "https://headset.local/",
+        readiness_states: list[dict] | None = None,
+    ) -> None:
+        self.interstitial = interstitial
+        self.interstitial_url = interstitial_url
+        self.readiness_states = readiness_states or [
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20}
+        ]
+        self._readiness_index = 0
+        self.calls: list[tuple[str, dict]] = []
+
+    def respond(self, method: str, params: dict) -> dict:
+        self.calls.append((method, params))
+        expr = params.get("expression", "")
+
+        if method in (
+            "Security.setIgnoreCertificateErrors",
+            "Page.bringToFront",
+            "Page.navigate",
+            "Input.dispatchMouseEvent",
+        ):
+            return {}
+        if expr == "!!document.getElementById('details-button')":
+            return {"result": {"value": self.interstitial}}
+        if expr == "window.location.href":
+            return {"result": {"value": self.interstitial_url}}
+        if expr in (
+            "document.getElementById('details-button')?.click()",
+            "document.getElementById('proceed-link')?.click()",
+            "document.getElementById('startButton')?.click()",
+        ):
+            return {}
+        if "getBoundingClientRect" in expr:
+            i = min(self._readiness_index, len(self.readiness_states) - 1)
+            self._readiness_index += 1
+            return {"result": {"value": self.readiness_states[i]}}
+        if "errorMessageBox" in expr:
+            # Reports the session as already active (btnText != 'CONNECT') so the post-click
+            # outcome-monitor loop returns on its first iteration instead of polling for real.
+            return {"result": {"value": {"btnText": "DISCONNECT", "errorText": None}}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+@asynccontextmanager
+async def _fake_cdp_ws(script: _CdpScript):
+    """Serves *script*'s responses on an OS-assigned port; yields the `ws://` URL to connect to."""
+
+    async def handler(websocket):
+        async for raw in websocket:
+            msg = json.loads(raw)
+            result = script.respond(msg["method"], msg.get("params", {}))
+            await websocket.send(json.dumps({"id": msg["id"], "result": result}))
+
+    async with ws_serve(handler, "localhost", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        yield f"ws://localhost:{port}"
+
+
+async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_clicks() -> (
+    None
+):
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "initializing",
+                "text": "CONNECT (checking capabilities)",
+                "disabled": True,
+            },
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20},
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    assert "Input.dispatchMouseEvent" in methods
+    assert "Page.navigate" not in methods
+
+
+async def test_cdp_session_click_connect_failed_capability_check_raises() -> None:
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "failed",
+                "text": "CONNECT (capability check failed)",
+                "disabled": True,
+            }
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        with pytest.raises(OobAdbError, match="startButton marked failed"):
+            await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
+
+
+async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> None:
+    script = _CdpScript(interstitial=True, interstitial_url="https://headset.local/")
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" in methods
+    assert fallback_clicks == []
+
+
+async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> None:
+    script = _CdpScript(
+        interstitial=True, interstitial_url="chrome-error://chromewebdata/"
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" not in methods
+    assert fallback_clicks == ["document.getElementById('proceed-link')?.click()"]
