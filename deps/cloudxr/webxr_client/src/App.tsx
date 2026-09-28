@@ -549,12 +549,38 @@ function AppContent() {
   // re-rendering when the channel attaches.
   const controlChannelRef = useRef<HeadsetControlChannel | null>(null);
 
+  // Tracks the exact "Reconnecting (n/maxAttempts)" text last shown, so it can be retracted via
+  // hideStatusIfShowing once the status moves on - without erasing a different message (e.g. the
+  // real error onError shows right after a give-up) that may have already replaced it.
+  const lastReconnectingStatusRef = useRef<string | null>(null);
+
   // Only ``(true, 'Connected')`` corresponds to onStreamStarted; everything
   // else is "not streaming" — pre-stream errors as well as stop/disconnect.
   const handleStatusChange = (connected: boolean, status: string) => {
     setIsConnected(connected);
     setSessionStatus(status);
     controlChannelRef.current?.sendStreamStatus(connected && status === 'Connected');
+
+    // CloudXRComponent reports retry progress through this same status text (see
+    // streamingErrorClassification.ts / CloudXRComponent's reconnect handling) rather than a
+    // dedicated callback - surface it as an info banner, not an error, and retract it once the
+    // status moves past reconnecting (succeeded, or gave up and onError shows the real message).
+    if (status.startsWith('Reconnecting')) {
+      // A countdown in progress captured the pre-reconnect sendMessage closure; left running,
+      // it would fire START_TELEOP_COMMAND through the stopped session instead of the
+      // replacement one once the timer elapses.
+      if (countdownTimerRef.current !== null) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+      setIsCountingDown(false);
+      setCountdownRemaining(0);
+      cloudXR2DUI?.showStatus(status, 'info');
+      lastReconnectingStatusRef.current = status;
+    } else if (lastReconnectingStatusRef.current) {
+      cloudXR2DUI?.hideStatusIfShowing(lastReconnectingStatusRef.current);
+      lastReconnectingStatusRef.current = null;
+    }
 
     // Drop the previous session's quality reading rather than leaving a stale green
     // indicator on a dead stream. Safe on every non-Connected status, including the

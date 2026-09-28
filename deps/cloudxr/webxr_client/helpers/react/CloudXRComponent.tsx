@@ -33,21 +33,24 @@
  * for CloudXR's custom rendering pipeline.
  */
 
+import * as CloudXR from '@nvidia/cloudxr';
+import { useFrame, useThree } from '@react-three/fiber';
+import { useXR } from '@react-three/xr';
+import { useEffect, useRef } from 'react';
+import type { WebGLRenderer } from 'three';
+import { Color } from 'three';
+
 import { MetricsTracker } from '@helpers/Metrics';
 import type {
   FrameMetricsUpdate,
   NetworkMetricsUpdate,
   RenderMetricsUpdate,
 } from '@helpers/metricsUpdates';
-import { getConnectionConfig, ConnectionConfiguration, CloudXRConfig } from '@helpers/utils';
+import { isRecoverable } from '@helpers/streamingErrorClassification';
+import { CloudXRConfig, ConnectionConfiguration, getConnectionConfig } from '@helpers/utils';
 import { bindGL } from '@helpers/WebGLStateBinding';
 import { clearPendingGLErrors } from '@helpers/WebGlUtils';
-import * as CloudXR from '@nvidia/cloudxr';
-import { useThree, useFrame } from '@react-three/fiber';
-import { useXR } from '@react-three/xr';
-import { useRef, useEffect } from 'react';
-import { Color } from 'three';
-import type { WebGLRenderer } from 'three';
+
 import { applyTargetFrameRate } from '../../src/config/frameRate';
 
 /** Clear color shown in headless mode so it's visually obvious the client is running with rendering suppressed. */
@@ -77,6 +80,17 @@ interface CloudXRComponentProps {
 
   /** Callback fired when CloudXR session is created or destroyed. Receives session instance or null. */
   onSessionReady?: (session: CloudXR.Session | null) => void;
+
+  /**
+   * Bounded retry policy for a mid-stream error (see streamingErrorClassification.ts's
+   * isRecoverable() for which errors qualify). Defaults: 3 attempts, 3000ms delay - matching
+   * controlChannel.ts's HeadsetControlChannel reconnect, which this mirrors, including its
+   * single-callback shape: retry progress is reported through onStatusChange (status text
+   * "Reconnecting (n/maxAttempts)"), the same channel HeadsetControlChannel's onConnectionChange
+   * uses, rather than a dedicated callback. An unrecoverable error, or exhausting maxAttempts,
+   * falls back to today's behavior: onError + onExitImmersiveXR.
+   */
+  reconnect?: { maxAttempts?: number; delayMs?: number };
 
   /** Callback fired with the resolved server address after proxy configuration is applied. */
   onServerAddress?: (address: string) => void;
@@ -157,6 +171,7 @@ export default function CloudXRComponent({
   onError,
   onExitImmersiveXR,
   onSessionReady,
+  reconnect,
   onServerAddress,
   onRenderPerformanceMetrics,
   onStreamingPerformanceMetrics,
@@ -176,6 +191,11 @@ export default function CloudXRComponent({
   const cxrSessionRef = useRef<CloudXR.Session | null>(null);
   const onExitImmersiveXRRef = useRef(onExitImmersiveXR);
   onExitImmersiveXRRef.current = onExitImmersiveXR;
+
+  const maxReconnectAttempts = reconnect?.maxAttempts ?? 3;
+  const reconnectDelayMs = reconnect?.delayMs ?? 3000;
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Metrics trackers for averaging performance metrics
   // Use prop values if provided, otherwise use defaults
@@ -229,6 +249,7 @@ export default function CloudXRComponent({
 
     if (webXRManager) {
       const handleSessionStart = async () => {
+        reconnectAttemptRef.current = 0;
         const xrSession = webXRManager.getSession();
 
         // CloudXR must advertise the rate actually used by the headset. Wait for WebXR to
@@ -383,6 +404,9 @@ export default function CloudXRComponent({
               trackedGL.restore();
             },
             onStreamStarted: () => {
+              // A successful (re)connect clears the counter, so an unrelated later failure
+              // gets its own full budget of attempts rather than inheriting this one's count.
+              reconnectAttemptRef.current = 0;
               console.debug('CloudXR stream started');
               onStatusChange?.(true, 'Connected');
             },
@@ -392,6 +416,26 @@ export default function CloudXRComponent({
                 const errorMsg = error.code
                   ? `${error.message} (Error code: 0x${error.code.toString(16).toUpperCase()})`
                   : error.message;
+
+                if (isRecoverable(error) && reconnectAttemptRef.current < maxReconnectAttempts) {
+                  reconnectAttemptRef.current += 1;
+                  console.warn(
+                    `CloudXR stream error, retry ${reconnectAttemptRef.current}/${maxReconnectAttempts} ` +
+                      `in ${reconnectDelayMs}ms:`,
+                    errorMsg
+                  );
+                  onStatusChange?.(
+                    false,
+                    `Reconnecting (${reconnectAttemptRef.current}/${maxReconnectAttempts})`
+                  );
+                  cxrSessionRef.current = null;
+                  onSessionReady?.(null);
+                  reconnectTimerRef.current = setTimeout(() => {
+                    reconnectTimerRef.current = null;
+                    establishSession();
+                  }, reconnectDelayMs);
+                  return;
+                }
 
                 console.error('Stream stopped with error:', errorMsg);
                 onStatusChange?.(false, 'Error');
@@ -497,47 +541,60 @@ export default function CloudXRComponent({
             },
           };
 
-          // Shared GL contexts may still have queued errors from the host app (e.g. R3F/XR).
-          // Clear them before createSession so CloudXR setup only sees errors from its own path.
-          clearPendingGLErrors(gl);
-
-          // Create the CloudXR session.
-          let cxrSession: CloudXR.Session;
-          try {
-            cxrSession = CloudXR.createSession(cloudXROptions, cloudXRDelegates);
-          } catch (error) {
-            onStatusChange?.(false, 'Session Creation Failed');
-            onError?.(`Failed to create CloudXR session: ${error}`);
-            onExitImmersiveXRRef.current?.();
-            return;
-          }
-
-          // Store the session in the ref so it persists across re-renders
-          cxrSessionRef.current = cxrSession;
-
-          // Notify parent that session is ready
-          onSessionReady?.(cxrSession);
-
-          // Start session (synchronous call that initiates connection)
-          try {
-            cxrSession.connect();
-            console.log('CloudXR session connect initiated');
-            // Note: The session will transition to Connected state via the onStreamStarted callback
-            // Use cxrSession.state to check if streaming has actually started
-          } catch (error) {
-            onStatusChange?.(false, 'Connection Failed');
-            // Report error via callback
-            onError?.('Failed to connect CloudXR session');
-            // Best-effort: release SDK resources if connect() threw after createSession(); ignore disconnect failures.
-            try {
-              cxrSession.disconnect();
-            } catch {
-              // Ignore errors from disconnect().
+          // Creates and connects a CloudXR session against the options/delegates above. Called
+          // once here for the initial connect, and again (unchanged) by onStreamStopped's retry
+          // path below - cloudXROptions/cloudXRDelegates don't vary per attempt, only whether a
+          // session currently exists.
+          const establishSession = (): void => {
+            if (cxrSessionRef.current) {
+              console.error('CloudXR session already exists');
+              return;
             }
-            cxrSessionRef.current = null;
-            onSessionReady?.(null);
-            onExitImmersiveXRRef.current?.();
-          }
+
+            // Shared GL contexts may still have queued errors from the host app (e.g. R3F/XR).
+            // Clear them before createSession so CloudXR setup only sees errors from its own path.
+            clearPendingGLErrors(gl);
+
+            // Create the CloudXR session.
+            let cxrSession: CloudXR.Session;
+            try {
+              cxrSession = CloudXR.createSession(cloudXROptions, cloudXRDelegates);
+            } catch (error) {
+              onStatusChange?.(false, 'Session Creation Failed');
+              onError?.(`Failed to create CloudXR session: ${error}`);
+              onExitImmersiveXRRef.current?.();
+              return;
+            }
+
+            // Store the session in the ref so it persists across re-renders
+            cxrSessionRef.current = cxrSession;
+
+            // Notify parent that session is ready
+            onSessionReady?.(cxrSession);
+
+            // Start session (synchronous call that initiates connection)
+            try {
+              cxrSession.connect();
+              console.log('CloudXR session connect initiated');
+              // Note: The session will transition to Connected state via the onStreamStarted callback
+              // Use cxrSession.state to check if streaming has actually started
+            } catch (error) {
+              onStatusChange?.(false, 'Connection Failed');
+              // Report error via callback
+              onError?.('Failed to connect CloudXR session');
+              // Best-effort: release SDK resources if connect() threw after createSession(); ignore disconnect failures.
+              try {
+                cxrSession.disconnect();
+              } catch {
+                // Ignore errors from disconnect().
+              }
+              cxrSessionRef.current = null;
+              onSessionReady?.(null);
+              onExitImmersiveXRRef.current?.();
+            }
+          };
+
+          establishSession();
         } else {
           onStatusChange?.(false, 'Reference Space Unavailable');
           onError?.('Could not obtain an XR reference space for CloudXR');
@@ -546,10 +603,24 @@ export default function CloudXRComponent({
       };
 
       const handleSessionEnd = () => {
+        // A pending retry belongs to this WebXR session; cancel it before it can create a new
+        // CloudXR session against a gl/referenceSpace that's about to become stale. Checked
+        // unconditionally (not inside the cxrSessionRef.current branch below): while a retry is
+        // pending, cxrSessionRef.current is already null.
+        const hadPendingRetry = reconnectTimerRef.current !== null;
+        if (reconnectTimerRef.current !== null) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
         if (cxrSessionRef.current) {
           cxrSessionRef.current.disconnect();
           cxrSessionRef.current = null;
           onSessionReady?.(null);
+        } else if (hadPendingRetry) {
+          // No live session to disconnect() - one was never re-established - so nothing else
+          // will emit onStreamStopped -> onStatusChange here. Without this, the last status a
+          // caller ever sees stays "Reconnecting (n/maxAttempts)" forever.
+          onStatusChange?.(false, 'Disconnected');
         }
       };
 
@@ -561,6 +632,10 @@ export default function CloudXRComponent({
       return () => {
         webXRManager.removeEventListener('sessionstart', handleSessionStart);
         webXRManager.removeEventListener('sessionend', handleSessionEnd);
+        if (reconnectTimerRef.current !== null) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
       };
     }
   }, [threeRenderer, config]); // Re-register handlers when renderer or config changes
