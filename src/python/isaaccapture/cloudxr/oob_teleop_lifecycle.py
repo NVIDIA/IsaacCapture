@@ -70,6 +70,7 @@ class OobLifecycle:
         metrics_stale_sec: float = 5.0,
         host_listener_probe: Callable[[int], bool] = _host_listener_ready,
     ) -> None:
+        # Immutable topology and injected collaborators.
         self.hub = hub
         self.resolved_port = resolved_port
         self.usb_local = usb_local
@@ -82,10 +83,14 @@ class OobLifecycle:
         self.sleep = sleep
         self.metrics_stale_sec = metrics_stale_sec
         self.host_listener_probe = host_listener_probe
+
+        # Headset selection remains pinned after the first successful choice.
         self.selected = os.environ.get("ANDROID_SERIAL", "").strip() or None
         self.explicit_serial = self.selected is not None
         self.ignored_serials: tuple[str, ...] = ()
         self._cache_cleared = False
+
+        # Browser, relay, and CONNECT state rebuilt after transport loss.
         self.generation = 0
         self.monitor: asyncio.Task | None = None
         self.coturn = None
@@ -96,6 +101,8 @@ class OobLifecycle:
         self.last_stream_at: float | None = None
         self.connect_at: float | None = None
         self.browser_probe_after: float | None = None
+
+        # Wall-clock timestamps exported in lifecycle status.
         self.last_adb_at: float | None = None
         self.last_network_at: float | None = None
         self.last_rules_at: float | None = None
@@ -103,6 +110,8 @@ class OobLifecycle:
         self.last_turn_at: float | None = None
         self._turn_listener_ready = False
         self.last_network_state: adb.HeadsetNetworkState | None = None
+
+        # Monotonic time enforces the retry budget; wall time is for API consumers.
         self.episode_start = self.clock()
         self.episode_wall_start = time.time()
         self.attempts = 0
@@ -120,6 +129,7 @@ class OobLifecycle:
         self.attempts = 0
 
     async def _publish(self, health: str, state: str, reason: str, **flags) -> None:
+        # A healthy session failing again starts a fresh, fully budgeted recovery episode.
         if health == "degraded" and self._last_health in {"browser_ready", "active"}:
             self._restart_episode()
         self._last_health = health
@@ -239,6 +249,7 @@ class OobLifecycle:
         await asyncio.shield(task)
 
     async def _ensure_coturn(self) -> bool:
+        """Ensure the TURN listener is healthy; return whether it was restarted."""
         if not self.usb_local or self.turn_port is None:
             return False
         if self.coturn is not None and self.coturn.poll() is None:
@@ -356,6 +367,7 @@ class OobLifecycle:
             host_client=self.host_client,
             on_dispatched=on_dispatched,
         )
+        # A successful return still establishes dispatch if an adapter omits the callback.
         if not self.connect_dispatched:
             on_dispatched()
         await self._publish(
@@ -410,6 +422,7 @@ class OobLifecycle:
         if client is None:
             self.browser_ready = False
             raise adb.OobAdbError("Browser OOB client disconnected")
+        # Snapshot timestamps are epoch milliseconds; local time.time() values are seconds.
         fresh = bool(
             client.get("lastMetricsAt")
             and (time.time() * 1000 - client["lastMetricsAt"])
@@ -470,6 +483,12 @@ class OobLifecycle:
             raise adb.OobAdbError("coturn restarted; renewing browser connection")
 
     async def run(self) -> None:
+        """Keep one headset recovered through ADB, browser, and streaming states.
+
+        The first ready headset stays pinned while unrelated devices are ignored. Routine
+        transport and browser failures publish degraded state and retry until cancellation;
+        unexpected implementation failures propagate after owned resources are cleaned up.
+        """
         token = adb.SELECTED_ADB_SERIAL.set(self.selected) if self.selected else None
         try:
             if not self.snapshot:
@@ -477,6 +496,7 @@ class OobLifecycle:
                     "starting", "WAITING_FOR_ADB", "Waiting for headset"
                 )
             while True:
+                # WAITING_FOR_ADB: select once, then wait only for that headset.
                 devices = await asyncio.to_thread(adb.enumerate_adb_devices)
                 ready = devices.ready
                 if self.selected is None and len(ready) == 1:
@@ -580,6 +600,7 @@ class OobLifecycle:
                     self.usb_local
                     and network.state is adb.HeadsetNetworkState.NO_NETWORK
                 ):
+                    # PREPARING_DEVICE cannot proceed until WebRTC sees a network.
                     await self._stop_monitor()
                     self.browser_ready = False
                     self.connect_dispatched = False
@@ -628,6 +649,7 @@ class OobLifecycle:
                     await self.sleep(self.config.interval_sec)
                     continue
                 try:
+                    # ACTIVE and VERIFYING_BROWSER first revalidate their USB substrate.
                     if self.browser_ready or self.connect_dispatched:
                         await self._check_usb_prerequisites()
                     if self.browser_ready:
@@ -637,6 +659,7 @@ class OobLifecycle:
                     elif self.connect_dispatched:
                         await self._verify_browser()
                     else:
+                        # PREPARING_DEVICE rebuilds USB before AUTOMATING_BROWSER.
                         self.attempts += 1
                         await self._publish(
                             "degraded",

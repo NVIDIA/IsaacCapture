@@ -74,6 +74,7 @@ export class HeadsetControlChannel {
   // the hub stays in sync after a WS drop and so we don't lose an event
   // fired before the WS finished its handshake.
   private lastStreamStatus: boolean | null = null;
+  // Summarize locally emitted metrics so health reports can prove post-CONNECT activity.
   private lastMetricsAt: number | null = null;
   private metricCadences: string[] = [];
 
@@ -190,6 +191,7 @@ export class HeadsetControlChannel {
         this.opts.onConfig(payload.config as StreamConfig, payload.configVersion as number);
       }
     } else if (type === 'healthProbe') {
+      // Echo the generation and probe nonce with the browser's latest stream evidence.
       if (typeof payload.probeId !== 'string' || typeof payload.lifecycleGeneration !== 'number')
         return;
       this.ws?.send(

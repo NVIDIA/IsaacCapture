@@ -382,6 +382,7 @@ class OOBControlHub:
             }
 
     async def _handle_health_report(self, ws: Any, payload: dict) -> None:
+        """Resolve the matching lifecycle probe from its intended headset only."""
         key = (str(payload.get("probeId", "")), payload.get("lifecycleGeneration"))
         async with self._lock:
             state = self._headsets.get(ws)
