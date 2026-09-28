@@ -69,14 +69,14 @@ Connecting Inputs
 -----------------
 
 Use one debounced selector per signal (simple wiring, no multi-input lambdas):
-see :code-file:`teleop_controls_simple_example.py <examples/teleop_session_manager/python/isaacteleop_examples/teleop_session_manager/teleop_controls_simple_example.py>`
+see :code-file:`teleop_controls_simple_example.py <examples/teleop_session_manager/python/isaaccapture_examples/teleop_session_manager/teleop_controls_simple_example.py>`
 for the full runnable setup.
 
 .. code-block:: python
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-   from isaacteleop.retargeting_engine.tensor_types import ControllerInputIndex
-   from isaacteleop.teleop_session_manager import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource
+   from isaaccapture.retargeting_engine.tensor_types import ControllerInputIndex
+   from isaaccapture.teleop_session_manager import (
        DefaultTeleopStateManager,
        create_bool_selector,
    )
@@ -131,7 +131,7 @@ or other high-level behavior:
 
 .. code-block:: python
 
-   from isaacteleop.retargeting_engine.interface.execution_events import ExecutionState
+   from isaaccapture.retargeting_engine.interface.execution_events import ExecutionState
 
    outputs = session.step()
    context = session.last_context

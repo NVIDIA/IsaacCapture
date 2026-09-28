@@ -4,7 +4,7 @@
 Televiz
 =======
 
-Televiz (``isaacteleop.viz``) is the visualization module for Isaac Teleop. It composites what the
+Televiz (``isaaccapture.viz``) is the visualization module for Isaac Teleop. It composites what the
 operator sees — camera and sensor feeds, plus 3D rendered content such as gsplat or nvblox — and
 presents it in stereo to an XR headset over :doc:`CloudXR </references/cloudxr>`. Desktop-window and
 offscreen output are also available, mainly for development and debugging.
@@ -24,18 +24,18 @@ Python API, which mirrors the C++ names one-to-one — see `C++ API`_.
 Installation
 ------------
 
-Televiz ships inside the ``isaacteleop`` wheel — install it from PyPI:
+Televiz ships inside the ``isaaccapture`` wheel — install it from PyPI:
 
 .. code-block:: bash
 
-   pip install isaacteleop
+   pip install isaaccapture
 
 The published wheels (Linux x86_64 / aarch64, CPython 3.11–3.13) bundle the compiled
-``isaacteleop.viz`` module, so **no source build is required**. Verify with:
+``isaaccapture.viz`` module, so **no source build is required**. Verify with:
 
 .. code-block:: python
 
-   import isaacteleop.viz as televiz
+   import isaaccapture.viz as televiz
 
 You only need to :doc:`build from source </getting_started/build_from_source/index>` when
 developing Isaac Teleop itself — that build enables Televiz automatically when Vulkan and the
@@ -70,7 +70,7 @@ A session holds **either** one ``ProjectionLayer`` **or** any number of texture 
 
 All symbols are imported from the top-level module::
 
-   import isaacteleop.viz as televiz
+   import isaaccapture.viz as televiz
 
 Display modes
 -------------
@@ -100,7 +100,7 @@ A minimal offscreen render-and-readback (no GPU display, no headset):
 .. code-block:: python
 
    import cupy as cp
-   import isaacteleop.viz as televiz
+   import isaaccapture.viz as televiz
 
    viz_cfg = televiz.VizSessionConfig()
    viz_cfg.mode = televiz.DisplayMode.kOffscreen
@@ -625,10 +625,10 @@ extensions automatically), then pass the handles through:
 
 .. code-block:: python
 
-   import isaacteleop.viz as televiz
-   from isaacteleop.teleop_session_manager import TeleopSession, TeleopSessionConfig
-   from isaacteleop.deviceio import DeviceIOSession
-   from isaacteleop.oxr import OpenXRSessionHandles
+   import isaaccapture.viz as televiz
+   from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
+   from isaaccapture.deviceio import DeviceIOSession
+   from isaaccapture.oxr import OpenXRSessionHandles
 
    viz_cfg = televiz.VizSessionConfig()
    viz_cfg.mode = televiz.DisplayMode.kXr
@@ -711,7 +711,7 @@ Data types
 C++ API
 -------
 
-Televiz is a C++ library; ``isaacteleop.viz`` is a thin pybind11 binding over it. The Python and C++
+Televiz is a C++ library; ``isaaccapture.viz`` is a thin pybind11 binding over it. The Python and C++
 APIs share the same type and method names (``VizSession``, ``QuadLayer``, ``submit``,
 ``set_placement``, ``DisplayMode::kXr``, …), so everything on this page maps directly to C++. All
 symbols live in ``namespace viz``, and headers use nested include paths::

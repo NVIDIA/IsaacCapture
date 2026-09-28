@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -439,8 +440,8 @@ headset or OpenXR runtime required during replay.</p>
 <p>Pass an <code class="docutils literal notranslate"><span class="pre">McapRecordingConfig</span></code> in the <code class="docutils literal notranslate"><span class="pre">mcap_config</span></code> field while keeping the
 default <code class="docutils literal notranslate"><span class="pre">SessionMode.LIVE</span></code>.  <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> automatically discovers
 trackers from the pipeline, so you only need to provide the output filename:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
     <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
@@ -463,7 +464,7 @@ example, a pipeline with <code class="docutils literal notranslate"><span class=
 <p>Any <code class="docutils literal notranslate"><span class="pre">(tracker,</span> <span class="pre">channel_name)</span></code> pairs you pass explicitly via
 <code class="docutils literal notranslate"><span class="pre">tracker_names</span></code> are <strong>appended</strong> after the auto-discovered sources.  This is
 useful for recording additional trackers that are not part of the pipeline:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span>
 
 <span class="n">extra_tracker</span> <span class="o">=</span> <span class="n">deviceio</span><span class="o">.</span><span class="n">HandTracker</span><span class="p">()</span>
 
@@ -484,12 +485,12 @@ useful for recording additional trackers that are not part of the pipeline:</p>
 <p>Set <code class="docutils literal notranslate"><span class="pre">mode=SessionMode.REPLAY</span></code> and pass an <code class="docutils literal notranslate"><span class="pre">McapReplayConfig</span></code>.  No OpenXR
 session or headset connection is created — data is read directly from the MCAP
 file:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TeleopSession</span><span class="p">,</span>
     <span class="n">TeleopSessionConfig</span><span class="p">,</span>
     <span class="n">SessionMode</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapReplayConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapReplayConfig</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
     <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
@@ -542,7 +543,7 @@ schema change from getting there.</p>
 <section id="runnable-example">
 <h2>Runnable Example<a class="headerlink" href="#runnable-example" title="Link to this heading">#</a></h2>
 <p>A complete record / replay example lives at
-<code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/python/</span></code>:</p>
+<code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">common.py</span></code> — pipeline builders (<code class="docutils literal notranslate"><span class="pre">build_hand_pipeline()</span></code>,
 <code class="docutils literal notranslate"><span class="pre">build_controller_pipeline()</span></code>, <code class="docutils literal notranslate"><span class="pre">build_full_body_pipeline()</span></code>) plus the
@@ -568,7 +569,7 @@ additional source nodes (<code class="docutils literal notranslate"><span class=
 controllers, and full body), see <code class="docutils literal notranslate"><span class="pre">examples/deviceio_live_view/</span></code> and its
 <code class="docutils literal notranslate"><span class="pre">README.md</span></code>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view
-python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.deviceio_live_view<span class="w"> </span>--accept-eula
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.deviceio_live_view<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 <p>A C++ recorder lives at <code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/cpp/</span></code>:</p>
@@ -576,15 +577,14 @@ python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.dev
 <li><p><code class="docutils literal notranslate"><span class="pre">record_full_body.cpp</span></code> — records the <code class="docutils literal notranslate"><span class="pre">full_body</span></code> channel by passing a
 <code class="docutils literal notranslate"><span class="pre">core::McapRecordingConfig</span></code> to <code class="docutils literal notranslate"><span class="pre">DeviceIOSession::run()</span></code>. It uses the
 same channel base name as <code class="docutils literal notranslate"><span class="pre">FullBodySource</span></code>, so the resulting file replays
-with <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code>.</p></li>
+with <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code>.</p></li>
 </ul>
 <section id="live-preview">
 <h3>Live preview<a class="headerlink" href="#live-preview" title="Link to this heading">#</a></h3>
-<p>From the example directory:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/mcap_record_replay/python
-uv<span class="w"> </span>sync
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>live_full_body.py<span class="w"> </span>--accept-eula
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>live_full_body.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w"> </span>--accept-eula<span class="w">  </span><span class="c1"># change viser port</span>
+<p>From the repo root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 <p>Open the printed URL (default <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>) in a browser.  The
@@ -593,21 +593,22 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 </section>
 <section id="recording">
 <h3>Recording<a class="headerlink" href="#recording" title="Link to this heading">#</a></h3>
-<p>From the example directory:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/mcap_record_replay/python
-uv<span class="w"> </span>sync
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>record_hand.py<span class="w">            </span><span class="c1"># 5 s → ../recordings/hands_&lt;timestamp&gt;.mcap</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>record_hand.py<span class="w"> </span><span class="m">10</span><span class="w">         </span><span class="c1"># record for 10 seconds</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>record_hand.py<span class="w"> </span><span class="m">10</span><span class="w"> </span>out.mcap<span class="w">  </span><span class="c1"># custom output path</span>
+<p>From the repo root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+<span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.record_hand"</span>
+<span class="nv">$R</span><span class="w">              </span><span class="c1"># 5 s → ./recordings/hands_&lt;timestamp&gt;.mcap</span>
+<span class="nv">$R</span><span class="w"> </span><span class="m">10</span><span class="w">           </span><span class="c1"># record for 10 seconds</span>
+<span class="nv">$R</span><span class="w"> </span><span class="m">10</span><span class="w"> </span>out.mcap<span class="w">  </span><span class="c1"># custom output path</span>
 </pre></div>
 </div>
+<p>Recordings are written to <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> relative to where you run the
+command, and the replay scripts look there when given no path.</p>
 <p>The example never downloads a published wheel — it runs against the
-<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> next to it.  Above, <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">sync</span></code> builds it from this checkout; the
-first sync compiles the extension modules and takes a few minutes, later ones
-reuse the cached build, and the install is editable, so edits under
-<code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need no rebuild.  From
-<code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay/python</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span></code>) it
-picks up the wheel you just built instead — see
+<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The first install
+compiles the extension modules and takes a few minutes; later ones reuse the
+cached build, and the install is editable, so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need
+no rebuild.  From <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
+<span class="pre">--install</span></code>) it picks up the wheel you just built instead — see
 <a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
 <p>An active OpenXR runtime / headset must be connected, just like any other
 live <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code>.  Recording also needs the CloudXR runtime natives, which
@@ -618,19 +619,22 @@ has no such requirement.</p>
 <section id="replaying">
 <h3>Replaying<a class="headerlink" href="#replaying" title="Link to this heading">#</a></h3>
 <p>Replay runs headless — no headset required:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>replay_hand.py<span class="w">                       </span><span class="c1"># newest file in ../recordings/</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>replay_hand.py<span class="w"> </span>path/to/file.mcap<span class="w">     </span><span class="c1"># explicit file</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>replay_hand.py<span class="w"> </span>--loop<span class="w">                </span><span class="c1"># repeat until Ctrl+C</span>
-uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>replay_hand.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w">           </span><span class="c1"># change viser port</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.replay_hand"</span>
+<span class="nv">$R</span><span class="w">                    </span><span class="c1"># newest hands_*.mcap under ./recordings/</span>
+<span class="nv">$R</span><span class="w"> </span>path/to/file.mcap<span class="w">  </span><span class="c1"># explicit file</span>
+<span class="nv">$R</span><span class="w"> </span>--loop<span class="w">             </span><span class="c1"># repeat until Ctrl+C</span>
+<span class="nv">$R</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w">        </span><span class="c1"># change viser port</span>
 </pre></div>
 </div>
 <p>Open the printed URL (default <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">record_controller.py</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_controller.py</span></code> and
-<code class="docutils literal notranslate"><span class="pre">record_full_body.py</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> pairs use the same CLI
-(positional MCAP path, <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, <code class="docutils literal notranslate"><span class="pre">--loop</span></code>).
-<code class="docutils literal notranslate"><span class="pre">live_full_body.py</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher
-flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">record_controller</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> /
+<code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
+<code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, <code class="docutils literal notranslate"><span class="pre">--loop</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
+<code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> (instead of an activated venv) needs an explicit <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">3.11</span></code>
+— without it, <code class="docutils literal notranslate"><span class="pre">uv</span></code> may resolve against the system Python and fail to match
+the lockfile.</p>
 </section>
 </section>
 <section id="api-reference">
@@ -821,7 +825,7 @@ When empty, <code class="docutils literal notranslate"><span class="pre">TeleopS
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

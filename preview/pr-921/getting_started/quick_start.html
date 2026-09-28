@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -439,7 +440,7 @@ commands to the terminal.</p>
 <ul class="simple">
 <li><p><a class="reference internal" href="#try-it-on-brev-zero-setup" id="id5">Try It on Brev — Zero Setup</a></p></li>
 <li><p><a class="reference internal" href="#check-out-code-base-for-examples" id="id6">1. Check out code base (for examples)</a></p></li>
-<li><p><a class="reference internal" href="#install-the-isaacteleop-pip-package" id="id7">2. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></p></li>
+<li><p><a class="reference internal" href="#install-the-isaaccapture-pip-package" id="id7">2. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></p></li>
 <li><p><a class="reference internal" href="#configure-cloudxr-optional" id="id8">3. Configure CloudXR (optional)</a></p></li>
 <li><p><a class="reference internal" href="#whitelist-ports-for-firewall" id="id9">4. Whitelist ports for Firewall</a></p></li>
 <li><p><a class="reference internal" href="#connect-an-xr-headset" id="id10">5. Connect an XR headset</a></p></li>
@@ -496,22 +497,29 @@ Launch on Brev — Isaac Lab 3.0 beta 1</div>
 <p>As a quick start guide, we don’t need to build the code base from source. However, we still need
 to clone the repository for a couple quick samples to run.</p>
 </section>
-<section id="install-the-isaacteleop-pip-package">
-<span id="install-isaacteleop-pip-package"></span><h2>2. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package<a class="headerlink" href="#install-the-isaacteleop-pip-package" title="Link to this heading">#</a></h2>
+<section id="install-the-isaaccapture-pip-package">
+<span id="install-isaaccapture-pip-package"></span><h2>2. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package<a class="headerlink" href="#install-the-isaaccapture-pip-package" title="Link to this heading">#</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Upgrading from 1.5 or earlier? The import package and the distribution were both
+renamed from <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> in 1.6. Installing <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> automatically
+replaces the legacy package and keeps old imports working temporarily.
+See <a class="reference internal" href="../references/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
+</div>
 <p>In a new terminal, activate your preferred virtual or conda environment, then install the latest
 stable release from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaacteleop[cloudxr,retargeters]~=1.0'</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span>
 </pre></div>
 </div>
 <p>Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
 and an opt-in to pre-release versions — shown here with <a class="reference external" href="https://docs.astral.sh/uv/" rel="noopener noreferrer" target="_blank">uv</a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaacteleop[cloudxr,retargeters]~=1.0'</span><span class="w"> </span><span class="se">\</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">      </span>--extra-index-url<span class="w"> </span>https://pypi.nvidia.com<span class="w"> </span>--prerelease<span class="o">=</span>allow
 </pre></div>
 </div>
 <p>The two commands above track the newest 1.x release. To follow this version of the documentation
 (1.6.x) exactly, pin to the series it describes instead:</p>
-<pre class="literal-block">uv pip install 'isaacteleop[cloudxr,retargeters]~=1.6.0' \
+<pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.6.0' \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
 <p>Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See <a class="reference internal" href="build_from_source/index.html"><span class="doc">Build from Source</span></a> for more details.</p>
@@ -535,7 +543,7 @@ on the <em>runtime</em>, so applications inherit whatever the runtime they conne
 was started with. To override it, or any other setting, write a <code class="docutils literal notranslate"><span class="pre">KEY=value</span></code>
 env file and start the service with it:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">echo</span><span class="w"> </span><span class="s1">'NV_DEVICE_PROFILE=auto-native'</span><span class="w"> </span>&gt;<span class="w"> </span>custom.env
-python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--cloudxr-env-config<span class="w"> </span>./custom.env
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--cloudxr-env-config<span class="w"> </span>./custom.env
 </pre></div>
 </div>
 <p>The same <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> flag is available on the teleop examples under
@@ -656,11 +664,11 @@ defaults reach you without clearing browser storage. Switch the profile to
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p class="sd-card-text">If GitHub Pages is unreachable (corporate network, air-gapped machine), you can serve the web
-client locally from the CloudXR proxy and open <code class="docutils literal notranslate"><span class="pre">https://&lt;your-ip&gt;:48322/client/</span></code> instead of
-the GitHub Pages URL. Port 48322 is already whitelisted in step
-<a class="reference internal" href="#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>. See <a class="reference internal" href="../references/oob_teleop_control.html"><span class="doc">Out-of-Band Teleop Control</span></a> for how to serve the
-client from the proxy.</p>
+<p class="sd-card-text">When a teleop example starts the CloudXR service, it hosts the matching web client at
+<code class="docutils literal notranslate"><span class="pre">https://&lt;your-ip&gt;:48322/client/</span></code> by default and prints that URL. The GitHub Pages URL above
+remains available; pass <code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> to disable local hosting. Port 48322 is already
+whitelisted in step <a class="reference internal" href="#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>. See <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a> for service
+hosting and existing-service behavior.</p>
 </div>
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
@@ -875,7 +883,7 @@ from source</p></li>
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#try-it-on-brev-zero-setup">Try It on Brev — Zero Setup</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#check-out-code-base-for-examples">1. Check out code base (for examples)</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-the-isaacteleop-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-the-isaaccapture-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configure-cloudxr-optional">3. Configure CloudXR (optional)</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#whitelist-ports-for-firewall">4. Whitelist ports for Firewall</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connect-an-xr-headset">5. Connect an XR headset</a></li>
@@ -964,7 +972,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

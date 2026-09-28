@@ -383,6 +383,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
 </ul>
 </div>
@@ -510,7 +511,7 @@ included.</p>
 The implementation remains lazy-loaded, so importing other Isaac Teleop
 features does not import its heavier numerical stack. The
 <code class="docutils literal notranslate"><span class="pre">[grounding]</span></code> extra installs that runtime stack:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaacteleop[grounding]"</span>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[grounding]"</span>
 </pre></div>
 </div>
 <p>For a source or editable install, CMake performs the same fetch and
@@ -524,7 +525,7 @@ or CMake bundle option. A build configured with
 </section>
 <section id="use-it-from-python">
 <h2>Use it from Python<a class="headerlink" href="#use-it-from-python" title="Link to this heading">#</a></h2>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">SharpaHandRetargeter</span><span class="p">,</span>
     <span class="n">SharpaHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -562,13 +563,13 @@ produced in your target joint order.</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/retargeting
 
 <span class="gp"># </span>Synthetic<span class="w"> </span>curl<span class="w"> </span>animation<span class="w"> </span><span class="o">(</span>no<span class="w"> </span>headset,<span class="w"> </span>no<span class="w"> </span>GUI<span class="w"> </span>required<span class="o">)</span>:
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo<span class="w"> </span>--synthetic
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo<span class="w"> </span>--synthetic
 
 <span class="gp"># </span>Live<span class="w"> </span>bimanual<span class="w"> </span>from<span class="w"> </span>a<span class="w"> </span>connected<span class="w"> </span>Quest<span class="w"> </span>headset:
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo
 
 <span class="gp"># </span>Custom<span class="w"> </span>MJCFs<span class="w"> </span><span class="o">(</span>e.g.<span class="w"> </span>the<span class="w"> </span>mesh-bearing<span class="w"> </span>variants<span class="o">)</span>:
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--left-mjcf<span class="w">  </span>/path/to/left_sharpawave.xml<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--right-mjcf<span class="w"> </span>/path/to/right_sharpawave.xml
 </pre></div>
@@ -752,7 +753,7 @@ submitting the change.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

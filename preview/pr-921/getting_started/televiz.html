@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -431,7 +432,7 @@
                   
   <section id="televiz">
 <h1>Televiz<a class="headerlink" href="#televiz" title="Link to this heading">#</a></h1>
-<p>Televiz (<code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code>) is the visualization module for Isaac Teleop. It composites what the
+<p>Televiz (<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code>) is the visualization module for Isaac Teleop. It composites what the
 operator sees — camera and sensor feeds, plus 3D rendered content such as gsplat or nvblox — and
 presents it in stereo to an XR headset over <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR</span></a>. Desktop-window and
 offscreen output are also available, mainly for development and debugging.</p>
@@ -477,13 +478,13 @@ Python API, which mirrors the C++ names one-to-one — see <a class="reference i
 </nav>
 <section id="installation">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
-<p>Televiz ships inside the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> wheel — install it from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>isaacteleop
+<p>Televiz ships inside the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel — install it from PyPI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
 <p>The published wheels (Linux x86_64 / aarch64, CPython 3.11–3.13) bundle the compiled
-<code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> module, so <strong>no source build is required</strong>. Verify with:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module, so <strong>no source build is required</strong>. Verify with:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 </pre></div>
 </div>
 <p>You only need to <a class="reference internal" href="build_from_source/index.html"><span class="doc">build from source</span></a> when
@@ -515,7 +516,7 @@ RGBD layer for external renderers (gsplat, nvblox, neural reconstruction) that p
 <p>A session holds <strong>either</strong> one <code class="docutils literal notranslate"><span class="pre">ProjectionLayer</span></code> <strong>or</strong> any number of texture layers
 (<code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> / <code class="docutils literal notranslate"><span class="pre">CylinderLayer</span></code> / <code class="docutils literal notranslate"><span class="pre">EquirectLayer</span></code>), never both — see <a class="reference internal" href="#layers">Layers</a>.</p>
 <p>All symbols are imported from the top-level module:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 </pre></div>
 </div>
 </section>
@@ -552,7 +553,7 @@ running OpenXR runtime (e.g. CloudXR).</p></td>
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Quick start</a><a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
 <p>A minimal offscreen render-and-readback (no GPU display, no headset):</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">cupy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">cp</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 
 <span class="n">viz_cfg</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSessionConfig</span><span class="p">()</span>
 <span class="n">viz_cfg</span><span class="o">.</span><span class="n">mode</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">DisplayMode</span><span class="o">.</span><span class="n">kOffscreen</span>
@@ -1116,10 +1117,10 @@ session (Isaac Teleop’s own <code class="docutils literal notranslate"><span c
 timing.</p>
 <p>Declare the extensions your trackers need in <code class="docutils literal notranslate"><span class="pre">required_extensions</span></code> (Televiz adds its own rendering
 extensions automatically), then pass the handles through:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceIOSession</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceIOSession</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
 
 <span class="n">viz_cfg</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSessionConfig</span><span class="p">()</span>
 <span class="n">viz_cfg</span><span class="o">.</span><span class="n">mode</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">DisplayMode</span><span class="o">.</span><span class="n">kXr</span>
@@ -1205,7 +1206,7 @@ radius.
 </section>
 <section id="c-api">
 <h2><a class="toc-backref" href="#id23" role="doc-backlink">C++ API</a><a class="headerlink" href="#c-api" title="Link to this heading">#</a></h2>
-<p>Televiz is a C++ library; <code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> is a thin pybind11 binding over it. The Python and C++
+<p>Televiz is a C++ library; <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> is a thin pybind11 binding over it. The Python and C++
 APIs share the same type and method names (<code class="docutils literal notranslate"><span class="pre">VizSession</span></code>, <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code>, <code class="docutils literal notranslate"><span class="pre">submit</span></code>,
 <code class="docutils literal notranslate"><span class="pre">set_placement</span></code>, <code class="docutils literal notranslate"><span class="pre">DisplayMode::kXr</span></code>, …), so everything on this page maps directly to C++. All
 symbols live in <code class="docutils literal notranslate"><span class="pre">namespace</span> <span class="pre">viz</span></code>, and headers use nested include paths:</p>
@@ -1424,7 +1425,7 @@ output locations.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

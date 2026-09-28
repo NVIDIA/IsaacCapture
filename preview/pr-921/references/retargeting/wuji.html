@@ -383,6 +383,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
 </ul>
 </div>
@@ -483,13 +484,13 @@ the last valid command instead of forwarding the invalid output.</p></td>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
 <p>Install the Wuji retargeting extra:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaacteleop[wuji]'</span>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[wuji]'</span>
 </pre></div>
 </div>
 </section>
 <section id="use-it-from-python">
 <h2>Use it from Python<a class="headerlink" href="#use-it-from-python" title="Link to this heading">#</a></h2>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">WujiHandRetargeter</span><span class="p">,</span>
     <span class="n">WujiHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -511,15 +512,15 @@ real Wuji hand:</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/retargeting
 
 <span class="gp"># </span>Device-free<span class="w"> </span>smoke<span class="w"> </span><span class="nb">test</span>
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>synthetic<span class="w"> </span>--model<span class="w"> </span>wuji_hand_2<span class="w"> </span>--hand<span class="w"> </span>right
 
 <span class="gp"># </span>Replay<span class="w"> </span>MediaPipe-format<span class="w"> </span>keypoints
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>replay<span class="w"> </span>--replay<span class="w"> </span>my_take.pkl<span class="w"> </span>--model<span class="w"> </span>wuji_hand_2<span class="w"> </span>--hand<span class="w"> </span>right
 
 <span class="gp"># </span>Drive<span class="w"> </span>real<span class="w"> </span>hardware<span class="w"> </span>and<span class="w"> </span><span class="nb">let</span><span class="w"> </span>TeleopSession<span class="w"> </span>launch<span class="w"> </span>the<span class="w"> </span>Wuji<span class="w"> </span>glove<span class="w"> </span>plugin
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.retargeting.wuji_hand_retargeter_demo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--mode<span class="w"> </span>drive<span class="w"> </span>--hand<span class="w"> </span>right<span class="w"> </span>--plugin-path<span class="w"> </span>build/src/plugins
 </pre></div>
 </div>
@@ -689,7 +690,7 @@ into a complete pipeline.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

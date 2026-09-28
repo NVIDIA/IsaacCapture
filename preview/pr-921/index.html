@@ -376,6 +376,7 @@
 <li class="toctree-l1"><a class="reference internal" href="references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/license.html">License</a></li>
 </ul>
 </div>
@@ -446,7 +447,7 @@ installation and first-run steps.</p>
 <li class="toctree-l1"><a class="reference internal" href="getting_started/quick_start.html">Quick Start</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#try-it-on-brev-zero-setup">Try It on Brev — Zero Setup</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#check-out-code-base-for-examples">1. Check out code base (for examples)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#install-the-isaacteleop-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#install-the-isaaccapture-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#configure-cloudxr-optional">3. Configure CloudXR (optional)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#whitelist-ports-for-firewall">4. Whitelist ports for Firewall</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#connect-an-xr-headset">5. Connect an XR headset</a></li>
@@ -461,7 +462,7 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#clone-the-repository">1. Clone the repository</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#cmake-configure-and-build">2. CMake: Configure and build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#running-tests">3. Running tests</a></li>
-<li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#install-the-isaacteleop-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#install-the-isaaccapture-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="getting_started/teleop_session.html">Teleop Session</a><ul>
@@ -701,6 +702,15 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="references/egocentric_hand_reconstruction.html#limitations">Limitations</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#in-short">In short</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#upgrading-an-existing-install">Upgrading an existing install</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#imports">Imports</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#what-importing-the-old-name-does">What importing the old name does</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#installing">Installing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#logging">Logging</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="references/license.html">License</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="references/license.html#known-exceptions">Known exceptions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/license.html#license-headers">License headers</a></li>
@@ -844,7 +854,7 @@ installation and first-run steps.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

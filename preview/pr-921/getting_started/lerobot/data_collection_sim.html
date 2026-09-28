@@ -384,6 +384,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/license.html">License</a></li>
 </ul>
 </div>
@@ -488,7 +489,7 @@ profile with <code class="docutils literal notranslate"><span class="pre">--clou
 client in a desktop browser, which emulates a headset. The <strong>SO-101 Leader</strong> path needs no headset
 at all — omit <code class="docutils literal notranslate"><span class="pre">--xr</span></code> and the sim runs standalone in the Kit viewport.</p>
 <p><strong>Step 3 — (SO-101 Leader only) Build the</strong> <code class="docutils literal notranslate"><span class="pre">so101_leader</span></code> <strong>plugin.</strong> The leader arm is served by
-an Isaac Teleop C++ plugin that is <strong>not</strong> part of the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package or of Isaac Lab —
+an Isaac Teleop C++ plugin that is <strong>not</strong> part of the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package or of Isaac Lab —
 you must build this repository from source to get it. See
 <a class="reference internal" href="#sim-so101-leader-build"><span class="std std-ref">Build and install the plugin</span></a> in the <strong>SO-101 Leader</strong> tab below.</p>
 </section>
@@ -541,7 +542,7 @@ for you.</p>
 <p id="sim-so101-leader-build"><strong>1. Build and install the plugin</strong></p>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
-<p><code class="docutils literal notranslate"><span class="pre">so101_leader_plugin</span></code> ships <strong>only as source</strong> — it is not in the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip
+<p><code class="docutils literal notranslate"><span class="pre">so101_leader_plugin</span></code> ships <strong>only as source</strong> — it is not in the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip
 package, not in Isaac Lab, and not in any release archive. It is produced by building
 this repository (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop" rel="noopener noreferrer" target="_blank">NVIDIA/IsaacTeleop</a>) from
 source. If <code class="docutils literal notranslate"><span class="pre">./install/plugins/so101_leader/so101_leader_plugin</span></code> does not exist, this
@@ -863,7 +864,7 @@ branch in Isaac Lab, which targets a different task and must be adapted.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

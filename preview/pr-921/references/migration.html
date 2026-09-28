@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Device provider monitoring &#8212; Isaac Teleop Documentation</title>
+    <title>Migrating to isaaccapture &#8212; Isaac Teleop Documentation</title>
   
   
   
@@ -52,15 +52,15 @@
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
     <script src="../_static/copybutton.js?v=2c21a7a3"></script>
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
-    <script>DOCUMENTATION_OPTIONS.pagename = 'references/device_provider_monitoring';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'references/migration';</script>
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
 
     <link rel="icon" href="../_static/favicon.ico"/>
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Camera Streaming" href="camera_streaming.html" />
-    <link rel="prev" title="Retargeter: Wuji Glove to Wuji Hand" href="retargeting/wuji.html" />
+    <link rel="next" title="License" href="license.html" />
+    <link rel="prev" title="Egocentric Hand Reconstruction" href="egocentric_hand_reconstruction.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -371,13 +371,13 @@
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -413,7 +413,7 @@
         <i class="fa-solid fa-home"></i>
       </a>
     </li>
-    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Device provider monitoring</span></li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></span></li>
   </ul>
 </nav>
 </div>
@@ -430,140 +430,93 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="device-provider-monitoring">
-<h1>Device provider monitoring<a class="headerlink" href="#device-provider-monitoring" title="Link to this heading">#</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> exposes a read-only snapshot of the providers and devices in
-the active session. A <em>provider</em> is the component that owns and reports a
-device, such as the live OpenXR runtime or a configured plugin with device
-monitoring support. Configured plugins without monitoring support continue to
-launch as before but are not included in the monitoring inventory.</p>
-<p>Providers and devices remain in the status inventory for the lifetime of the
-session, including after provider failure or shutdown.</p>
-<section id="reading-status">
-<h2>Reading status<a class="headerlink" href="#reading-status" title="Link to this heading">#</a></h2>
-<p>The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceState</span>
-
-<span class="k">with</span> <span class="n">TeleopSession</span><span class="p">(</span><span class="n">config</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
-    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-        <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
-        <span class="n">snapshot</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_status</span><span class="p">()</span>
-        <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">snapshot</span><span class="o">.</span><span class="n">devices</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">status</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="n">DeviceState</span><span class="o">.</span><span class="n">CONNECTED</span><span class="p">,</span> <span class="n">DeviceState</span><span class="o">.</span><span class="n">DISABLED</span><span class="p">):</span>
-                <span class="nb">print</span><span class="p">(</span><span class="n">device</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">device</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">device</span><span class="o">.</span><span class="n">reason</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">device</span><span class="o">.</span><span class="n">error</span><span class="p">)</span>
-
-        <span class="n">provider</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_provider_status</span><span class="p">(</span><span class="s2">"plugin/my_plugin"</span><span class="p">)</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_device_status</span><span class="p">(</span><span class="s2">"my_plugin/my/device"</span><span class="p">)</span>
+  <section id="migrating-to-isaaccapture">
+<h1>Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code><a class="headerlink" href="#migrating-to-isaaccapture" title="Link to this heading">#</a></h1>
+<p>In 1.6 the Python import package and the distribution were both renamed from
+<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>. <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> keeps working for now
+through an alias shipped inside the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel, which <strong>will be
+removed in 1.9</strong>.</p>
+<p>Depend on <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and pin <code class="docutils literal notranslate"><span class="pre">isaaccapture&lt;1.9</span></code> if you need the alias
+to stay available while you migrate imports.</p>
+<section id="in-short">
+<h2>In short<a class="headerlink" href="#in-short" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p>Upgrade with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-U</span> <span class="pre">isaaccapture[...]</span></code> – see
+<a class="reference internal" href="#migration-upgrading"><span class="std std-ref">Upgrading an existing install</span></a>.</p></li>
+<li><p>Rewrite <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> in imports, <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span></code> commands
+and dependency pins; <code class="docutils literal notranslate"><span class="pre">isaacteleop_examples</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture_examples</span></code>.</p></li>
+</ol>
+</section>
+<section id="upgrading-an-existing-install">
+<span id="migration-upgrading"></span><h2>Upgrading an existing install<a class="headerlink" href="#upgrading-an-existing-install" title="Link to this heading">#</a></h2>
+<p>Installing <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> replaces the old <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> distribution with
+a small transition package that contains no code. Pip removes the legacy
+implementation automatically:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"isaaccapture[cloudxr]"</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">get_provider_status()</span></code> and <code class="docutils literal notranslate"><span class="pre">get_device_status()</span></code> return <code class="docutils literal notranslate"><span class="pre">None</span></code> for an
-unknown ID. <code class="docutils literal notranslate"><span class="pre">StatusSnapshot.updated_at_ns</span></code> is the monotonic time when the
-current snapshot was assembled; it is not an observation-history field.</p>
+<p>The same command works on a fresh environment. Both import names resolve to
+<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>. Existing <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-U</span> <span class="pre">isaacteleop[...]</span></code> commands also
+install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and forward the requested extras.</p>
 </section>
-<section id="identity-and-inventory">
-<h2>Identity and inventory<a class="headerlink" href="#identity-and-inventory" title="Link to this heading">#</a></h2>
-<ul class="simple">
-<li><p>A monitored plugin provider ID is <code class="docutils literal notranslate"><span class="pre">plugin/&lt;plugin_root_id&gt;</span></code>.</p></li>
-<li><p>A monitored plugin device ID is
-<code class="docutils literal notranslate"><span class="pre">&lt;plugin_root_id&gt;&lt;manifest</span> <span class="pre">device</span> <span class="pre">path&gt;</span></code>.</p></li>
-<li><p>The live OpenXR provider is <code class="docutils literal notranslate"><span class="pre">openxr/runtime</span></code> and owns
-<code class="docutils literal notranslate"><span class="pre">openxr/headset</span></code>.</p></li>
-<li><p>Replay sessions expose neither a live OpenXR provider nor configured plugin
-providers.</p></li>
-</ul>
-<p>Plugin device descriptors come from <code class="docutils literal notranslate"><span class="pre">PluginInfo.devices</span></code> in <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>.
-Unknown paths in a status report never create devices. The identity rules form
-the integration contract for plugins that support monitoring.</p>
-</section>
-<section id="provider-states">
-<h2>Provider states<a class="headerlink" href="#provider-states" title="Link to this heading">#</a></h2>
-<dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">INITIALIZING</span></code></dt><dd><p>The plugin is being resolved or launched, or the owned OpenXR session is
-being created. Every owned device is <code class="docutils literal notranslate"><span class="pre">INITIALIZING</span></code>.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">AVAILABLE</span></code></dt><dd><p>The plugin process is running, or the OpenXR runtime and session are
-operational. This does not imply that an owned physical device is connected.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">FAILED</span></code></dt><dd><p>Provider startup failed, a plugin exited or was signaled, process observation
-failed, DeviceIO update failed, or the OpenXR runtime/session was lost.
-Every owned device is <code class="docutils literal notranslate"><span class="pre">UNAVAILABLE</span></code>.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">STOPPED</span></code></dt><dd><p>The provider was intentionally stopped during session teardown. Every owned
-device is <code class="docutils literal notranslate"><span class="pre">UNAVAILABLE</span></code> without treating teardown as a failure.</p>
-</dd>
-</dl>
-</section>
-<section id="device-states">
-<h2>Device states<a class="headerlink" href="#device-states" title="Link to this heading">#</a></h2>
-<dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">INITIALIZING</span></code></dt><dd><p>The provider is still initializing.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code></dt><dd><p>The provider is available, but no authoritative current conclusion exists.
-This includes absent, stale, malformed, incomplete, or unsupported reports.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">CONNECTED</span></code> / <code class="docutils literal notranslate"><span class="pre">DISCONNECTED</span></code></dt><dd><p>The available provider explicitly reports that the device is present or
-absent.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">DEGRADED</span></code></dt><dd><p>The device is connected but has a recoverable impairment, partial
-functionality, or active recovery.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">FAILED</span></code></dt><dd><p>The provider remains available but reports a device-specific nonrecoverable
-failure.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">UNAVAILABLE</span></code></dt><dd><p>Provider failure or teardown prevents current device observation. Provider
-precedence overrides any earlier device report.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">DISABLED</span></code></dt><dd><p>The manifest declares the capability, but startup arguments intentionally
-excluded it for this plugin instance.</p>
-</dd>
-</dl>
-<p>Device state records the current condition; its reason records the cause and
-must not restate the state. The error field carries optional human-readable detail
-rather than another reason code.</p>
-</section>
-<section id="plugin-status-transport">
-<h2>Plugin status transport<a class="headerlink" href="#plugin-status-transport" title="Link to this heading">#</a></h2>
-<p>A monitored plugin publishes complete <code class="docutils literal notranslate"><span class="pre">PluginDeviceStatusSnapshot</span></code>
-FlatBuffers through a
-<code class="docutils literal notranslate"><span class="pre">PluginDeviceStatusPublisher</span></code> and the existing OpenXR <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>
-transport. The collection ID is derived from launcher-managed metadata as
-<code class="docutils literal notranslate"><span class="pre">&lt;plugin_root_id&gt;/device_status</span></code>. The schema version is 1, unchanged state is
-republished every second, and a report is stale after three seconds.</p>
-<p>Every snapshot must contain each manifest path exactly once. Duplicate,
-unknown, missing, malformed, or unsupported entries make the provider’s
-declared devices <code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code> until a valid current snapshot arrives.</p>
-<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">plugin_utils</span><span class="o">::</span><span class="n">PluginDeviceStatusEntry</span><span class="p">;</span>
-<span class="k">using</span><span class="w"> </span><span class="n">plugin_utils</span><span class="o">::</span><span class="n">PluginDeviceStatusPublisher</span><span class="p">;</span>
-
-<span class="k">auto</span><span class="w"> </span><span class="n">extensions</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PluginDeviceStatusPublisher</span><span class="o">::</span><span class="n">get_required_extensions</span><span class="p">();</span>
-<span class="n">core</span><span class="o">::</span><span class="n">OpenXRSession</span><span class="w"> </span><span class="n">session</span><span class="p">(</span><span class="s">"MyPlugin"</span><span class="p">,</span><span class="w"> </span><span class="n">extensions</span><span class="p">);</span>
-<span class="n">PluginDeviceStatusPublisher</span><span class="w"> </span><span class="nf">status</span><span class="p">(</span><span class="n">session</span><span class="p">.</span><span class="n">get_handles</span><span class="p">(),</span><span class="w"> </span><span class="n">plugin_root_id</span><span class="p">);</span>
-
-<span class="n">status</span><span class="p">.</span><span class="n">publish_if_changed</span><span class="p">(</span>
-<span class="w">    </span><span class="p">{</span><span class="n">PluginDeviceStatusEntry</span><span class="p">{</span>
-<span class="w">        </span><span class="p">.</span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"/my/device"</span><span class="p">,</span>
-<span class="w">        </span><span class="p">.</span><span class="n">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">core</span><span class="o">::</span><span class="n">PluginDeviceState_CONNECTED</span><span class="p">,</span>
-<span class="w">        </span><span class="p">.</span><span class="n">reason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">core</span><span class="o">::</span><span class="n">PluginDeviceReason_NONE</span><span class="p">,</span>
-<span class="w">    </span><span class="p">}},</span>
-<span class="w">    </span><span class="n">monotonic_time_ns</span><span class="p">);</span>
+<section id="imports">
+<h2>Imports<a class="headerlink" href="#imports" title="Link to this heading">#</a></h2>
+<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-import isaacteleop</span>
+<span class="gd">-from isaacteleop.teleop_session_manager import DeviceState</span>
+<span class="gi">+import isaaccapture</span>
+<span class="gi">+from isaaccapture.teleop_session_manager import DeviceState</span>
 </pre></div>
 </div>
-<p>Plugin integrations should follow the same contract: publish from the
-plugin’s normal update thread rather than an SDK callback thread. Status
-transport must not change ordinary data publication, reconnection, or tracker
-behavior.</p>
+<p>Every submodule keeps its name; only the top-level package changes. Both names
+resolve to the same module objects until 1.9, so a partially migrated process
+shares state, singletons and extension registrations rather than loading two
+copies.</p>
+<p>The same rename applies to <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span></code> entry points, for example
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">run</span></code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><code class="docutils literal notranslate"><span class="pre">isaacteleop_examples</span></code> became <code class="docutils literal notranslate"><span class="pre">isaaccapture_examples</span></code>, and the alias
+does <strong>not</strong> cover it – it serves <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> alone. Every
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop_examples.*</span></code> command fails with a bare
+<code class="docutils literal notranslate"><span class="pre">ModuleNotFoundError</span></code> and no notice attached. The example distributions
+renamed with it: <code class="docutils literal notranslate"><span class="pre">isaacteleop-examples-*</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture-examples-*</span></code>.</p>
+</div>
 </section>
-<section id="openxr-ownership">
-<h2>OpenXR ownership<a class="headerlink" href="#openxr-ownership" title="Link to this heading">#</a></h2>
-<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-availability. Runtime or session loss fails the provider; form-factor
-unavailability disconnects the headset while leaving the runtime provider
-available.</p>
-<p>For externally supplied <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>, Isaac Teleop does not consume the
-external owner’s event queue. The provider is available after setup and the
-headset remains <code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code> unless the owner supplies health through another
-integration.</p>
+<section id="what-importing-the-old-name-does">
+<h2>What importing the old name does<a class="headerlink" href="#what-importing-the-old-name-does" title="Link to this heading">#</a></h2>
+<p>Until 1.9 the old name emits a standard <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code> on first import.
+Python’s warning filters control its visibility; use <code class="docutils literal notranslate"><span class="pre">-W</span> <span class="pre">default</span></code> to see it.
+With <code class="docutils literal notranslate"><span class="pre">-W</span> <span class="pre">error::DeprecationWarning</span></code>, the import raises until migrated or filtered.</p>
+</section>
+<section id="installing">
+<h2>Installing<a class="headerlink" href="#installing" title="Link to this heading">#</a></h2>
+<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-pip install isaacteleop[cloudxr]</span>
+<span class="gi">+pip install isaaccapture[cloudxr]</span>
+</pre></div>
+</div>
+<p>Update dependency pins and extras to the new name:</p>
+<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-isaacteleop[retargeters,ui,cloudxr]~=1.5.0</span>
+<span class="gi">+isaaccapture[retargeters,ui,cloudxr]~=1.6.0</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel ships the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> alias inside it, so
+<code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> keeps working after the requirement is renamed. Pip
+installs the transition dependency automatically.</p>
+<p>A <code class="docutils literal notranslate"><span class="pre">sys.meta_path</span></code> finder is invisible to a type checker, so everything under
+<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> is typed <code class="docutils literal notranslate"><span class="pre">Any</span></code> and <strong>pyright reports every submodule import as
+unresolved</strong> (<code class="docutils literal notranslate"><span class="pre">reportMissingImports</span></code>). The alias promises runtime identity only.</p>
+</section>
+<section id="logging">
+<h2>Logging<a class="headerlink" href="#logging" title="Link to this heading">#</a></h2>
+<p>Loggers are named after the module they live in, and the alias hands back the
+real module, so the whole hierarchy moved to <code class="docutils literal notranslate"><span class="pre">isaaccapture.*</span></code> even for code
+that still imports the old name. No alias can reach a string key, so a
+<code class="docutils literal notranslate"><span class="pre">dictConfig</span></code> or <code class="docutils literal notranslate"><span class="pre">getLogger</span></code> call naming <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> silently stops
+matching – the logger is created, and nothing ever logs to it:</p>
+<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-logging.getLogger("isaacteleop.cloudxr").setLevel(logging.DEBUG)</span>
+<span class="gi">+logging.getLogger("isaaccapture.cloudxr").setLevel(logging.DEBUG)</span>
+</pre></div>
+</div>
 </section>
 </section>
 
@@ -578,20 +531,20 @@ integration.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="retargeting/wuji.html"
+       href="egocentric_hand_reconstruction.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Retargeter: Wuji Glove to Wuji Hand</p>
+        <p class="prev-next-title">Egocentric Hand Reconstruction</p>
       </div>
     </a>
     <a class="right-next"
-       href="camera_streaming.html"
+       href="license.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Camera Streaming</p>
+        <p class="prev-next-title">License</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -616,12 +569,12 @@ integration.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-status">Reading status</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#identity-and-inventory">Identity and inventory</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#provider-states">Provider states</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#device-states">Device states</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#plugin-status-transport">Plugin status transport</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#openxr-ownership">OpenXR ownership</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#in-short">In short</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#upgrading-an-existing-install">Upgrading an existing install</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#imports">Imports</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-importing-the-old-name-does">What importing the old name does</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installing">Installing</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#logging">Logging</a></li>
 </ul>
   </nav></div>
 

@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -482,19 +483,22 @@
 </section>
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
-<p>After building, install the wheel with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>isaacteleop<span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall
+<p>After building, install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>isaaccapture<span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall
 
 <span class="c1"># or</span>
-pip<span class="w"> </span>install<span class="w"> </span>install/wheels/isaacteleop-*.whl
+pip<span class="w"> </span>install<span class="w"> </span>install/wheels/isaaccapture-*.whl
 </pre></div>
 </div>
+<p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
+in 1.9, so
+<code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without a second install; see <a class="reference internal" href="migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 </section>
 <section id="installing-from-source-with-pip-scikit-build-core">
 <h2>Installing from source with pip (scikit-build-core)<a class="headerlink" href="#installing-from-source-with-pip-scikit-build-core" title="Link to this heading">#</a></h2>
 <p>In addition to the classic CMake flow above (which stages the package
 and produces a wheel under <code class="docutils literal notranslate"><span class="pre">install/wheels/</span></code>), the repository ships a root
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> that exposes <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> through the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> that exposes <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> through the
 <a class="reference external" href="https://scikit-build-core.readthedocs.io/" rel="noopener noreferrer" target="_blank">scikit-build-core</a> build backend,
 driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">            </span><span class="c1"># build + install the compiled wheel from source</span>
@@ -538,7 +542,6 @@ incremental wheel tree intact.</p></li>
 <p>After a successful build and install, relative to your build directory:</p>
 <ul class="simple">
 <li><p><strong>C++ libraries:</strong> <code class="docutils literal notranslate"><span class="pre">src/core/</span></code> (and under each module)</p></li>
-<li><p><strong>Python wheel:</strong> <code class="docutils literal notranslate"><span class="pre">wheels/isaacteleop-*.whl</span></code></p></li>
 <li><p><strong>Examples (binaries):</strong> under <code class="docutils literal notranslate"><span class="pre">examples/</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">examples/oxr/cpp/</span></code>)</p></li>
 <li><p><strong>Installed files:</strong> <code class="docutils literal notranslate"><span class="pre">install/</span></code> (or your <code class="docutils literal notranslate"><span class="pre">CMAKE_INSTALL_PREFIX</span></code>)
 - Libraries: <code class="docutils literal notranslate"><span class="pre">install/lib/</span></code>
@@ -739,7 +742,7 @@ in <a class="reference internal" href="../getting_started/build_from_source/inde
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

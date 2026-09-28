@@ -12,7 +12,7 @@ examples more readable by focusing on **what** you want to do rather than
 Overview
 --------
 
-The main component is :code-file:`TeleopSession <src/python/isaacteleop/teleop_session_manager/teleop_session.py>`, which manages the complete lifecycle
+The main component is :code-file:`TeleopSession <src/python/isaaccapture/teleop_session_manager/teleop_session.py>`, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 :code-file:`DeviceIOSession <src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp>`
 and :doc:`device trackers <../device/trackers>` so that callers don't need to
@@ -31,13 +31,13 @@ Here's a minimal example:
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import (
+   from isaaccapture.teleop_session_manager import (
        TeleopSession,
        TeleopSessionConfig,
    )
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner
-   from isaacteleop.retargeters import GripperRetargeter, GripperRetargeterConfig
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner
+   from isaaccapture.retargeters import GripperRetargeter, GripperRetargeterConfig
 
    # Create source and build pipeline (one GripperRetargeter per side)
    controllers = ControllersSource(name="controllers")
@@ -118,7 +118,7 @@ argument is a ``uint64`` handle value.
 
 .. code-block:: python
 
-   from isaacteleop.oxr import OpenXRSessionHandles
+   from isaaccapture.oxr import OpenXRSessionHandles
 
    handles = OpenXRSessionHandles(
        instance_handle, session_handle, space_handle, proc_addr
@@ -145,8 +145,8 @@ available vendor ids.
 
 .. code-block:: python
 
-   import isaacteleop.deviceio as deviceio
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import FullBodySource
+   import isaaccapture.deviceio as deviceio
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import FullBodySource
 
    # Select the backend on the source; it flows through the pipeline into the session.
    full_body = FullBodySource(
@@ -209,7 +209,7 @@ matching the historical ownership behavior.
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import RetargetingExecutionConfig
+   from isaaccapture.teleop_session_manager import RetargetingExecutionConfig
 
    config = TeleopSessionConfig(
        app_name="MyApp",
@@ -241,7 +241,7 @@ pipelined mode, but public session state such as ``frame_count``,
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import (
+   from isaaccapture.teleop_session_manager import (
        DeadlinePacingConfig,
        RetargetingExecutionConfig,
    )
@@ -403,11 +403,11 @@ Example (explicit GraphTime + ExecutionEvents override):
 
    import time
 
-   from isaacteleop.retargeting_engine.interface.execution_events import (
+   from isaaccapture.retargeting_engine.interface.execution_events import (
        ExecutionEvents,
        ExecutionState,
    )
-   from isaacteleop.retargeting_engine.interface.retargeter_core_types import GraphTime
+   from isaaccapture.retargeting_engine.interface.retargeter_core_types import GraphTime
 
    now_ns = time.monotonic_ns()
    result = session.step(

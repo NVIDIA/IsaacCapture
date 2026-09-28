@@ -71,7 +71,7 @@ features does not import its heavier numerical stack. The
 
 .. code-block:: console
 
-   $ pip install "isaacteleop[grounding]"
+   $ pip install "isaaccapture[grounding]"
 
 For a source or editable install, CMake performs the same fetch and
 staging automatically:
@@ -89,7 +89,7 @@ Use it from Python
 
 .. code-block:: python
 
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeters import (
        SharpaHandRetargeter,
        SharpaHandRetargeterConfig,
    )
@@ -132,13 +132,13 @@ The repo ships a bimanual demo in ``examples/retargeting``:
    $ uv pip install -e ./examples/retargeting
 
    # Synthetic curl animation (no headset, no GUI required):
-   $ python -m isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo --synthetic
+   $ python -m isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo --synthetic
 
    # Live bimanual from a connected Quest headset:
-   $ python -m isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo
+   $ python -m isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo
 
    # Custom MJCFs (e.g. the mesh-bearing variants):
-   $ python -m isaacteleop_examples.retargeting.sharpa_hand_retargeter_demo \
+   $ python -m isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo \
        --left-mjcf  /path/to/left_sharpawave.xml \
        --right-mjcf /path/to/right_sharpawave.xml
 

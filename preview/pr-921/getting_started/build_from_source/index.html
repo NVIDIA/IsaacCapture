@@ -380,6 +380,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/license.html">License</a></li>
 </ul>
 </div>
@@ -445,7 +446,7 @@ examples. The instructions align with the project’s CMake configuration and th
 <li><p><a class="reference internal" href="#clone-the-repository" id="id7">1. Clone the repository</a></p></li>
 <li><p><a class="reference internal" href="#cmake-configure-and-build" id="id8">2. CMake: Configure and build</a></p></li>
 <li><p><a class="reference internal" href="#running-tests" id="id9">3. Running tests</a></p></li>
-<li><p><a class="reference internal" href="#install-the-isaacteleop-pip-package" id="id10">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></p></li>
+<li><p><a class="reference internal" href="#install-the-isaaccapture-pip-package" id="id10">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></p></li>
 </ul>
 </nav>
 <div class="admonition-next-steps admonition">
@@ -483,7 +484,7 @@ on Windows), and on Linux <strong>wayland-scanner</strong> (<code class="docutil
 backend — pass <code class="docutils literal notranslate"><span class="pre">-DGLFW_BUILD_WAYLAND=OFF</span></code> to build Televiz against X11 only instead.
 Neither gates the auto-default: if one is missing, the configure fails naming it rather
 than quietly dropping the module. Most users do not need any of this:
-<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaacteleop</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> module. See
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaaccapture</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module. See
 <a class="reference internal" href="#other-build-options">Other Build options</a> for the full option table.</p>
 </div>
 </section>
@@ -546,19 +547,19 @@ tarballs such as:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">CloudXR-&lt;version-for-runtime-sdk&gt;-Linux-&lt;arch&gt;-sdk.tar.gz</span></code> (CloudXR Runtime SDK)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">CloudXR-exp-&lt;version-for-runtime-sdk&gt;-Linux-&lt;arch&gt;-sdk.tar.gz</span></code> (experimental
-runtime). Packaged by default as <code class="docutils literal notranslate"><span class="pre">isaacteleop.cloudxr_exp</span></code>; needed for Jetson Orin
+runtime). Packaged by default as <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr_exp</span></code>; needed for Jetson Orin
 support (for example <a class="reference internal" href="../televiz.html"><span class="doc">Televiz</span></a>) until the default runtime covers
 those platforms.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version-for-web-sdk&gt;.tgz</span></code> (CloudXR Web SDK)</p></li>
 </ul>
-<p>You can place them in the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/deps/cloudxr/" rel="noopener noreferrer" target="_blank">deps/cloudxr/</a> directory and update the <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code>
+<p>You can place them in the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/deps/cloudxr" rel="noopener noreferrer" target="_blank">deps/cloudxr/</a> directory and update the <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code>
 file to locally override the default version defined in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/deps/cloudxr/.env.default" rel="noopener noreferrer" target="_blank">deps/cloudxr/.env.default</a>,
 like this:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CXR_RUNTIME_SDK_VERSION</span><span class="o">=</span>&lt;version-for-runtime-sdk&gt;
 <span class="nv">CXR_WEB_SDK_VERSION</span><span class="o">=</span>&lt;version-for-web-sdk&gt;
 </pre></div>
 </div>
-<p>The experimental runtime is packaged into the wheel as <code class="docutils literal notranslate"><span class="pre">isaacteleop.cloudxr_exp</span></code> by default
+<p>The experimental runtime is packaged into the wheel as <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr_exp</span></code> by default
 (<code class="docutils literal notranslate"><span class="pre">ENABLE_CLOUDXR_EXP_BUNDLE=ON</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">-DENABLE_CLOUDXR_EXP_BUNDLE=OFF</span></code> to skip it.
 Select it at runtime with <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP</span></code>.
 See <a class="reference internal" href="../../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a>.</p>
@@ -675,7 +676,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </tr>
 <tr class="row-odd"><td><p><strong>Televiz visualization</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BUILD_VIZ</span></code></p></td>
-<td><p>Auto: <code class="docutils literal notranslate"><span class="pre">ON</span></code> when Vulkan and the CUDA Toolkit are detected, else <code class="docutils literal notranslate"><span class="pre">OFF</span></code>. Force with <code class="docutils literal notranslate"><span class="pre">-DBUILD_VIZ=ON</span></code> / <code class="docutils literal notranslate"><span class="pre">-DBUILD_VIZ=OFF</span></code>. (Most users don’t need this — <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaacteleop</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> module.)</p></td>
+<td><p>Auto: <code class="docutils literal notranslate"><span class="pre">ON</span></code> when Vulkan and the CUDA Toolkit are detected, else <code class="docutils literal notranslate"><span class="pre">OFF</span></code>. Force with <code class="docutils literal notranslate"><span class="pre">-DBUILD_VIZ=ON</span></code> / <code class="docutils literal notranslate"><span class="pre">-DBUILD_VIZ=OFF</span></code>. (Most users don’t need this — <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaaccapture</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module.)</p></td>
 </tr>
 </tbody>
 </table>
@@ -767,20 +768,24 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
 </div>
 <p>The CI uses <code class="docutils literal notranslate"><span class="pre">ctest</span></code> (see <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a>).</p>
 </section>
-<section id="install-the-isaacteleop-pip-package">
-<h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a><a class="headerlink" href="#install-the-isaacteleop-pip-package" title="Link to this heading">#</a></h2>
+<section id="install-the-isaaccapture-pip-package">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a><a class="headerlink" href="#install-the-isaaccapture-pip-package" title="Link to this heading">#</a></h2>
 <p>The wheels are built in the <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code> directory. Install the package from the wheels.
 Using <code class="docutils literal notranslate"><span class="pre">pip</span></code>, you need to pass the <code class="docutils literal notranslate"><span class="pre">--no-index</span></code> option to automatically find the right wheel
 based on the Python version.  Note that <code class="docutils literal notranslate"><span class="pre">pip</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code> has slightly different options.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pass --no-index to use only wheels in ./install/wheels/;</span>
 <span class="c1"># Pass --force-reinstall to replace an existing install.</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaacteleop[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--no-index<span class="w"> </span>--force-reinstall
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--no-index<span class="w"> </span>--force-reinstall
 </pre></div>
 </div>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pass --reinstall to replace an existing install.</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaacteleop[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall
 </pre></div>
 </div>
+<p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
+in 1.9, so
+<code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
+<a class="reference internal" href="../../references/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 <section id="alternative-install-directly-from-source-with-pip">
 <h3>Alternative: install directly from source with pip<a class="headerlink" href="#alternative-install-directly-from-source-with-pip" title="Link to this heading">#</a></h3>
 <p>The repository also ships a root <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> using the
@@ -834,10 +839,16 @@ tagged <code class="docutils literal notranslate"><span class="pre">+local</span
 <code class="docutils literal notranslate"><span class="pre">.devN</span></code> labels) stays with the classic flow via
 <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/cmake/IsaacTeleopVersion.cmake" rel="noopener noreferrer" target="_blank">cmake/IsaacTeleopVersion.cmake</a>.</p></li>
 </ul>
+<div class="admonition-import-isaacteleop-under-this-path admonition">
+<p class="admonition-title"><code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> under this path</p>
+<p>Both <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">.</span></code> and <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-e</span> <span class="pre">.</span></code> serve the alias: the shim’s
+source (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/compat/isaacteleop.py" rel="noopener noreferrer" target="_blank">src/compat/isaacteleop.py</a>) is mapped beside <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>’s
+and ships in the same wheel (<a class="reference internal" href="../../references/migration.html"><span class="doc">Migrating to isaaccapture</span></a>).</p>
+</div>
 <div class="admonition-editable-installs-and-iterating-on-pure-python-subpackages admonition">
 <p class="admonition-title">Editable installs and iterating on pure-Python subpackages</p>
 <p>An editable install (<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-e</span> <span class="pre">.</span></code>) never recompiles on import. Pure-Python
-subpackages resolve straight to <code class="docutils literal notranslate"><span class="pre">src/python/isaacteleop/</span></code>, so edits <strong>take effect
+subpackages resolve straight to <code class="docutils literal notranslate"><span class="pre">src/python/isaaccapture/</span></code>, so edits <strong>take effect
 live</strong> — a fresh interpreter is enough.</p>
 <p>Compiled extensions are the exception: <code class="docutils literal notranslate"><span class="pre">.so</span></code>/<code class="docutils literal notranslate"><span class="pre">.pyd</span></code> still come from the CMake
 build tree, so C++ changes need a <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--build</span></code> (or a re-run of
@@ -849,7 +860,7 @@ build tree, so C++ changes need a <code class="docutils literal notranslate"><sp
 <p>The full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra does <strong>not</strong> resolve on <code class="docutils literal notranslate"><span class="pre">aarch64</span></code> (some of its
 pinned dependencies have no aarch64 wheels). On Jetson/DGX-class robotics
 targets, install the <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> extra instead:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaacteleop[retargeters-lite]"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters-lite]"</span>
 </pre></div>
 </div>
 </div>
@@ -921,7 +932,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-tests">3. Running tests</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-the-isaacteleop-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a><ul class="nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-the-isaaccapture-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#alternative-install-directly-from-source-with-pip">Alternative: install directly from source with pip</a></li>
 </ul>
 </li>
@@ -1007,7 +1018,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>

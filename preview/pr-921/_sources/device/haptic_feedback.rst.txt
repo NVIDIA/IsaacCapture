@@ -23,8 +23,8 @@ graph outputs and writes them *out* to a device after the graph runs.
 - **Device-side schemas** (``TensorGroupType``) describe what a device consumes.
   ``ControllerHapticPulse`` carries ``[amplitude, frequency_hz, duration_s]``;
   ``EndEffectorForce`` carries a 3-DoF force for future grounded devices. They
-  live in ``isaacteleop.retargeting_engine.tensor_types``.
-- **Retargeters** in ``isaacteleop.retargeters.tactile_retargeters`` map
+  live in ``isaaccapture.retargeting_engine.tensor_types``.
+- **Retargeters** in ``isaaccapture.retargeters.tactile_retargeters`` map
   sim-side tactile data (a ``TactileVector`` / ``TactileHeatmap``) to a
   device-side schema — e.g. ``TactileVectorToControllerPulse``.
 - **HapticSink** (``IDeviceIOSink``) is the vendor-neutral output node. It stores
