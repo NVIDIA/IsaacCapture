@@ -233,6 +233,13 @@ export const URL_PARAMS: UrlParam[] = [
     description: 'Delay before each retry attempt, in milliseconds.',
   },
   {
+    key: 'streamAttachTimeoutMs',
+    elementId: 'cloudxrStreamAttachTimeoutMs',
+    isValid: isNumber,
+    description:
+      'Base timeout for detecting a stream that never attaches ("passthrough-only"), in milliseconds. Independent of retry.',
+  },
+  {
     key: 'proxyUrl',
     elementId: 'proxyUrl',
     description: 'Proxy URL for routing (HTTPS); leave empty for direct WSS.',

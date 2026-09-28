@@ -72,6 +72,10 @@ export interface ReactUIConfig {
   reconnectMaxAttempts?: number;
   /** Delay between retry attempts in milliseconds. Only used when reconnectEnabled is true. */
   reconnectDelayMs?: number;
+  /** Base timeout (ms) for "passthrough-only" detection (session entered XR but the stream never
+   * attached). Independent of reconnectEnabled - detection always runs; doubles per retry
+   * attempt when reconnect is also on. See CloudXRComponent's streamAttachTimeoutMs prop. */
+  streamAttachTimeoutMs?: number;
   /** Active teleop project path (a key path in `TELEOP_PROJECTS`). */
   teleopPath: string;
 }

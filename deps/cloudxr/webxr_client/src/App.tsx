@@ -1196,6 +1196,7 @@ function AppContent() {
                       }
                     : undefined
                 }
+                streamAttachTimeoutMs={config?.streamAttachTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
                   if (cloudXR2DUI) {

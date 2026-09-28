@@ -1486,6 +1486,28 @@ limitations under the License.
               </div>
 
               <div class="config-section">
+                <label for="cloudxrStreamAttachTimeoutMs" class="input-label"
+                  >Stream Attach Timeout (ms, default: 8000)</label
+                >
+                <input
+                  id="cloudxrStreamAttachTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="100"
+                  placeholder="Stream attach timeout in ms"
+                  spellcheck="false"
+                  value="8000"
+                />
+                <div class="config-text">
+                  How long to wait for the video stream to attach before treating the session as
+                  stuck ("passthrough-only" - entered XR with nothing rendering). Independent of
+                  Retry on Error above: this detection always runs; doubles on each retry attempt
+                  when retry is also on.
+                </div>
+              </div>
+
+              <div class="config-section">
                 <label for="cloudxrAutoRefreshMode" class="input-label"
                   >Auto Refresh on Session End</label
                 >

@@ -192,6 +192,8 @@ export class CloudXR2DUI {
   private reconnectMaxAttemptsInput!: HTMLInputElement;
   /** Delay before each retry attempt, in milliseconds */
   private reconnectDelayMsInput!: HTMLInputElement;
+  /** Base timeout for passthrough-only detection, in milliseconds - independent of retry. */
+  private streamAttachTimeoutMsInput!: HTMLInputElement;
   /** Button that clears stored settings and reloads to defaults. */
   private resetSettingsButton!: HTMLButtonElement;
   /** Container for the runtime-generated URL-parameter help list (optional in markup). */
@@ -500,6 +502,9 @@ export class CloudXR2DUI {
       'cloudxrReconnectMaxAttempts'
     );
     this.reconnectDelayMsInput = this.getElement<HTMLInputElement>('cloudxrReconnectDelayMs');
+    this.streamAttachTimeoutMsInput = this.getElement<HTMLInputElement>(
+      'cloudxrStreamAttachTimeoutMs'
+    );
     this.teleopModeSubtitle = this.getElement<HTMLElement>('teleopModeSubtitle');
     this.teleopProjectSelect = this.getElement<HTMLSelectElement>('teleopProjectSelect');
     this.resetSettingsButton = this.getElement<HTMLButtonElement>('resetSettingsButton');
@@ -567,6 +572,7 @@ export class CloudXR2DUI {
       reconnectEnabled: true,
       reconnectMaxAttempts: 3,
       reconnectDelayMs: 3000,
+      streamAttachTimeoutMs: 8000,
       teleopPath: DEFAULT_TELEOP_PATH,
     };
   }
@@ -616,6 +622,7 @@ export class CloudXR2DUI {
       { el: this.reconnectEnabledInput, key: 'reconnectEnabled' },
       { el: this.reconnectMaxAttemptsInput, key: 'reconnectMaxAttempts' },
       { el: this.reconnectDelayMsInput, key: 'reconnectDelayMs' },
+      { el: this.streamAttachTimeoutMsInput, key: 'streamAttachTimeoutMs' },
     ];
   }
 
@@ -839,6 +846,8 @@ export class CloudXR2DUI {
     addListener(this.xrOffsetZInput, 'input', updateConfig);
     addListener(this.xrOffsetZInput, 'change', updateConfig);
     addListener(this.controlPanelPositionSelect, 'change', updateConfig);
+    addListener(this.streamAttachTimeoutMsInput, 'input', updateConfig);
+    addListener(this.streamAttachTimeoutMsInput, 'change', updateConfig);
     addListener(this.teleopProjectSelect, 'change', () => {
       const value = this.teleopProjectSelect.value;
       if (!value) return;
@@ -1091,6 +1100,10 @@ export class CloudXR2DUI {
       reconnectDelayMs: (() => {
         const v = parseInt(this.reconnectDelayMsInput.value, 10);
         return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().reconnectDelayMs;
+      })(),
+      streamAttachTimeoutMs: (() => {
+        const v = parseInt(this.streamAttachTimeoutMsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().streamAttachTimeoutMs;
       })(),
       panelHiddenAtStart: this.panelHiddenAtStartSelect.value === 'true',
       teleopPath: this.teleopPath,
