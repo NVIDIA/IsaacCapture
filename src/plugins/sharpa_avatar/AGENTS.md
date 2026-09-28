@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
   `/opt/avatar-sdk`). Do not copy, patch, or package SDK files.
 - Install the pinned production `avatar-sdk` package from the signed production
   channel, and never substitute `-dev` or `-beta`. Do not parse or duplicate
-  `production_version`: `install.sh` and CMake call
+  `production_version`: CMake calls
   `install_avatar_sdk.sh --check`, which holds the default root to the full pin
   (layout, `BUILD_TYPE=Production`, dpkg package version) and layout-checks a
   custom root, where a non-production build only warns. Do not pin `VERSION=`
@@ -29,8 +29,8 @@ SPDX-License-Identifier: Apache-2.0
   demand exact set equality (extra fingerprints from key rotation are allowed).
 - Keep installer responsibilities separate: SDK/APT in
   `install_avatar_sdk.sh`, host device permissions in
-  `install_udev_rules.sh`, and plugin build/install orchestration in
-  `install.sh`.
+  `install_udev_rules.sh`, and plugin build/install through the repository's
+  top-level CMake workflow.
 - Installers must not delete files derived from a configured install prefix.
 - Do not mutate loader environment variables or SDK configuration at runtime.
   Runtime paths come from the selected SDK root and its `sdk_config.json`.

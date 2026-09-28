@@ -19,7 +19,12 @@ Install them first, then run this example against the installed plugin.
 ## Run
 
 ```bash
-./src/plugins/sharpa_avatar/install.sh
+./src/plugins/sharpa_avatar/install_avatar_sdk.sh
+cmake -B build \
+  -DBUILD_PLUGIN_SHARPA_AVATAR=ON \
+  -DAVATAR_SDK_ROOT=/opt/avatar-sdk
+cmake --build build --parallel
+cmake --install build
 uv pip install -e ./examples/sharpa_avatar
 python -m isaacteleop_examples.sharpa_avatar
 ```
@@ -29,8 +34,9 @@ and the right hand is orange. The terminal reports the OpenXR hands plus the
 22-DoF RAW and ROBOT joint streams. Bringing a fingertip close to the thumb
 vibrates that finger. Ctrl+C stops it.
 
-If the plugin binary is missing, run the installer above first. `uv pip install
--e` pulls `viser`; CloudXR comes from the `isaacteleop[cloudxr]` extra.
+If the plugin binary is missing, run the SDK install and top-level CMake commands
+above first. `uv pip install -e` pulls `viser`; CloudXR comes from the
+`isaacteleop[cloudxr]` extra.
 
 ## Options
 

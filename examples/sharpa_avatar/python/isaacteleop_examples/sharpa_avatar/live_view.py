@@ -6,7 +6,7 @@ Starts CloudXR and ``avatar_hand_plugin`` unless you opt out. Pinch a fingertip
 toward the thumb to vibrate that finger. Does not import plugin C++ classes or
 the Sharpa desktop application.
 
-Usage (after ``src/plugins/sharpa_avatar/install.sh``)::
+Usage (after installing the SDK and plugin through top-level CMake)::
 
     uv pip install -e ./examples/sharpa_avatar
     python -m isaacteleop_examples.sharpa_avatar
@@ -544,8 +544,9 @@ def main() -> int:
         _die(
             "Sharpa Avatar plugin binary was not found under "
             f"{PLUGIN_ROOT_ID}/{PLUGIN_NAME}.\n"
-            "  Build it with:  ./src/plugins/sharpa_avatar/install.sh\n"
-            "  That installs install/plugins/sharpa_avatar/avatar_hand_plugin.\n"
+            "  Build it with the top-level CMake workflow and "
+            "-DBUILD_PLUGIN_SHARPA_AVATAR=ON.\n"
+            "  Then install it with:  cmake --install build\n"
             "  Or pass --plugin-search-path to the directory that contains "
             "sharpa_avatar/avatar_hand_plugin."
         )
@@ -708,7 +709,6 @@ def main() -> int:
                     "avatar-backend or Avatar Desktop)"
                 )
             time.sleep(step_period)
-    return 0
 
 
 if __name__ == "__main__":
