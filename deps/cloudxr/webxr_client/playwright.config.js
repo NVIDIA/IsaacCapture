@@ -57,6 +57,9 @@ module.exports = defineConfig({
   ],
 
   use: {
+    // Only matches the component-mock server (:8083); the app-mock server (:8082) has no
+    // matching baseURL because specs against it (AppMockTest.spec.js, ClientUIStatesTest.spec.js)
+    // hardcode their own full http://localhost:8082/ URL instead of relying on this default.
     baseURL: 'http://localhost:8083',
     trace: 'on-first-retry',
     launchOptions: {
