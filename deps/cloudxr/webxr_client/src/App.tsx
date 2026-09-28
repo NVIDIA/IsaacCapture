@@ -1247,6 +1247,8 @@ function AppContent() {
                   onCountdownDecrease={handleDecreaseCountdown}
                   countdownDisabled={isCountingDown}
                   position={controlPanelPositionVector}
+                  controlPanelPosition={config?.controlPanelPosition ?? 'center'}
+                  controlPanelLayout={CONTROL_PANEL_LAYOUT}
                   rotation={[0, 0, 0]}
                   renderFpsText={renderFpsText}
                   poseSendFpsText={poseSendFpsText}

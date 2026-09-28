@@ -36,16 +36,30 @@
  */
 
 import { ReadonlySignal } from '@preact/signals-react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Handle, HandleState, HandleTarget } from '@react-three/handle';
 import { Container, Image, Text } from '@react-three/uikit';
 import { Button } from '@react-three/uikit-default';
-import React, { useEffect, useRef, useState } from 'react';
-import { Color, Group, Mesh, MeshStandardMaterial, Object3D, Vector3 } from 'three';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Camera,
+  Color,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  Object3D,
+  Quaternion,
+  Vector3,
+} from 'three';
 import { damp } from 'three/src/math/MathUtils.js';
 
 import { PerformanceCanvasImage } from '@helpers/react/PerformanceCanvasImage';
 import { useXRButton } from '@helpers/react/useXRButton';
+import {
+  ControlPanelLayoutOptions,
+  ControlPanelPosition,
+  getControlPanelPositionVector,
+} from '@helpers/react/utils';
 
 import arrowLeftStartOnRectangleSvg from './icons/arrow-left-start-on-rectangle.svg';
 import arrowUturnLeftSvg from './icons/arrow-uturn-left.svg';
@@ -54,6 +68,11 @@ import { useRecorder } from './RecorderContext';
 
 // Face-camera rotation constants
 const FACE_CAMERA_DAMPING = 10; // Higher = faster rotation toward camera
+
+const WORLD_FORWARD = new Vector3(0, 0, -1);
+const WORLD_UP = new Vector3(0, 1, 0);
+// Synthesized via CDP by oob_teleop_adb.py's _cdp_send_reset_panel_key - keep in sync.
+const RESET_PANEL_KEY = 'r'; // compared against event.key.toLowerCase()
 
 /** Display size for the Performance metrics slot (width and height passed to PerformanceCanvasImage and its container). */
 const METRIC_SLOT_WIDTH = 512;
@@ -74,6 +93,11 @@ interface CloudXRUIProps {
   countdownDisabled?: boolean;
   position?: [number, number, number];
   rotation?: [number, number, number];
+  /** Same setting used for the initial world-space `position` above - reused by
+   * resetPanelRelativeToHead so a reset reproduces the same left/center/right choice. */
+  controlPanelPosition?: ControlPanelPosition;
+  /** Same layout constants used to compute `position` above. */
+  controlPanelLayout?: ControlPanelLayoutOptions;
   /** Computed signal for render FPS text - updates without React re-render */
   renderFpsText?: ReadonlySignal<string>;
   /** Computed signal for pose send FPS text - the rate operator intent reaches the robot */
@@ -248,6 +272,8 @@ export default function CloudXR3DUI({
   onCountdownDecrease,
   countdownDisabled = false,
   position = [1.8, 1.75, -1.3],
+  controlPanelPosition = 'center',
+  controlPanelLayout = { distance: 1.8, height: 1.85, angleDegrees: 70 },
   rotation = [0, 0, 0], // Note: Y rotation is controlled by face-camera logic
   renderFpsText,
   poseSendFpsText,
@@ -284,10 +310,15 @@ export default function CloudXR3DUI({
   /** Control panel hidden: small Show control (see settings to hide control panel on XR enter). */
   const [panelHidden, setPanelHidden] = useState(false);
   const prevXRMode = useRef(false);
+  // Set on the same isXRMode false->true transition below, consumed (and cleared) by the
+  // useFrame block further down - see resetPanelRelativeToHead's doc comment for why the
+  // placement itself can't happen here, in a plain effect.
+  const needsInitialPlacement = useRef(false);
 
   useEffect(() => {
     if (isXRMode && !prevXRMode.current) {
       setPanelHidden(panelHiddenAtStart);
+      needsInitialPlacement.current = true;
     }
     prevXRMode.current = isXRMode;
   }, [isXRMode, panelHiddenAtStart]);
@@ -312,6 +343,90 @@ export default function CloudXR3DUI({
     }
   }, [position[0], position[1], position[2]]);
 
+  const { camera } = useThree();
+
+  /**
+   * Un-hides the panel and repositions it relative to *cam* using the same left/center/right +
+   * distance/height/angle the initial world-space `position` prop was computed from
+   * (getControlPanelPositionVector, App.tsx's CONTROL_PANEL_LAYOUT) - just re-anchored to the
+   * current head pose instead of the world/tracking origin. There is no way to detect a panel
+   * that's hidden or dragged out of reach (see CloudXR2DUI's panelHiddenAtStart docs) - the drag
+   * handle needed to recover it can itself be unreachable - so this offers a fix instead: the
+   * operator (or the host, via oob_teleop_adb.py's _cdp_send_reset_panel_key synthesizing
+   * RESET_PANEL_KEY over CDP) can always bring the panel back regardless of where it ended up.
+   * The Handle system reads/writes this same groupRef.position, so a normal drag still works
+   * immediately afterward.
+   *
+   * *cam*'s yaw is used on the horizontal (XZ) plane only, matching the face-camera effect below
+   * - using the raw camera quaternion (which includes pitch) would place the panel above or
+   * below eye level, or tilted, whenever the operator's head isn't level. Height comes straight
+   * from controlPanelLayout.height (already floor-relative in the local-floor reference space),
+   * not from the camera's current height, so it doesn't track the operator crouching/standing.
+   *
+   * IMPORTANT: only call this with a camera whose transform is known-current for this frame
+   * (i.e. from useFrame's `state.camera`, or - as in the keydown handler below - useThree()'s
+   * camera when called well after session start, never from a plain mount-time effect). A WebXR
+   * session can only produce a frame callback once it has a real tracked pose, so useFrame is the
+   * only place that's guaranteed fresh; a plain useEffect keyed on isXRMode can fire before the
+   * first tracked frame lands, reading a stale/default transform instead.
+   */
+  const resetPanelRelativeToHead = useCallback(
+    (cam: Camera) => {
+      if (!groupRef.current) {
+        return;
+      }
+      const forward = WORLD_FORWARD.clone().applyQuaternion(cam.quaternion);
+      forward.y = 0;
+      forward.normalize();
+      const yawQuat = new Quaternion().setFromUnitVectors(WORLD_FORWARD, forward);
+
+      const [localX, panelHeight, localZ] = getControlPanelPositionVector(
+        controlPanelPosition,
+        controlPanelLayout
+      );
+      const horizontalOffset = new Vector3(localX, 0, localZ).applyQuaternion(yawQuat);
+      const target = new Vector3(
+        cam.position.x + horizontalOffset.x,
+        panelHeight,
+        cam.position.z + horizontalOffset.z
+      );
+
+      groupRef.current.position.copy(target);
+      setPanelHidden(false);
+      // Logged so a test can assert the panel actually lands near the headset instead of at a
+      // fixed world coordinate - see the console lines, not the scene graph, since there's no
+      // other way to observe a Three.js object's world position from outside the page.
+      console.debug(
+        `[CloudXRUI] headset position: (${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)})`
+      );
+      console.debug(
+        `[CloudXRUI] panel reset to: (${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
+      );
+    },
+    [controlPanelPosition, controlPanelLayout]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== RESET_PANEL_KEY) {
+        return;
+      }
+      // Unlike a function key, a plain letter can be typed into any of the 2D settings form's
+      // text inputs - don't reset the panel out from under someone typing a server IP.
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      resetPanelRelativeToHead(camera);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [camera, resetPanelRelativeToHead]);
+
   const isCompact = minimizeOnPlay && playInProgress;
   const isMinimizedLayout = isCompact || panelHidden;
   const handleWidth = panelHidden ? 0.12 : isCompact ? 0.28 : 1.0;
@@ -328,6 +443,12 @@ export default function CloudXR3DUI({
   useFrame((state, dt) => {
     if (groupRef.current == null) {
       return;
+    }
+    // First real XR frame since session start (see resetPanelRelativeToHead's doc comment for
+    // why it must happen here, not in the isXRMode effect that set the flag).
+    if (needsInitialPlacement.current) {
+      resetPanelRelativeToHead(state.camera);
+      needsInitialPlacement.current = false;
     }
     state.camera.getWorldPosition(cameraPositionHelper);
     groupRef.current.getWorldPosition(uiPositionHelper);

@@ -1437,6 +1437,50 @@ def clear_headset_browser_cache(*, usb_local: bool) -> int:
         _adb_forward_remove(_CDP_LOCAL_PORT)
 
 
+# Must match CloudXRUI.tsx's RESET_PANEL_KEY / the keydown listener's key check.
+_RESET_PANEL_KEY = "r"
+_RESET_PANEL_CODE = (
+    "KeyR"  # DOM KeyboardEvent.code convention, not the same string as .key
+)
+_RESET_PANEL_VIRTUAL_KEY_CODE = 82  # VK_R
+
+
+async def _cdp_send_reset_panel_key(ws_url: str) -> None:
+    """Synthesize the reset-panel keypress (CloudXRUI.tsx's window keydown listener) over CDP.
+
+    Recovers a "missing panel" (hidden, or dragged out of reach) by fixing it rather than
+    detecting it first: the client-side handler un-hides the panel and repositions it in front
+    of the current head pose, regardless of where it ended up or why. Best-effort - exceptions
+    propagate; callers treat this as non-fatal.
+    """
+    from websockets.asyncio.client import connect as ws_connect  # noqa: PLC0415
+
+    _seq = 0
+
+    async def send(ws, method: str, params: dict | None = None) -> None:
+        nonlocal _seq
+        _seq += 1
+        req_id = _seq
+        await ws.send(
+            json.dumps({"id": req_id, "method": method, "params": params or {}})
+        )
+        while True:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+            if msg.get("id") == req_id:
+                return
+
+    key_params = {
+        "key": _RESET_PANEL_KEY,
+        "code": _RESET_PANEL_CODE,
+        "windowsVirtualKeyCode": _RESET_PANEL_VIRTUAL_KEY_CODE,
+        "nativeVirtualKeyCode": _RESET_PANEL_VIRTUAL_KEY_CODE,
+    }
+    async with ws_connect(ws_url) as ws:
+        await send(ws, "Input.dispatchKeyEvent", {"type": "rawKeyDown", **key_params})
+        await send(ws, "Input.dispatchKeyEvent", {"type": "keyUp", **key_params})
+    log.info("CDP: sent reset-panel key (%s)", _RESET_PANEL_KEY)
+
+
 async def _cdp_session_click_connect(
     ws_url: str,
     *,
@@ -1810,6 +1854,7 @@ async def run_oob_connect(
     host_client: bool = False,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
+    reset_panel_on_connect: bool = False,
 ) -> asyncio.Task | None:
     """Open the teleop page on the headset via ``am start`` and click CONNECT via CDP.
 
@@ -1821,7 +1866,10 @@ async def run_oob_connect(
       4. Bring the tab to the foreground (required by WebXR ``requestSession``).
       5. Handle the self-signed cert interstitial if present.
       6. Find the CONNECT button and click it via ``Input.dispatchMouseEvent``.
-      7. Start a background monitor that forwards mid-stream errors from the
+      7. If *reset_panel_on_connect*, synthesize the reset-panel keypress so the
+         in-headset panel starts in front of the operator rather than wherever
+         it was left (world position persists across sessions via the drag handle).
+      8. Start a background monitor that forwards mid-stream errors from the
          web client's ``errorMessageBox`` into the server log.
 
     Args:
@@ -1834,6 +1882,11 @@ async def run_oob_connect(
             GitHub Pages origin.
         on_dispatched: Called after the trusted CONNECT mouse click, before
             the Quest DOM fallback and connection polling.
+        reset_panel_on_connect: When ``True``, send the reset-panel key
+            (:func:`_cdp_send_reset_panel_key`) right after CONNECT is
+            clicked. Off by default: it repositions the panel every launch,
+            which overrides any deliberate manual placement from the
+            previous session.
 
     Returns:
         A running :class:`asyncio.Task` that monitors the headset's error
@@ -2044,6 +2097,12 @@ async def run_oob_connect(
             on_dispatched=on_dispatched,
             on_client_loaded=on_client_loaded,
         )
+
+        if reset_panel_on_connect:
+            try:
+                await _cdp_send_reset_panel_key(ws_url)
+            except Exception as exc:
+                log.warning("CDP: reset-panel key send failed (non-fatal): %s", exc)
 
         # --- Step 5: background monitor for mid-stream error banners ---------
         # Keep the adb forward alive; the monitor tears it down on exit.
