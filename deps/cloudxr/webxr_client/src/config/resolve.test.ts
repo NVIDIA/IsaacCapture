@@ -153,6 +153,9 @@ function sampleValid(key: string): string {
     'streamTestDurationSeconds',
     'reconnectMaxAttempts',
     'reconnectDelayMs',
+    'controlPanelDistance',
+    'controlPanelHeight',
+    'controlPanelAngleDegrees',
   ]);
   if (numeric.has(key)) return '1';
   const enums: Record<string, string> = {
