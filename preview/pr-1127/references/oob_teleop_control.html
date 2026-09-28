@@ -689,7 +689,10 @@ updated client.</p>
 <p>The same redacted lifecycle snapshot appears in <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">status</span></code>, through
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.oob_status()</span></code>, and at
 <code class="docutils literal notranslate"><span class="pre">&lt;cloudxr-install-dir&gt;/run/oob_status.json</span></code>. A normal shutdown removes the
-status file; a terminal <code class="docutils literal notranslate"><span class="pre">DEVICE_REPLACED</span></code> snapshot remains for diagnosis.</p>
+status file. The <code class="docutils literal notranslate"><span class="pre">selectedSerial</span></code> and <code class="docutils literal notranslate"><span class="pre">explicitSerial</span></code> fields identify the
+session’s headset selection, and <code class="docutils literal notranslate"><span class="pre">ignoredSerials</span></code> lists other observed ADB
+devices (up to eight display-safe serials). Selection is scoped to the current
+service session; a previous status file never pins a new session.</p>
 <div class="pst-scrollable-table-container"><table class="table" id="id1">
 <caption><span class="caption-text">Metrics reported per cadence (CloudXR.js 6.3.0)</span><a class="headerlink" href="#id1" title="Link to this table">#</a></caption>
 <colgroup>
@@ -902,7 +905,10 @@ reach returning clients. Only <code class="docutils literal notranslate"><span c
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code></p></td>
-<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>).</p></td>
+<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>). Also the hosted <code class="docutils literal notranslate"><span class="pre">/client/</span></code>
+origin for both <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> and <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>: the page
+and signaling share this socket. In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode
+<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> maps it to the headset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code></p></td>
 <td><p>Optional auth token for hub access</p></td>
@@ -950,8 +956,10 @@ combination at startup.</p></td>
 <td><p>Pin a specific adb device when more than one is connected. The
 lifecycle waits if multiple devices are ready before its first
 selection. Once selected, every device command uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
-If that serial disappears and a different ready serial appears, the
-service records <code class="docutils literal notranslate"><span class="pre">DEVICE_REPLACED</span></code> and stops for operator review.</p></td>
+If the selected serial disappears, becomes offline, or is unauthorized,
+the service waits for it and ignores other devices. When it returns,
+recovery resumes even if the other devices remain connected. Without
+<code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code>, exactly one ready device is required for selection.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
@@ -1262,7 +1270,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 24, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
       <br/>
     
   </p>
