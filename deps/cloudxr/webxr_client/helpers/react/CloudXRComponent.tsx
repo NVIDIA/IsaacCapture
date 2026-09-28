@@ -82,13 +82,15 @@ interface CloudXRComponentProps {
   onSessionReady?: (session: CloudXR.Session | null) => void;
 
   /**
-   * Bounded retry policy for a mid-stream error (see streamingErrorClassification.ts's
-   * isRecoverable() for which errors qualify). Defaults: 3 attempts, 3000ms delay - matching
+   * Opt-in bounded retry policy for a mid-stream error (see streamingErrorClassification.ts's
+   * isRecoverable() for which errors qualify). Omit entirely to keep today's behavior (onError +
+   * onExitImmersiveXR on any stream error, no retry) - retry only ever runs when this prop is
+   * provided, even as `{}`. When provided, defaults: 3 attempts, 3000ms delay - matching
    * controlChannel.ts's HeadsetControlChannel reconnect, which this mirrors, including its
    * single-callback shape: retry progress is reported through onStatusChange (status text
    * "Reconnecting (n/maxAttempts)"), the same channel HeadsetControlChannel's onConnectionChange
    * uses, rather than a dedicated callback. An unrecoverable error, or exhausting maxAttempts,
-   * falls back to today's behavior: onError + onExitImmersiveXR.
+   * falls back to the no-retry behavior: onError + onExitImmersiveXR.
    */
   reconnect?: { maxAttempts?: number; delayMs?: number };
 
@@ -192,7 +194,9 @@ export default function CloudXRComponent({
   const onExitImmersiveXRRef = useRef(onExitImmersiveXR);
   onExitImmersiveXRRef.current = onExitImmersiveXR;
 
-  const maxReconnectAttempts = reconnect?.maxAttempts ?? 3;
+  // No `reconnect` prop at all means opt-out (0 attempts), not "use the defaults" - only a
+  // caller that explicitly asks for retry (even as `reconnect={{}}`) gets it.
+  const maxReconnectAttempts = reconnect ? (reconnect.maxAttempts ?? 3) : 0;
   const reconnectDelayMs = reconnect?.delayMs ?? 3000;
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
