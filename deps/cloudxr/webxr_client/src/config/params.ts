@@ -171,6 +171,24 @@ export const URL_PARAMS: UrlParam[] = [
     description: 'In-XR control panel start position: left, center, or right.',
   },
   {
+    key: 'controlPanelDistance',
+    elementId: 'controlPanelDistance',
+    isValid: isNumber,
+    description: 'In-XR control panel distance from the viewer, in meters.',
+  },
+  {
+    key: 'controlPanelHeight',
+    elementId: 'controlPanelHeight',
+    isValid: isNumber,
+    description: 'In-XR control panel height, in meters (floor-relative).',
+  },
+  {
+    key: 'controlPanelAngleDegrees',
+    elementId: 'controlPanelAngleDegrees',
+    isValid: isNumber,
+    description: 'In-XR control panel angle from center for the left/right positions, in degrees.',
+  },
+  {
     key: 'controllerModelVisibility',
     elementId: 'controllerModelVisibility',
     isValid: oneOf('show', 'hide'),

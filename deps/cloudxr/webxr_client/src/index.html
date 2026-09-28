@@ -1205,6 +1205,49 @@ limitations under the License.
               </div>
 
               <div class="config-section">
+                <label class="input-label">Control Panel Layout</label>
+                <label for="controlPanelDistance" class="input-label"
+                  >Distance from viewer, meters (default: 1.8)</label
+                >
+                <input
+                  id="controlPanelDistance"
+                  class="ui-input config-input"
+                  type="number"
+                  step="0.1"
+                  placeholder="Distance in meters"
+                  spellcheck="false"
+                  value="1.8"
+                />
+                <label for="controlPanelHeight" class="input-label"
+                  >Height, meters (default: 1.85)</label
+                >
+                <input
+                  id="controlPanelHeight"
+                  class="ui-input config-input"
+                  type="number"
+                  step="0.1"
+                  placeholder="Height in meters"
+                  spellcheck="false"
+                  value="1.85"
+                />
+                <label for="controlPanelAngleDegrees" class="input-label"
+                  >Left/right angle from center, degrees (default: 70)</label
+                >
+                <input
+                  id="controlPanelAngleDegrees"
+                  class="ui-input config-input"
+                  type="number"
+                  step="1"
+                  placeholder="Angle in degrees"
+                  spellcheck="false"
+                  value="70"
+                />
+                <div class="config-text">
+                  Only applies to the left/right start positions above; ignored for center.
+                </div>
+              </div>
+
+              <div class="config-section">
                 <label for="panelHiddenAtStart" class="input-label"
                   >Control panel when entering XR</label
                 >
