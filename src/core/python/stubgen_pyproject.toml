@@ -11,6 +11,6 @@ description = "Stub generation dependencies for Isaac Teleop pybind11 modules"
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "pybind11-stubgen",
+    "pybind11-stubgen>=2.5,<3",
     "numpy",
 ]
