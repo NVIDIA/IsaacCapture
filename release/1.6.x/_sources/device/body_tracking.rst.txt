@@ -251,9 +251,9 @@ to ``DeviceIOSession::run()`` with the tracker mapped to the ``full_body``
 channel base name. ``examples/mcap_record_replay/cpp/record_full_body.cpp``
 demonstrates this — a file recorded there replays unchanged with
 ``replay_full_body.py``. Give it an output directory
-(``record_full_body 5 examples/mcap_record_replay/recordings/``) and each run
-writes a fresh timestamped take into it, which is where
-``replay_full_body.py`` looks by default.
+(``record_full_body 5 recordings/``) and each run writes a fresh timestamped
+take into it; ``replay_full_body.py`` run from the same directory picks the
+newest one from ``./recordings/`` by default.
 
 .. figure:: ../_static/full-body-replay.gif
    :alt: Full body skeleton replayed from an MCAP recording in viser

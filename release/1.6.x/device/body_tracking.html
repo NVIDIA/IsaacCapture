@@ -760,9 +760,9 @@ to <code class="docutils literal notranslate"><span class="pre">DeviceIOSession:
 channel base name. <code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/cpp/record_full_body.cpp</span></code>
 demonstrates this — a file recorded there replays unchanged with
 <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code>. Give it an output directory
-(<code class="docutils literal notranslate"><span class="pre">record_full_body</span> <span class="pre">5</span> <span class="pre">examples/mcap_record_replay/recordings/</span></code>) and each run
-writes a fresh timestamped take into it, which is where
-<code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> looks by default.</p>
+(<code class="docutils literal notranslate"><span class="pre">record_full_body</span> <span class="pre">5</span> <span class="pre">recordings/</span></code>) and each run writes a fresh timestamped
+take into it; <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> run from the same directory picks the
+newest one from <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> by default.</p>
 <figure class="align-default" id="id1">
 <img alt="Full body skeleton replayed from an MCAP recording in viser" class="no-image-zoom" src="../_images/full-body-replay.gif" />
 <figcaption>
