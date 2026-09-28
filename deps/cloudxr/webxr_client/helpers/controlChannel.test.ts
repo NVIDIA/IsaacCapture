@@ -75,26 +75,44 @@ function startHub(): Promise<{
     // `waiters` buffers a nextLine() call that arrived before its line did. Each line
     // resolves at most one waiter (FIFO), so this never double-delivers a line.
     const pending: string[] = [];
-    const waiters: Array<(line: string) => void> = [];
+    const waiters: Array<{ resolve: (line: string) => void; reject: (error: Error) => void }> = [];
+    // If the process dies before a pending nextLine() gets its line, that waiter would
+    // otherwise hang forever (only a Jest timeout would surface it, with no stderr) -
+    // once set, every future and in-flight nextLine() rejects immediately with this instead.
+    let terminalError: Error | undefined;
 
     rl.on('line', line => {
       const waiter = waiters.shift();
-      if (waiter) waiter(line);
+      if (waiter) waiter.resolve(line);
       else pending.push(line);
     });
 
     const nextLine = (): Promise<string> =>
-      new Promise(res => {
+      new Promise((res, rej) => {
+        if (terminalError) {
+          rej(terminalError);
+          return;
+        }
         const line = pending.shift();
         if (line !== undefined) res(line);
-        else waiters.push(res);
+        else waiters.push({ resolve: res, reject: rej });
       });
 
     let stderr = '';
     proc.stderr!.on('data', chunk => {
       stderr += String(chunk);
     });
-    proc.on('error', reject);
+
+    const fail = (error: Error) => {
+      if (terminalError) return;
+      terminalError = error;
+      for (const waiter of waiters.splice(0)) waiter.reject(error);
+      reject(error);
+    };
+    proc.once('error', fail);
+    proc.once('close', (code, signal) => {
+      fail(new Error(`Hub process closed (code ${code}, signal ${signal})\nstderr: ${stderr}`));
+    });
 
     nextLine().then(readyLine => {
       const match = /^READY (\d+)$/.exec(readyLine);
@@ -128,11 +146,21 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
     const configs: Array<{ config: StreamConfig; version: number }> = [];
     const connectionChanges: boolean[] = [];
+    // The hub stores the headset (and so prints SNAPSHOT) before it sends `hello` back, so
+    // awaiting only the SNAPSHOT line does not guarantee the client has processed `hello`
+    // yet - wait for onConfig itself rather than racing it.
+    let resolveGotConfig: () => void;
+    const gotConfig = new Promise<void>(res => {
+      resolveGotConfig = res;
+    });
 
     channel = new HeadsetControlChannel({
       url: `ws://127.0.0.1:${hub.port}`,
       deviceLabel: 'jest-test',
-      onConfig: (config, configVersion) => configs.push({ config, version: configVersion }),
+      onConfig: (config, configVersion) => {
+        configs.push({ config, version: configVersion });
+        resolveGotConfig();
+      },
       onConnectionChange: connected => connectionChanges.push(connected),
     });
     channel.connect();
@@ -150,6 +178,8 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
       streamingSince: null,
       deviceLabel: 'jest-test',
     });
+
+    await gotConfig;
 
     // The client side agrees: onConnectionChange(true) fired (WebSocket opened) and
     // onConfig fired once with the hub's `hello` payload (empty config, version 0 - the
