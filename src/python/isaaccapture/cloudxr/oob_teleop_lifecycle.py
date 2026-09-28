@@ -32,15 +32,15 @@ class RecoveryConfig:
     interval_sec: float = 5.0
 
 
-class DeviceReplacedError(RuntimeError):
-    """A different ready serial appeared after the first headset was pinned."""
+def _display_serial(serial: str) -> str:
+    """Bound untrusted ADB serials before putting them in status or logs."""
+    return "".join(c if c.isprintable() and c not in "\r\n" else "?" for c in serial)[
+        :80
+    ]
 
-    def __init__(self, selected: str, replacement: str):
-        self.selected = selected
-        self.replacement = replacement
-        super().__init__(
-            f"DEVICE_REPLACED: selected {selected}, observed {replacement}"
-        )
+
+def _display_serials(serials: tuple[str, ...]) -> list[str]:
+    return [_display_serial(serial) for serial in serials[:8]]
 
 
 def _host_listener_ready(port: int) -> bool:
@@ -64,7 +64,7 @@ class OobLifecycle:
         config: RecoveryConfig,
         turn_port: int | None = None,
         on_status: Callable[[dict], None] | None = None,
-        on_fatal: Callable[[DeviceReplacedError], None] | None = None,
+        on_fatal: Callable[[Exception], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = asyncio.sleep,
         metrics_stale_sec: float = 5.0,
@@ -84,7 +84,7 @@ class OobLifecycle:
         self.host_listener_probe = host_listener_probe
         self.selected = os.environ.get("ANDROID_SERIAL", "").strip() or None
         self.explicit_serial = self.selected is not None
-        self._selected_once = False
+        self.ignored_serials: tuple[str, ...] = ()
         self._cache_cleared = False
         self.generation = 0
         self.monitor: asyncio.Task | None = None
@@ -108,6 +108,7 @@ class OobLifecycle:
         self.attempts = 0
         self._ready_count = 0
         self._last_observation: tuple | None = None
+        self._last_ignored_warning: tuple | None = None
         self._last_reason = ""
         self._last_health: str | None = None
         self._prerequisite_signature: tuple | None = None
@@ -129,8 +130,9 @@ class OobLifecycle:
             "health": health,
             "state": state,
             "reason": reason,
-            "selectedSerial": self.selected,
+            "selectedSerial": _display_serial(self.selected) if self.selected else None,
             "explicitSerial": self.explicit_serial,
+            "ignoredSerials": _display_serials(self.ignored_serials),
             "episodeStartedAt": self.episode_wall_start,
             "episodeDeadline": self.episode_wall_start + self.config.timeout_sec,
             "attemptCount": self.attempts,
@@ -477,38 +479,53 @@ class OobLifecycle:
             while True:
                 devices = await asyncio.to_thread(adb.enumerate_adb_devices)
                 ready = devices.ready
-                observed_serials = {serial for serial, _ in devices.devices}
-                if (
-                    self._selected_once
-                    and self.selected not in observed_serials
-                    and ready
-                ):
-                    error = DeviceReplacedError(self.selected, ready[0])
-                    await self._publish(
-                        "fatal",
-                        "FATAL",
-                        "DEVICE_REPLACED",
-                        expectedSerial=self.selected,
-                        replacementSerial=ready[0],
-                    )
-                    if self.on_fatal:
-                        self.on_fatal(error)
-                    raise error
                 if self.selected is None and len(ready) == 1:
                     self.selected = ready[0]
                     token = adb.SELECTED_ADB_SERIAL.set(self.selected)
-                if self.selected in ready:
-                    self._selected_once = True
-                observation = (tuple(devices.devices), devices.diagnostic)
+                self.ignored_serials = (
+                    tuple(
+                        sorted(
+                            serial
+                            for serial, _ in devices.devices
+                            if serial != self.selected
+                        )
+                    )
+                    if self.selected
+                    else ()
+                )
+                selected_state = dict(devices.devices).get(self.selected)
+                observation = (tuple(sorted(devices.devices)), devices.diagnostic)
                 if observation != self._last_observation:
                     self._restart_episode()
                     self._ready_count = 0
                     self._last_observation = observation
-                    if self.selected in ready and len(ready) > 1:
-                        log.warning(
-                            "Extra ADB device present; continuing with pinned serial %s",
-                            self.selected,
-                        )
+                warning_signature = (self.ignored_serials, selected_state)
+                if warning_signature != self._last_ignored_warning:
+                    self._last_ignored_warning = warning_signature
+                    if self.ignored_serials:
+                        ignored = ", ".join(_display_serials(self.ignored_serials))
+                        if len(self.ignored_serials) > 8:
+                            ignored += f", and {len(self.ignored_serials) - 8} more"
+                        if selected_state == "device":
+                            log.warning(
+                                "Ignored ADB device(s) %s; continuing with selected headset %s.",
+                                ignored,
+                                _display_serial(self.selected),
+                            )
+                        else:
+                            if selected_state in {"offline", "unauthorized"}:
+                                log.warning(
+                                    "Ignored ADB device(s) %s; selected headset %s is %s; waiting for it to reconnect.",
+                                    ignored,
+                                    _display_serial(self.selected),
+                                    selected_state,
+                                )
+                            else:
+                                log.warning(
+                                    "Ignored ADB device(s) %s; waiting for selected headset %s to reconnect.",
+                                    ignored,
+                                    _display_serial(self.selected),
+                                )
                 selected_ready = bool(self.selected and self.selected in ready)
                 if not selected_ready:
                     await self._stop_monitor()
@@ -519,6 +536,12 @@ class OobLifecycle:
                     states = dict(devices.devices)
                     if len(ready) > 1 and self.selected is None:
                         reason = "Multiple ready devices; unplug extras or set ANDROID_SERIAL"
+                    elif self.selected and states.get(self.selected) == "unauthorized":
+                        reason = "Selected headset unauthorized; accept the USB debugging prompt"
+                    elif self.selected and states.get(self.selected) == "offline":
+                        reason = "Selected headset offline; reconnect the USB cable"
+                    elif self.selected:
+                        reason = "Waiting for selected headset to reconnect"
                     elif "unauthorized" in states.values():
                         reason = "Headset unauthorized; accept the USB debugging prompt"
                     elif "offline" in states.values():

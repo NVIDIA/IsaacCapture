@@ -294,7 +294,10 @@ updated client.
 The same redacted lifecycle snapshot appears in ``service status``, through
 ``CloudXRLauncher.oob_status()``, and at
 ``<cloudxr-install-dir>/run/oob_status.json``. A normal shutdown removes the
-status file; a terminal ``DEVICE_REPLACED`` snapshot remains for diagnosis.
+status file. The ``selectedSerial`` and ``explicitSerial`` fields identify the
+session's headset selection, and ``ignoredSerials`` lists other observed ADB
+devices (up to eight display-safe serials). Selection is scoped to the current
+service session; a previous status file never pins a new session.
 
 .. list-table:: Metrics reported per cadence (CloudXR.js 6.3.0)
    :header-rows: 1
@@ -530,8 +533,10 @@ Environment variables
      - Pin a specific adb device when more than one is connected. The
        lifecycle waits if multiple devices are ready before its first
        selection. Once selected, every device command uses ``-s <serial>``.
-       If that serial disappears and a different ready serial appears, the
-       service records ``DEVICE_REPLACED`` and stops for operator review.
+       If the selected serial disappears, becomes offline, or is unauthorized,
+       the service waits for it and ignores other devices. When it returns,
+       recovery resumes even if the other devices remain connected. Without
+       ``ANDROID_SERIAL``, exactly one ready device is required for selection.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host.

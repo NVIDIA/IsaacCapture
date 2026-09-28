@@ -57,6 +57,37 @@ class TestRunFlags:
 
 
 class TestOobConsoleReporter:
+    def test_ignored_set_and_selected_state_changes_emit_once(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {
+            "health": "degraded",
+            "state": "WAITING_FOR_ADB",
+            "reason": "Waiting for selected headset to reconnect",
+            "selectedSerial": "original",
+            "adbReady": False,
+            "ignoredSerials": ["other"],
+        }
+        assert any(
+            "Ignored ADB device(s) other; waiting for selected headset original" in line
+            for line in reporter.observe(base)
+        )
+        assert reporter.observe(base) == []
+        offline = {
+            **base,
+            "reason": "Selected headset offline; reconnect the USB cable",
+        }
+        assert any("original (offline)" in line for line in reporter.observe(offline))
+        assert reporter.observe(offline) == []
+        more = {**offline, "ignoredSerials": ["other", "another"]}
+        assert any("another, other" in line for line in reporter.observe(more))
+        assert reporter.observe({**more, "ignoredSerials": ["another", "other"]}) == []
+        ready = {**more, "state": "PREPARING_DEVICE", "adbReady": True}
+        assert any(
+            "continuing with selected headset original" in line
+            for line in reporter.observe(ready)
+        )
+        assert reporter.observe(ready) == []
+
     def test_absent_headset_is_visible_but_rate_limited(self):
         now = [0.0]
         reporter = cli._OobConsoleReporter(clock=lambda: now[0])

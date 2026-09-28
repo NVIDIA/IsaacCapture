@@ -321,6 +321,7 @@ class _OobConsoleReporter:
         self._ever_ready = False
         self._last_health: str | None = None
         self._last_stage: tuple | None = None
+        self._last_ignored: tuple | None = None
 
     def observe(self, snapshot: dict) -> list[str]:
         """Return messages for a new snapshot, with repeated states limited."""
@@ -334,6 +335,8 @@ class _OobConsoleReporter:
         stage = (state, snapshot.get("episodeStartedAt"), snapshot.get("generation"))
         entered_stage = stage != self._last_stage
         messages: list[str] = []
+        ignored = tuple(sorted(snapshot.get("ignoredSerials") or ()))
+        ignored_signature = (ignored, ready, reason if not ready else None)
 
         def emit(key: str, message: str, interval: float = 30.0) -> None:
             now = self._clock()
@@ -356,6 +359,25 @@ class _OobConsoleReporter:
                 0,
             )
         self._adb_ready = ready
+
+        if ignored and ignored_signature != self._last_ignored:
+            names = ", ".join(ignored)
+            if ready:
+                messages.append(
+                    f"[setup-oob] Ignored ADB device(s) {names}; continuing with selected headset {serial}."
+                )
+            else:
+                state_detail = (
+                    " (offline)"
+                    if "offline" in reason.lower()
+                    else " (unauthorized)"
+                    if "unauthorized" in reason.lower()
+                    else ""
+                )
+                messages.append(
+                    f"[setup-oob] Ignored ADB device(s) {names}; waiting for selected headset {serial}{state_detail} to reconnect."
+                )
+        self._last_ignored = ignored_signature
 
         if state == "WAITING_FOR_ADB" and not ready:
             if serial is None and not any(

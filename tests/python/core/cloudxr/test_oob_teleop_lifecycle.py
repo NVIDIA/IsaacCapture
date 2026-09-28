@@ -20,7 +20,6 @@ from isaaccapture.cloudxr.oob_teleop_adb import (
 )
 from isaaccapture.cloudxr.oob_teleop_env import resolve_oob_recovery_config
 from isaaccapture.cloudxr.oob_teleop_lifecycle import (
-    DeviceReplacedError,
     OobLifecycle,
     RecoveryConfig,
 )
@@ -102,19 +101,57 @@ async def test_absent_headset_keeps_observing_after_episode_expires(monkeypatch)
     assert all(status["health"] != "fatal" for status in hub.statuses)
 
 
-async def test_selected_serial_replacement_is_terminal(monkeypatch):
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("extra_count", [1, 2])
+@pytest.mark.parametrize("selected_state", [None, "offline", "unauthorized"])
+@pytest.mark.parametrize("return_with_extras", [False, True])
+async def test_unrelated_devices_wait_and_original_recovers(
+    monkeypatch, caplog, explicit, extra_count, selected_state, return_with_extras
+):
+    if explicit:
+        monkeypatch.setenv("ANDROID_SERIAL", "original")
+    else:
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
     hub = FakeHub()
-    statuses = []
     fatals = []
-    devices = iter(
-        [
-            AdbDevices((("original", "device"),)),
-            AdbDevices((("replacement", "device"),)),
-        ]
+    extras = tuple((f"extra-{i}", "device") for i in range(extra_count))
+    absent = (
+        extras if selected_state is None else (("original", selected_state), *extras)
     )
+    returned = (
+        (("original", "device"), *extras)
+        if return_with_extras
+        else (("original", "device"),)
+    )
+    observations = [
+        AdbDevices((("original", "device"),)),
+        AdbDevices(absent),
+        AdbDevices(absent, "poll diagnostic changed"),
+        AdbDevices(returned),
+        AdbDevices(returned),
+    ]
+    commands = []
+    recovered = []
 
-    async def no_wait(_):
-        return None
+    def enumerate_devices():
+        return observations.pop(0) if observations else AdbDevices(returned)
+
+    def command(args, **kwargs):
+        commands.append(tuple(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    async def sleep(_):
+        if len(commands) > 20:
+            raise AssertionError("Unexpected command loop")
+        if not observations:
+            raise asyncio.CancelledError
+
+    async def prepare():
+        recovered.append(adb.SELECTED_ADB_SERIAL.get())
+        await asyncio.to_thread(adb._adb_run, ["adb", "shell", "true"])
+
+    async def automate():
+        lifecycle.browser_ready = True
 
     lifecycle = OobLifecycle(
         hub=hub,
@@ -122,34 +159,52 @@ async def test_selected_serial_replacement_is_terminal(monkeypatch):
         usb_local=False,
         host_client=False,
         config=RecoveryConfig(),
-        sleep=no_wait,
-        on_status=statuses.append,
+        sleep=sleep,
         on_fatal=fatals.append,
     )
-    with patch(
-        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
-        side_effect=lambda: next(devices),
+    with (
+        patch.object(adb, "enumerate_adb_devices", side_effect=enumerate_devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(adb, "_adb_run", side_effect=ORIGINAL_ADB_RUN),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_adb.subprocess.run", side_effect=command
+        ),
+        patch.object(lifecycle, "_prepare_device", new=prepare),
+        patch.object(lifecycle, "_automate", new=automate),
     ):
-        with pytest.raises(DeviceReplacedError, match="DEVICE_REPLACED"):
+        with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
-    assert len(fatals) == 1
-    assert statuses[-1]["health"] == "fatal"
-    assert statuses[-1]["expectedSerial"] == "original"
-    assert statuses[-1]["replacementSerial"] == "replacement"
+    assert not fatals
+    assert not any(status["health"] == "fatal" for status in hub.statuses)
+    assert lifecycle.selected == "original"
+    assert any(
+        status["state"] == "WAITING_FOR_ADB"
+        and status["ignoredSerials"] == [x[0] for x in extras]
+        for status in hub.statuses
+    )
+    assert all(status["explicitSerial"] is explicit for status in hub.statuses)
+    if selected_state:
+        assert any(selected_state in status["reason"] for status in hub.statuses)
+    assert recovered == ["original"]
+    assert commands
+    assert all(command[:3] == ("adb", "-s", "original") for command in commands)
+    assert sum(
+        "Ignored ADB device(s)" in record.message for record in caplog.records
+    ) == (2 if return_with_extras else 1)
 
 
-async def test_explicit_serial_replacement_is_terminal_after_selection(monkeypatch):
+async def test_explicit_serial_waits_without_ever_adopting_other(monkeypatch):
     monkeypatch.setenv("ANDROID_SERIAL", "original")
     hub = FakeHub()
-    devices = iter(
-        [
-            AdbDevices((("original", "device"),)),
-            AdbDevices((("replacement", "device"),)),
-        ]
-    )
+    observations = [AdbDevices((("other", "device"),))] * 3
 
-    async def no_wait(_):
-        return None
+    async def sleep(_):
+        if not observations:
+            raise asyncio.CancelledError
 
     lifecycle = OobLifecycle(
         hub=hub,
@@ -157,16 +212,150 @@ async def test_explicit_serial_replacement_is_terminal_after_selection(monkeypat
         usb_local=False,
         host_client=False,
         config=RecoveryConfig(),
-        sleep=no_wait,
+        sleep=sleep,
     )
-    with patch(
-        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
-        side_effect=lambda: next(devices),
+    with patch.object(
+        adb, "enumerate_adb_devices", side_effect=lambda: observations.pop(0)
     ):
-        with pytest.raises(DeviceReplacedError):
+        with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
     assert lifecycle.selected == "original"
-    assert hub.statuses[-1]["health"] == "fatal"
+    assert all(status["selectedSerial"] == "original" for status in hub.statuses)
+    assert hub.statuses[-1]["ignoredSerials"] == ["other"]
+
+
+async def test_implicit_selection_waits_for_exactly_one_ready(monkeypatch):
+    monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+    hub = FakeHub()
+    observations = [AdbDevices((("one", "device"), ("two", "device")))] * 2
+
+    async def sleep(_):
+        if not observations:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    with patch.object(
+        adb, "enumerate_adb_devices", side_effect=lambda: observations.pop(0)
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    assert lifecycle.selected is None
+    assert hub.statuses[-1]["ignoredSerials"] == []
+    assert "Multiple ready devices" in hub.statuses[-1]["reason"]
+
+
+async def test_adb_enumeration_reorder_does_not_restart_recovery(monkeypatch, caplog):
+    monkeypatch.setenv("ANDROID_SERIAL", "original")
+    hub = FakeHub()
+    observations = [
+        AdbDevices((("original", "device"), ("z", "device"), ("a", "device"))),
+        AdbDevices((("a", "device"), ("original", "device"), ("z", "device"))),
+    ]
+    prepared = []
+
+    async def sleep(_):
+        if not observations:
+            raise asyncio.CancelledError
+
+    async def prepare():
+        prepared.append(lifecycle.selected)
+
+    async def automate():
+        lifecycle.browser_ready = True
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    with (
+        patch.object(
+            adb, "enumerate_adb_devices", side_effect=lambda: observations.pop(0)
+        ),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(lifecycle, "_prepare_device", new=prepare),
+        patch.object(lifecycle, "_automate", new=automate),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    assert prepared == ["original"]
+    assert hub.statuses[-1]["ignoredSerials"] == ["a", "z"]
+    assert (
+        sum("Ignored ADB device(s)" in record.message for record in caplog.records) == 1
+    )
+
+
+async def test_ignored_serial_display_is_bounded_and_safe(monkeypatch):
+    monkeypatch.setenv("ANDROID_SERIAL", "original\n" + "X" * 100)
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    lifecycle.ignored_serials = tuple(f"extra\n{i}" + "Y" * 100 for i in range(12))
+    await lifecycle._publish("degraded", "WAITING_FOR_ADB", "waiting")
+    status = hub.statuses[-1]
+    assert status["schemaVersion"] == 1
+    assert len(status["selectedSerial"]) == 80
+    assert len(status["ignoredSerials"]) == 8
+    assert all(
+        "\n" not in serial and len(serial) <= 80 for serial in status["ignoredSerials"]
+    )
+    assert "\n" not in status["selectedSerial"]
+
+
+async def test_cleanup_commands_stay_on_selected_serial_when_it_is_absent(monkeypatch):
+    monkeypatch.setenv("ANDROID_SERIAL", "original")
+    hub = FakeHub()
+    commands = []
+    observations = [AdbDevices((("other", "device"),))]
+
+    def command(args, **kwargs):
+        commands.append(tuple(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    async def sleep(_):
+        raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=False,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    with (
+        patch.object(
+            adb, "enumerate_adb_devices", side_effect=lambda: observations.pop(0)
+        ),
+        patch.object(adb, "_adb_run", side_effect=ORIGINAL_ADB_RUN),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_adb.subprocess.run", side_effect=command
+        ),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    assert any("reverse" in command for command in commands)
+    assert all(command[:3] == ("adb", "-s", "original") for command in commands)
 
 
 async def test_extra_ready_device_does_not_change_pinned_target():
@@ -186,7 +375,6 @@ async def test_extra_ready_device_does_not_change_pinned_target():
         sleep=stop,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     with (
         patch(
             "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
@@ -273,7 +461,6 @@ async def test_late_coturn_fault_opens_new_episode():
         sleep=stop_after_fault,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle._last_health = "active"
     lifecycle.snapshot = {"health": "active"}
@@ -326,7 +513,6 @@ async def test_wifi_restoration_reopens_expired_episode():
         sleep=stop_after_attempt,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle.episode_start = 0.0
     lifecycle.last_network_state = HeadsetNetworkState.NO_NETWORK
@@ -627,7 +813,6 @@ async def test_registered_browser_disconnect_triggers_new_connect():
         sleep=sleep,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle._last_observation = (ready.devices, ready.diagnostic)
     lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
@@ -682,7 +867,6 @@ async def test_missing_reverse_rule_during_probe_wait_triggers_rebuild():
         sleep=sleep,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle._last_observation = (ready.devices, ready.diagnostic)
     lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
@@ -826,7 +1010,6 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
         sleep=lambda _: asyncio.sleep(0),
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle._last_observation = (ready.devices, ready.diagnostic)
     lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
@@ -888,7 +1071,6 @@ async def test_timeout_after_connect_click_does_not_dispatch_again():
         sleep=stop_after_verification,
     )
     lifecycle.selected = "original"
-    lifecycle._selected_once = True
     lifecycle._ready_count = 2
     lifecycle._last_observation = (ready.devices, ready.diagnostic)
     lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT

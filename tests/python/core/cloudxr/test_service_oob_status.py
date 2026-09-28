@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from isaaccapture.cloudxr.oob_teleop_lifecycle import DeviceReplacedError
 from isaaccapture.cloudxr.launcher import CloudXRLauncher
 from isaaccapture.cloudxr.service import CloudXRService
 
@@ -37,12 +36,20 @@ def _service_for_status(tmp_path):
 def test_status_file_is_atomic_and_bound_to_session(tmp_path):
     service = _service_for_status(tmp_path)
     service._publish_oob_status(
-        {"schemaVersion": 1, "health": "degraded", "reason": "Waiting for headset"}
+        {
+            "schemaVersion": 1,
+            "health": "degraded",
+            "reason": "Waiting for headset",
+            "selectedSerial": "original",
+            "explicitSerial": False,
+            "ignoredSerials": ["other"],
+        }
     )
     status = json.loads(service._oob_status_path.read_text())
     assert status["sessionId"] == "test-session"
     assert status["runtimePid"] == os.getpid()
     assert status["health"] == "degraded"
+    assert status["ignoredSerials"] == ["other"]
     assert not service._oob_status_path.with_suffix(".json.tmp").exists()
     assert service.oob_status() == status
     assert service.drain_oob_updates() == [status]
@@ -54,14 +61,12 @@ def test_status_file_is_atomic_and_bound_to_session(tmp_path):
 def test_fatal_callback_is_one_shot_and_health_preserves_cause(tmp_path):
     service = _service_for_status(tmp_path)
     service.stop = MagicMock()
-    error = DeviceReplacedError("old", "new")
+    error = RuntimeError("fatal lifecycle failure")
     service._on_oob_fatal(error)
-    service._on_oob_fatal(DeviceReplacedError("old", "another"))
+    service._on_oob_fatal(RuntimeError("another failure"))
     service._fatal_supervisor.join(timeout=2)
     service.stop.assert_called_once()
-    with pytest.raises(
-        RuntimeError, match="DEVICE_REPLACED: selected old, observed new"
-    ):
+    with pytest.raises(RuntimeError, match="fatal lifecycle failure"):
         service.health_check()
 
 
