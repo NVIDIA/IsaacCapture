@@ -86,7 +86,7 @@ test.describe('client UI states', () => {
     await expect(page.locator('#errorMessageBox')).not.toHaveClass(/(^|\s)error(\s|$)/);
   });
 
-  test('missing-panel: panelHiddenAtStart connects normally with no host-observable panel-visibility signal', async ({
+  test('missing-panel: panelHiddenAtStart is reflected in the panel-visibility log', async ({
     page,
   }) => {
     test.setTimeout(30000);
@@ -95,12 +95,20 @@ test.describe('client UI states', () => {
     page.on('console', msg => consoleLines.push(msg.text()));
 
     // The in-headset panel (CloudXRUI.tsx) is a world-anchored WebXR scene object, not a DOM
-    // element - there is no host-visible signal for panelHidden either way (reliability doc:
-    // "not detected today"). This only confirms the existing panelHiddenAtStart entry point
-    // doesn't itself break the connect flow.
+    // element, so there was no host-observable signal for panelHidden either way (reliability
+    // doc: "not detected today"). CloudXRUI.tsx now logs panel-visibility transitions on every
+    // change - this only proves that signal exists and reflects panelHiddenAtStart correctly;
+    // a real watchdog still needs a *recovery* path (this remains "not detected" in the sense
+    // that nothing reacts if the panel becomes unreachable mid-session).
     await page.goto('http://localhost:8082/?panelHiddenAtStart=true');
     await waitForConsoleText(consoleLines, 'IWER DevUI initialized with XR device.');
     await page.click('#startButton', { timeout: 15000 });
     await waitForConsoleText(consoleLines, 'CloudXR stream started');
+    // panelHidden starts false (logged "visible" at mount) and only picks up
+    // panelHiddenAtStart once the XR session actually enters - the last logged transition is
+    // therefore the one that matters here.
+    await waitForConsoleText(consoleLines, '[CloudXRUI] panel visibility: hidden');
+    const visibilityLogs = consoleLines.filter(l => l.includes('[CloudXRUI] panel visibility:'));
+    expect(visibilityLogs.at(-1)).toContain('hidden');
   });
 });

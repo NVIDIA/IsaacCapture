@@ -292,6 +292,13 @@ export default function CloudXR3DUI({
     prevXRMode.current = isXRMode;
   }, [isXRMode, panelHiddenAtStart]);
 
+  // Only host-observable signal for the in-headset panel's visibility (a world-anchored WebXR
+  // scene object, not a DOM element) - lets a host-side watchdog/test tell "panel hidden" apart
+  // from "panel missing" instead of both looking like silence.
+  useEffect(() => {
+    console.debug(`[CloudXRUI] panel visibility: ${panelHidden ? 'hidden' : 'visible'}`);
+  }, [panelHidden]);
+
   // Keep localStorage in sync when the user toggles the option.
   useEffect(() => {
     try {
