@@ -11,6 +11,7 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -21,12 +22,31 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
     adb_device_state,
     assert_adb_device_online,
     assert_exactly_one_adb_device,
+    build_teleop_url,
     coturn_binary_path,
     oob_adb_automation_message,
     require_adb_on_path,
     require_coturn_available,
     run_adb_headset_bookmark,
 )
+
+
+def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None:
+    for name in (
+        "TELEOP_CLIENT_RECONNECT_ENABLED",
+        "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+        "TELEOP_CLIENT_RECONNECT_DELAY_MS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    url = build_teleop_url(
+        resolved_port=48322,
+        usb_local=True,
+        web_client_base="https://localhost:8080",
+    )
+    query = parse_qs(urlparse(url).query)
+    assert query["reconnectEnabled"] == ["true"]
+    assert query["reconnectMaxAttempts"] == ["3"]
+    assert query["reconnectDelayMs"] == ["3000"]
 
 
 @pytest.fixture(autouse=True)

@@ -482,7 +482,7 @@ class OobLifecycle:
         # Restore the host-owned CDP forward and passive monitor promptly. A
         # missing socket/tab is evidence for the bounded fallback below, not a
         # reason to mutate browser state yet.
-        await self._attach_existing_monitor()
+        cdp_attached = await self._attach_existing_monitor()
         report = await self.hub.probe_browser(
             self.generation,
             0,
@@ -520,12 +520,11 @@ class OobLifecycle:
             and metrics_at > self._repair_started_at * 1000
             and time.time() * 1000 - metrics_at < self.metrics_stale_sec * 1000
         )
-        if report.get("streaming") and fresh_post_repair:
+        if report.get("streaming") and fresh_post_repair and cdp_attached:
             self.last_stream_at = time.time()
             self._transport_lost = False
             self._restore_existing_browser = False
             self.connect_dispatched = True
-            await self._attach_existing_monitor()
             await self._publish(
                 "active",
                 "ACTIVE",
@@ -542,6 +541,29 @@ class OobLifecycle:
                 streamPhase=phase,
             )
             return
+        if report.get("streaming") and fresh_post_repair:
+            if self.clock() >= self._client_grace_deadline:
+                # Streaming alone is not the complete host-owned topology: if
+                # CDP never becomes attachable, rebuild the browser once after
+                # the bounded grace rather than reporting a false ACTIVE state.
+                await self._automate()
+                return
+            await self._publish(
+                "browser_ready",
+                "VERIFYING_EXISTING_BROWSER",
+                "Stream resumed; waiting for CDP forwarding and monitoring",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=True,
+                turnPrerequisitesReady=True,
+                browserRegistered=True,
+                healthProbeAcknowledged=True,
+                streaming=True,
+                clientMetricsFresh=True,
+                turnEndToEndHealthy=False,
+                streamPhase=phase,
+            )
+            return
         if terminal_event and terminal_event not in self._handled_terminal_events:
             self._handled_terminal_events.add(terminal_event)
             if await self._same_tab_connect(f"terminal:{terminal_event}"):
@@ -555,7 +577,11 @@ class OobLifecycle:
             # accepted the same-tab click. Fall back only after the grace.
             await self._automate()
             return
-        if self.clock() >= self._client_grace_deadline and phase != "terminal":
+        if (
+            self.clock() >= self._client_grace_deadline
+            and phase != "terminal"
+            and not self.connect_dispatched
+        ):
             if await self._same_tab_connect(f"grace:{self.generation}"):
                 return
         await self._attach_existing_monitor()
@@ -828,7 +854,54 @@ class OobLifecycle:
                     )
                     await self.sleep(self.config.interval_sec)
                     continue
-                if self._transport_lost and self._restore_existing_browser:
+                preserving_browser = (
+                    self._transport_lost and self._restore_existing_browser
+                )
+                if not self.browser_ready or preserving_browser:
+                    state = await self.hub.get_snapshot()
+                    clients = tuple(
+                        sorted(
+                            (
+                                str(headset["clientId"]),
+                                bool(headset.get("streaming")),
+                                str(headset.get("streamPhase") or ""),
+                                str(headset.get("terminalEventId") or ""),
+                            )
+                            for headset in state["headsets"]
+                        )
+                    )
+                    rules = None
+                    if self.usb_local:
+                        rules = await asyncio.to_thread(
+                            adb._run_adb,
+                            "reverse observe",
+                            ["adb", "reverse", "--list"],
+                        )
+                    signature = (
+                        clients,
+                        rules,
+                        self.coturn.poll() if self.coturn else None,
+                    )
+                    if (
+                        self._prerequisite_signature is not None
+                        and signature != self._prerequisite_signature
+                    ):
+                        self._restart_episode()
+                    self._prerequisite_signature = signature
+                if (
+                    preserving_browser
+                    and self.clock() >= self.episode_start + self.config.timeout_sec
+                ):
+                    await self._publish(
+                        "degraded",
+                        "VERIFYING_EXISTING_BROWSER",
+                        "Recovery episode expired; observing for a change",
+                        adbReady=True,
+                        networkPresent=True,
+                    )
+                    await self.sleep(self.config.interval_sec)
+                    continue
+                if preserving_browser:
                     try:
                         if self._repair_started_at is None:
                             self.attempts += 1
@@ -862,27 +935,6 @@ class OobLifecycle:
                         )
                     await self.sleep(self.config.interval_sec)
                     continue
-                if not self.browser_ready:
-                    state = await self.hub.get_snapshot()
-                    clients = tuple(sorted(h["clientId"] for h in state["headsets"]))
-                    rules = None
-                    if self.usb_local:
-                        rules = await asyncio.to_thread(
-                            adb._run_adb,
-                            "reverse observe",
-                            ["adb", "reverse", "--list"],
-                        )
-                    signature = (
-                        clients,
-                        rules,
-                        self.coturn.poll() if self.coturn else None,
-                    )
-                    if (
-                        self._prerequisite_signature is not None
-                        and signature != self._prerequisite_signature
-                    ):
-                        self._restart_episode()
-                    self._prerequisite_signature = signature
                 if (
                     self.clock() >= self.episode_start + self.config.timeout_sec
                     and not self.browser_ready

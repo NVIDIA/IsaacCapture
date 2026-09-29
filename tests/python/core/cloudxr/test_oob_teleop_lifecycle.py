@@ -102,6 +102,67 @@ async def test_absent_headset_keeps_observing_after_episode_expires(monkeypatch)
     assert all(status["health"] != "fatal" for status in hub.statuses)
 
 
+async def test_replug_repair_observes_after_deadline_until_topology_changes():
+    hub = FakeHub()
+    now = [0.0]
+    rebuild_times = []
+
+    async def sleep(seconds):
+        now[0] += seconds
+        if now[0] >= 5.0:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=2, interval_sec=1),
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+
+    async def fail_rebuild():
+        rebuild_times.append(now[0])
+        raise adb.OobAdbError("stable repair failure")
+
+    def reverse_listing(*_args, **_kwargs):
+        return "topology-changed" if now[0] >= 4.0 else "stable-topology"
+
+    ready = AdbDevices((("original", "device"),))
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            side_effect=reverse_listing,
+        ),
+        patch.object(lifecycle, "_rebuild_usb", new=fail_rebuild),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert rebuild_times == [1.0, 2.0, 4.0]
+    expired = [
+        status
+        for status in hub.statuses
+        if status["reason"] == "Recovery episode expired; observing for a change"
+    ]
+    assert expired
+    assert all(status["state"] == "VERIFYING_EXISTING_BROWSER" for status in expired)
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("extra_count", [1, 2])
 @pytest.mark.parametrize("selected_state", [None, "offline", "unauthorized"])
@@ -1242,16 +1303,63 @@ async def test_existing_page_retrying_then_streaming_within_grace_never_clicks()
     assert lifecycle.snapshot["health"] == "active"
 
 
+async def test_fresh_stream_without_cdp_stays_degraded_until_fallback():
+    hub = FakeHub()
+    now = time.time()
+    clock = [0.0]
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": True,
+            "lastMetricsAt": (now + 1) * 1000,
+            "streamPhase": "streaming",
+            "terminalEventId": None,
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        clock=lambda: clock[0],
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = now
+    lifecycle._client_grace_deadline = 20.0
+    bootstraps = []
+
+    async def bootstrap():
+        bootstraps.append(True)
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=False),
+        patch.object(lifecycle, "_automate", new=bootstrap),
+    ):
+        await lifecycle._recover_existing_browser()
+        assert lifecycle.snapshot["health"] == "browser_ready"
+        assert lifecycle.snapshot["turnEndToEndHealthy"] is False
+        assert lifecycle._transport_lost is True
+        clock[0] = 21.0
+        await lifecycle._recover_existing_browser()
+    assert bootstraps == [True]
+
+
 async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry():
     hub = FakeHub()
     event = ["terminal-1"]
+    phase = ["terminal"]
+    now = [0.0]
     hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
         0,
         result={
             "clientId": "surviving-page",
             "streaming": False,
             "lastMetricsAt": None,
-            "streamPhase": "terminal",
+            "streamPhase": phase[0],
             "terminalEventId": event[0],
         },
     )
@@ -1262,6 +1370,7 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
         host_client=True,
         turn_port=3478,
         config=RecoveryConfig(),
+        clock=lambda: now[0],
     )
     lifecycle.selected = "original"
     lifecycle._transport_lost = True
@@ -1282,7 +1391,11 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
     ):
         await lifecycle._recover_existing_browser()
         await lifecycle._recover_existing_browser()
+        phase[0] = "retrying"
+        now[0] = 100.0
+        await lifecycle._recover_existing_browser()
         event[0] = "terminal-2"
+        phase[0] = "terminal"
         await lifecycle._recover_existing_browser()
     await lifecycle._stop_monitor()
     assert clicks[0] is False

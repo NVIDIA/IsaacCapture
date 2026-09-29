@@ -233,6 +233,24 @@ def test_build_headset_bookmark_url_panel_hidden() -> None:
     assert q["panelHiddenAtStart"] == ["true"]
 
 
+def test_build_headset_bookmark_url_with_reconnect_policy() -> None:
+    """The host-owned retry budget reaches the browser on its initial page load."""
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={
+            "serverIP": "10.0.0.1",
+            "port": 48322,
+            "reconnectEnabled": False,
+            "reconnectMaxAttempts": 5,
+            "reconnectDelayMs": 750,
+        },
+    )
+    q = parse_qs(urlparse(u).query)
+    assert q["reconnectEnabled"] == ["false"]
+    assert q["reconnectMaxAttempts"] == ["5"]
+    assert q["reconnectDelayMs"] == ["750"]
+
+
 def test_build_headset_bookmark_url_requires_server_ip() -> None:
     """stream_config without serverIP raises ValueError."""
     with pytest.raises(ValueError, match="serverIP"):

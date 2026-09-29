@@ -536,8 +536,8 @@ def default_initial_stream_config(resolved_proxy_port: int) -> dict:
 def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
-    Keys match query params the WebXR client reads on page load
-    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``).
+    Keys match query params the WebXR client reads on page load, including
+    codec, panel visibility, and bounded stream-reconnect policy.
     """
     out: dict = {}
     out.update(client_reconnect_config_from_env())
@@ -613,6 +613,13 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    v = cfg.get("reconnectEnabled")
+    if isinstance(v, bool):
+        params["reconnectEnabled"] = "true" if v else "false"
+    for key in ("reconnectMaxAttempts", "reconnectDelayMs"):
+        v = cfg.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
         params["turnServer"] = str(v).strip()
