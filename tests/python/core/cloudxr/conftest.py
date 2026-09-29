@@ -11,14 +11,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import importlib.util
+import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
+import time
 import types
-from contextlib import contextmanager
+import urllib.error
+import urllib.request
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -306,5 +312,255 @@ def mock_adb(**kwargs):
     """Patches ``subprocess.run`` with a :class:`FakeAdb` (constructed from *kwargs*) for
     the duration of the block; yields the instance so a test can inspect ``.calls``."""
     fake = FakeAdb(**kwargs)
+    with patch("subprocess.run", side_effect=fake):
+        yield fake
+
+
+# ============================================================================
+# Real-browser OOB integration test-infra (see /oob-real-browser-integration-
+# test-plan.md at the repo root): a real Chromium running the real webxr
+# client, driven by run_oob_connect() through a RealBrowserAdb whose
+# success-path commands have real side effects instead of canned output.
+# ============================================================================
+
+_CHROME_EXECUTABLE = os.environ.get("PLAYWRIGHT_CHROME_PATH", "/usr/bin/google-chrome")
+
+# Matches deps/cloudxr/webxr_client/playwright.config.js's CHROMIUM_ARGS:
+# SwiftShader software WebGL (no GPU in this sandbox) and --disable-features=WebXR
+# so native/real XR is off and IWER (loaded by the page itself) provides navigator.xr.
+_CHROME_LAUNCH_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--ignore-gpu-blocklist",
+    "--enable-webgl",
+    "--use-angle=swiftshader",
+    "--use-gl=angle",
+    "--disable-features=WebXR",
+]
+
+
+def _free_tcp_port() -> int:
+    """Bind an ephemeral port and immediately release it for a subprocess to reuse."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_http(url: str, *, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1):
+                return
+        except (urllib.error.URLError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            time.sleep(0.2)
+    raise RuntimeError(f"{url} did not respond within {timeout:.0f}s") from last_exc
+
+
+class RealChrome:
+    """A real, locally-launched Chromium instance reachable over its own CDP port."""
+
+    def __init__(self, cdp_port: int) -> None:
+        self.cdp_port = cdp_port
+
+    def open_url(self, url: str) -> dict:
+        """Open *url* in a new real tab via CDP's HTTP endpoint (``PUT /json/new``)."""
+        req = urllib.request.Request(
+            f"http://localhost:{self.cdp_port}/json/new?{url}", method="PUT"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+
+
+@contextmanager
+def real_chrome(cdp_port: int, *, user_data_dir: Path):
+    """Launch a real local Chromium reachable over CDP on *cdp_port*, for the block's duration."""
+    args = [
+        _CHROME_EXECUTABLE,
+        f"--remote-debugging-port={cdp_port}",
+        f"--user-data-dir={user_data_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        *_CHROME_LAUNCH_ARGS,
+        "about:blank",
+    ]
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        _wait_for_http(f"http://localhost:{cdp_port}/json/version", timeout=15.0)
+        yield RealChrome(cdp_port)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@contextmanager
+def real_webxr_dev_server(port: int = 8080):
+    """Reuse an already-running webxr_client dev server on *port*, or start one.
+
+    Mirrors playwright.config.js's ``reuseExistingServer: !process.env.CI``: a
+    manual run typically already has ``npm run dev-server`` running for other
+    purposes, so this only spawns (and later tears down) one when nothing
+    answers on *port* yet.
+    """
+
+    def _is_up() -> bool:
+        try:
+            with urllib.request.urlopen(f"http://localhost:{port}/", timeout=1):
+                return True
+        except (urllib.error.URLError, ConnectionError, OSError):
+            return False
+
+    if _is_up():
+        yield
+        return
+
+    webxr_client_dir = repo_root() / "deps" / "cloudxr" / "webxr_client"
+    proc = subprocess.Popen(
+        ["npm", "run", "dev-server"],
+        cwd=webxr_client_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            if _is_up():
+                break
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    "webxr_client `npm run dev-server` exited before becoming ready"
+                )
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(
+                f"webxr_client dev-server did not bind port {port} in time"
+            )
+        yield
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+@asynccontextmanager
+async def minimal_mock_runtime(port: int):
+    """Bind *port* and accept WebSocket connections, holding them open without
+    responding to anything sent on them.
+
+    Not a CloudXR runtime in any protocol sense — just enough that wss.py's
+    ``proxy_handler()`` succeeds in connecting (instead of ECONNREFUSED), so a
+    real client's signaling handshake doesn't immediately close out from under
+    it. See /oob-real-browser-integration-test-plan.md ``§0`` for why this is
+    needed and why it's deliberately this minimal.
+    """
+    from websockets.asyncio.server import serve as ws_serve  # noqa: PLC0415
+
+    async def handler(ws):
+        with contextlib.suppress(Exception):
+            async for _ in ws:
+                pass
+
+    async with ws_serve(handler, host="localhost", port=port):
+        yield
+
+
+@asynccontextmanager
+async def real_wss_proxy(install_dir: Path, *, proxy_port: int, backend_port: int):
+    """Run the real ``wss.py`` proxy (TLS + OOB hub) for the block's duration.
+
+    ``TELEOP_OOB_HUB_ONLY=1`` makes ``setup_oob=True`` wire up the real
+    ``OOBControlHub`` without also having ``wss.py`` itself call
+    ``run_oob_connect()`` on our behalf — the test drives that call directly,
+    against the real proxy this starts. ``usb_local=False`` here (a ``wss.run()``
+    param, independent of the ``usb_local`` a test passes to its own
+    ``run_oob_connect()`` call) skips ``wss.py``'s own adb-reverse/coturn setup,
+    which has no real device to run against in this test.
+    """
+    from cloudxr_py_test_ns.wss import run as wss_run  # noqa: PLC0415
+
+    os.environ["CXR_INSTALL_DIR"] = str(install_dir)
+    prev_hub_only = os.environ.get("TELEOP_OOB_HUB_ONLY")
+    os.environ["TELEOP_OOB_HUB_ONLY"] = "1"
+
+    stop_future: asyncio.Future = asyncio.get_running_loop().create_future()
+    listening = asyncio.Event()
+
+    task = asyncio.create_task(
+        wss_run(
+            None,
+            stop_future,
+            backend_host="localhost",
+            backend_port=backend_port,
+            proxy_port=proxy_port,
+            setup_oob=True,
+            usb_local=False,
+            host_client=False,
+            on_listening=listening.set,
+        )
+    )
+    try:
+        await asyncio.wait_for(listening.wait(), timeout=15.0)
+        yield
+    finally:
+        if not stop_future.done():
+            stop_future.set_result(None)
+        await asyncio.wait_for(task, timeout=10.0)
+        if prev_hub_only is None:
+            os.environ.pop("TELEOP_OOB_HUB_ONLY", None)
+        else:
+            os.environ["TELEOP_OOB_HUB_ONLY"] = prev_hub_only
+
+
+class RealBrowserAdb(FakeAdb):
+    """Like :class:`FakeAdb`, but ``am start`` and ``adb forward`` have real side
+    effects against a real :class:`RealChrome` instead of returning canned output.
+
+    Error-injection kwargs (``device_state``, ``am_start_rc``, ``devtools_socket``,
+    ``forward_rc``) work exactly as on :class:`FakeAdb`: the fake side of each still
+    gates whether the real side effect happens at all, so tests can still
+    deliberately drive the same failure paths ``FakeAdb``-based tests do.
+
+    ``adb forward`` is a real no-op (not a real TCP forward) because *chrome*
+    is launched with ``--remote-debugging-port`` equal to
+    ``oob_teleop_adb._CDP_LOCAL_PORT`` already — the port ``run_oob_connect()``
+    forwards to is already the real CDP port, so there is nothing to actually
+    forward.
+    """
+
+    def __init__(self, chrome: RealChrome, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._chrome = chrome
+
+    def __call__(self, args: list[str], **kwargs) -> subprocess.CompletedProcess:
+        if args[:2] == ["adb", "shell"] and any("am start" in a for a in args):
+            self.calls.append(list(args))
+            if self.am_start_rc != 0:
+                return subprocess.CompletedProcess(
+                    args, self.am_start_rc, "", "am start failed"
+                )
+            shell_cmd = args[2]
+            tokens = shlex.split(shell_cmd)
+            url = tokens[tokens.index("-d") + 1]
+            self._chrome.open_url(url)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["adb", "forward"] and "--remove" not in args:
+            self.calls.append(list(args))
+            return subprocess.CompletedProcess(args, self.forward_rc, "", "")
+        return super().__call__(args, **kwargs)
+
+
+@contextmanager
+def real_browser_adb(chrome: RealChrome, **kwargs):
+    """Patches ``subprocess.run`` with a :class:`RealBrowserAdb` for the block's
+    duration; yields the instance so a test can inspect ``.calls``."""
+    fake = RealBrowserAdb(chrome, **kwargs)
     with patch("subprocess.run", side_effect=fake):
         yield fake

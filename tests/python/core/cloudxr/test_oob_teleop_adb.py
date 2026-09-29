@@ -901,112 +901,82 @@ async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> Non
 
 
 # ============================================================================
-# run_oob_connect(): end-to-end against conftest.py's mock_adb() (the fake-adb
-# double, unit-tested on its own in test_fake_adb.py) plus the fake CDP
-# tab-list server above - rather than mocking each Python-level helper
-# (_discover_devtools_socket, run_adb_headset_bookmark, _adb_forward_cdp/
-# _remove, _close_stale_teleop_tabs) individually. mock_adb() covers all of
-# those at once (every one of them ultimately shells out via subprocess.run),
-# exercising their real parsing/command-building logic - the /proc/net/unix
-# regex scan, the am start shell command, the get-state checks - not just the
-# assumption that they work in combination.
+# run_oob_connect(): real-browser integration test (see
+# /oob-real-browser-integration-test-plan.md at the repo root). A real
+# Chromium runs the real webxr_client (real IWER-emulated WebXR, real CDP),
+# served by a real `npm run dev-server`, behind a real wss.py proxy (real
+# OOBControlHub; no real CloudXR runtime — minimal_mock_runtime() is enough
+# that the client's signaling handshake doesn't immediately error, see the
+# plan's top-of-file note on why). Only adb itself is faked (no physical
+# Android device), via RealBrowserAdb: its `am start` and `adb forward` drive
+# the real Chromium instead of returning canned output.
 #
-# _cdp_session_click_connect (real WebSocket CDP - cert bypass, readiness
-# polling) and _monitor_teleop_error_banner (a background task that never
-# terminates on its own) are mocked directly: both are separate, complex
-# pieces of behavior outside what this test is meant to prove.
+# This replaces the fully-synthetic mock_adb()/fake-CDP-server
+# run_oob_connect() tests from PR #1148 — those proved run_oob_connect()'s
+# own orchestration logic against scripted responses; this proves the same
+# code path against the real client it actually launches.
+#
+# Slow (real browser + real dev server + real wss.py) and requires a system
+# Chrome (PLAYWRIGHT_CHROME_PATH override; defaults to /usr/bin/google-chrome)
+# and Node/npm on PATH — run manually for now; not yet wired into CI.
 # ============================================================================
 
-from conftest import mock_adb  # noqa: E402
+import contextlib  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from conftest import (  # noqa: E402
+    _free_tcp_port,
+    minimal_mock_runtime,
+    real_browser_adb,
+    real_chrome,
+    real_webxr_dev_server,
+    real_wss_proxy,
+)
 
 from cloudxr_py_test_ns.oob_teleop_adb import run_oob_connect  # noqa: E402
 
 
-async def test_run_oob_connect_success_end_to_end() -> None:
-    """The real run_oob_connect(), driven against a fake adb and a fake CDP tab-list
-    server: device online -> stale-tab scan (none) -> am start -> devtools socket found
-    -> forward set up -> new teleop tab discovered -> CONNECT clicked -> monitor spawned.
-
-    asyncio.create_task is also mocked, not just _monitor_teleop_error_banner: that
-    function is a genuine infinite loop in real life, and letting a real Task wrap its
-    (mocked, non-awaitable-by-default) return value invites asyncio coroutine-lifecycle
-    edge cases - cancelling before the loop ever starts it, "never awaited" warnings on
-    GC - that are irrelevant to what this test is actually proving (that run_oob_connect
-    calls create_task with the right coroutine and returns the resulting task). Patching
-    create_task itself sidesteps all of that: nothing here ever really runs as a task.
+async def test_run_oob_connect_real_browser_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real run_oob_connect(), driven against a real Chromium running the real
+    webxr client: device online -> stale-tab scan -> am start opens a real tab ->
+    real devtools socket already reachable (Chrome's own --remote-debugging-port
+    equals _CDP_LOCAL_PORT, so adb forward is a real no-op) -> real CDP tab
+    discovery finds the real tab -> real _cdp_session_click_connect polls the
+    real client's readiness state machine (real IWER capability checks) and
+    clicks the real CONNECT button.
     """
-    tabs = [
-        {
-            "id": "teleop-1",
-            "url": "https://headset.local/?oobEnable=1",
-            "webSocketDebuggerUrl": "ws://localhost:1/devtools/page/teleop-1",
-        }
-    ]
-    sentinel_task = MagicMock()
-    with (
-        mock_adb() as fake_adb,
-        _fake_cdp_server(tabs),
-        patch(
-            "cloudxr_py_test_ns.oob_teleop_adb._cdp_session_click_connect"
-        ) as mock_click,
-        # new=MagicMock() bypasses patch()'s auto-AsyncMock substitution for a coroutine
-        # function: an AsyncMock always returns a real coroutine when called, and since
-        # create_task is also mocked here, nothing would ever await/close it - "coroutine
-        # was never awaited" on GC. This test only checks the call args, not async
-        # behavior, so a plain MagicMock sidesteps that entirely.
-        patch(
-            "cloudxr_py_test_ns.oob_teleop_adb._monitor_teleop_error_banner",
-            new=MagicMock(),
-        ) as mock_monitor,
-        patch(
-            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.create_task",
-            return_value=sentinel_task,
-        ) as mock_create_task,
-    ):
-        task = await run_oob_connect(resolved_port=48322, timeout=10.0, usb_local=True)
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", "http://localhost:8080")
+    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
 
-    mock_click.assert_called_once_with(tabs[0]["webSocketDebuggerUrl"])
-    mock_monitor.assert_called_once_with(
-        tabs[0]["webSocketDebuggerUrl"], _CDP_LOCAL_PORT
-    )
-    # Not asserted against mock_monitor.return_value: patch() auto-detects
-    # _monitor_teleop_error_banner is a coroutine function and uses AsyncMock, whose
-    # call returns a fresh internal coroutine each time, not .return_value directly -
-    # mock_monitor.assert_called_once_with above already proves the real call args.
-    mock_create_task.assert_called_once()
-    assert mock_create_task.call_args.kwargs.get("name") == "cloudxr-oob-error-monitor"
-    assert task is sentinel_task
+    wss_port = _free_tcp_port()
+    backend_port = _free_tcp_port()
+    user_data_dir = tmp_path / "chrome-profile"
+    user_data_dir.mkdir()
+    install_dir = tmp_path / "cxr-install"
+
+    with (
+        real_webxr_dev_server(),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_adb(chrome) as fake_adb,
+    ):
+        async with minimal_mock_runtime(backend_port):
+            async with real_wss_proxy(
+                install_dir, proxy_port=wss_port, backend_port=backend_port
+            ):
+                task = await run_oob_connect(
+                    resolved_port=wss_port, timeout=30.0, usb_local=True
+                )
+
+        # A real task, not None: the click genuinely succeeded and
+        # _monitor_teleop_error_banner is genuinely running against the real
+        # client's real tab, not swallowed as "click phase ok, monitor
+        # failed to spawn" (see run_oob_connect()'s own return-value contract).
+        assert isinstance(task, asyncio.Task)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
     assert any(c[:2] == ["adb", "get-state"] for c in fake_adb.calls)
     assert any("am start" in " ".join(c) for c in fake_adb.calls)
-
-
-async def test_run_oob_connect_no_devtools_socket_raises() -> None:
-    """A headset whose browser never exposes a DevTools socket (browser didn't launch,
-    or isn't Chromium-based) surfaces OobAdbError rather than hanging past the timeout."""
-    with mock_adb(devtools_socket=""):  # never matches _DEVTOOLS_SOCKET_RE
-        with pytest.raises(OobAdbError, match=r"no .*devtools_remote.* socket found"):
-            await run_oob_connect(resolved_port=48322, timeout=1.5, usb_local=True)
-
-
-async def test_run_oob_connect_am_start_failure_raises() -> None:
-    """A failing `am start` (e.g. device went offline between preflight and launch)
-    surfaces OobAdbError instead of silently continuing to the devtools-socket wait."""
-    with mock_adb(am_start_rc=1):
-        with pytest.raises(OobAdbError):
-            await run_oob_connect(resolved_port=48322, timeout=1.5, usb_local=True)
-
-
-async def test_run_oob_connect_no_matching_tab_raises() -> None:
-    """A browser that launches and exposes a DevTools socket, but never actually
-    navigates a tab to the teleop URL (e.g. a stuck intent handler), surfaces
-    OobAdbError rather than hanging - proven with an empty tab list throughout."""
-    with (
-        mock_adb() as fake_adb,
-        _fake_cdp_server([]),
-    ):
-        with pytest.raises(OobAdbError, match="tab for the teleop page not found"):
-            await run_oob_connect(resolved_port=48322, timeout=1.5, usb_local=True)
-    # Confirms the cold-launch re-fire heuristic actually fired once, not just that
-    # the overall call eventually gave up.
-    am_start_calls = [c for c in fake_adb.calls if "am start" in " ".join(c)]
-    assert len(am_start_calls) >= 2
