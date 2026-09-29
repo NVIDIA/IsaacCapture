@@ -71,7 +71,10 @@ test.describe('client UI states', () => {
     page.on('console', msg => consoleLines.push(msg.text()));
 
     await page.goto('http://localhost:8082/');
-    await waitForConsoleText(consoleLines, 'IWER DevUI initialized with XR device.');
+    // See AppMockTest.spec.js: "IWER DevUI initialized with XR device." logs before
+    // installRuntime() and is skipped on the supported no-DevUI path - "IWER runtime installed."
+    // is the reliable, unconditional signal that navigator.xr is actually usable.
+    await waitForConsoleText(consoleLines, 'IWER runtime installed.');
     await page.click('#startButton', { timeout: 15000 });
 
     // The session enters immersive-ar and MockCloudXR.connect() is called (proving this isn't
