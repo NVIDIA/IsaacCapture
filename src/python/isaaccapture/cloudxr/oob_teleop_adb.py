@@ -1440,6 +1440,8 @@ async def _cdp_session_click_connect(
     ws_url: str,
     *,
     refresh_static_assets: bool = False,
+    allow_navigation: bool = True,
+    clear_stale_error: bool = False,
     on_dispatched: Callable[[], None] | None = None,
 ) -> None:
     """Open a single CDP session and click the CONNECT button.
@@ -1491,6 +1493,10 @@ async def _cdp_session_click_connect(
         on_interstitial = r.get("result", {}).get("value", False)
 
         if on_interstitial:
+            if not allow_navigation:
+                raise OobAdbError(
+                    "CDP: surviving teleop tab is on a certificate interstitial"
+                )
             log.info("CDP: cert interstitial detected")
             navigated = False
             if cert_suppressed:
@@ -1548,6 +1554,23 @@ async def _cdp_session_click_connect(
                     "probe will still verify the client",
                     exc,
                 )
+
+        if clear_stale_error:
+            # A terminal CloudXR error remains visible after the button returns to
+            # CONNECT. Hide that old banner before polling the new attempt so it
+            # cannot be mistaken for a failure produced by this click.
+            await send(
+                ws,
+                "Runtime.evaluate",
+                {
+                    "expression": """(function() {
+                    const box = document.getElementById('errorMessageBox');
+                    const text = document.getElementById('errorMessageText');
+                    box?.classList.remove('show');
+                    if (text) text.textContent = '';
+                })()"""
+                },
+            )
 
         # ---- bring tab to foreground so WebXR requestSession() succeeds ------
         # WebXR requires the page to be visible; Page.bringToFront activates the tab.
@@ -1720,6 +1743,52 @@ async def _cdp_session_click_connect(
             "CDP: connection state unknown after %.0fs — check headset",
             _CONNECT_TIMEOUT,
         )
+
+
+async def attach_existing_oob_tab(
+    *,
+    click_connect: bool = False,
+    on_dispatched: Callable[[], None] | None = None,
+) -> asyncio.Task:
+    """Attach CDP monitoring to a surviving OOB tab without navigating it.
+
+    When *click_connect* is true, dispatch one trusted CONNECT click in the
+    existing tab. This path never closes tabs, invokes ``am start``, reloads,
+    or creates a new browser page.
+    """
+    socket_name = await asyncio.to_thread(_discover_devtools_socket)
+    if not socket_name:
+        raise OobAdbError("CDP: no browser DevTools socket after USB repair")
+    await asyncio.to_thread(_adb_forward_cdp, socket_name, _CDP_LOCAL_PORT)
+    try:
+        tabs = await asyncio.to_thread(_cdp_list_tabs, _CDP_LOCAL_PORT)
+        tab = next(
+            (
+                item
+                for item in tabs
+                if item.get("webSocketDebuggerUrl")
+                and "oobEnable=" in (item.get("url") or "")
+            ),
+            None,
+        )
+        if tab is None:
+            raise OobAdbError("CDP: no surviving teleop tab after USB repair")
+        ws_url = tab["webSocketDebuggerUrl"]
+        if click_connect:
+            await _cdp_session_click_connect(
+                ws_url,
+                refresh_static_assets=False,
+                allow_navigation=False,
+                clear_stale_error=True,
+                on_dispatched=on_dispatched,
+            )
+        return asyncio.create_task(
+            _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT),
+            name="cloudxr-oob-error-monitor",
+        )
+    except BaseException:
+        await asyncio.to_thread(_adb_forward_remove, _CDP_LOCAL_PORT)
+        raise
 
 
 async def run_oob_connect(

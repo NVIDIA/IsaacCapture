@@ -119,6 +119,77 @@ async def test_local_client_reloads_without_http_cache_before_connect() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() -> None:
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    async def monitor(*_args):
+        await asyncio.Event().wait()
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module, "_discover_devtools_socket", return_value="socket"),
+        patch.object(adb_module, "_adb_forward_cdp"),
+        patch.object(
+            adb_module,
+            "_cdp_list_tabs",
+            return_value=[
+                {
+                    "url": "https://localhost:8080/other",
+                    "webSocketDebuggerUrl": "ws://other",
+                },
+                {
+                    "url": "https://localhost:8080/?oobEnable=1",
+                    "webSocketDebuggerUrl": "ws://teleop",
+                },
+            ],
+        ),
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "_monitor_teleop_error_banner", side_effect=monitor),
+        patch.object(adb_module, "_close_stale_teleop_tabs") as close_tabs,
+        patch.object(adb_module, "run_adb_headset_bookmark") as launch,
+    ):
+        task = await adb_module.attach_existing_oob_tab(click_connect=True)
+        click.assert_awaited_once_with(
+            "ws://teleop",
+            refresh_static_assets=False,
+            allow_navigation=False,
+            clear_stale_error=True,
+            on_dispatched=None,
+        )
+        close_tabs.assert_not_called()
+        launch.assert_not_called()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_attach_existing_tab_without_exact_oob_page_cleans_forward() -> None:
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module, "_discover_devtools_socket", return_value="socket"),
+        patch.object(adb_module, "_adb_forward_cdp"),
+        patch.object(
+            adb_module,
+            "_cdp_list_tabs",
+            return_value=[
+                {"url": "https://localhost:8080/", "webSocketDebuggerUrl": "ws://other"}
+            ],
+        ),
+        patch.object(adb_module, "_adb_forward_remove") as cleanup,
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+    ):
+        with pytest.raises(OobAdbError, match="no surviving teleop tab"):
+            await adb_module.attach_existing_oob_tab(click_connect=True)
+    click.assert_not_awaited()
+    cleanup.assert_called_once_with(9223)
+
+
 @patch("cloudxr_py_test_ns.oob_teleop_adb.shutil.which", return_value="/usr/bin/adb")
 def test_require_adb_on_path_found(mock_which: MagicMock) -> None:
     require_adb_on_path()

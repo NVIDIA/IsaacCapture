@@ -266,10 +266,15 @@ After each automated CONNECT, the hub sends
 ``healthProbe {probeId, lifecycleGeneration}`` to a newly registered
 browser page. That page answers
 ``healthReport {probeId, lifecycleGeneration, pageTimestamp, streamStatus,
-lastMetricsAt, metricCadences}``. The hub accepts only the matching probe
-and generation from the target connection. It uses its own receive time for
-freshness; the headset clock is diagnostic only. A matching reply means the
-UI, WSS, and bidirectional browser control path are ready. The lifecycle
+streamPhase, terminalEventId, terminalDetail, lastMetricsAt, metricCadences}``.
+``streamPhase`` is one of ``idle``, ``connecting``, ``retrying``, ``streaming``,
+or ``terminal``. A terminal event ID remains stable while that failure is
+replayed and changes only for a later, distinct terminal failure. Older clients
+that send only the boolean ``streamStatus`` remain supported. The hub accepts
+only the matching probe and generation from the target connection. It uses its
+own receive time for freshness; the headset clock is diagnostic only. A
+matching reply means the UI, WSS, and bidirectional browser control path are
+ready. The lifecycle
 reports ``browser_ready`` while waiting for a stream. In USB-local relay
 mode, ``active`` additionally requires ``streamStatus=true`` and fresh
 post-CONNECT client metrics; coturn listening and ADB rules alone are only
@@ -277,12 +282,20 @@ TURN prerequisites.
 
 If CONNECT was dispatched but a fresh browser report has not arrived, the
 lifecycle remains degraded in ``VERIFYING_BROWSER`` and continues probing
-without clicking CONNECT again. A lost browser/control connection, a broken
-device-side prerequisite, or cable reconnection starts a new automation
-attempt. The browser bundle must implement ``healthProbe`` / ``healthReport``;
-an older non-empty ``TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js`` is not replaced
-automatically. OOB startup checks for the protocol and fails with an asset
-diagnostic if the local bundle is too old. For source-tree testing, run
+without clicking CONNECT again. After a USB cable replug, the lifecycle enters
+``VERIFYING_EXISTING_BROWSER`` and gives the client's configured reconnect loop
+time to finish. Fresh post-repair stream metrics return it to ``ACTIVE`` without
+closing, reloading, or navigating the surviving tab. One terminal event permits
+one same-tab CONNECT click; a full browser launch is reserved for the case where
+no usable tab survives the bounded grace period. The lifecycle is the sole
+owner of CDP/browser mutations; its error monitor only reports evidence.
+
+A lost browser/control connection or broken device-side prerequisite starts a
+new recovery attempt. The browser bundle must implement ``healthProbe`` /
+``healthReport``; an older non-empty
+``TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js`` is not replaced automatically. OOB
+startup checks for the protocol and fails with an asset diagnostic if the local
+bundle is too old. For source-tree testing, run
 ``npm run build`` in ``deps/cloudxr/webxr_client`` and point
 ``TELEOP_WEB_CLIENT_STATIC_DIR`` at its ``build`` directory before starting
 the service. USB-local static responses use ``Cache-Control: no-store``;
@@ -542,6 +555,16 @@ Environment variables
        Expiry changes to observation mode; it never stops the host.
    * - ``TELEOP_OOB_RETRY_INTERVAL_SEC``
      - Positive finite retry and observation interval in seconds (default ``5``).
+   * - ``TELEOP_CLIENT_RECONNECT_ENABLED``
+     - Enable the WebXR client's stream reconnect loop (default ``true``).
+       The OOB lifecycle waits for this client-owned loop before taking over.
+   * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
+     - Non-negative number of browser-local reconnect attempts (default ``3``).
+       The value is also included in the generated headset URL.
+   * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
+     - Non-negative delay between browser-local attempts in milliseconds
+       (default ``3000``). The host derives its bounded recovery grace from
+       this value and the maximum-attempt count.
    * - ``USB_UI_PORT``
      - HTTPS static web client port for ``--usb-local`` (default ``8080``).
        Binds to ``127.0.0.1:<port>`` and ``adb reverse``-maps the port to
@@ -581,9 +604,12 @@ On startup the launcher:
    starts/verifies coturn, and creates ``adb reverse`` rules for 8080
    (static UI), 48322 (WSS), 49100 (backend), and 3478 (TURN).
 5. Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
-   replugging the same serial rebuilds all four rules, CDP forwarding, and
-   browser automation. A fresh browser health report confirms the control
-   path; streaming with fresh metrics confirms the relay path.
+   replugging the same serial first rebuilds all four reverse rules, verifies
+   coturn, and repairs CDP forwarding without mutating a surviving browser tab.
+   The WebXR client owns its bounded reconnect attempts. Fresh post-repair
+   stream metrics resume the existing session; a stable terminal event allows
+   one same-tab CONNECT click, and only a missing/unusable tab falls back to
+   full browser launch automation.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (``https://127.0.0.1:<usb_ui_port>``)

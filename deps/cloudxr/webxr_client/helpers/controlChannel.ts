@@ -39,6 +39,32 @@ export interface MetricsSnapshot {
   metrics: Record<string, number>;
 }
 
+export type StreamPhase = 'idle' | 'connecting' | 'retrying' | 'streaming' | 'terminal';
+
+export function streamPhaseForStatus(connected: boolean, status: string): StreamPhase {
+  if (connected && status === 'Connected') return 'streaming';
+  if (status.startsWith('Reconnecting')) return 'retrying';
+  if (
+    [
+      'Error',
+      'Session Creation Failed',
+      'Connection Failed',
+      'Reference Space Unavailable',
+    ].includes(status)
+  )
+    return 'terminal';
+  if (status === 'Testing network') return 'connecting';
+  return 'idle';
+}
+
+interface StreamStatusSnapshot {
+  streaming: boolean;
+  phase: StreamPhase;
+  detail?: string;
+  terminalEventId?: string;
+  terminalDetail?: string;
+}
+
 export interface ControlChannelOptions {
   /** Full WSS URL of the hub, e.g. wss://host:48322/oob/v1/ws */
   url: string;
@@ -73,7 +99,10 @@ export class HeadsetControlChannel {
   // Last value passed to sendStreamStatus; replayed on every (re)connect so
   // the hub stays in sync after a WS drop and so we don't lose an event
   // fired before the WS finished its handshake.
-  private lastStreamStatus: boolean | null = null;
+  private lastStreamStatus: StreamStatusSnapshot | null = null;
+  private terminalEventId: string | null = null;
+  private terminalDetail: string | null = null;
+  private terminalSequence = 0;
   // Summarize locally emitted metrics so health reports can prove post-CONNECT activity.
   private lastMetricsAt: number | null = null;
   private metricCadences: string[] = [];
@@ -86,12 +115,34 @@ export class HeadsetControlChannel {
     this._openWebSocket();
   }
 
-  /** Forward CloudXR streaming state to the hub; cached so reconnect re-syncs. */
-  sendStreamStatus(streaming: boolean): void {
+  /** Forward CloudXR state to the hub; optional fields preserve legacy boolean senders. */
+  sendStreamStatus(streaming: boolean, phase?: StreamPhase, detail?: string): void {
     if (this.disposed) return;
-    this.lastStreamStatus = streaming;
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ type: 'streamStatus', payload: { streaming } }));
+    const resolvedPhase = phase ?? (streaming ? 'streaming' : 'idle');
+    if (resolvedPhase === 'terminal') {
+      if (!this.terminalEventId) {
+        this.terminalSequence += 1;
+        this.terminalEventId = `${Date.now()}-${this.terminalSequence}`;
+      }
+      this.terminalDetail = detail ?? this.terminalDetail;
+    } else if (resolvedPhase === 'connecting' || resolvedPhase === 'retrying' || streaming) {
+      // A new client-owned attempt or a successful stream retires the prior terminal event.
+      this.terminalEventId = null;
+      this.terminalDetail = null;
+    }
+    this.lastStreamStatus = {
+      streaming,
+      phase: resolvedPhase,
+      ...(detail ? { detail } : {}),
+      ...(this.terminalEventId ? { terminalEventId: this.terminalEventId } : {}),
+      ...(this.terminalDetail ? { terminalDetail: this.terminalDetail } : {}),
+    };
+    this._sendCachedStreamStatus();
+  }
+
+  private _sendCachedStreamStatus(): void {
+    if (!this.lastStreamStatus || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type: 'streamStatus', payload: this.lastStreamStatus }));
   }
 
   /** Close the channel permanently. Safe to call multiple times. */
@@ -137,7 +188,7 @@ export class HeadsetControlChannel {
         })
       );
       if (this.lastStreamStatus !== null) {
-        this.sendStreamStatus(this.lastStreamStatus);
+        this._sendCachedStreamStatus();
       }
       this.opts.onConnectionChange?.(true);
       this._startMetricsTimer();
@@ -201,7 +252,10 @@ export class HeadsetControlChannel {
             probeId: payload.probeId,
             lifecycleGeneration: payload.lifecycleGeneration,
             pageTimestamp: Date.now(),
-            streamStatus: this.lastStreamStatus === true,
+            streamStatus: this.lastStreamStatus?.streaming === true,
+            streamPhase: this.lastStreamStatus?.phase ?? 'idle',
+            terminalEventId: this.terminalEventId,
+            terminalDetail: this.terminalDetail,
             lastMetricsAt: this.lastMetricsAt,
             metricCadences: this.metricCadences,
           },

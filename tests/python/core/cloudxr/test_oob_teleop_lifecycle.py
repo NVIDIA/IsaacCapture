@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
 from unittest.mock import patch
 
 import pytest
@@ -601,8 +602,9 @@ async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failur
     assert len([args for args in calls if "--remove" in args]) == 10
 
 
-async def test_cable_loss_and_same_serial_replug_rebuilds_every_rule_and_reconnects():
+async def test_cable_loss_and_same_serial_replug_rebuilds_rules_without_relaunch():
     hub = FakeHub()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(0, result=None)
     hub.get_snapshot = lambda: asyncio.sleep(
         0,
         result={
@@ -673,6 +675,7 @@ async def test_cable_loss_and_same_serial_replug_rebuilds_every_rule_and_reconne
             return_value=AdbReverseProbe(True, ()),
         ),
         patch.object(lifecycle, "_prepare_device", new=noop),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
         patch.object(lifecycle, "_ensure_coturn", new=noop),
         patch.object(lifecycle, "_automate", new=automate),
     ):
@@ -684,7 +687,7 @@ async def test_cable_loss_and_same_serial_replug_rebuilds_every_rule_and_reconne
         if len(args) > 3 and args[1] == "reverse" and args[2].startswith("tcp:")
     ]
     assert installs == [f"tcp:{p}" for p in (8080, 48322, 49100, 3478)] * 2
-    assert connects == ["original", "original"]
+    assert connects == ["original"]
     assert calls[-5:] == [
         ["adb", "forward", "--remove", "tcp:9223"],
         *[
@@ -719,9 +722,9 @@ async def test_replug_connect_is_not_repeated_while_waiting_for_browser_or_strea
 
     async def probe(generation, after, **_kwargs):
         probe_calls.append(generation)
-        if generation == 1:
+        if len(probe_calls) == 1:
             return {"clientId": "initial-page"}
-        if generation == 2 and late_health_report and probe_calls.count(2) >= 3:
+        if late_health_report and len(probe_calls) >= 4:
             return {"clientId": "replug-page"}
         return None
 
@@ -775,20 +778,21 @@ async def test_replug_connect_is_not_repeated_while_waiting_for_browser_or_strea
             side_effect=connect,
         ),
         patch.object(lifecycle, "_prepare_device", new=noop),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
         patch.object(lifecycle, "_ensure_coturn", new=noop),
     ):
         with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
 
-    assert clicks == ["original", "original"]
-    assert lifecycle.generation == 2
-    assert probe_calls.count(2) >= 3
+    assert clicks == ["original"]
+    assert lifecycle.generation == 1
+    assert len(probe_calls) >= 3
     assert hub.statuses[-1]["turnEndToEndHealthy"] is False
     if late_health_report:
         assert hub.statuses[-1]["health"] == "browser_ready"
     else:
-        assert hub.statuses[-1]["state"] == "VERIFYING_BROWSER"
-        assert hub.statuses[-1]["connectDispatched"] is True
+        assert hub.statuses[-1]["state"] == "VERIFYING_EXISTING_BROWSER"
+        assert hub.statuses[-1]["connectDispatched"] is False
         assert hub.statuses[-1]["health"] == "degraded"
 
 
@@ -952,10 +956,18 @@ async def test_host_listener_failure_rolls_back_without_starting_turn():
             "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
         ),
         patch.object(lifecycle, "_ensure_coturn") as coturn,
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect"
+        ) as full_bootstrap,
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab"
+        ) as existing_tab,
     ):
         with pytest.raises(Exception, match="Host listener on tcp:49100"):
             await lifecycle._rebuild_usb()
     coturn.assert_not_called()
+    full_bootstrap.assert_not_called()
+    existing_tab.assert_not_called()
     assert len([args for args in calls if "--remove" in args]) == 10
 
 
@@ -1101,3 +1113,329 @@ async def test_timeout_after_connect_click_does_not_dispatch_again():
     assert len(clicks) == 1
     assert lifecycle.connect_dispatched
     assert any(s["state"] == "VERIFYING_BROWSER" for s in hub.statuses)
+
+
+async def test_replug_repairs_transport_and_resumes_existing_page_without_automation():
+    hub = FakeHub()
+    now = time.time()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": True,
+            "lastMetricsAt": (now + 1) * 1000,
+            "streamPhase": "streaming",
+            "terminalEventId": None,
+        },
+    )
+    calls = []
+    monitor_attaches = []
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(interval_sec=0.01),
+        host_listener_probe=lambda _port: True,
+    )
+    lifecycle.selected = "original"
+    lifecycle.generation = 4
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    async def no_coturn_restart():
+        lifecycle._turn_listener_ready = True
+        return False
+
+    async def monitor_attached():
+        monitor_attaches.append(True)
+        return True
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            return_value=AdbReverseProbe(True, ()),
+        ),
+        patch.object(lifecycle, "_ensure_coturn", new=no_coturn_restart),
+        patch.object(lifecycle, "_attach_existing_monitor", new=monitor_attached),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect"
+        ) as full_bootstrap,
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab"
+        ) as same_tab,
+    ):
+        await lifecycle._rebuild_usb()
+        lifecycle._repair_started_at = now
+        lifecycle._client_grace_deadline = lifecycle.clock() + 20
+        await lifecycle._recover_existing_browser()
+
+    reversed_ports = [
+        args[2]
+        for args in calls
+        if len(args) >= 4 and args[1] == "reverse" and args[2].startswith("tcp:")
+    ]
+    assert reversed_ports == ["tcp:8080", "tcp:48322", "tcp:49100", "tcp:3478"]
+    full_bootstrap.assert_not_called()
+    same_tab.assert_not_called()
+    assert monitor_attaches
+    assert lifecycle.generation == 4
+    assert lifecycle.snapshot["health"] == "active"
+
+
+async def test_existing_page_retrying_then_streaming_within_grace_never_clicks():
+    hub = FakeHub()
+    now = time.time()
+    reports = iter(
+        [
+            {
+                "clientId": "surviving-page",
+                "streaming": False,
+                "lastMetricsAt": None,
+                "streamPhase": "retrying",
+                "terminalEventId": None,
+            },
+            {
+                "clientId": "surviving-page",
+                "streaming": True,
+                "lastMetricsAt": (now + 1) * 1000,
+                "streamPhase": "streaming",
+                "terminalEventId": None,
+            },
+        ]
+    )
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(0, result=next(reports))
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = now
+    lifecycle._client_grace_deadline = lifecycle.clock() + 20
+
+    async def monitor_attached():
+        return True
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", new=monitor_attached),
+        patch.object(lifecycle, "_same_tab_connect") as same_tab,
+        patch.object(lifecycle, "_automate") as full_bootstrap,
+    ):
+        await lifecycle._recover_existing_browser()
+        assert lifecycle.snapshot["streamPhase"] == "retrying"
+        await lifecycle._recover_existing_browser()
+    same_tab.assert_not_called()
+    full_bootstrap.assert_not_called()
+    assert lifecycle.snapshot["health"] == "active"
+
+
+async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry():
+    hub = FakeHub()
+    event = ["terminal-1"]
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": False,
+            "lastMetricsAt": None,
+            "streamPhase": "terminal",
+            "terminalEventId": event[0],
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.selected = "original"
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = lifecycle.clock() + 20
+    clicks = []
+
+    async def attach(*, click_connect, on_dispatched=None):
+        clicks.append(click_connect)
+        if on_dispatched:
+            on_dispatched()
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with patch(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+        side_effect=attach,
+    ):
+        await lifecycle._recover_existing_browser()
+        await lifecycle._recover_existing_browser()
+        event[0] = "terminal-2"
+        await lifecycle._recover_existing_browser()
+    await lifecycle._stop_monitor()
+    assert clicks[0] is False
+    assert [click for click in clicks if click] == [True, True]
+    assert lifecycle.generation == 0
+
+
+async def test_no_surviving_page_after_grace_bootstraps_once():
+    hub = FakeHub()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(0, result=None)
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        clock=lambda: 100.0,
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = 99.0
+    bootstraps = []
+
+    async def no_tab(_key):
+        return False
+
+    async def bootstrap():
+        bootstraps.append(True)
+        lifecycle._transport_lost = False
+
+    with (
+        patch.object(lifecycle, "_same_tab_connect", new=no_tab),
+        patch.object(lifecycle, "_automate", new=bootstrap),
+    ):
+        await lifecycle._recover_existing_browser()
+    assert bootstraps == [True]
+
+
+async def test_terminal_without_attachable_tab_bootstraps_once_after_grace():
+    hub = FakeHub()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": False,
+            "lastMetricsAt": None,
+            "streamPhase": "terminal",
+            "terminalEventId": "terminal-1",
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        clock=lambda: 100.0,
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = 99.0
+    bootstraps = []
+
+    async def no_tab(_key):
+        return False
+
+    async def bootstrap():
+        bootstraps.append(True)
+        lifecycle._transport_lost = False
+
+    with (
+        patch.object(lifecycle, "_same_tab_connect", new=no_tab),
+        patch.object(lifecycle, "_automate", new=bootstrap),
+    ):
+        await lifecycle._recover_existing_browser()
+    assert bootstraps == [True]
+
+
+async def test_later_terminal_without_cdp_enters_bounded_existing_browser_recovery():
+    hub = FakeHub()
+    hub.get_snapshot = lambda: asyncio.sleep(
+        0,
+        result={
+            "headsets": [
+                {
+                    "clientId": "page",
+                    "streaming": False,
+                    "lastMetricsAt": None,
+                    "streamPhase": "terminal",
+                    "terminalEventId": "later-terminal",
+                }
+            ]
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "page"
+
+    async def no_tab(_key):
+        return False
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=True),
+        patch.object(lifecycle, "_same_tab_connect", new=no_tab),
+    ):
+        await lifecycle._observe_stream()
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    assert lifecycle._repair_started_at is not None
+    assert lifecycle._client_grace_deadline is not None
+
+
+async def test_stale_pre_repair_metrics_do_not_mark_existing_page_active():
+    hub = FakeHub()
+    now = time.time()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": True,
+            "lastMetricsAt": (now - 5) * 1000,
+            "streamPhase": "streaming",
+            "terminalEventId": None,
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = now
+    lifecycle._client_grace_deadline = lifecycle.clock() + 20
+
+    async def monitor_attached():
+        return True
+
+    with patch.object(lifecycle, "_attach_existing_monitor", new=monitor_attached):
+        await lifecycle._recover_existing_browser()
+    assert lifecycle.snapshot["health"] == "browser_ready"
+    assert lifecycle.snapshot["clientMetricsFresh"] is False

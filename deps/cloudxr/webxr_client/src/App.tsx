@@ -41,7 +41,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { v5 } from 'uuid';
 
 import { checkCapabilities } from '@helpers/BrowserCapabilities';
-import { HeadsetControlChannel } from '@helpers/controlChannel';
+import { HeadsetControlChannel, streamPhaseForStatus } from '@helpers/controlChannel';
 import { getDeviceProfile, resolveDeviceProfileId } from '@helpers/DeviceProfiles';
 import { loadIWERIfNeeded } from '@helpers/LoadIWER';
 import { MetricsAccumulator } from '@helpers/metricsAccumulator';
@@ -559,7 +559,9 @@ function AppContent() {
   const handleStatusChange = (connected: boolean, status: string) => {
     setIsConnected(connected);
     setSessionStatus(status);
-    controlChannelRef.current?.sendStreamStatus(connected && status === 'Connected');
+    const streaming = connected && status === 'Connected';
+    const streamPhase = streamPhaseForStatus(connected, status);
+    controlChannelRef.current?.sendStreamStatus(streaming, streamPhase, status);
 
     // CloudXRComponent reports retry progress through this same status text (see
     // streamingErrorClassification.ts / CloudXRComponent's reconnect handling) rather than a

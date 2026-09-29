@@ -50,6 +50,9 @@ def clear_teleop_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEOP_STREAM_PORT",
         "TELEOP_CLIENT_CODEC",
         "TELEOP_CLIENT_PANEL_HIDDEN_AT_START",
+        "TELEOP_CLIENT_RECONNECT_ENABLED",
+        "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+        "TELEOP_CLIENT_RECONNECT_DELAY_MS",
         "TELEOP_CLIENT_ROUTE",
         "TELEOP_WEB_CLIENT_BASE",
         "TELEOP_PROXY_HOST",
@@ -291,8 +294,44 @@ def test_build_headset_bookmark_url_route_empty_suppresses_fragment(
 
 
 def test_client_ui_fields_from_env_empty(clear_teleop_env: None) -> None:
-    """client_ui_fields_from_env returns an empty dict when no UI env vars are set."""
-    assert client_ui_fields_from_env() == {}
+    """Client and host receive the same default bounded-retry settings."""
+    assert client_ui_fields_from_env() == {
+        "reconnectEnabled": True,
+        "reconnectMaxAttempts": 3,
+        "reconnectDelayMs": 3000,
+    }
+
+
+def test_client_ui_fields_from_env_reconnect_overrides(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "false")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "750")
+    assert client_ui_fields_from_env() == {
+        "reconnectEnabled": False,
+        "reconnectMaxAttempts": 5,
+        "reconnectDelayMs": 750,
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TELEOP_CLIENT_RECONNECT_ENABLED", "maybe"),
+        ("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "-1"),
+        ("TELEOP_CLIENT_RECONNECT_DELAY_MS", "1.5"),
+    ],
+)
+def test_client_ui_fields_reject_invalid_reconnect_values(
+    clear_teleop_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        client_ui_fields_from_env()
 
 
 def test_client_ui_fields_from_env_codec(

@@ -37,6 +37,48 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
 
+CLIENT_RECONNECT_DEFAULT_ENABLED = True
+CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS = 3
+CLIENT_RECONNECT_DEFAULT_DELAY_MS = 3000
+
+
+def client_reconnect_config_from_env() -> dict:
+    """Return validated WebXR retry settings shared by the URL and host lifecycle."""
+
+    def boolean(name: str, default: bool) -> bool:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be a boolean")
+
+    def nonnegative_int(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        try:
+            value = default if raw is None else int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a non-negative integer") from exc
+        if value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+        return value
+
+    return {
+        "reconnectEnabled": boolean(
+            "TELEOP_CLIENT_RECONNECT_ENABLED", CLIENT_RECONNECT_DEFAULT_ENABLED
+        ),
+        "reconnectMaxAttempts": nonnegative_int(
+            "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+            CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS,
+        ),
+        "reconnectDelayMs": nonnegative_int(
+            "TELEOP_CLIENT_RECONNECT_DELAY_MS", CLIENT_RECONNECT_DEFAULT_DELAY_MS
+        ),
+    }
+
 
 def resolve_oob_recovery_config():
     """Resolve and validate the bounded recovery cadence once at startup."""
@@ -52,9 +94,13 @@ def resolve_oob_recovery_config():
             raise ValueError(f"{name} must be a positive finite number")
         return value
 
+    reconnect = client_reconnect_config_from_env()
     return RecoveryConfig(
         timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
         interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
+        client_reconnect_enabled=reconnect["reconnectEnabled"],
+        client_reconnect_max_attempts=reconnect["reconnectMaxAttempts"],
+        client_reconnect_delay_ms=reconnect["reconnectDelayMs"],
     )
 
 
@@ -494,6 +540,7 @@ def client_ui_fields_from_env() -> dict:
     (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``).
     """
     out: dict = {}
+    out.update(client_reconnect_config_from_env())
     codec = os.environ.get("TELEOP_CLIENT_CODEC", "").strip()
     if codec:
         out["codec"] = codec

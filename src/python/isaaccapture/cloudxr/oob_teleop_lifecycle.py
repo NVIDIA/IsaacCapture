@@ -30,6 +30,20 @@ log = logging.getLogger(__name__)
 class RecoveryConfig:
     timeout_sec: float = 60.0
     interval_sec: float = 5.0
+    client_reconnect_enabled: bool = True
+    client_reconnect_max_attempts: int = 3
+    client_reconnect_delay_ms: int = 3000
+
+    @property
+    def client_recovery_grace_sec(self) -> float:
+        """Bound host takeover so the browser gets its configured retry budget first."""
+        if not self.client_reconnect_enabled:
+            return self.interval_sec
+        return max(
+            self.interval_sec,
+            self.client_reconnect_max_attempts * self.client_reconnect_delay_ms / 1000.0
+            + 10.0,
+        )
 
 
 def _display_serial(serial: str) -> str:
@@ -101,6 +115,12 @@ class OobLifecycle:
         self.last_stream_at: float | None = None
         self.connect_at: float | None = None
         self.browser_probe_after: float | None = None
+        self._transport_lost = False
+        self._restore_existing_browser = False
+        self._repair_started_at: float | None = None
+        self._client_grace_deadline: float | None = None
+        self._handled_terminal_events: set[str] = set()
+        self._soft_click_keys: set[str] = set()
 
         # Wall-clock status timestamps and latest prerequisite observations.
         self.last_adb_at: float | None = None
@@ -198,6 +218,22 @@ class OobLifecycle:
                 )
             except Exception:
                 log.debug("CDP forward cleanup failed", exc_info=True)
+
+    async def _remember_transport_loss(self) -> None:
+        """Drop transport-owned state while preserving the prior browser intent."""
+        if not self._transport_lost:
+            self._restore_existing_browser = bool(
+                self.browser_ready
+                or self.connect_dispatched
+                or self.last_stream_at is not None
+            )
+            self._transport_lost = self.usb_local and self._restore_existing_browser
+            self._repair_started_at = None
+            self._client_grace_deadline = None
+        await self._stop_monitor()
+        self.browser_ready = False
+        self.browser_client = None
+        self.connect_dispatched = False
 
     async def _run_adb_command(self, command: list[str], *, timeout: float) -> object:
         """Finish an in-flight ADB mutation before cancellation cleanup runs."""
@@ -316,7 +352,11 @@ class OobLifecycle:
             raise
         await self._publish(
             "degraded",
-            "AUTOMATING_BROWSER",
+            (
+                "VERIFYING_EXISTING_BROWSER"
+                if self._restore_existing_browser
+                else "AUTOMATING_BROWSER"
+            ),
             "TURN and reverse rules verified",
             adbReady=True,
             networkPresent=True,
@@ -340,6 +380,10 @@ class OobLifecycle:
 
     async def _automate(self) -> None:
         await self._stop_monitor()
+        self._transport_lost = False
+        self._restore_existing_browser = False
+        self._repair_started_at = None
+        self._client_grace_deadline = None
         self.generation += 1
         self.browser_ready = False
         self.browser_client = None
@@ -380,6 +424,160 @@ class OobLifecycle:
             turnPrerequisitesReady=self.usb_local,
         )
         await self._verify_browser()
+
+    async def _attach_existing_monitor(self) -> bool:
+        """Reattach passive CDP monitoring without treating failure as page loss."""
+        if self.monitor is not None and not self.monitor.done():
+            return True
+        self.monitor = None
+        try:
+            self.monitor = await adb.attach_existing_oob_tab(click_connect=False)
+        except adb.OobAdbError:
+            log.info(
+                "Existing browser is healthy through OOB but CDP is not attachable"
+            )
+            return False
+        return True
+
+    async def _same_tab_connect(self, key: str) -> bool:
+        """Dispatch at most one trusted CONNECT click for a terminal/grace event."""
+        if key in self._soft_click_keys:
+            return False
+        self._soft_click_keys.add(key)
+        await self._stop_monitor()
+        self.connect_dispatched = False
+
+        def on_dispatched() -> None:
+            self.connect_at = time.time()
+            self.connect_dispatched = True
+
+        try:
+            self.monitor = await adb.attach_existing_oob_tab(
+                click_connect=True, on_dispatched=on_dispatched
+            )
+        except adb.OobAdbError:
+            self.monitor = None
+            return False
+        if not self.connect_dispatched:
+            on_dispatched()
+        self._client_grace_deadline = (
+            self.clock() + self.config.client_recovery_grace_sec
+        )
+        await self._publish(
+            "degraded",
+            "VERIFYING_EXISTING_BROWSER",
+            "Existing browser CONNECT dispatched; waiting for fresh stream evidence",
+            adbReady=True,
+            networkPresent=True,
+            reverseRulesVerified=self.usb_local,
+            turnPrerequisitesReady=self.usb_local,
+            connectDispatched=True,
+        )
+        return True
+
+    async def _recover_existing_browser(self) -> None:
+        """Restore a surviving page after USB repair before mutating browser state."""
+        assert self._repair_started_at is not None
+        assert self._client_grace_deadline is not None
+        # Restore the host-owned CDP forward and passive monitor promptly. A
+        # missing socket/tab is evidence for the bounded fallback below, not a
+        # reason to mutate browser state yet.
+        await self._attach_existing_monitor()
+        report = await self.hub.probe_browser(
+            self.generation,
+            0,
+            timeout=min(self.config.interval_sec, 2.0),
+        )
+        if report is None:
+            if self.clock() < self._client_grace_deadline:
+                await self._publish(
+                    "degraded",
+                    "VERIFYING_EXISTING_BROWSER",
+                    "USB repaired; waiting for the existing browser control channel",
+                    adbReady=True,
+                    networkPresent=True,
+                    reverseRulesVerified=True,
+                    turnPrerequisitesReady=True,
+                )
+                return
+            if await self._same_tab_connect(f"grace:{self.generation}"):
+                return
+            # No usable tab survived the bounded grace. Only now perform the
+            # destructive close/navigate/bootstrap path.
+            await self._automate()
+            return
+
+        self.browser_client = report["clientId"]
+        self.browser_ready = True
+        self.last_browser_at = time.time()
+        phase = report.get("streamPhase") or (
+            "streaming" if report.get("streaming") else "idle"
+        )
+        terminal_event = report.get("terminalEventId")
+        metrics_at = report.get("lastMetricsAt")
+        fresh_post_repair = bool(
+            metrics_at
+            and metrics_at > self._repair_started_at * 1000
+            and time.time() * 1000 - metrics_at < self.metrics_stale_sec * 1000
+        )
+        if report.get("streaming") and fresh_post_repair:
+            self.last_stream_at = time.time()
+            self._transport_lost = False
+            self._restore_existing_browser = False
+            self.connect_dispatched = True
+            await self._attach_existing_monitor()
+            await self._publish(
+                "active",
+                "ACTIVE",
+                "Existing browser resumed after USB repair",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=True,
+                turnPrerequisitesReady=True,
+                browserRegistered=True,
+                healthProbeAcknowledged=True,
+                streaming=True,
+                clientMetricsFresh=True,
+                turnEndToEndHealthy=True,
+                streamPhase=phase,
+            )
+            return
+        if terminal_event and terminal_event not in self._handled_terminal_events:
+            self._handled_terminal_events.add(terminal_event)
+            if await self._same_tab_connect(f"terminal:{terminal_event}"):
+                return
+        if (
+            phase == "terminal"
+            and not self.connect_dispatched
+            and self.clock() >= self._client_grace_deadline
+        ):
+            # The terminal event was handled once, but no usable CDP tab
+            # accepted the same-tab click. Fall back only after the grace.
+            await self._automate()
+            return
+        if self.clock() >= self._client_grace_deadline and phase != "terminal":
+            if await self._same_tab_connect(f"grace:{self.generation}"):
+                return
+        await self._attach_existing_monitor()
+        await self._publish(
+            "browser_ready",
+            "VERIFYING_EXISTING_BROWSER",
+            (
+                "Existing browser is retrying the stream"
+                if phase == "retrying"
+                else "Existing browser is alive; waiting for fresh stream evidence"
+            ),
+            adbReady=True,
+            networkPresent=True,
+            reverseRulesVerified=True,
+            turnPrerequisitesReady=True,
+            browserRegistered=True,
+            healthProbeAcknowledged=True,
+            streaming=False,
+            clientMetricsFresh=False,
+            streamPhase=phase,
+            terminalEventId=terminal_event,
+        )
 
     async def _verify_browser(self) -> None:
         """Wait for OOB proof after CONNECT without repeating the click on timeout."""
@@ -422,6 +620,27 @@ class OobLifecycle:
         if client is None:
             self.browser_ready = False
             raise adb.OobAdbError("Browser OOB client disconnected")
+        if self.monitor is not None and self.monitor.done():
+            self.monitor = None
+        if self.monitor is None:
+            await self._attach_existing_monitor()
+        phase = client.get("streamPhase") or (
+            "streaming" if client.get("streaming") else "idle"
+        )
+        terminal_event = client.get("terminalEventId")
+        if terminal_event and terminal_event not in self._handled_terminal_events:
+            self._handled_terminal_events.add(terminal_event)
+            if not await self._same_tab_connect(f"terminal:{terminal_event}"):
+                # Continue the bounded existing-browser path without rebuilding
+                # transport that is already healthy. At grace expiry this may
+                # bootstrap only if no usable CDP tab can be recovered.
+                self._transport_lost = True
+                self._restore_existing_browser = True
+                self._repair_started_at = time.time()
+                self._client_grace_deadline = (
+                    self.clock() + self.config.client_recovery_grace_sec
+                )
+            return
         # Snapshot timestamps are epoch milliseconds; local time.time() values are seconds.
         fresh = bool(
             client.get("lastMetricsAt")
@@ -447,7 +666,11 @@ class OobLifecycle:
         reason = (
             "Stream and fresh metrics confirmed"
             if health == "active"
-            else "Browser ready; waiting for stream or fresh metrics"
+            else (
+                "Browser is retrying the stream"
+                if phase == "retrying"
+                else "Browser ready; waiting for stream or fresh metrics"
+            )
         )
         await self._publish(
             health,
@@ -462,6 +685,8 @@ class OobLifecycle:
             streaming=streaming,
             clientMetricsFresh=fresh,
             turnEndToEndHealthy=self.usb_local and health == "active",
+            streamPhase=phase,
+            terminalEventId=terminal_event,
         )
 
     async def _check_usb_prerequisites(self) -> None:
@@ -548,10 +773,7 @@ class OobLifecycle:
                                 )
                 selected_ready = bool(self.selected and self.selected in ready)
                 if not selected_ready:
-                    await self._stop_monitor()
-                    self.browser_ready = False
-                    self.connect_dispatched = False
-                    self.browser_client = None
+                    await self._remember_transport_loss()
                     self._ready_count = 0
                     states = dict(devices.devices)
                     if len(ready) > 1 and self.selected is None:
@@ -583,10 +805,7 @@ class OobLifecycle:
                     self._restart_episode()
                     self.last_network_state = network.state
                 if network.state is adb.HeadsetNetworkState.ADB_UNAVAILABLE:
-                    await self._stop_monitor()
-                    self.browser_ready = False
-                    self.connect_dispatched = False
-                    self.browser_client = None
+                    await self._remember_transport_loss()
                     await self._publish(
                         "degraded",
                         "WAITING_FOR_ADB",
@@ -601,16 +820,46 @@ class OobLifecycle:
                     and network.state is adb.HeadsetNetworkState.NO_NETWORK
                 ):
                     # PREPARING_DEVICE cannot proceed until WebRTC sees a network.
-                    await self._stop_monitor()
-                    self.browser_ready = False
-                    self.connect_dispatched = False
-                    self.browser_client = None
                     await self._publish(
                         "degraded",
                         "PREPARING_DEVICE",
                         "Headset has no non-loopback network",
                         adbReady=True,
                     )
+                    await self.sleep(self.config.interval_sec)
+                    continue
+                if self._transport_lost and self._restore_existing_browser:
+                    try:
+                        if self._repair_started_at is None:
+                            self.attempts += 1
+                            await self._publish(
+                                "degraded",
+                                "REBUILDING_USB",
+                                "Selected headset returned; repairing USB transport",
+                                adbReady=True,
+                                networkPresent=True,
+                            )
+                            await asyncio.to_thread(
+                                adb.assert_headset_awake, timeout=10.0
+                            )
+                            await self._rebuild_usb()
+                            self._repair_started_at = time.time()
+                            self._client_grace_deadline = (
+                                self.clock() + self.config.client_recovery_grace_sec
+                            )
+                        await self._recover_existing_browser()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self._repair_started_at = None
+                        self._client_grace_deadline = None
+                        await self._publish(
+                            "degraded",
+                            "REBUILDING_USB",
+                            str(exc)[:300],
+                            adbReady=True,
+                            networkPresent=True,
+                        )
                     await self.sleep(self.config.interval_sec)
                     continue
                 if not self.browser_ready:
@@ -653,8 +902,6 @@ class OobLifecycle:
                     if self.browser_ready or self.connect_dispatched:
                         await self._check_usb_prerequisites()
                     if self.browser_ready:
-                        if self.monitor is not None and self.monitor.done():
-                            raise adb.OobAdbError("CDP monitor ended")
                         await self._observe_stream()
                     elif self.connect_dispatched:
                         await self._verify_browser()
