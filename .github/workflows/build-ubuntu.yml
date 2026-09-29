@@ -25,6 +25,7 @@ env:
   # commit only needs to be recent enough to contain that baseline. Update the
   # commit and its release-date comment together.
   VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc  # 2026.05.25
+  NO_GPU_ARM: "1"
 
 jobs:
   build-ubuntu:
@@ -164,8 +165,6 @@ jobs:
       run: ccache --show-stats
 
     - name: Run All Tests
-      # NO_GPU_ARM=1 skips arm64 test execution while still building arm64.
-      if: ${{ !(matrix.arch == 'arm64' && vars.NO_GPU_ARM == '1') }}
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
 
     - name: Generate coverage report
@@ -414,8 +413,6 @@ jobs:
     steps:
     - name: Resolve GPU test architectures
       id: resolve
-      env:
-        NO_GPU_ARM: ${{ vars.NO_GPU_ARM }}
       run: |
         if [[ "$NO_GPU_ARM" == "1" ]]; then
           echo 'arches=["x64"]' >> "$GITHUB_OUTPUT"
