@@ -356,11 +356,17 @@ async function runStep4(): Promise<void> {
   );
   reconnectingAttempts = [];
   const exitCountBefore = exitImmersiveCount;
+  const initiallyConnected = await startAndWaitConnected(0);
+  if (!initiallyConnected) {
+    appendLog('[step4] FAIL: initial session did not connect');
+    return;
+  }
   // Keep every retried session Connecting well past RECONNECT_DELAY_MS, so each failure below
   // lands on a session that hasn't reconnected yet (a reconnect would otherwise reset the
-  // attempt counter before the next failure, per step 3's own PASS case).
+  // attempt counter before the next failure, per step 3's own PASS case). Set only now, after
+  // the initial connection succeeds - onSessionReady checks this before pendingConnectWaitMs, so
+  // setting it earlier would also delay (and starve the 3000ms wait for) the initial session.
   alwaysConnectWaitMs = 5000;
-  await startAndWaitConnected(0);
 
   for (let i = 0; i < MAX_RECONNECT_ATTEMPTS + 1; i++) {
     activeSession?.triggerFailure({
