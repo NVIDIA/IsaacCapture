@@ -36,3 +36,7 @@ endif()
 if(BUILD_PLUGIN_WUJI_GLOVE)
     add_subdirectory(wuji_glove)
 endif()
+# Gated: Linux + Avatar SDK under /opt/avatar-sdk. Missing SDK skips the plugin.
+if(BUILD_PLUGIN_SHARPA_AVATAR)
+    add_subdirectory(sharpa_avatar)
+endif()

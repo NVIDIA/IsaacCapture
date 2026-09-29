@@ -69,6 +69,7 @@ Table of Contents
    device/oak
    device/oglo
    device/wuji_glove
+   device/sharpa_avatar
    device/haptikos
 
 .. toctree::

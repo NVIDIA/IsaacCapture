@@ -18,6 +18,7 @@ if(BUILD_EXAMPLES)
     add_subdirectory(mcap_record_replay)
     add_subdirectory(deviceio_live_view)
     add_subdirectory(haptic_feedback)
+    add_subdirectory(sharpa_avatar)
 elseif(BUILD_EXAMPLE_TELEOP_ROS2)
     # Only the ROS 2 reference integration (e.g. for Docker).
     add_subdirectory(teleop_ros2)

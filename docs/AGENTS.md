@@ -31,6 +31,14 @@ LFS holds pointer text and Sphinx copies it into the site verbatim, so a page th
 right locally can still ship broken artwork. Commit artwork together with the page or data
 that references it.
 
+## Device pages stand alone
+
+`docs/source/device/*.rst` is what the public site renders. A `:code-file:`
+link to a plugin README is extra, not a substitute. Write the same class of
+page as Wuji or Manus: what the hardware is, data flow, install, run,
+published collections, and troubleshooting. Keep volatile operator detail
+in the plugin README; do not shrink the site page to a stub.
+
 ## Never wrap styled layout in `.. container::`
 
 Docutils renders `container` as `class="docutils container"`, and Bootstrap claims the same
