@@ -389,7 +389,7 @@ pre.out {
         us through the upload form.
     </p>
     <p class="tool-lede tool-ref">
-        <a href="https://nvidia.github.io/IsaacTeleop/main/overview/ecosystem.html" target="_blank" rel="noopener noreferrer">See the live Ecosystem page <span aria-hidden="true">&#8599;</span></a>
+        <a href="../../overview/ecosystem.html" target="_blank" rel="noopener noreferrer">See the live Ecosystem page <span aria-hidden="true">&#8599;</span></a>
         for how listed devices fill in each field.
     </p>
 </header>
@@ -1394,8 +1394,13 @@ function measureAspect(record, done) {
     image.src = record.dataUrl;
 }
 
-function storeLogo(record, which) {
+/* Reads finish out of order, so each slot counts its selections and a read that is no
+   longer the latest one, or whose slot was cleared since, is dropped. */
+const logoSeq = { light: 0, dark: 0 };
+
+function storeLogo(record, which, seq) {
     measureAspect(record, () => {
+        if (seq !== logoSeq[which]) return;
         if (which === "light") state.logo = record; else state.logoDark = record;
         showLogoName(which, record);
         render();
@@ -1404,13 +1409,14 @@ function storeLogo(record, which) {
 
 function readLogo(file, which) {
     if (!file) return;
+    const seq = ++logoSeq[which];
     const isSvg = /svg/i.test(file.type) || /\.svg$/i.test(file.name);
     const reader = new FileReader();
     reader.onload = () => {
         const record = { name: file.name, size: file.size, dataUrl: reader.result, isSvg: isSvg, text: "" };
-        if (!isSvg) return storeLogo(record, which);
+        if (!isSvg) return storeLogo(record, which, seq);
         const textReader = new FileReader();
-        textReader.onload = () => { record.text = textReader.result; storeLogo(record, which); };
+        textReader.onload = () => { record.text = textReader.result; storeLogo(record, which, seq); };
         textReader.readAsText(file);
     };
     reader.readAsDataURL(file);
@@ -1430,13 +1436,14 @@ function svgRecord(text, name) {
 function loadExample() {
     Object.assign(state, JSON.parse(JSON.stringify(EXAMPLE)), { logo: null, logoDark: null });
     syncToInputs();
+    const seq = { light: ++logoSeq.light, dark: ++logoSeq.dark };
     const fetchSvg = (file) => fetch(LOGO_DIR + file).then((response) => {
         if (!response.ok) throw new Error(response.status);
         return response.text();
     });
     Promise.all([fetchSvg("manus.svg"), fetchSvg("manus-dark.svg")]).then(([light, dark]) => {
-        storeLogo(svgRecord(light, "manus.svg"), "light");
-        storeLogo(svgRecord(dark, "manus-dark.svg"), "dark");
+        storeLogo(svgRecord(light, "manus.svg"), "light", seq.light);
+        storeLogo(svgRecord(dark, "manus-dark.svg"), "dark", seq.dark);
     }, () => toast("The example logos load only from the docs site"));
 }
 
@@ -1521,8 +1528,8 @@ for (const [dropId, inputId, which] of [["drop-light", "f-logo", "light"], ["dro
     });
 }
 
-$("clear-light").addEventListener("click", () => { state.logo = null; $("f-logo").value = ""; showLogoName("light", null); render(); });
-$("clear-dark").addEventListener("click", () => { state.logoDark = null; $("f-logo-dark").value = ""; showLogoName("dark", null); render(); });
+$("clear-light").addEventListener("click", () => { logoSeq.light += 1; state.logo = null; $("f-logo").value = ""; showLogoName("light", null); render(); });
+$("clear-dark").addEventListener("click", () => { logoSeq.dark += 1; state.logoDark = null; $("f-logo-dark").value = ""; showLogoName("dark", null); render(); });
 
 $("copy-yaml").addEventListener("click", () => copy(yamlText(), "YAML"));
 $("copy-summary").addEventListener("click", () => copy(summaryText(), "Summary"));
@@ -1535,6 +1542,8 @@ $("download-zip").addEventListener("click", () => {
 $("load-example").addEventListener("click", loadExample);
 
 $("reset").addEventListener("click", () => {
+    logoSeq.light += 1;
+    logoSeq.dark += 1;
     Object.assign(state, { name: "", url: "", modes: "", company: "", details: emptyDetails(), logo: null, logoDark: null });
     syncToInputs();
     toast("Cleared");

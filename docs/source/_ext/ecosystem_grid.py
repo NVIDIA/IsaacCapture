@@ -9,9 +9,6 @@ markup never changes.
 
 Invalid records raise at build time rather than warn, because ``make current-docs``
 runs ``sphinx-build -W`` and a silently dropped row is worse than a failed build.
-
-``_static/tools/supported-devices-listing-preview.html`` rebuilds the row markup in
-JavaScript for its preview, so a markup change here has to be made there too.
 """
 
 from __future__ import annotations
