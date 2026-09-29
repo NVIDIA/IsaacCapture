@@ -86,12 +86,32 @@ jobs:
               BASE="$PUSH_BEFORE"
             else
               # Push to a feature/fix branch: check every commit that is on
-              # this branch but not yet on the default branch.  This is the
-              # correct range regardless of force-pushes or rebases — it
-              # naturally excludes existing main commits (which predate this
-              # requirement) and only checks the contributor's new work.
-              git fetch --quiet origin "$DEFAULT_BRANCH" 2>/dev/null || true
-              BASE="origin/$DEFAULT_BRANCH"
+              # this branch but not yet on its parent.  The parent isn't
+              # always the default branch — a backport branch forked from a
+              # release branch (e.g. release/1.5.x) would otherwise be diffed
+              # against origin/main and pick up years of pre-DCO release-only
+              # history.  Git branches don't record their fork point, so
+              # approximate the parent as whichever remote branch shares the
+              # most recent history with HEAD: the one whose merge-base
+              # yields the fewest commits new to this branch.
+              git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true
+
+              BASE=""
+              best_count=-1
+              while IFS= read -r ref; do
+                [[ "$ref" == "origin/$CURRENT_BRANCH" ]] && continue
+                mb=$(git merge-base HEAD "$ref" 2>/dev/null) || continue
+                count=$(git rev-list --count "$mb..HEAD")
+                if [[ "$best_count" -eq -1 || "$count" -lt "$best_count" ]]; then
+                  best_count="$count"
+                  BASE="$mb"
+                fi
+              done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -v '/HEAD$')
+
+              if [[ -z "$BASE" ]]; then
+                echo "::error::Cannot determine commit range: no remote branch shares history with $CURRENT_BRANCH."
+                exit 1
+              fi
             fi
           fi
 
