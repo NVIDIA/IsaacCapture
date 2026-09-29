@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -149,13 +149,13 @@ def run_motion_controller_loop(session):
         if frame_count % 30 == 0:
             elapsed = session.get_elapsed_time()
 
-            # Left hand (thumb, index, middle)
-            l_thumb = joints_left[0]
+            # Left hand proximal joints (thumb, index, middle)
+            l_thumb = joints_left[1]
             l_index = joints_left[3]
             l_middle = joints_left[5]
 
-            # Right hand (thumb, index, middle)
-            r_thumb = joints_right[0]
+            # Right hand proximal joints (thumb, index, middle)
+            r_thumb = joints_right[1]
             r_index = joints_right[3]
             r_middle = joints_right[5]
 
