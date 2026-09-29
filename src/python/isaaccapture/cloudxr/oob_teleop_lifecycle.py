@@ -26,6 +26,10 @@ from .oob_teleop_env import (
 log = logging.getLogger(__name__)
 
 
+class _UsbTransportLost(adb.OobAdbError):
+    """Host-owned USB topology disappeared while the browser was active."""
+
+
 @dataclass(frozen=True)
 class RecoveryConfig:
     timeout_sec: float = 60.0
@@ -244,6 +248,14 @@ class OobLifecycle:
         self.browser_ready = False
         self.browser_client = None
         self.connect_dispatched = False
+
+    async def _enter_transport_recovery(self, reason: str, state: str) -> None:
+        """Preserve browser intent and publish one USB-loss transition."""
+        entering = not self._transport_lost
+        await self._remember_transport_loss()
+        if entering and self._transport_lost:
+            self._restart_episode()
+        await self._publish("degraded", state, reason)
 
     async def _run_adb_command(self, command: list[str], *, timeout: float) -> object:
         """Finish an in-flight ADB mutation before cancellation cleanup runs."""
@@ -737,13 +749,13 @@ class OobLifecycle:
             [usb_ui_port(), self.resolved_port, usb_backend_port(), self.turn_port],
         )
         if not verification.adb_available:
-            raise adb.OobAdbError("ADB unavailable while verifying reverse rules")
+            raise _UsbTransportLost("ADB unavailable while verifying reverse rules")
         if verification.missing_ports:
-            raise adb.OobAdbError(
+            raise _UsbTransportLost(
                 f"USB reverse rules missing: {verification.missing_ports}"
             )
         if restarted:
-            raise adb.OobAdbError("coturn restarted; renewing browser connection")
+            raise _UsbTransportLost("coturn restarted; renewing browser connection")
 
     async def run(self) -> None:
         """Keep one headset recovered through ADB, browser, and streaming states.
@@ -811,7 +823,6 @@ class OobLifecycle:
                                 )
                 selected_ready = bool(self.selected and self.selected in ready)
                 if not selected_ready:
-                    await self._remember_transport_loss()
                     self._ready_count = 0
                     states = dict(devices.devices)
                     if len(ready) > 1 and self.selected is None:
@@ -828,7 +839,7 @@ class OobLifecycle:
                         reason = "Headset offline; reconnect the USB cable"
                     else:
                         reason = devices.diagnostic or "Waiting for selected headset"
-                    await self._publish("degraded", "WAITING_FOR_ADB", reason)
+                    await self._enter_transport_recovery(reason, "WAITING_FOR_ADB")
                     await self.sleep(self.config.interval_sec)
                     continue
                 self._ready_count += 1
@@ -843,11 +854,9 @@ class OobLifecycle:
                     self._restart_episode()
                     self.last_network_state = network.state
                 if network.state is adb.HeadsetNetworkState.ADB_UNAVAILABLE:
-                    await self._remember_transport_loss()
-                    await self._publish(
-                        "degraded",
-                        "WAITING_FOR_ADB",
+                    await self._enter_transport_recovery(
                         "ADB unavailable: " + network.diagnostic,
+                        "WAITING_FOR_ADB",
                     )
                     await self.sleep(self.config.interval_sec)
                     continue
@@ -987,6 +996,12 @@ class OobLifecycle:
                             if self.usb_local:
                                 await self._rebuild_usb()
                             await self._automate()
+                except _UsbTransportLost as exc:
+                    # Enumeration can miss a quick cable flap. Reverse/TURN
+                    # evidence enters the same preservation path immediately,
+                    # without the ordinary retry sleep or browser teardown.
+                    await self._enter_transport_recovery(str(exc), "REBUILDING_USB")
+                    continue
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
