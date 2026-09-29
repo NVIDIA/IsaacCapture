@@ -1508,6 +1508,47 @@ limitations under the License.
               </div>
 
               <div class="config-section">
+                <label for="cloudxrWarmupBeginTimeoutMs" class="input-label"
+                  >Warm-up Begin Timeout (ms, default: 10000 / 10 seconds)</label
+                >
+                <input
+                  id="cloudxrWarmupBeginTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="Warm-up begin timeout in ms"
+                  spellcheck="false"
+                  value="10000"
+                />
+                <div class="config-text">
+                  How long to wait, after the stream attaches, for the first sign that decoder
+                  warm-up has started before treating the session as stuck. Independent of Stream
+                  Attach Timeout above (a separate, later window); does not grow on retry.
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrWarmupEndTimeoutMs" class="input-label"
+                  >Warm-up End Timeout (ms, default: 30000 / 30 seconds)</label
+                >
+                <input
+                  id="cloudxrWarmupEndTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="Warm-up end timeout in ms"
+                  spellcheck="false"
+                  value="30000"
+                />
+                <div class="config-text">
+                  How long to wait for decoder warm-up to finish once it has begun before treating
+                  the session as stuck. Does not grow on retry.
+                </div>
+              </div>
+
+              <div class="config-section">
                 <label for="cloudxrAutoRefreshMode" class="input-label"
                   >Auto Refresh on Session End</label
                 >

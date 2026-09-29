@@ -154,6 +154,8 @@ function sampleValid(key: string): string {
     'reconnectMaxAttempts',
     'reconnectDelayMs',
     'streamAttachTimeoutMs',
+    'warmupBeginTimeoutMs',
+    'warmupEndTimeoutMs',
   ]);
   if (numeric.has(key)) return '1';
   const enums: Record<string, string> = {

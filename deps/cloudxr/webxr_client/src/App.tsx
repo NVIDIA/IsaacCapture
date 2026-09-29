@@ -1197,6 +1197,8 @@ function AppContent() {
                     : undefined
                 }
                 streamAttachTimeoutMs={config?.streamAttachTimeoutMs}
+                warmupBeginTimeoutMs={config?.warmupBeginTimeoutMs}
+                warmupEndTimeoutMs={config?.warmupEndTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
                   if (cloudXR2DUI) {
