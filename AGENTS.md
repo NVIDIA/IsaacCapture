@@ -203,6 +203,15 @@ A `commit-msg` pre-commit hook enforces this. Install it **once per clone**
 pre-commit install --hook-type commit-msg
 ```
 
+## Remote pushes
+
+- Before pushing, compare `git remote get-url` with the user-specified owner and
+  repository. Do not infer the destination from the account, remote alias, or
+  branch name.
+- Before updating an existing pull request, verify its exact head owner,
+  repository, and ref. A similarly named branch does not update that pull
+  request.
+
 ## Pre-commit — match CI before you stop
 
 - From the **IsaacTeleop repo root** (this directory), run pre-commit and **fix all failures** before you treat a change as finished (do not only rely on “should pass” reasoning).
