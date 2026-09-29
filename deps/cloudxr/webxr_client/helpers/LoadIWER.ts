@@ -116,6 +116,11 @@ async function loadIWER(): Promise<IWERLoadResult> {
           window.xrDevice = device;
           supportsImmersive = true;
           iwerLoaded = true;
+          // The only log that's both unconditional (fires whether or not DevUI loaded, unlike
+          // "IWER DevUI initialized...") and guaranteed to follow installRuntime() actually
+          // succeeding (unlike "IWER DevUI initialized...", which logs before this await) - the
+          // one a caller (e.g. a test) should wait on to know navigator.xr is truly usable.
+          console.info('IWER runtime installed.');
         } catch (e) {
           console.warn('IWER runtime install failed:', e);
           supportsImmersive = false;
