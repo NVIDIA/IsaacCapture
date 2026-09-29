@@ -1793,6 +1793,95 @@ async def test_fresh_stream_without_cdp_never_mutates_live_browser():
     assert bootstraps == []
 
 
+async def test_fresh_stream_passively_reattaches_cdp_after_episode_expires():
+    hub = FakeHub()
+    wall_now = time.time()
+    clock = [3.0]
+    ready = AdbDevices((("original", "device"),))
+    report = {
+        "clientId": "surviving-page",
+        "streaming": True,
+        "lastMetricsAt": (wall_now + 1) * 1000,
+        "streamPhase": "streaming",
+        "terminalEventId": None,
+    }
+
+    async def get_snapshot():
+        return {"headsets": [report]}
+
+    async def probe_browser(*_args, **_kwargs):
+        return report
+
+    hub.get_snapshot = get_snapshot
+    hub.probe_browser = probe_browser
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=2, interval_sec=5),
+        clock=lambda: clock[0],
+    )
+    lifecycle.selected = "original"
+    lifecycle.generation = 4
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.episode_start = 0.0
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = wall_now
+    lifecycle._client_grace_deadline = 0.0
+    lifecycle._fresh_stream_without_cdp = True
+    attach_results = iter((False, True))
+    attach_times = []
+
+    async def attach_monitor():
+        attach_times.append(clock[0])
+        return next(attach_results)
+
+    async def sleep(seconds):
+        if lifecycle.snapshot.get("health") == "active":
+            raise asyncio.CancelledError
+        assert seconds <= 1.0
+        clock[0] += seconds
+
+    lifecycle.sleep = sleep
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value="stable-topology",
+        ),
+        patch.object(lifecycle, "_attach_existing_monitor", new=attach_monitor),
+        patch.object(lifecycle, "_same_tab_connect") as same_tab,
+        patch.object(lifecycle, "_automate") as full_bootstrap,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert attach_times == [3.0, 4.0]
+    degraded_streaming = [
+        status for status in hub.statuses if status["health"] == "degraded"
+    ]
+    assert degraded_streaming
+    assert all(status["streaming"] is True for status in degraded_streaming)
+    assert all(status["clientMetricsFresh"] is True for status in degraded_streaming)
+    assert all(status["turnEndToEndHealthy"] is True for status in degraded_streaming)
+    assert lifecycle.snapshot["health"] == "active"
+    assert lifecycle.snapshot["state"] == "ACTIVE"
+    assert lifecycle.generation == 4
+    same_tab.assert_not_called()
+    full_bootstrap.assert_not_called()
+
+
 @pytest.mark.parametrize("phase", ["idle", "retrying"])
 async def test_nonstreaming_client_without_cdp_bootstraps_once_after_grace(phase):
     hub = FakeHub()
@@ -1889,7 +1978,7 @@ async def test_short_episode_caps_client_grace_and_falls_back_once(
     lifecycle._restore_existing_browser = True
     lifecycle._repair_started_at = time.time()
     lifecycle._client_grace_deadline = lifecycle._bounded_client_grace_deadline()
-    assert lifecycle.config.client_recovery_grace_sec == 19.0
+    assert lifecycle.config.client_recovery_grace_sec == 40.0
     assert lifecycle._client_grace_deadline == expected_deadline
     bootstraps = []
 

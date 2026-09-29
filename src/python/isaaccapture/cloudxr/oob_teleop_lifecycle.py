@@ -128,6 +128,7 @@ class OobLifecycle:
         self._restore_existing_browser = False
         self._repair_started_at: float | None = None
         self._client_grace_deadline: float | None = None
+        self._fresh_stream_without_cdp = False
         self._handled_terminal_events: set[str] = set()
         self._soft_click_keys: set[str] = set()
 
@@ -249,6 +250,7 @@ class OobLifecycle:
             self._transport_lost = self.usb_local and self._restore_existing_browser
             self._repair_started_at = None
             self._client_grace_deadline = None
+            self._fresh_stream_without_cdp = False
         await self._stop_monitor()
         self.browser_ready = False
         self.browser_client = None
@@ -430,6 +432,7 @@ class OobLifecycle:
         self._restore_existing_browser = False
         self._repair_started_at = None
         self._client_grace_deadline = None
+        self._fresh_stream_without_cdp = False
         self.generation += 1
         self.browser_ready = False
         self.browser_client = None
@@ -533,6 +536,7 @@ class OobLifecycle:
             timeout=min(self.config.interval_sec, 2.0),
         )
         if report is None:
+            self._fresh_stream_without_cdp = False
             if self.clock() < self._client_grace_deadline:
                 await self._publish(
                     "degraded",
@@ -564,10 +568,14 @@ class OobLifecycle:
             and metrics_at > self._repair_started_at * 1000
             and time.time() * 1000 - metrics_at < self.metrics_stale_sec * 1000
         )
+        self._fresh_stream_without_cdp = bool(
+            report.get("streaming") and fresh_post_repair and not cdp_attached
+        )
         if report.get("streaming") and fresh_post_repair and cdp_attached:
             self.last_stream_at = time.time()
             self._transport_lost = False
             self._restore_existing_browser = False
+            self._fresh_stream_without_cdp = False
             self.connect_dispatched = True
             await self._publish(
                 "active",
@@ -998,6 +1006,7 @@ class OobLifecycle:
                 if (
                     preserving_browser
                     and self.clock() >= self.episode_start + self.config.timeout_sec
+                    and not self._fresh_stream_without_cdp
                 ):
                     await self._publish(
                         "degraded",
