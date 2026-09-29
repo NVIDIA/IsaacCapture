@@ -25,6 +25,7 @@ env:
   # commit only needs to be recent enough to contain that baseline. Update the
   # commit and its release-date comment together.
   VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc  # 2026.05.25
+  NO_GPU_ARM: "1"
 
 jobs:
   build-ubuntu:
@@ -382,18 +383,49 @@ jobs:
         # own .venv without isaacteleop, rather than .venv-skbuild.
         .venv-skbuild/bin/python "${RUNNER_TEMP}/skbuild_smoke.py"
 
+    - name: Wheel contents (the pip wheel ships both names)
+      run: |
+        set -euo pipefail
+        # ctest's packaging suite reads the classic uv-built wheels; this is the
+        # only thing that reaches a wheel built by the pip config, which has its
+        # own wheel.packages mapping.
+        uv build --wheel --python 3.11 --out-dir dist-wheel src/compat
+        uv build --wheel --python 3.11 --out-dir dist-wheel
+        ISAAC_TELEOP_WHEELS_DIR="${PWD}/dist-wheel" \
+          uv run --python 3.11 --directory tests/python/packaging --extra dev \
+          pytest -v test_wheel_contents.py
+
+  # Jobs `if:` conditions cannot see the `matrix` context, so arm64 GPU test
+  # runs are skipped by computing the test matrix here instead: when
+  # NO_GPU_ARM=1, arm64 drops out of the matrix entirely (no self-hosted arm64
+  # GPU runner is claimed) while build-ubuntu still builds arm64 unconditionally.
+  resolve-test-arches:
+    runs-on: ubuntu-22.04
+    permissions: {}
+    outputs:
+      arches: ${{ steps.resolve.outputs.arches }}
+    steps:
+    - name: Resolve GPU test architectures
+      id: resolve
+      run: |
+        if [[ "$NO_GPU_ARM" == "1" ]]; then
+          echo 'arches=["x64"]' >> "$GITHUB_OUTPUT"
+        else
+          echo 'arches=["x64", "arm64"]' >> "$GITHUB_OUTPUT"
+        fi
+
   test-viz-gpu:
     # Runs [gpu]-tagged Catch2 tests for the Televiz module on a self-hosted
     # GPU runner. The build-ubuntu job runs on a GPU-less GitHub-hosted runner
     # where these tests SKIP cleanly; this job actually exercises the Vulkan
     # / CUDA paths that build-ubuntu cannot.
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
-    needs: build-ubuntu
+    needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
-        arch: ['x64', 'arm64']
+        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
 
     steps:
     - name: Download viz test binaries
@@ -575,13 +607,13 @@ jobs:
 
   test-cloudxr:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
-    needs: build-ubuntu
+    needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         python_version: ['3.11', '3.12', '3.13']
-        arch: ['x64', 'arm64']
+        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
 
     steps:
     - name: Checkout code
@@ -618,13 +650,13 @@ jobs:
 
   test-teleop-ros2:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
-    needs: build-ubuntu
+    needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         python_version: ['3.12']
-        arch: ['x64', 'arm64']
+        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
 
     steps:
     - name: Checkout code
