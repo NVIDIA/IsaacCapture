@@ -330,7 +330,9 @@ def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
     Keys match query params the WebXR client reads on page load
-    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``).
+    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
+    ``reconnectEnabled``, ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
     """
     out: dict = {}
     codec = os.environ.get("TELEOP_CLIENT_CODEC", "").strip()
@@ -341,6 +343,25 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    re_enabled = os.environ.get("TELEOP_CLIENT_RECONNECT_ENABLED", "").strip().lower()
+    if re_enabled in ("1", "true", "yes", "on"):
+        out["reconnectEnabled"] = True
+    elif re_enabled in ("0", "false", "no", "off"):
+        out["reconnectEnabled"] = False
+    for env_name, key in (
+        ("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "reconnectMaxAttempts"),
+        ("TELEOP_CLIENT_RECONNECT_DELAY_MS", "reconnectDelayMs"),
+        ("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "streamAttachTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "warmupBeginTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "warmupEndTimeoutMs"),
+    ):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            out[key] = int(raw)
+        except ValueError:
+            continue
     return out
 
 
@@ -377,10 +398,12 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart`` — are plain form
-    overrides the client honours either way, so the headset still lands with
-    the right streaming target pre-filled.  Callers must not disable OOB while
-    the control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``reconnectEnabled``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
+    ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
+    the client honours either way, so the headset still lands with the right
+    streaming target pre-filled.  Callers must not disable OOB while the
+    control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
     CloudXR streaming backend rather than refused.
 
     A HashRouter fragment is appended at the end when ``TELEOP_CLIENT_ROUTE``
@@ -405,6 +428,21 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    v = cfg.get("reconnectEnabled")
+    if isinstance(v, bool):
+        params["reconnectEnabled"] = "true" if v else "false"
+    for key in (
+        "reconnectMaxAttempts",
+        "reconnectDelayMs",
+        "streamAttachTimeoutMs",
+        "warmupBeginTimeoutMs",
+        "warmupEndTimeoutMs",
+    ):
+        v = cfg.get(key)
+        if isinstance(v, bool):
+            continue  # bool is an int subclass; exclude it from the numeric fields above.
+        if isinstance(v, int):
+            params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
         params["turnServer"] = str(v).strip()

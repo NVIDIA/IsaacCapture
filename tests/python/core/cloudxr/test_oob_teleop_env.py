@@ -47,6 +47,12 @@ def clear_teleop_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEOP_STREAM_PORT",
         "TELEOP_CLIENT_CODEC",
         "TELEOP_CLIENT_PANEL_HIDDEN_AT_START",
+        "TELEOP_CLIENT_RECONNECT_ENABLED",
+        "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+        "TELEOP_CLIENT_RECONNECT_DELAY_MS",
+        "TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS",
+        "TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS",
+        "TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS",
         "TELEOP_CLIENT_ROUTE",
         "TELEOP_WEB_CLIENT_BASE",
         "TELEOP_PROXY_HOST",
@@ -308,6 +314,86 @@ def test_client_ui_fields_from_env_panel_hidden(
     monkeypatch.setenv("TELEOP_CLIENT_PANEL_HIDDEN_AT_START", "true")
     fields = client_ui_fields_from_env()
     assert fields["panelHiddenAtStart"] is True
+
+
+def test_client_ui_fields_from_env_reconnect_enabled(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TELEOP_CLIENT_RECONNECT_ENABLED=true sets reconnectEnabled to True."""
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "true")
+    fields = client_ui_fields_from_env()
+    assert fields["reconnectEnabled"] is True
+
+
+def test_client_ui_fields_from_env_reconnect_disabled(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TELEOP_CLIENT_RECONNECT_ENABLED=false sets reconnectEnabled to False."""
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "false")
+    fields = client_ui_fields_from_env()
+    assert fields["reconnectEnabled"] is False
+
+
+def test_client_ui_fields_from_env_reliability_timeouts(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The five reconnect/timeout ms/count env vars are surfaced as integer fields."""
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "2500")
+    monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "90000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "8000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "20000")
+    fields = client_ui_fields_from_env()
+    assert fields["reconnectMaxAttempts"] == 5
+    assert fields["reconnectDelayMs"] == 2500
+    assert fields["streamAttachTimeoutMs"] == 90000
+    assert fields["warmupBeginTimeoutMs"] == 8000
+    assert fields["warmupEndTimeoutMs"] == 20000
+
+
+def test_client_ui_fields_from_env_invalid_timeout_ignored(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-integer timeout env var is silently ignored rather than raising."""
+    monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "not-a-number")
+    fields = client_ui_fields_from_env()
+    assert "streamAttachTimeoutMs" not in fields
+
+
+def test_build_headset_bookmark_url_reconnect_enabled() -> None:
+    """reconnectEnabled=True from stream_config is serialised as "true" in the bookmark URL."""
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={
+            "serverIP": "10.0.0.1",
+            "port": 48322,
+            "reconnectEnabled": True,
+        },
+    )
+    q = parse_qs(urlparse(u).query)
+    assert q["reconnectEnabled"] == ["true"]
+
+
+def test_build_headset_bookmark_url_reliability_timeouts() -> None:
+    """Reconnect/timeout numeric fields from stream_config are forwarded as query params."""
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={
+            "serverIP": "10.0.0.1",
+            "port": 48322,
+            "reconnectMaxAttempts": 5,
+            "reconnectDelayMs": 2500,
+            "streamAttachTimeoutMs": 90000,
+            "warmupBeginTimeoutMs": 8000,
+            "warmupEndTimeoutMs": 20000,
+        },
+    )
+    q = parse_qs(urlparse(u).query)
+    assert q["reconnectMaxAttempts"] == ["5"]
+    assert q["reconnectDelayMs"] == ["2500"]
+    assert q["streamAttachTimeoutMs"] == ["90000"]
+    assert q["warmupBeginTimeoutMs"] == ["8000"]
+    assert q["warmupEndTimeoutMs"] == ["20000"]
 
 
 def test_default_initial_stream_config_defaults(clear_teleop_env: None) -> None:
