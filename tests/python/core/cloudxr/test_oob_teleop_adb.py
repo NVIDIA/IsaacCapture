@@ -675,6 +675,7 @@ def _fake_cdp_server(tabs: list[dict]):
     finally:
         server.shutdown()
         thread.join(timeout=5)
+        server.server_close()
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
