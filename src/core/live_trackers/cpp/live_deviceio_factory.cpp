@@ -47,6 +47,21 @@ bool is_tracker_type(const ITracker& tracker)
     return dynamic_cast<const TrackerT*>(&tracker) != nullptr;
 }
 
+// Whether an impl needs OpenXR session handles. Impls default to needing them; one that works
+// without (an in-process device) opts out with `static constexpr bool requires_openxr = false`.
+template <typename ImplT>
+constexpr bool impl_requires_openxr()
+{
+    if constexpr (requires { ImplT::requires_openxr; })
+    {
+        return ImplT::requires_openxr;
+    }
+    else
+    {
+        return true;
+    }
+}
+
 template <typename TrackerT, typename ImplT>
 bool try_add_extensions(const ITracker& tracker, std::set<std::string>& out)
 {
@@ -127,6 +142,8 @@ struct TrackerDispatchEntry
     // type's sole vendor; multi-vendor types set vendor_id per row and list the default vendor
     // first (see k_tracker_dispatch).
     std::string_view vendor_id = {};
+    // Whether the impl needs OpenXR session handles (see impl_requires_openxr).
+    bool requires_openxr = true;
 };
 
 // Build a dispatch row for a (tracker type, impl) pair, wiring up its extension
@@ -135,7 +152,8 @@ struct TrackerDispatchEntry
 template <typename TrackerT, typename ImplT>
 constexpr TrackerDispatchEntry make_dispatch_entry(TryCreateFn try_create, std::string_view vendor_id = {})
 {
-    return TrackerDispatchEntry{ &try_add_extensions<TrackerT, ImplT>, &is_tracker_type<TrackerT>, try_create, vendor_id };
+    return TrackerDispatchEntry{ &try_add_extensions<TrackerT, ImplT>, &is_tracker_type<TrackerT>, try_create,
+                                 vendor_id, impl_requires_openxr<ImplT>() };
 }
 
 // One row per (tracker type, vendor). A tracker type may have several vendor rows; the first row
@@ -339,6 +357,33 @@ std::vector<std::string> LiveDeviceIOFactory::get_required_extensions(
     }
 
     return { all.begin(), all.end() };
+}
+
+bool LiveDeviceIOFactory::requires_openxr(const std::vector<std::shared_ptr<ITracker>>& trackers,
+                                          const std::vector<std::pair<const ITracker*, TrackerVendor>>& tracker_vendors)
+{
+    // Precondition: DeviceIOSession has validated tracker_vendors (see @pre); this only resolves.
+    for (const auto& tracker : trackers)
+    {
+        if (!tracker)
+            throw std::invalid_argument("LiveDeviceIOFactory: null tracker in trackers list");
+
+        const TrackerVendor* selected = find_tracker_vendor(tracker_vendors, tracker.get());
+        const TrackerDispatchEntry* row = nullptr;
+        for (const auto& dispatch : k_tracker_dispatch)
+        {
+            if (row_selected(dispatch, selected) && dispatch.matches(*tracker))
+            {
+                row = &dispatch;
+                break;
+            }
+        }
+        if (row == nullptr)
+            throw_unresolved_tracker("LiveDeviceIOFactory::requires_openxr", *tracker, selected);
+        if (row->requires_openxr)
+            return true;
+    }
+    return false;
 }
 
 LiveDeviceIOFactory::LiveDeviceIOFactory(const OpenXRSessionHandles& handles,
