@@ -1882,6 +1882,106 @@ async def test_fresh_stream_passively_reattaches_cdp_after_episode_expires():
     full_bootstrap.assert_not_called()
 
 
+async def test_second_cable_loss_invalidates_repair_before_browser_recovery():
+    hub = FakeHub()
+    clock = [0.0]
+    ready = AdbDevices((("original", "device"),))
+    absent = AdbDevices(())
+    observations = [absent, absent, ready]
+    report = {
+        "clientId": "surviving-page",
+        "streaming": True,
+        "lastMetricsAt": (time.time() + 10) * 1000,
+        "streamPhase": "streaming",
+        "terminalEventId": None,
+    }
+
+    async def get_snapshot():
+        return {"headsets": [report]}
+
+    async def probe_browser(*_args, **_kwargs):
+        return {**report, "lastMetricsAt": (time.time() + 1) * 1000}
+
+    hub.get_snapshot = get_snapshot
+    hub.probe_browser = probe_browser
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(interval_sec=5),
+        clock=lambda: clock[0],
+    )
+    lifecycle.selected = "original"
+    lifecycle.generation = 4
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = 40.0
+    lifecycle._fresh_stream_without_cdp = True
+    actions = []
+    invalidations = []
+    original_invalidate = lifecycle._invalidate_completed_repair
+
+    def invalidate(signature):
+        changed = original_invalidate(signature)
+        invalidations.append(changed)
+        return changed
+
+    async def rebuild():
+        actions.append("rebuild")
+        lifecycle._transport_disruption_signature = None
+        lifecycle._prerequisite_signature = None
+
+    async def attach_monitor():
+        actions.append("attach")
+        return True
+
+    async def sleep(seconds):
+        if lifecycle.snapshot.get("health") == "active":
+            raise asyncio.CancelledError
+        assert seconds <= 1.0
+        if len(invalidations) == 1:
+            assert lifecycle._repair_started_at is None
+            assert lifecycle._client_grace_deadline is None
+            assert lifecycle._fresh_stream_without_cdp is False
+        clock[0] += seconds
+
+    lifecycle.sleep = sleep
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            side_effect=lambda: observations.pop(0) if observations else ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value="restored-topology",
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
+        patch.object(lifecycle, "_invalidate_completed_repair", new=invalidate),
+        patch.object(lifecycle, "_rebuild_usb", new=rebuild),
+        patch.object(lifecycle, "_attach_existing_monitor", new=attach_monitor),
+        patch.object(lifecycle, "_same_tab_connect") as same_tab,
+        patch.object(lifecycle, "_automate") as full_bootstrap,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert invalidations == [True, False]
+    assert actions == ["rebuild", "attach"]
+    assert lifecycle.snapshot["health"] == "active"
+    assert lifecycle.generation == 4
+    same_tab.assert_not_called()
+    full_bootstrap.assert_not_called()
+
+
 @pytest.mark.parametrize("phase", ["idle", "retrying"])
 async def test_nonstreaming_client_without_cdp_bootstraps_once_after_grace(phase):
     hub = FakeHub()

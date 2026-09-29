@@ -129,6 +129,7 @@ class OobLifecycle:
         self._repair_started_at: float | None = None
         self._client_grace_deadline: float | None = None
         self._fresh_stream_without_cdp = False
+        self._transport_disruption_signature: tuple | None = None
         self._handled_terminal_events: set[str] = set()
         self._soft_click_keys: set[str] = set()
 
@@ -256,6 +257,17 @@ class OobLifecycle:
         self.browser_client = None
         self.connect_dispatched = False
 
+    def _invalidate_completed_repair(self, signature: tuple) -> bool:
+        """Forget post-repair evidence once for each distinct hard disruption."""
+        if signature == self._transport_disruption_signature:
+            return False
+        self._transport_disruption_signature = signature
+        self._repair_started_at = None
+        self._client_grace_deadline = None
+        self._fresh_stream_without_cdp = False
+        self._restart_episode()
+        return True
+
     async def _enter_transport_recovery(
         self,
         reason: str,
@@ -265,10 +277,11 @@ class OobLifecycle:
         network_present: bool,
     ) -> None:
         """Preserve browser intent and publish one USB-loss transition."""
-        entering = not self._transport_lost
         await self._remember_transport_loss()
-        if entering and self._transport_lost:
-            self._restart_episode()
+        if self._transport_lost:
+            self._invalidate_completed_repair(
+                (state, reason, adb_ready, network_present)
+            )
         await self._publish(
             "degraded",
             state,
@@ -411,6 +424,11 @@ class OobLifecycle:
             reverseRulesVerified=True,
             turnPrerequisitesReady=True,
         )
+        # The repaired substrate is the new baseline. A later identical cable
+        # loss or topology change is therefore a new disruption, while
+        # repeated observations before repair remain deduplicated.
+        self._transport_disruption_signature = None
+        self._prerequisite_signature = None
 
     async def _prepare_device(self) -> None:
         """Wake the selected headset and clear stale browser state once."""
@@ -433,6 +451,7 @@ class OobLifecycle:
         self._repair_started_at = None
         self._client_grace_deadline = None
         self._fresh_stream_without_cdp = False
+        self._transport_disruption_signature = None
         self.generation += 1
         self.browser_ready = False
         self.browser_client = None
@@ -576,6 +595,7 @@ class OobLifecycle:
             self._transport_lost = False
             self._restore_existing_browser = False
             self._fresh_stream_without_cdp = False
+            self._transport_disruption_signature = None
             self.connect_dispatched = True
             await self._publish(
                 "active",
@@ -997,10 +1017,20 @@ class OobLifecycle:
                         rules,
                         self.coturn.poll() if self.coturn else None,
                     )
-                    if (
+                    signature_changed = (
                         self._prerequisite_signature is not None
                         and signature != self._prerequisite_signature
-                    ):
+                    )
+                    topology_changed = bool(
+                        signature_changed
+                        and preserving_browser
+                        and signature[1:] != self._prerequisite_signature[1:]
+                    )
+                    if topology_changed:
+                        self._invalidate_completed_repair(
+                            ("topology", rules, signature[2])
+                        )
+                    elif signature_changed:
                         self._restart_episode()
                     self._prerequisite_signature = signature
                 if (
