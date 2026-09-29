@@ -368,6 +368,39 @@ def test_build_teleop_url_host_client_uses_resolved_proxy_host_and_port(
     assert "port=49322" in url
 
 
+def test_build_teleop_url_forwards_reliability_config_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TELEOP_CLIENT_* reconnect/warm-up env vars reach the bookmark URL end to end.
+
+    Anticipatory: gmorgan/oob-reliability-config-wiring (#1145) adds the forwarding
+    logic this asserts on; that branch hasn't merged here yet, so this currently
+    fails on the assertions below (not an ImportError - build_teleop_url() itself
+    already exists on main) until it does. Kept here rather than only on that
+    branch so the merge has an executable, already-written spec to land against,
+    per the "write the test now, let it fail until merged" approach - this is a
+    plain env-var/string-building unit test, so it needs no real-browser
+    infrastructure at all, unlike the auto-relaunch coverage below.
+    """
+    from cloudxr_py_test_ns.oob_teleop_adb import build_teleop_url
+
+    monkeypatch.delenv("TELEOP_WEB_CLIENT_BASE", raising=False)
+    monkeypatch.setenv("PROXY_PORT", "48322")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "true")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "2500")
+    monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "90000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "8000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "20000")
+    url = build_teleop_url(resolved_port=49322, usb_local=True)
+    assert "reconnectEnabled=true" in url
+    assert "reconnectMaxAttempts=5" in url
+    assert "reconnectDelayMs=2500" in url
+    assert "streamAttachTimeoutMs=90000" in url
+    assert "warmupBeginTimeoutMs=8000" in url
+    assert "warmupEndTimeoutMs=20000" in url
+
+
 @patch("cloudxr_py_test_ns.oob_teleop_adb.adb_device_state", return_value="device")
 @patch("cloudxr_py_test_ns.oob_teleop_adb.subprocess.run")
 def test_setup_adb_reverse_ports_uses_resolved_proxy_port(
@@ -904,21 +937,31 @@ async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> Non
 # run_oob_connect(): real-browser integration test (see
 # /oob-real-browser-integration-test-plan.md at the repo root). A real
 # Chromium runs the real webxr_client (real IWER-emulated WebXR, real CDP),
-# served by a real `npm run dev-server`, behind a real wss.py proxy (real
-# OOBControlHub; no real CloudXR runtime — minimal_mock_runtime() is enough
-# that the client's signaling handshake doesn't immediately error, see the
-# plan's top-of-file note on why). Only adb itself is faked (no physical
-# Android device), via RealBrowserAdb: its `am start` and `adb forward` drive
-# the real Chromium instead of returning canned output.
+# served from a real static production build (never a dev-server — see
+# static_webxr_build()'s docstring for why HMR is structurally unsafe for
+# this), behind a real wss.py proxy (real OOBControlHub). Only adb itself is
+# faked (no physical Android device), via RealBrowserAdb: its `am start` and
+# `adb forward` drive the real Chromium instead of returning canned output.
+#
+# ALWAYS the MockCloudXR build (`build:app-mock`), never the real
+# `@nvidia/cloudxr` SDK: the real SDK genuinely tries to stream against
+# whatever's on `backend_port`, which is unpredictable and uncontrollable in
+# a test (see the plan's §0/§3 history — this was tried and abandoned).
+# MockCloudXR gives the same real App.tsx/CloudXRComponent UI (same
+# #startButton/#errorMessageBox DOM) with a fully deterministic, externally
+# controllable session underneath (window.__mockCloudXRFail(), see
+# cdp_evaluate()), and never opens a socket of its own — no
+# minimal_mock_runtime() stand-in needed for CloudXR signaling at all.
 #
 # This replaces the fully-synthetic mock_adb()/fake-CDP-server
 # run_oob_connect() tests from PR #1148 — those proved run_oob_connect()'s
 # own orchestration logic against scripted responses; this proves the same
 # code path against the real client it actually launches.
 #
-# Slow (real browser + real dev server + real wss.py) and requires a system
-# Chrome (PLAYWRIGHT_CHROME_PATH override; defaults to /usr/bin/google-chrome)
-# and Node/npm on PATH — run manually for now; not yet wired into CI.
+# Slow (real browser + a real webpack production build + real wss.py) and
+# requires a system Chrome (PLAYWRIGHT_CHROME_PATH override; defaults to
+# /usr/bin/google-chrome) and Node/npm on PATH — run manually for now; not
+# yet wired into CI.
 # ============================================================================
 
 import contextlib  # noqa: E402
@@ -926,11 +969,11 @@ from pathlib import Path  # noqa: E402
 
 from conftest import (  # noqa: E402
     _free_tcp_port,
-    minimal_mock_runtime,
+    cdp_evaluate,
     real_browser_adb,
     real_chrome,
-    real_webxr_dev_server,
     real_wss_proxy,
+    static_webxr_build,
 )
 
 from cloudxr_py_test_ns.oob_teleop_adb import run_oob_connect  # noqa: E402
@@ -940,14 +983,15 @@ async def test_run_oob_connect_real_browser_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The real run_oob_connect(), driven against a real Chromium running the real
-    webxr client: device online -> stale-tab scan -> am start opens a real tab ->
-    real devtools socket already reachable (Chrome's own --remote-debugging-port
-    equals _CDP_LOCAL_PORT, so adb forward is a real no-op) -> real CDP tab
-    discovery finds the real tab -> real _cdp_session_click_connect polls the
-    real client's readiness state machine (real IWER capability checks) and
-    clicks the real CONNECT button.
+    webxr client (MockCloudXR underneath — see module docstring): device online ->
+    stale-tab scan -> am start opens a real tab -> real devtools socket already
+    reachable (Chrome's own --remote-debugging-port equals _CDP_LOCAL_PORT, so adb
+    forward is a real no-op) -> real CDP tab discovery finds the real tab -> real
+    _cdp_session_click_connect polls the real client's readiness state machine
+    (real IWER capability checks) and clicks the real CONNECT button.
     """
-    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", "http://localhost:8080")
+    client_port = _free_tcp_port()
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
     monkeypatch.delenv("CONTROL_TOKEN", raising=False)
 
     wss_port = _free_tcp_port()
@@ -957,17 +1001,20 @@ async def test_run_oob_connect_real_browser_end_to_end(
     install_dir = tmp_path / "cxr-install"
 
     with (
-        real_webxr_dev_server(),
+        static_webxr_build(
+            client_port,
+            npm_build_script="build:app-mock",
+            build_dir_name="build-app-mock",
+        ),
         real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
         real_browser_adb(chrome) as fake_adb,
     ):
-        async with minimal_mock_runtime(backend_port):
-            async with real_wss_proxy(
-                install_dir, proxy_port=wss_port, backend_port=backend_port
-            ):
-                task = await run_oob_connect(
-                    resolved_port=wss_port, timeout=30.0, usb_local=True
-                )
+        async with real_wss_proxy(
+            install_dir, proxy_port=wss_port, backend_port=backend_port
+        ):
+            task = await run_oob_connect(
+                resolved_port=wss_port, timeout=30.0, usb_local=True
+            )
 
         # A real task, not None: the click genuinely succeeded and
         # _monitor_teleop_error_banner is genuinely running against the real
@@ -980,3 +1027,209 @@ async def test_run_oob_connect_real_browser_end_to_end(
 
     assert any(c[:2] == ["adb", "get-state"] for c in fake_adb.calls)
     assert any("am start" in " ".join(c) for c in fake_adb.calls)
+
+
+async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real run_oob_connect() driven against the real App.tsx/CloudXRComponent
+    UI with MockCloudXR swapped in for @nvidia/cloudxr (``npm run
+    build:app-mock``, ``tests/mock/cloudxr-mock-alias.ts``, static build, no
+    dev-server — see :func:`static_webxr_build`): identical
+    ``#startButton``/``#errorMessageBox`` DOM to production, but
+    ``window.__mockCloudXRFail()`` lets this test force a deterministic
+    mid-session failure instead of guessing at how a real backend failure
+    would surface over the wire.
+
+    MockCloudXR never opens a socket of its own (zero ``WebSocket`` usage in
+    ``tests/mock/MockCloudXR.ts``), so nothing needs to stand in for a CloudXR
+    runtime here; ``wss.py`` + ``OOBControlHub`` still run for real so the URL
+    ``run_oob_connect()`` builds is a genuine ``wss://.../oob/v1/ws`` endpoint,
+    matching what a real launch produces.
+
+    Proves the crash-trigger mechanism itself — a real, real-DOM error banner
+    appears on demand — ahead of reusing it to test
+    ``_find_and_click_teleop_tab``'s actual recovery once this test infra is
+    merged onto ``gmorgan/oob-error-relaunch`` (that branch's monitor is
+    repair-capable; this branch's is not, so this test only proves the crash
+    signal is real and detectable, not that anything recovers from it).
+    """
+    client_port = _free_tcp_port()
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
+    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+
+    wss_port = _free_tcp_port()
+    backend_port = _free_tcp_port()
+    user_data_dir = tmp_path / "chrome-profile"
+    user_data_dir.mkdir()
+    install_dir = tmp_path / "cxr-install"
+
+    with (
+        static_webxr_build(
+            client_port,
+            npm_build_script="build:app-mock",
+            build_dir_name="build-app-mock",
+        ),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_adb(chrome),
+    ):
+        async with real_wss_proxy(
+            install_dir, proxy_port=wss_port, backend_port=backend_port
+        ):
+            task = await run_oob_connect(
+                resolved_port=wss_port, timeout=30.0, usb_local=True
+            )
+            assert isinstance(task, asyncio.Task)
+
+            teleop_tabs = [
+                t for t in chrome.list_tabs() if "oobEnable=" in (t.get("url") or "")
+            ]
+            assert len(teleop_tabs) == 1
+            ws_url = teleop_tabs[0]["webSocketDebuggerUrl"]
+
+            # code in the 0xc0f22300-0xc0f223ff (server-disconnect) range: a
+            # code in the 0xc0f22300-0xc0f223ff (server-disconnect) range: a
+            # code-less failure is "recoverable" per
+            # helpers/streamingErrorClassification.ts's isRecoverable(), and
+            # CloudXRComponent.tsx's onStreamStopped auto-reconnects on those
+            # without ever showing #errorMessageBox at all.
+            #
+            # Retried inside the poll loop, not fired once beforehand:
+            # triggerFailure() is a no-op unless MockCloudXR's session is
+            # already Connecting/Connected (see MockCloudXR.ts), and
+            # run_oob_connect() returns as soon as the button text changes -
+            # which happens on WebXR session entry, near-instantly, likely
+            # before CloudXR.createSession()'s own async chain
+            # (applyTargetFrameRate/requestReferenceSpace) has finished. A
+            # call before the session exists silently does nothing, so retry
+            # until the banner actually appears rather than firing once and
+            # hoping the timing lines up. Idempotent once it does land: a
+            # session already in Error state fails the same Connecting/
+            # Connected guard, so later retries no-op harmlessly.
+            # 5s is ample margin above the ~1s this actually takes once the
+            # session exists (observed) - MockCloudXR's own transitions are
+            # near-instant, unlike the relaunch test below which waits on
+            # real am start + tab discovery.
+            banner = ""
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while asyncio.get_running_loop().time() < deadline:
+                await cdp_evaluate(
+                    ws_url,
+                    "window.__mockCloudXRFail('simulated crash', 0xc0f22300)",
+                )
+                r = await cdp_evaluate(
+                    ws_url,
+                    """(function() {
+                        const box = document.getElementById('errorMessageBox');
+                        if (!box || !box.classList.contains('show')) return '';
+                        if (box.classList.contains('success') ||
+                            box.classList.contains('info')) return '';
+                        return document.getElementById('errorMessageText')
+                                   ?.textContent?.trim() || '';
+                    })()""",
+                )
+                banner = (r.get("result") or {}).get("value") or ""
+                if banner:
+                    break
+                await asyncio.sleep(0.5)
+
+            assert "simulated crash" in banner
+
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+async def test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real client-side terminal error should trigger a real auto-relaunch:
+    a second real ``am start``, a second real tab, clicked back to CONNECT-ready.
+
+    Anticipatory, like ``test_build_teleop_url_forwards_reliability_config_from_env``
+    above: gmorgan/oob-error-relaunch (#1146) adds this behavior
+    (``_find_and_click_teleop_tab``, a repair-capable ``_monitor_teleop_error_banner``)
+    and hasn't merged here yet, so this currently fails - not on an ImportError of a
+    private function (deliberately not imported here at all, so this stays correct
+    across internal refactors), but on the black-box assertions below: today's
+    monitor only logs the banner this test triggers, it never relaunches anything, so
+    no second tab/``am start`` ever appears and the wait below times out. Exercising
+    exactly what #1146 promises - a genuine crash recovered by genuine ADB+CDP
+    automation, not a scripted stand-in for either - is exactly what the real-browser
+    infrastructure in this module exists to prove, unlike
+    ``test_build_teleop_url_forwards_reliability_config_from_env``'s plain
+    env-var/string check.
+    """
+    client_port = _free_tcp_port()
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
+    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+
+    wss_port = _free_tcp_port()
+    backend_port = _free_tcp_port()
+    user_data_dir = tmp_path / "chrome-profile"
+    user_data_dir.mkdir()
+    install_dir = tmp_path / "cxr-install"
+
+    with (
+        static_webxr_build(
+            client_port,
+            npm_build_script="build:app-mock",
+            build_dir_name="build-app-mock",
+        ),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_adb(chrome) as fake_adb,
+    ):
+        async with real_wss_proxy(
+            install_dir, proxy_port=wss_port, backend_port=backend_port
+        ):
+            task = await run_oob_connect(
+                resolved_port=wss_port, timeout=30.0, usb_local=True
+            )
+            assert isinstance(task, asyncio.Task)
+
+            teleop_tabs_before = [
+                t for t in chrome.list_tabs() if "oobEnable=" in (t.get("url") or "")
+            ]
+            assert len(teleop_tabs_before) == 1
+            ws_url = teleop_tabs_before[0]["webSocketDebuggerUrl"]
+            am_start_calls_before = sum(
+                1 for c in fake_adb.calls if "am start" in " ".join(c)
+            )
+
+            # Same retry-until-it-lands approach as the crash-banner test above:
+            # triggerFailure() no-ops until MockCloudXR's session actually exists.
+            # 15s: once #1146 lands, a relaunch has no cold-launch devtools-socket
+            # wait (browser's already running) - just am start + tab discovery +
+            # click, which the initial launch above already does in ~5s.
+            relaunched = False
+            deadline = asyncio.get_running_loop().time() + 15.0
+            while asyncio.get_running_loop().time() < deadline:
+                await cdp_evaluate(
+                    ws_url,
+                    "window.__mockCloudXRFail('simulated crash', 0xc0f22300)",
+                )
+                am_start_calls_now = sum(
+                    1 for c in fake_adb.calls if "am start" in " ".join(c)
+                )
+                teleop_tabs_now = [
+                    t
+                    for t in chrome.list_tabs()
+                    if "oobEnable=" in (t.get("url") or "")
+                ]
+                if (
+                    am_start_calls_now > am_start_calls_before
+                    and len(teleop_tabs_now) >= 2
+                ):
+                    relaunched = True
+                    break
+                await asyncio.sleep(0.5)
+
+            assert relaunched, (
+                "expected a second real `am start` and a second real tab after "
+                "a terminal client error - today's (pre-#1146) monitor only logs "
+                "the banner, it never relaunches anything"
+            )
+
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

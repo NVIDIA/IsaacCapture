@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # OOB real-browser integration test — plan
 
 Goal: exercise `run_oob_connect()`'s real orchestration logic against a real
@@ -29,7 +34,7 @@ add real SDP/ICE handling if the real client's own error/timeout behavior
 requires it. Full WebRTC media (real rendering) remains explicitly out of
 scope / a separate future project — this is only "enough to not error."
 
-## 0. Confirmed architecture
+## 0. Confirmed architecture (superseded — see §8 for what's actually implemented)
 
 Four real components, one mock:
 
@@ -305,3 +310,95 @@ following this repo's own existing convention (`live_ipc_socket`,
   purposes.
 - Ephemeral-port scraping (`cloudxr-js`'s approach) and any CI-specific
   wiring are explicitly deferred to the future CI PR.
+
+## 8. Final state (as implemented — supersedes §0, §7's dev-server decision)
+
+Reality diverged from §0/§7 during implementation, for good reasons found
+along the way. This is what's actually in `conftest.py`/`test_oob_teleop_adb.py`
+now:
+
+1. **Always `MockCloudXR`, never the real `@nvidia/cloudxr` SDK.** §0 wanted
+   the real SDK for "real rendering"; in practice the real SDK genuinely
+   tries to stream against whatever's on `backend_port`, which is
+   unpredictable and gives a test nothing to assert against. `MockCloudXR`
+   (via `tests/mock/cloudxr-mock-alias.ts`'s webpack alias) mounts the exact
+   same `App.tsx`/`CloudXRComponent.tsx` UI (same `#startButton`/
+   `#errorMessageBox` DOM `run_oob_connect()`'s own code already polls) with
+   a fully deterministic, externally-controllable session underneath —
+   `window.__mockCloudXRFail(message?, code?)`, callable over CDP via
+   `cdp_evaluate()`. It never opens a socket of its own, so **no
+   `minimal_mock_runtime()` stand-in exists any more at all** — that whole
+   piece from §3 is gone.
+2. **Never a dev-server — always a static production build**
+   (`static_webxr_build()`, replacing §7's `real_webxr_dev_server()`).
+   Two independent, real bugs forced this and are worth knowing about if
+   this code is ever touched again:
+   - **Webpack HMR module duplication.** A dev-server's hot-reload
+     re-executes a module's top-level code on live-reload, creating a
+     *second* instance of it side by side with the one React already
+     mounted against. For `cloudxr-mock-alias.ts` this meant
+     `window.__mockCloudXRFail()` silently bound to a fresh, never-used
+     `activeSession` while the real, already-running session lived on
+     untouched in the original instance — callable, no error, just no
+     effect. A static build has no live-reload runtime at all, so this is
+     structurally impossible now, not just avoided by luck.
+   - **`<React.StrictMode>` double-invoking effects in a dev-mode build.**
+     Independent of HMR: `webpack.app-mock.js` used `mode: 'development'`,
+     and `src/index.tsx` wraps the app in `StrictMode`, which deliberately
+     double-invokes effects in dev builds — calling
+     `CloudXRComponent.tsx`'s `establishSession()` (and so
+     `CloudXR.createSession()`) twice. Fixed by switching
+     `webpack.app-mock.js` to `mode: 'production'`, which sets
+     `NODE_ENV=production` and makes React skip StrictMode's double-invoke
+     entirely.
+   - **A third, unrelated trap on the way to diagnosing the above:**
+     `webpack.common.js`'s persistent filesystem cache
+     (`cache: {type: 'filesystem'}`) is keyed only on the webpack config
+     file (`buildDependencies.config`), not on every source file it
+     compiles — a stale cache entry silently served an old compiled
+     `cloudxr-mock-alias.ts` that didn't include a real source edit at all
+     (confirmed by `grep`ping the built bundle for a symbol that wasn't
+     there). `static_webxr_build()` now deletes
+     `node_modules/.cache/webpack` before every build; correctness matters
+     far more than incremental-build speed for a test fixture that already
+     rebuilds from scratch every run.
+3. **`window.__mockCloudXRFail(message?, code?)` needs a `code` in the
+   `0xc0f22300`–`0xc0f223ff` range to produce a real, DOM-visible error.**
+   A code-less failure is "recoverable" per
+   `helpers/streamingErrorClassification.ts`'s `isRecoverable()`, and
+   `CloudXRComponent.tsx`'s `onStreamStopped` auto-reconnects on those
+   silently, without ever showing `#errorMessageBox` — exactly like a real
+   transient failure would. `cloudxr-mock-alias.ts` was extended to accept
+   an optional `code` (previously message-only) to reach the non-recoverable
+   path, matching what `tests/mock/CloudXRComponentTest.tsx`'s own
+   `NON_RETRYABLE_CODE` steps already did internally.
+4. **Fire `__mockCloudXRFail()` in a retry loop, not once.** It's a no-op
+   until MockCloudXR's session actually exists and is
+   `Connecting`/`Connected`; `run_oob_connect()` returns as soon as the
+   button text changes, which happens on WebXR session entry — near
+   instantly, and likely before `CloudXR.createSession()`'s own async chain
+   has finished. Retrying is safe: once the failure lands the session moves
+   to `Error` state, so later calls just keep failing the same guard
+   harmlessly.
+
+Three tests now exist in `test_oob_teleop_adb.py`:
+
+- `test_run_oob_connect_real_browser_end_to_end` — the full real
+  adb→CDP→click path against `MockCloudXR`, proving `run_oob_connect()`'s
+  own orchestration for real.
+- `test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner` — proves
+  the crash-trigger mechanism itself: a real, deterministic, DOM-visible
+  error banner on demand.
+- `test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch` —
+  **anticipatory**, written against `gmorgan/oob-error-relaunch` (#1146)
+  before that branch has merged here. It deliberately does not import any
+  private function from that branch (so it can't fail on an ImportError
+  that would depend on exact internal names surviving the merge); instead
+  it asserts on black-box observable recovery — a second real `am start`
+  and a second real tab after a genuine triggered crash. It fails today,
+  correctly, on that assertion after a real 30s wait (not a collection
+  error), and should turn green the moment #1146's relaunch logic lands on
+  this branch. `test_build_teleop_url_forwards_reliability_config_from_env`
+  (added to the plain unit-test section, no browser needed) is the same
+  "write it now, let it fail until merged" idea applied to
+  `gmorgan/oob-reliability-config-wiring` (#1145)'s config-forwarding logic.

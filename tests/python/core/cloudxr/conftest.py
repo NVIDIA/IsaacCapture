@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -373,6 +374,13 @@ class RealChrome:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
 
+    def list_tabs(self) -> list[dict]:
+        """Real ``GET /json`` — every open tab, with its ``webSocketDebuggerUrl``."""
+        with urllib.request.urlopen(
+            f"http://localhost:{self.cdp_port}/json", timeout=5
+        ) as resp:
+            return json.loads(resp.read())
+
 
 @contextmanager
 def real_chrome(cdp_port: int, *, user_data_dir: Path):
@@ -400,76 +408,108 @@ def real_chrome(cdp_port: int, *, user_data_dir: Path):
 
 
 @contextmanager
-def real_webxr_dev_server(port: int = 8080):
-    """Reuse an already-running webxr_client dev server on *port*, or start one.
+def static_webxr_build(port: int, *, npm_build_script: str, build_dir_name: str):
+    """Build webxr_client once via a real ``npm run <npm_build_script>`` production
+    build (no dev-server, no HMR), then serve the resulting static directory with a
+    plain HTTP server for the block's duration.
 
-    Mirrors playwright.config.js's ``reuseExistingServer: !process.env.CI``: a
-    manual run typically already has ``npm run dev-server`` running for other
-    purposes, so this only spawns (and later tears down) one when nothing
-    answers on *port* yet.
+    Deliberately never a dev-server: webpack's hot-module-replacement re-executes a
+    module's top-level code on live-reload, creating a *second* instance of it
+    side by side with the one React already mounted against — for
+    ``tests/mock/cloudxr-mock-alias.ts`` this means ``window.__mockCloudXRFail()``
+    silently binds to a fresh, never-used ``activeSession`` while the real,
+    already-running session lives on in the original instance untouched. A static
+    build has no live-reload runtime at all, so this class of bug is structurally
+    impossible, not just avoided by luck.
+
+    *npm_build_script*/*build_dir_name* pairs (see ``package.json``/the matching
+    ``webpack.*.js``). Always use the ``build:app-mock`` pair for a real-browser
+    test: the real SDK genuinely tries to stream against whatever's on
+    ``backend_port``, which is unpredictable and uncontrollable to assert against.
+
+    * ``"build"`` / ``"build"`` — the real production client against the real
+      ``@nvidia/cloudxr`` SDK. Not for tests — kept only as a manual sanity
+      build; see the warning above.
+    * ``"build:app-mock"`` / ``"build-app-mock"`` — the identical ``App.tsx`` /
+      ``CloudXRComponent.tsx`` UI (same ``#startButton``/``#errorMessageBox``
+      DOM), but with ``@nvidia/cloudxr`` aliased to ``MockCloudXR``, which exposes
+      ``window.__mockCloudXRFail(message?, code?)`` globally so a CDP
+      ``Runtime.evaluate`` call can force a deterministic, controllable
+      mid-session failure — see :func:`cdp_evaluate`. ``MockCloudXR`` opens no
+      socket of its own, so nothing needs to stand in for a CloudXR runtime at
+      all.
+
+    Always rebuilds (mirrors ``cloudxr-js``'s ``global-setup.js``: a stale bundle
+    from a previous branch must never silently pass) rather than reusing whatever
+    happens to be on disk or already listening on *port*.
     """
-
-    def _is_up() -> bool:
-        try:
-            with urllib.request.urlopen(f"http://localhost:{port}/", timeout=1):
-                return True
-        except (urllib.error.URLError, ConnectionError, OSError):
-            return False
-
-    if _is_up():
-        yield
-        return
-
     webxr_client_dir = repo_root() / "deps" / "cloudxr" / "webxr_client"
-    proc = subprocess.Popen(
-        ["npm", "run", "dev-server"],
+    # webpack.common.js turns on persistent filesystem caching
+    # (cache: {type: 'filesystem'}), keyed only on the config file
+    # (buildDependencies.config), not on every source file it compiles. A stale
+    # entry there can silently serve an old compiled module for a source file
+    # that *did* change - hit for real while building this fixture: an edit to
+    # tests/mock/cloudxr-mock-alias.ts was invisible in the output bundle
+    # (`grep` for the new symbol found nothing) until this cache was cleared.
+    # Correctness matters far more than incremental-build speed for a test
+    # fixture, so always start from a clean cache rather than trust it.
+    shutil.rmtree(
+        webxr_client_dir / "node_modules" / ".cache" / "webpack", ignore_errors=True
+    )
+    subprocess.run(
+        ["npm", "run", npm_build_script],
         cwd=webxr_client_dir,
+        check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    build_dir = webxr_client_dir / build_dir_name
+    if not (build_dir / "index.html").is_file():
+        raise RuntimeError(
+            f"{build_dir} has no index.html after `npm run {npm_build_script}`"
+        )
+
+    from functools import partial
+    from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+    from threading import Thread
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(build_dir))
+    httpd = ThreadingHTTPServer(("localhost", port), handler)
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
     try:
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            if _is_up():
-                break
-            if proc.poll() is not None:
-                raise RuntimeError(
-                    "webxr_client `npm run dev-server` exited before becoming ready"
-                )
-            time.sleep(0.5)
-        else:
-            raise RuntimeError(
-                f"webxr_client dev-server did not bind port {port} in time"
-            )
+        _wait_for_http(f"http://localhost:{port}/", timeout=15.0)
         yield
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
 
 
-@asynccontextmanager
-async def minimal_mock_runtime(port: int):
-    """Bind *port* and accept WebSocket connections, holding them open without
-    responding to anything sent on them.
+async def cdp_evaluate(ws_url: str, expression: str) -> dict:
+    """Open a one-shot CDP session to *ws_url* and evaluate *expression*.
 
-    Not a CloudXR runtime in any protocol sense — just enough that wss.py's
-    ``proxy_handler()`` succeeds in connecting (instead of ECONNREFUSED), so a
-    real client's signaling handshake doesn't immediately close out from under
-    it. See /oob-real-browser-integration-test-plan.md ``§0`` for why this is
-    needed and why it's deliberately this minimal.
+    Mirrors the ``send()`` helper duplicated in ``_cdp_session_click_connect``/
+    ``_monitor_teleop_error_banner`` (``oob_teleop_adb.py``), for a test that
+    needs to poke a real tab from outside those functions — e.g. calling
+    ``window.__mockCloudXRFail()`` to force a deterministic mid-session error.
     """
-    from websockets.asyncio.server import serve as ws_serve  # noqa: PLC0415
+    from websockets.asyncio.client import connect as ws_connect  # noqa: PLC0415
 
-    async def handler(ws):
-        with contextlib.suppress(Exception):
-            async for _ in ws:
-                pass
-
-    async with ws_serve(handler, host="localhost", port=port):
-        yield
+    async with ws_connect(ws_url) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": expression, "returnByValue": True},
+                }
+            )
+        )
+        while True:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+            if msg.get("id") == 1:
+                return msg.get("result", {})
 
 
 @asynccontextmanager
