@@ -66,7 +66,7 @@ python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on fi
 
 **MetaQuest — connect** (same WiFi)
 - Open the headset browser → the CloudXR web client at
-  `https://nvidia.github.io/IsaacTeleop/client` → enter the laptop IP → accept the
+  `https://nvidia.github.io/IsaacCapture/client` → enter the laptop IP → accept the
   self-signed certificate → **CONNECT**. (Or run the server with `--host-client`
   and open `https://<laptop-ip>:48322/client/` instead.)
 - You should now be in the CloudXR view; hand/head tracking is live.

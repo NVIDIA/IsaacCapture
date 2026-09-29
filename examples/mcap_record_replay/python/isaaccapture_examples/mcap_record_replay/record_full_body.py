@@ -14,7 +14,7 @@ Usage:
 
 Defaults: 5 seconds → ./recordings/full_body_<timestamp>.mcap
 
-See: https://nvidia.github.io/IsaacTeleop/main/references/mcap_record_replay.html
+See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
 
 import argparse

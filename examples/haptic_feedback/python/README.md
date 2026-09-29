@@ -23,5 +23,5 @@ Both connect through the CloudXR / OpenXR runtime, so start the runtime first.
 The full architecture, run instructions, and how to add a new haptic device are
 in the official documentation:
 
-**Haptic Feedback** — <https://nvidia.github.io/IsaacTeleop/main/device/haptic_feedback.html>
+**Haptic Feedback** — <https://nvidia.github.io/IsaacCapture/main/device/haptic_feedback.html>
 (source: [`docs/source/device/haptic_feedback.rst`](../../../docs/source/device/haptic_feedback.rst))

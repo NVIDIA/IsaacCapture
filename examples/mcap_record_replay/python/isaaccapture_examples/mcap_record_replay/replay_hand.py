@@ -15,7 +15,7 @@ If no path is given, the newest ``hands_*.mcap`` under ``./recordings/`` is
 used.
 ``--loop`` keeps replaying the file end-to-end until the process is killed.
 
-See: https://nvidia.github.io/IsaacTeleop/main/references/mcap_record_replay.html
+See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
 
 import argparse

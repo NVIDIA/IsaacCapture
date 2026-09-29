@@ -15,7 +15,7 @@ Usage:
 
 Press Ctrl+C to stop.
 
-See: https://nvidia.github.io/IsaacTeleop/main/references/mcap_record_replay.html
+See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
 
 import argparse

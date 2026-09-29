@@ -128,7 +128,7 @@ def test_versioned_web_client_url_exact_tag() -> None:
     # A clean MAJOR.MINOR.PATCH release maps to the per-tag client.
     assert (
         versioned_web_client_url("1.2.3")
-        == "https://nvidia.github.io/IsaacTeleop/client/v1.2.3/"
+        == "https://nvidia.github.io/IsaacCapture/client/v1.2.3/"
     )
 
 
@@ -137,11 +137,11 @@ def test_versioned_web_client_url_prerelease_uses_release_line() -> None:
     # rc / dev builds fall to the release line, not a per-tag client.
     assert (
         versioned_web_client_url("1.3.9rc1")
-        == "https://nvidia.github.io/IsaacTeleop/client/release-1.3.x/"
+        == "https://nvidia.github.io/IsaacCapture/client/release-1.3.x/"
     )
     assert (
         versioned_web_client_url("1.3.0.dev5")
-        == "https://nvidia.github.io/IsaacTeleop/client/release-1.3.x/"
+        == "https://nvidia.github.io/IsaacCapture/client/release-1.3.x/"
     )
 
 
@@ -160,7 +160,7 @@ def test_default_web_client_origin_uses_installed_version(
     monkeypatch.setattr(mod, "version", lambda _name: "1.4.0", raising=False)
     assert (
         default_web_client_origin()
-        == "https://nvidia.github.io/IsaacTeleop/client/v1.4.0/"
+        == "https://nvidia.github.io/IsaacCapture/client/v1.4.0/"
     )
 
 

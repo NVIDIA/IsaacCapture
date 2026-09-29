@@ -51,11 +51,11 @@ standardizing high-fidelity human demo data collection; and foster device & data
 
 ### Documentation
 
-Our [documentation page](https://nvidia.github.io/IsaacTeleop) provides everything you need to get started, including detailed tutorials and step-by-step guides. Follow these links to learn more:
+Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everything you need to get started, including detailed tutorials and step-by-step guides. Follow these links to learn more:
 
-- [Architecture](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html)
-- [Quick installation steps](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)
-- [How to build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source.html)
+- [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
+- [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
+- [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
 
 
 ### Install & Run Isaac Lab

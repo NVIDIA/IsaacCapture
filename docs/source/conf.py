@@ -124,7 +124,7 @@ _icons = _VERSION_ICON_MAP.get(_smv_name, _DEFAULT_ICONS)
 # ``release-1.3.x``, ``v1.2.3``).  Resolving the same slug here lets each
 # versioned docs build link to the matching client instead of always ``main``.
 _client_slug = (_smv_name or "main").replace("/", "-")
-_web_client_url = f"https://nvidia.github.io/IsaacTeleop/client/{_client_slug}/"
+_web_client_url = f"https://nvidia.github.io/IsaacCapture/client/{_client_slug}/"
 
 # Shared substitutions + link targets injected into every page, so the
 # branch-specific web client URL and version pin live in one place.
@@ -134,7 +134,7 @@ _web_client_url = f"https://nvidia.github.io/IsaacTeleop/client/{_client_slug}/"
 rst_epilog = f"""
 .. |web_client_url| replace:: {_web_client_url}
 .. |pip_version_pin| replace:: {_pip_version_pin}
-.. _`nvidia.github.io/IsaacTeleop/client`: {_web_client_url}
+.. _`nvidia.github.io/IsaacCapture/client`: {_web_client_url}
 .. _`Isaac Teleop Web Client`: {_web_client_url}
 """
 

@@ -7,7 +7,7 @@
 #   command. (Same-repo PRs auto-deploy via docs.yaml — they don't need this.)
 # - When a user with write access comments `/preview-docs` on any PR: download
 #   the matching docs.yaml artifacts for that PR's head SHA and deploy them to
-#   NVIDIA/IsaacTeleop/preview/pr-<N>/, reacting to the comment with progress
+#   NVIDIA/IsaacCapture/preview/pr-<N>/, reacting to the comment with progress
 #   feedback.
 #
 # This workflow does *not* run any PR code — docs.yaml already built and
@@ -50,7 +50,7 @@ jobs:
           commenting \`/preview-docs\` on this PR. Once deployed, the preview
           will live at:
 
-          https://nvidia.github.io/IsaacTeleop/preview/pr-$PR/
+          https://nvidia.github.io/IsaacCapture/preview/pr-$PR/
           EOF
           )"
 

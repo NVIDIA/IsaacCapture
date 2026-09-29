@@ -27,7 +27,7 @@ WSS_PROXY_DEFAULT_PORT = 48322
 # slug (``main``, ``release-1.3.x``, ``v1.2.3``, ...); the docs build emits one
 # slug per ref it builds. :func:`default_web_client_origin` resolves the slug
 # for the installed version so OOB opens the matching client.
-WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacTeleop/client/"
+WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")

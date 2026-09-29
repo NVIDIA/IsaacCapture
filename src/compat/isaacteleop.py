@@ -27,7 +27,7 @@ _DEPRECATION = (
     "The 'isaacteleop' import package was renamed to 'isaaccapture' in Isaac Teleop "
     "1.6; import 'isaaccapture' instead. This alias ships inside the isaaccapture "
     "wheel and will be removed in 1.9. "
-    "See https://nvidia.github.io/IsaacTeleop/main/references/migration.html"
+    "See https://nvidia.github.io/IsaacCapture/main/references/migration.html"
 )
 
 
