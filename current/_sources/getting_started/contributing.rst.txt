@@ -36,7 +36,7 @@ Every PR preview is published to a single canonical location:
 
 .. code-block:: text
 
-   https://nvidia.github.io/IsaacTeleop/preview/pr-<N>/
+   https://nvidia.github.io/IsaacCapture/preview/pr-<N>/
 
 How the preview gets built depends on where the PR's branch lives.
 

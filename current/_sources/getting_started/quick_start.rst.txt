@@ -231,7 +231,7 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    :open:
 
    No physical headset required for a quick test: open
-   `nvidia.github.io/IsaacTeleop/client`_
+   `nvidia.github.io/IsaacCapture/client`_
    in a **desktop browser** — IWER (Immersive Web Emulator Runtime) loads automatically and
    emulates a Meta Quest 3 headset.
 
@@ -315,7 +315,7 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
       are offline once those files are cached.
 
       For a **true air-gapped machine**, copy the full ``build/`` output (or the
-      matching directory from `nvidia.github.io/IsaacTeleop/client`_) into
+      matching directory from `nvidia.github.io/IsaacCapture/client`_) into
       ``~/.cloudxr/static-client/`` on the air-gapped host before the first run.
 
    The source code for the web client is in the :code-dir:`deps/cloudxr/webxr_client/` directory.
