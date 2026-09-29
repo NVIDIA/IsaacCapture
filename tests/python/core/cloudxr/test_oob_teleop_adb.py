@@ -928,3 +928,203 @@ async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> Non
     ]
     assert "Page.navigate" not in methods
     assert fallback_clicks == ["document.getElementById('proceed-link')?.click()"]
+
+
+# ============================================================================
+# _find_and_click_teleop_tab: the shared tab-find + click-CONNECT helper
+# extracted from run_oob_connect() so _monitor_teleop_error_banner's repair
+# path can reuse it against an already-alive adb forward. Combines the two
+# fake servers above: _fake_cdp_server (HTTP /json tab list, bound to the
+# real _CDP_LOCAL_PORT) and _fake_cdp_ws (WebSocket CDP, OS-assigned port,
+# referenced by the fake tab's webSocketDebuggerUrl).
+# ============================================================================
+
+import time  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import _find_and_click_teleop_tab  # noqa: E402
+
+
+async def test_find_and_click_teleop_tab_finds_already_navigated_tab() -> None:
+    """A tab whose URL already matches at snapshot time (Case C - no visible diff between
+    polls) is still found and clicked, without ever needing to re-fire am start."""
+    script = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(script) as ws_url:
+        tabs = [
+            {
+                "id": "teleop-1",
+                "url": "https://headset.local/?oobEnable=1",
+                "webSocketDebuggerUrl": ws_url,
+            }
+        ]
+        with (
+            _fake_cdp_server(tabs),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark"
+            ) as mock_bookmark,
+        ):
+            found_url = await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 5,
+                timeout=5,
+            )
+    assert found_url == ws_url
+    assert "Input.dispatchMouseEvent" in [m for m, _ in script.calls]
+    mock_bookmark.assert_not_called()  # tab was already there - no re-fire needed
+
+
+async def test_find_and_click_teleop_tab_no_tab_found_raises() -> None:
+    """No matching tab within the deadline raises OobAdbError rather than hanging."""
+    with (
+        _fake_cdp_server([]),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+            return_value=(0, ""),
+        ),
+    ):
+        with pytest.raises(OobAdbError, match="tab for the teleop page not found"):
+            await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 1.5,
+                timeout=1.5,
+            )
+
+
+# ============================================================================
+# _monitor_teleop_error_banner: error-banner tracking + auto-repair relaunch.
+# _find_and_click_teleop_tab is mocked directly here (already covered on its
+# own above) so these tests exercise the monitor's own decision logic - when
+# to relaunch, and the two give-up guards - without re-driving a full nested
+# CDP simulation for both the monitor's polling loop and the relaunch's own
+# tab discovery in the same test.
+# ============================================================================
+
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    _MAX_CONSECUTIVE_RELAUNCH_FAILURES,
+    _MAX_RELAUNCHES_PER_WINDOW,
+    _monitor_teleop_error_banner,
+)
+
+
+class _MonitorScript:
+    """Scripted responder for _monitor_teleop_error_banner's own CDP calls: certificate-error
+    suppression (ignored) and the errorMessageBox poll, which returns one entry of *banners*
+    per call (repeating the last entry once exhausted)."""
+
+    def __init__(self, banners: list[str]) -> None:
+        self.banners = banners
+        self._index = 0
+
+    def respond(self, method: str, params: dict) -> dict:
+        if method == "Security.setIgnoreCertificateErrors":
+            return {}
+        expr = params.get("expression", "")
+        if "errorMessageBox" in expr and "classList.contains('show')" in expr:
+            i = min(self._index, len(self.banners) - 1)
+            self._index += 1
+            return {"result": {"value": self.banners[i]}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+async def test_monitor_relaunches_once_on_terminal_error_then_keeps_watching(
+    capsys,
+) -> None:
+    """A single error banner triggers exactly one relaunch; once reconnected to the new
+    tab, an unchanging banner there does not trigger a second one."""
+    script = _MonitorScript(banners=["", "Stream did not attach within 500ms"])
+    new_ws_script = _MonitorScript(banners=[""])
+    async with (
+        _fake_cdp_ws(script) as ws_url,
+        _fake_cdp_ws(new_ws_script) as new_ws_url,
+    ):
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                return_value=new_ws_url,
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            # Long enough for: 1st tab's error banner (poll #2, ~2s) -> relaunch -> 2nd
+            # tab's steady empty banner (a couple more polls), plus scheduling margin.
+            await asyncio.sleep(4.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == 1
+    out = capsys.readouterr().err
+    assert "Stream did not attach within 500ms" in out
+    assert "relaunch succeeded" not in out  # that line goes to the logger, not stderr
+
+
+async def test_monitor_gives_up_after_max_consecutive_relaunch_failures(capsys) -> None:
+    """Auto-repair disables itself after _MAX_CONSECUTIVE_RELAUNCH_FAILURES failed relaunch
+    attempts, rather than retrying forever."""
+    script = _MonitorScript(banners=["Stream did not attach within 500ms"])
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                side_effect=OobAdbError("no matching tab"),
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            # Every reconnect immediately re-sees the same (never-changing) banner text,
+            # so failures accumulate quickly; margin above the bare minimum poll count.
+            await asyncio.sleep(2.0 * (_MAX_CONSECUTIVE_RELAUNCH_FAILURES + 1))
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == _MAX_CONSECUTIVE_RELAUNCH_FAILURES
+    out = capsys.readouterr().err
+    assert "manual intervention needed" in out
+
+
+async def test_monitor_gives_up_after_relaunch_flapping(capsys) -> None:
+    """Auto-repair also disables itself when relaunches keep *succeeding* but the session
+    re-fails shortly after each one - a problem consecutive-failure counting alone can't
+    catch, since every individual attempt "succeeded"."""
+    # Every reconnect (fresh or post-relaunch) sees the same banner immediately, so each
+    # relaunch "succeeds" (the mock always returns) but is immediately followed by another
+    # detected failure - the flapping pattern _MAX_RELAUNCHES_PER_WINDOW guards against.
+    script = _MonitorScript(banners=["Stream did not attach within 500ms"])
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                return_value=ws_url,
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            await asyncio.sleep(2.0 * (_MAX_RELAUNCHES_PER_WINDOW + 1))
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == _MAX_RELAUNCHES_PER_WINDOW
+    out = capsys.readouterr().err
+    assert "manual intervention needed" in out

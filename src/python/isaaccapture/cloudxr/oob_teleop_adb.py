@@ -1607,6 +1607,155 @@ async def _cdp_session_click_connect(ws_url: str) -> None:
         )
 
 
+async def _find_and_click_teleop_tab(
+    *,
+    resolved_port: int,
+    deadline: float,
+    timeout: float,
+    usb_local: bool = False,
+    host_client: bool = False,
+) -> str:
+    """Find the teleop tab (freshly opened or navigated by ``am start``) via the CDP forward
+    already up on ``_CDP_LOCAL_PORT``, then click CONNECT on it.
+
+    Re-fires ``am start`` once, at *timeout*'s midpoint (measured from entry to this
+    function, not from *deadline*), if the tab hasn't appeared yet — cold-launch can
+    swallow the first VIEW intent while the browser wakes up, and a second intent
+    reliably navigates an already-warm tab.
+
+    Shared by :func:`run_oob_connect` (initial launch — called right after its own
+    ``am start`` + forward setup, so *deadline* may already be partly consumed by that
+    setup) and the repair path in :func:`_monitor_teleop_error_banner` (mid-session,
+    forward already alive — see that function for why it fires its own ``am start``
+    before calling this rather than folding it in here: unlike initial launch, the
+    browser is already known-running, so there's no cold-launch devtools-socket wait to
+    order around).
+
+    Returns the tab's ``webSocketDebuggerUrl``. Raises :exc:`OobAdbError` if no matching
+    tab appears before *deadline*.
+    """
+
+    # Teleop URL substrings match on the happy path.  We also accept
+    # ``chrome-error://`` URLs because Chromium parks the tab there when
+    # the self-signed cert is blocked — the cert-bypass in
+    # ``_cdp_session_click_connect`` recovers from that state.
+    def _is_candidate_tab(tab: dict) -> bool:
+        url = tab.get("url") or ""
+        if not tab.get("webSocketDebuggerUrl") or not url:
+            return False
+        return (
+            "oobEnable" in url
+            or "localhost" in url
+            or "IsaacTeleop" in url
+            or url.startswith("chrome-error://")
+        )
+
+    # Snapshot {id → url} BEFORE we look for changes so we can detect both
+    # new tabs and existing tabs that were navigated to the new URL by am start.
+    tabs_url_before = {
+        t["id"]: (t.get("url") or "")
+        for t in _cdp_list_tabs(_CDP_LOCAL_PORT)
+        if "id" in t
+    }
+    log.info("CDP: %d tab(s) before navigation", len(tabs_url_before))
+
+    ws_url: str | None = None
+    am_start_retried = False
+    # Re-fire am start once if we don't see the tab in the first half
+    # of the deadline. Cold-launch can swallow the first VIEW intent
+    # (browser was being woken up), and a second intent reliably
+    # navigates an already-warm tab.
+    retry_at = time.monotonic() + (timeout / 2)
+    while ws_url is None and time.monotonic() < deadline:
+        await asyncio.sleep(1.0)
+        for tab in _cdp_list_tabs(_CDP_LOCAL_PORT):
+            if "id" not in tab or not tab.get("webSocketDebuggerUrl"):
+                continue
+            old_url = tabs_url_before.get(tab["id"])
+            current_url = tab.get("url") or ""
+            # Case A: brand-new tab — accept only if it looks like our page
+            # (happy path) or is a cert-error page (recoverable).
+            if old_url is None:
+                if not _is_candidate_tab(tab):
+                    continue
+                ws_url = tab["webSocketDebuggerUrl"]
+                log.info("CDP: new tab %r url=%s", tab.get("title"), current_url)
+                break
+            # Case B: existing tab whose URL changed after am start — this
+            # is ours (the VIEW intent just navigated it).  Trust the diff
+            # even if the new URL is chrome-error://.
+            if old_url != current_url:
+                ws_url = tab["webSocketDebuggerUrl"]
+                log.info(
+                    "CDP: navigated tab %r url=%s (was %s)",
+                    tab.get("title"),
+                    current_url,
+                    old_url or "<new>",
+                )
+                break
+            # Case C: existing tab whose URL was already our teleop URL
+            # at snapshot time and hasn't changed since. Happens when
+            # the browser navigated between cleanup and snapshot — am
+            # start fired, the tab landed on our URL, /json/list returned,
+            # and now there's no diff to detect. The ``oobEnable=`` query
+            # param is unique to URLs we generate, so matching it here
+            # won't grab an unrelated tab.
+            if "oobEnable=" in current_url:
+                ws_url = tab["webSocketDebuggerUrl"]
+                log.info(
+                    "CDP: existing teleop tab %r url=%s (snapshot already current)",
+                    tab.get("title"),
+                    current_url,
+                )
+                break
+
+        if ws_url is not None:
+            break
+
+        if not am_start_retried and time.monotonic() >= retry_at:
+            am_start_retried = True
+            log.warning(
+                "CDP: tab not found after %.1fs — re-firing am start (cold-launch race)",
+                timeout / 2,
+            )
+            oob_progress(
+                "setup-oob",
+                "tab not found yet — re-firing am start (browser may have "
+                "swallowed the first intent on cold launch) ...",
+            )
+            try:
+                rc, diag = await asyncio.to_thread(
+                    run_adb_headset_bookmark,
+                    resolved_port=resolved_port,
+                    usb_local=usb_local,
+                    host_client=host_client,
+                )
+                if rc != 0:
+                    log.warning("CDP: am start re-fire rc=%d: %s", rc, diag)
+            except Exception as exc:
+                log.warning("CDP: am start re-fire raised: %s", exc)
+
+    if ws_url is None:
+        raise OobAdbError(
+            "CDP: browser tab for the teleop page not found within timeout "
+            "(am start was re-fired once mid-way and still no match).\n"
+            "The page may not have loaded — open the teleop URL on the headset manually "
+            "and tap CONNECT."
+        )
+
+    oob_progress(
+        "setup-oob",
+        "teleop tab found — accepting cert, waiting for CONNECT button, "
+        "then auto-clicking it ...",
+    )
+
+    # cert interstitial + bring to front + readiness + click
+    # _cdp_session_click_connect polls the DOM for document.readyState +
+    # #startButton (up to 10s) so no fixed page-init sleep is needed here.
+    await _cdp_session_click_connect(ws_url)
+    return ws_url
+
+
 async def run_oob_connect(
     *,
     resolved_port: int,
@@ -1709,130 +1858,25 @@ async def run_oob_connect(
         ) from exc
 
     try:
-        # --- Step 3: find the teleop tab -------------------------------------
-        # Teleop URL substrings match on the happy path.  We also accept
-        # ``chrome-error://`` URLs because Chromium parks the tab there when
-        # the self-signed cert is blocked — the cert-bypass in
-        # ``_cdp_session_click_connect`` recovers from that state.
-        def _is_candidate_tab(tab: dict) -> bool:
-            url = tab.get("url") or ""
-            if not tab.get("webSocketDebuggerUrl") or not url:
-                return False
-            return (
-                "oobEnable" in url
-                or "localhost" in url
-                or "IsaacTeleop" in url
-                or url.startswith("chrome-error://")
-            )
-
-        # Snapshot {id → url} BEFORE we look for changes so we can detect both
-        # new tabs and existing tabs that were navigated to the new URL by am start.
-        tabs_url_before = {
-            t["id"]: (t.get("url") or "")
-            for t in _cdp_list_tabs(_CDP_LOCAL_PORT)
-            if "id" in t
-        }
-        log.info("CDP: %d tab(s) before navigation", len(tabs_url_before))
-
-        ws_url: str | None = None
-        am_start_retried = False
-        # Re-fire am start once if we don't see the tab in the first half
-        # of the deadline. Cold-launch can swallow the first VIEW intent
-        # (browser was being woken up), and a second intent reliably
-        # navigates an already-warm tab.
-        retry_at = time.monotonic() + (timeout / 2)
-        while ws_url is None and time.monotonic() < deadline:
-            await asyncio.sleep(1.0)
-            for tab in _cdp_list_tabs(_CDP_LOCAL_PORT):
-                if "id" not in tab or not tab.get("webSocketDebuggerUrl"):
-                    continue
-                old_url = tabs_url_before.get(tab["id"])
-                current_url = tab.get("url") or ""
-                # Case A: brand-new tab — accept only if it looks like our page
-                # (happy path) or is a cert-error page (recoverable).
-                if old_url is None:
-                    if not _is_candidate_tab(tab):
-                        continue
-                    ws_url = tab["webSocketDebuggerUrl"]
-                    log.info("CDP: new tab %r url=%s", tab.get("title"), current_url)
-                    break
-                # Case B: existing tab whose URL changed after am start — this
-                # is ours (the VIEW intent just navigated it).  Trust the diff
-                # even if the new URL is chrome-error://.
-                if old_url != current_url:
-                    ws_url = tab["webSocketDebuggerUrl"]
-                    log.info(
-                        "CDP: navigated tab %r url=%s (was %s)",
-                        tab.get("title"),
-                        current_url,
-                        old_url or "<new>",
-                    )
-                    break
-                # Case C: existing tab whose URL was already our teleop URL
-                # at snapshot time and hasn't changed since. Happens when
-                # the browser navigated between cleanup and snapshot — am
-                # start fired, the tab landed on our URL, /json/list returned,
-                # and now there's no diff to detect. The ``oobEnable=`` query
-                # param is unique to URLs we generate, so matching it here
-                # won't grab an unrelated tab.
-                if "oobEnable=" in current_url:
-                    ws_url = tab["webSocketDebuggerUrl"]
-                    log.info(
-                        "CDP: existing teleop tab %r url=%s (snapshot already current)",
-                        tab.get("title"),
-                        current_url,
-                    )
-                    break
-
-            if ws_url is not None:
-                break
-
-            if not am_start_retried and time.monotonic() >= retry_at:
-                am_start_retried = True
-                log.warning(
-                    "CDP: tab not found after %.1fs — re-firing am start (cold-launch race)",
-                    timeout / 2,
-                )
-                oob_progress(
-                    "setup-oob",
-                    "tab not found yet — re-firing am start (browser may have "
-                    "swallowed the first intent on cold launch) ...",
-                )
-                try:
-                    rc, diag = await asyncio.to_thread(
-                        run_adb_headset_bookmark,
-                        resolved_port=resolved_port,
-                        usb_local=usb_local,
-                        host_client=host_client,
-                    )
-                    if rc != 0:
-                        log.warning("CDP: am start re-fire rc=%d: %s", rc, diag)
-                except Exception as exc:
-                    log.warning("CDP: am start re-fire raised: %s", exc)
-
-        if ws_url is None:
-            raise OobAdbError(
-                "CDP: browser tab for the teleop page not found within timeout "
-                "(am start was re-fired once mid-way and still no match).\n"
-                "The page may not have loaded — open the teleop URL on the headset manually "
-                "and tap CONNECT."
-            )
-
-        oob_progress(
-            "setup-oob",
-            "teleop tab found — accepting cert, waiting for CONNECT button, "
-            "then auto-clicking it ...",
+        # --- Steps 3+4: find the teleop tab and click CONNECT ------------------
+        ws_url = await _find_and_click_teleop_tab(
+            resolved_port=resolved_port,
+            deadline=deadline,
+            timeout=timeout,
+            usb_local=usb_local,
+            host_client=host_client,
         )
-
-        # --- Step 4: cert interstitial + bring to front + readiness + click --
-        # _cdp_session_click_connect polls the DOM for document.readyState +
-        # #startButton (up to 10s) so no fixed page-init sleep is needed here.
-        await _cdp_session_click_connect(ws_url)
 
         # --- Step 5: background monitor for mid-stream error banners ---------
         # Keep the adb forward alive; the monitor tears it down on exit.
         monitor_task = asyncio.create_task(
-            _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT),
+            _monitor_teleop_error_banner(
+                ws_url,
+                _CDP_LOCAL_PORT,
+                resolved_port=resolved_port,
+                usb_local=usb_local,
+                host_client=host_client,
+            ),
             name="cloudxr-oob-error-monitor",
         )
         return monitor_task
@@ -1856,22 +1900,54 @@ def _teleop_error_hint(banner: str) -> str:
     return ""
 
 
-async def _monitor_teleop_error_banner(ws_url: str, local_port: int) -> None:
-    """Forward ``errorMessageBox`` content from the web client into the server log.
+# Cap on repair attempts that themselves fail (the relaunch call raising), so a genuinely
+# broken headset/network doesn't get hammered forever.
+_MAX_CONSECUTIVE_RELAUNCH_FAILURES = 3
+# Separate flapping guard: relaunches that keep *succeeding* but are followed by the
+# session re-failing again shortly after each one point at a deeper problem a relaunch
+# can't fix (e.g. a bad TURN/network path) - consecutive-failure counting alone wouldn't
+# catch that, since each individual relaunch attempt "succeeded".
+_MAX_RELAUNCHES_PER_WINDOW = 5
+_RELAUNCH_WINDOW_SECONDS = 300.0
+# Timeout budget for a single mid-session repair relaunch - shorter than run_oob_connect's
+# default (60s): the browser is already known-running (we're mid-session on it right now),
+# so there's no cold-launch devtools-socket wait to budget for, just am start + tab
+# discovery + click.
+_RELAUNCH_TIMEOUT_SECONDS = 30.0
 
-    Opens its own CDP session and polls the DOM once per second, logging at
-    WARNING level whenever the error banner shows new text with class
-    ``error`` (not ``success``/``info``, which are non-fatal status messages).
-    De-dupes identical messages so a banner that remains displayed logs once.
 
-    Runs until the task is cancelled (normal shutdown) or the WebSocket
-    drops (tab closed / headset disconnected).  Always tears down the
-    ``adb forward`` on exit.
+async def _monitor_teleop_error_banner(
+    ws_url: str,
+    local_port: int,
+    *,
+    resolved_port: int,
+    usb_local: bool = False,
+    host_client: bool = False,
+) -> None:
+    """Forward ``errorMessageBox`` content from the web client into the server log, and
+    automatically relaunch the teleop tab when a genuine (terminal) client error appears.
+
+    Opens its own CDP session and polls the DOM once per second. A banner with class
+    ``error`` (not ``success``/``info``, which are non-fatal status messages - notably,
+    CloudXRComponent's own bounded mid-retry "Reconnecting (n/max)" status is class
+    ``info``, so this only ever fires once the client itself has given up retrying)
+    triggers a relaunch: re-fire ``am start`` and re-click CONNECT on the resulting tab
+    via :func:`_find_and_click_teleop_tab`, reusing the adb forward already up on
+    *local_port* rather than rediscovering the DevTools socket. De-dupes identical
+    messages so a banner that remains displayed logs/repairs once.
+
+    Bounded by two independent guards (:data:`_MAX_CONSECUTIVE_RELAUNCH_FAILURES`,
+    :data:`_MAX_RELAUNCHES_PER_WINDOW` - see their doc comments) so a genuinely broken
+    headset/network doesn't trigger relaunches forever. Once either trips, auto-repair is
+    disabled for the rest of this monitor's life, but it keeps running and logging new
+    error banners, same as before this feature existed.
+
+    Runs until the task is cancelled (normal shutdown) or the WebSocket drops with no
+    further repair attempted.  Always tears down the ``adb forward`` on exit.
     """
     from websockets.asyncio.client import connect as ws_connect  # noqa: PLC0415
 
     _seq = 0
-    last_banner = ""
 
     async def send(ws, method: str, params: dict | None = None) -> dict:
         nonlocal _seq
@@ -1885,45 +1961,120 @@ async def _monitor_teleop_error_banner(ws_url: str, local_port: int) -> None:
             if msg.get("id") == req_id:
                 return msg.get("result", {})
 
+    consecutive_relaunch_failures = 0
+    relaunch_timestamps: list[float] = []
+    auto_repair_disabled = False
+
+    def _give_up_auto_repair(reason: str) -> None:
+        nonlocal auto_repair_disabled
+        auto_repair_disabled = True
+        log.error(
+            "monitor: auto-repair disabled for the rest of this session: %s", reason
+        )
+        print(
+            "\n\033[31mAutomatic recovery gave up after repeated failures "
+            f"({reason}) - manual intervention needed.\033[0m\n",
+            file=sys.stderr,
+            flush=True,
+        )
+
     try:
-        async with ws_connect(ws_url) as ws:
-            # Keep errors suppressed so the tab never stops rendering because of
-            # a stray cert hiccup on a later navigation.
-            try:
-                await send(ws, "Security.setIgnoreCertificateErrors", {"ignore": True})
-            except Exception as exc:
-                log.debug("monitor: Security domain unavailable (%s)", exc)
-            log.info("monitor: tracking errorMessageBox on the teleop page")
-            while True:
-                await asyncio.sleep(1.0)
-                r = await send(
-                    ws,
-                    "Runtime.evaluate",
-                    {
-                        "expression": """(function() {
-                            const box = document.getElementById('errorMessageBox');
-                            if (!box || !box.classList.contains('show')) return '';
-                            if (box.classList.contains('success') ||
-                                box.classList.contains('info')) return '';
-                            return document.getElementById('errorMessageText')
-                                       ?.textContent?.trim() || '';
-                        })()""",
-                        "returnByValue": True,
-                    },
-                )
-                banner = (r.get("result") or {}).get("value") or ""
-                if banner and banner != last_banner:
-                    log.warning("Teleop client error: %s", banner)
-                    extra = _teleop_error_hint(banner)
-                    # Mirror to stderr so the operator sees mid-stream errors
-                    # in the console, not only in the server log file.
-                    print(
-                        f"\n\033[33mTeleop client error: {banner}\033[0m\n"
-                        + (f"\033[33m  → {extra}\033[0m\n" if extra else ""),
-                        file=sys.stderr,
-                        flush=True,
+        while True:
+            last_banner = ""
+            relaunch_needed = False
+            async with ws_connect(ws_url) as ws:
+                # Keep errors suppressed so the tab never stops rendering because of
+                # a stray cert hiccup on a later navigation.
+                try:
+                    await send(
+                        ws, "Security.setIgnoreCertificateErrors", {"ignore": True}
                     )
-                last_banner = banner
+                except Exception as exc:
+                    log.debug("monitor: Security domain unavailable (%s)", exc)
+                log.info("monitor: tracking errorMessageBox on the teleop page")
+                while True:
+                    await asyncio.sleep(1.0)
+                    r = await send(
+                        ws,
+                        "Runtime.evaluate",
+                        {
+                            "expression": """(function() {
+                                const box = document.getElementById('errorMessageBox');
+                                if (!box || !box.classList.contains('show')) return '';
+                                if (box.classList.contains('success') ||
+                                    box.classList.contains('info')) return '';
+                                return document.getElementById('errorMessageText')
+                                           ?.textContent?.trim() || '';
+                            })()""",
+                            "returnByValue": True,
+                        },
+                    )
+                    banner = (r.get("result") or {}).get("value") or ""
+                    if banner and banner != last_banner:
+                        log.warning("Teleop client error: %s", banner)
+                        extra = _teleop_error_hint(banner)
+                        # Mirror to stderr so the operator sees mid-stream errors
+                        # in the console, not only in the server log file.
+                        print(
+                            f"\n\033[33mTeleop client error: {banner}\033[0m\n"
+                            + (f"\033[33m  → {extra}\033[0m\n" if extra else ""),
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        if not auto_repair_disabled:
+                            relaunch_needed = True
+                            break
+                    last_banner = banner
+
+            if not relaunch_needed:
+                break
+
+            now = time.monotonic()
+            relaunch_timestamps = [
+                t for t in relaunch_timestamps if now - t < _RELAUNCH_WINDOW_SECONDS
+            ]
+            if len(relaunch_timestamps) >= _MAX_RELAUNCHES_PER_WINDOW:
+                _give_up_auto_repair(
+                    f"{len(relaunch_timestamps)} relaunches within "
+                    f"{_RELAUNCH_WINDOW_SECONDS:.0f}s"
+                )
+                continue
+
+            log.warning("monitor: relaunching teleop tab after terminal client error")
+            try:
+                rc, diag = await asyncio.to_thread(
+                    run_adb_headset_bookmark,
+                    resolved_port=resolved_port,
+                    usb_local=usb_local,
+                    host_client=host_client,
+                )
+                if rc != 0:
+                    hint = adb_automation_failure_hint(diag)
+                    raise OobAdbError(oob_adb_automation_message(rc, diag, hint))
+                ws_url = await _find_and_click_teleop_tab(
+                    resolved_port=resolved_port,
+                    deadline=time.monotonic() + _RELAUNCH_TIMEOUT_SECONDS,
+                    timeout=_RELAUNCH_TIMEOUT_SECONDS,
+                    usb_local=usb_local,
+                    host_client=host_client,
+                )
+            except Exception as exc:
+                consecutive_relaunch_failures += 1
+                log.warning(
+                    "monitor: relaunch attempt %d/%d failed: %s",
+                    consecutive_relaunch_failures,
+                    _MAX_CONSECUTIVE_RELAUNCH_FAILURES,
+                    exc,
+                )
+                if consecutive_relaunch_failures >= _MAX_CONSECUTIVE_RELAUNCH_FAILURES:
+                    _give_up_auto_repair(
+                        f"{consecutive_relaunch_failures} consecutive relaunch failures"
+                    )
+                continue
+            else:
+                log.info("monitor: relaunch succeeded, resuming error-banner tracking")
+                consecutive_relaunch_failures = 0
+                relaunch_timestamps.append(now)
     except asyncio.CancelledError:
         log.info("monitor: cancelled")
         raise
