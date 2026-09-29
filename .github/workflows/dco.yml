@@ -93,6 +93,8 @@ jobs:
             else
               # Any other push: every commit not yet on a long-lived branch
               # (the default branch or release/*), whichever it was forked from.
+              # Do not infer a parent branch from merge-bases instead: any
+              # pushed branch could then vouch for an unsigned commit.
               git fetch --quiet origin \
                 "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" \
                 '+refs/heads/release/*:refs/remotes/origin/release/*' 2>/dev/null || true
