@@ -74,7 +74,7 @@ directory.
 The script will:
 
 1. Install the required system packages for MANUS Core Integrated.
-2. Download MANUS SDK v3.2.0.
+2. Download MANUS SDK v3.2.1.
 3. Extract and place the SDK for the host architecture in the correct location.
 4. Build the plugin and the diagnostic tool.
 
@@ -92,14 +92,14 @@ SDK download is unreachable from your network) and you need to place the SDK
 by hand.
 
 1. Download the MANUS Core SDK from
-   `MANUS Downloads <https://docs.manus-meta.com/3.2.0/Resources/>`_.
+   `MANUS Downloads <https://docs.manus-meta.com/3.2.1/Resources/>`_.
 2. From ``C++/SDKClient/ManusSDK`` in the archive, place ``include/`` and the
    library for your architecture (``lib/amd64/libManusSDK-amd64.so`` or
    ``lib/aarch64/libManusSDK-aarch64.so``, renamed to ``lib/libManusSDK.so``)
    into a ``ManusSDK`` folder inside ``src/plugins/manus/``, or point CMake at a
    different path by setting ``MANUS_SDK_ROOT``.
 3. Follow the
-   `MANUS Getting Started guide for Linux <https://docs.manus-meta.com/3.2.0/Plugins/SDK/Linux/>`_
+   `MANUS Getting Started guide for Linux <https://docs.manus-meta.com/3.2.1/Plugins/SDK/Linux/>`_
    to install the dependencies and configure device permissions.
 
 Expected directory layout after placing the SDK:

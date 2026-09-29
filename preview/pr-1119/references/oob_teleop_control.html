@@ -858,7 +858,10 @@ reach returning clients. Only <code class="docutils literal notranslate"><span c
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code></p></td>
-<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>)</p></td>
+<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>). Also the hosted <code class="docutils literal notranslate"><span class="pre">/client/</span></code>
+origin for both <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> and <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>: the page
+and signaling share this socket. In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode
+<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> maps it to the headset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code></p></td>
 <td><p>Optional auth token for hub access</p></td>
@@ -910,17 +913,11 @@ set; the value must match a serial currently in <code class="docutils literal no
 <code class="docutils literal notranslate"><span class="pre">adb</span></code> subprocess inherits it, so no code path needs <code class="docutils literal notranslate"><span class="pre">-s</span>
 <span class="pre">&lt;serial&gt;</span></code>.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
-<td><p>HTTPS static web client port for <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> (default <code class="docutils literal notranslate"><span class="pre">8080</span></code>).
-Binds to <code class="docutils literal notranslate"><span class="pre">127.0.0.1:&lt;port&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-maps the port to
-the headset.  <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> uses the WSS proxy port (<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>)
-instead; <code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code> has no effect on it.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -948,15 +945,17 @@ traverse the network).</p></li>
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
 the published client (see <a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
-<li><p>Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-the WSS proxy uses (Python <code class="docutils literal notranslate"><span class="pre">http.server</span></code> in a daemon thread).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> for 8080 (static UI), 48322 (WSS), 49100 (backend),
+<li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">/client/</span></code> on the WSS proxy port
+(<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>, default 48322) — the same HTTP/WSS multiplexer as
+<code class="docutils literal notranslate"><span class="pre">--host-client</span></code> (page and signaling share one origin).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> for 48322 (WSS + <code class="docutils literal notranslate"><span class="pre">/client/</span></code>), 49100 (backend),
 3478 (coturn TURN).</p></li>
 <li><p>Starts coturn locally on 127.0.0.1:3478 for WebRTC ICE relay.</p></li>
 <li><p>Launches the teleop URL on the headset and auto-clicks CONNECT via CDP.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
+cookies / HTTP cache for the teleop UI origins
+(<code class="docutils literal notranslate"><span class="pre">https://localhost:&lt;PROXY_PORT&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;PROXY_PORT&gt;</span></code>)
 before the session starts — the SDK and web client both cache settings
 (e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
@@ -1211,7 +1210,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 29, 2026.
       <br/>
     
   </p>

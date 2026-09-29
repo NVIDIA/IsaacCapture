@@ -410,7 +410,7 @@ What this path does and how it differs from the classic flow:
 .. admonition:: ``import isaacteleop`` under this path
 
    Both ``pip install .`` and ``pip install -e .`` serve the alias: the shim's
-   source (:code-dir:`src/compat/isaacteleop`) is mapped beside ``isaaccapture``'s
+   source (:code-file:`src/compat/isaacteleop.py`) is mapped beside ``isaaccapture``'s
    and ships in the same wheel (:doc:`/references/migration`).
 
 .. admonition:: Editable installs and iterating on pure-Python subpackages

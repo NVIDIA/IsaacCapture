@@ -441,7 +441,10 @@ Environment variables
    * - Variable
      - Description
    * - ``PROXY_PORT``
-     - WSS proxy port (default ``48322``)
+     - WSS proxy port (default ``48322``). Also the hosted ``/client/``
+       origin for both ``--host-client`` and ``--usb-local``: the page
+       and signaling share this socket. In ``--usb-local`` mode
+       ``adb reverse`` maps it to the headset.
    * - ``CONTROL_TOKEN``
      - Optional auth token for hub access
    * - ``TELEOP_STREAM_SERVER_IP``
@@ -482,11 +485,6 @@ Environment variables
        (per ``adb devices``). This is the standard adb env var — every
        ``adb`` subprocess inherits it, so no code path needs ``-s
        <serial>``.
-   * - ``USB_UI_PORT``
-     - HTTPS static web client port for ``--usb-local`` (default ``8080``).
-       Binds to ``127.0.0.1:<port>`` and ``adb reverse``-maps the port to
-       the headset.  ``--host-client`` uses the WSS proxy port (``PROXY_PORT``)
-       instead; ``USB_UI_PORT`` has no effect on it.
    * - ``USB_BACKEND_PORT``
      - CloudXR backend port the headset reaches via ``adb reverse`` in
        ``--usb-local`` mode (default ``49100``).
@@ -517,15 +515,17 @@ On startup the launcher:
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
    the published client (see :doc:`../getting_started/build_from_source/webxr`).
-3. Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-   the WSS proxy uses (Python ``http.server`` in a daemon thread).
-4. ``adb reverse`` for 8080 (static UI), 48322 (WSS), 49100 (backend),
+3. Serves that directory at ``/client/`` on the WSS proxy port
+   (``PROXY_PORT``, default 48322) — the same HTTP/WSS multiplexer as
+   ``--host-client`` (page and signaling share one origin).
+4. ``adb reverse`` for 48322 (WSS + ``/client/``), 49100 (backend),
    3478 (coturn TURN).
 5. Starts coturn locally on 127.0.0.1:3478 for WebRTC ICE relay.
 6. Launches the teleop URL on the headset and auto-clicks CONNECT via CDP.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (``https://127.0.0.1:<usb_ui_port>``)
+cookies / HTTP cache for the teleop UI origins
+(``https://localhost:<PROXY_PORT>`` and ``https://127.0.0.1:<PROXY_PORT>``)
 before the session starts — the SDK and web client both cache settings
 (e.g. ``general.iceTransportPolicy`` for ICE transport policy,
 ``cxr.isaac.teleopPath`` for the last-used project) in localStorage, and a

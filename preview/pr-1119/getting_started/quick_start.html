@@ -664,11 +664,11 @@ defaults reach you without clearing browser storage. Switch the profile to
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p class="sd-card-text">If GitHub Pages is unreachable (corporate network, air-gapped machine), you can serve the web
-client locally from the CloudXR proxy and open <code class="docutils literal notranslate"><span class="pre">https://&lt;your-ip&gt;:48322/client/</span></code> instead of
-the GitHub Pages URL. Port 48322 is already whitelisted in step
-<a class="reference internal" href="#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>. See <a class="reference internal" href="../references/oob_teleop_control.html"><span class="doc">Out-of-Band Teleop Control</span></a> for how to serve the
-client from the proxy.</p>
+<p class="sd-card-text">When a teleop example starts the CloudXR service, it hosts the matching web client at
+<code class="docutils literal notranslate"><span class="pre">https://&lt;your-ip&gt;:48322/client/</span></code> by default and prints that URL. The GitHub Pages URL above
+remains available; pass <code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> to disable local hosting. Port 48322 is already
+whitelisted in step <a class="reference internal" href="#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>. See <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a> for service
+hosting and existing-service behavior.</p>
 </div>
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
@@ -972,7 +972,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 29, 2026.
       <br/>
     
   </p>

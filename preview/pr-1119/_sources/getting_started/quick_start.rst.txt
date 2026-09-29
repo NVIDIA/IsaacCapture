@@ -258,11 +258,11 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
    .. note::
 
-      If GitHub Pages is unreachable (corporate network, air-gapped machine), you can serve the web
-      client locally from the CloudXR proxy and open ``https://<your-ip>:48322/client/`` instead of
-      the GitHub Pages URL. Port 48322 is already whitelisted in step
-      :ref:`whitelist-firewall-ports`. See :doc:`/references/oob_teleop_control` for how to serve the
-      client from the proxy.
+      When a teleop example starts the CloudXR service, it hosts the matching web client at
+      ``https://<your-ip>:48322/client/`` by default and prints that URL. The GitHub Pages URL above
+      remains available; pass ``--no-host-client`` to disable local hosting. Port 48322 is already
+      whitelisted in step :ref:`whitelist-firewall-ports`. See :doc:`/references/cloudxr` for service
+      hosting and existing-service behavior.
 
    .. tab-set::
       .. tab-item:: CloudXR web client

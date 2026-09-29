@@ -438,15 +438,16 @@ whichever runtime is serving rather than starting their own, so the runtime —
 and the headset connection — outlives the application using it.</p>
 <p>The teleop examples start a service themselves if none is running (see
 <a class="reference internal" href="../getting_started/quick_start.html#run-cloudxr-server"><span class="std std-ref">3. Configure CloudXR (optional)</span></a> in the quick start), and print a notice when they do,
-because that service keeps running after the example exits. Start it yourself
-when you want to:</p>
+because that service keeps running after the example exits. Examples that use
+<code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code> host CloudXR.js at <code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:48322/client/</span></code> by
+default when they start that service; pass <code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> to use the
+GitHub Pages client instead. Start the service yourself when you want to:</p>
 <ul class="simple">
 <li><p>keep the headset connected while you restart a teleop application repeatedly
 during development,</p></li>
 <li><p>point OpenXR applications that do not embed <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code> at CloudXR,</p></li>
-<li><p>use launch modes that only the service exposes, such as serving the web
-client locally (<code class="docutils literal notranslate"><span class="pre">--host-client</span></code>) or the out-of-band automation flags
-(<code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code>, <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>).</p></li>
+<li><p>use the out-of-band automation flags (<code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code>, <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>)
+that only the service exposes.</p></li>
 </ul>
 <nav class="contents local" id="sections">
 <p class="topic-title">Sections</p>
@@ -570,8 +571,9 @@ auto-clicks CONNECT over USB adb. Client URL is GitHub Pages.</p></td>
 (air-gapped / proxy use).</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">start</span> <span class="pre">--setup-oob</span> <span class="pre">--usb-local</span></code></p></td>
-<td><p>All traffic over USB: adb-reverse + coturn TURN relay + loopback
-HTTPS. Requires <code class="docutils literal notranslate"><span class="pre">coturn</span></code> and a WiFi-associated headset.</p></td>
+<td><p>All traffic over USB: adb-reverse + coturn TURN relay; serves
+<code class="docutils literal notranslate"><span class="pre">/client/</span></code> on the WSS port via loopback. Requires <code class="docutils literal notranslate"><span class="pre">coturn</span></code>
+and a WiFi-associated headset.</p></td>
 </tr>
 </tbody>
 </table>
@@ -660,9 +662,9 @@ instead of running a second one beside it — construct
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher(run_embedded=True)</span></code>, as the ROS 2 example node does. It
 refuses to start where a runtime is already serving the install directory:
 the options that configure the WSS proxy (<code class="docutils literal notranslate"><span class="pre">host_client</span></code>, <code class="docutils literal notranslate"><span class="pre">setup_oob</span></code>,
-<code class="docutils literal notranslate"><span class="pre">usb_local</span></code>) only apply to a proxy the process starts itself, so attaching
-would drop them with nothing to report it. Stop that service, or drop
-<code class="docutils literal notranslate"><span class="pre">run_embedded</span></code> to attach.</p>
+<code class="docutils literal notranslate"><span class="pre">usb_local</span></code>) only apply to a proxy the process starts itself. Attaching can
+report a <code class="docutils literal notranslate"><span class="pre">host_client</span></code> mismatch, but it cannot change the running proxy.
+Stop that service, or drop <code class="docutils literal notranslate"><span class="pre">run_embedded</span></code> to attach.</p>
 <p>To let other containers attach, share the run directory as a volume and point
 them at it with <code class="docutils literal notranslate"><span class="pre">XR_RUNTIME_JSON</span></code> and <code class="docutils literal notranslate"><span class="pre">NV_CXR_RUNTIME_DIR</span></code>;
 <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/docker-compose.test.yaml</span></code> mounts it read-only into the test
@@ -686,6 +688,11 @@ environment variables.</p></li>
 it. An application that attaches to a running runtime cannot apply them: it
 compares the requested settings against the runtime’s resolved environment,
 reports the ones that would have changed, and uses the running configuration.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--host-client</span></code> / <code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> follow the same rule. They apply when
+the launcher starts a service. When attaching, the launcher recovers the
+detached service flags from its command line and reports a mismatch when the
+running hosting differs. A foreground service leaves no recoverable flags, so
+that case stays quiet. Restart the service to change the hosting.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
   NV_DEVICE_PROFILE: auto-native requested, Quest3 in effect
   Restart the service to apply it:
@@ -916,7 +923,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 29, 2026.
       <br/>
     
   </p>
