@@ -987,7 +987,7 @@ early enough to leave one retry interval for a bounded fallback.</p></td>
 The OOB lifecycle waits for this client-owned loop before taking over.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
-<td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">3</span></code>).
+<td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">10</span></code>).
 The value is also included in the generated headset URL.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
@@ -1042,7 +1042,11 @@ coturn, and repairs CDP forwarding without mutating a surviving browser tab.
 The WebXR client owns its bounded reconnect attempts. Fresh post-repair
 stream metrics resume the existing session; a stable terminal event allows
 one same-tab CONNECT click, and only a missing/unusable tab falls back to
-full browser launch automation.</p></li>
+full browser launch automation. ADB loss, missing reverse rules, TURN
+failure or restart, and control/CDP/stream transport loss all enter this
+preservation-first repair path. While preserving an active browser, the
+launcher checks recovery prerequisites at most once per second instead of
+waiting for the ordinary five-second observation cadence.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)

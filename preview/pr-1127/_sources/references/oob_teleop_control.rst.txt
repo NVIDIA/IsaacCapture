@@ -561,7 +561,7 @@ Environment variables
      - Enable the WebXR client's stream reconnect loop (default ``true``).
        The OOB lifecycle waits for this client-owned loop before taking over.
    * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
-     - Non-negative number of browser-local reconnect attempts (default ``3``).
+     - Non-negative number of browser-local reconnect attempts (default ``10``).
        The value is also included in the generated headset URL.
    * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
      - Non-negative delay between browser-local attempts in milliseconds
@@ -611,7 +611,11 @@ On startup the launcher:
    The WebXR client owns its bounded reconnect attempts. Fresh post-repair
    stream metrics resume the existing session; a stable terminal event allows
    one same-tab CONNECT click, and only a missing/unusable tab falls back to
-   full browser launch automation.
+   full browser launch automation. ADB loss, missing reverse rules, TURN
+   failure or restart, and control/CDP/stream transport loss all enter this
+   preservation-first repair path. While preserving an active browser, the
+   launcher checks recovery prerequisites at most once per second instead of
+   waiting for the ordinary five-second observation cadence.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (``https://127.0.0.1:<usb_ui_port>``)
