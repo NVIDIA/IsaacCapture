@@ -36,7 +36,7 @@
 import * as CloudXR from '@nvidia/cloudxr';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useXR } from '@react-three/xr';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { WebGLRenderer } from 'three';
 import { Color } from 'three';
 
@@ -56,12 +56,18 @@ import { applyTargetFrameRate } from '../../src/config/frameRate';
 /** Clear color shown in headless mode so it's visually obvious the client is running with rendering suppressed. */
 const HEADLESS_CLEAR_COLOR = 0x00194d;
 
-/** Default for the streamAttachTimeoutMs prop below - see its doc comment. */
-// Deliberately generous: a real CloudXR server/network can legitimately take much longer than a
-// mock ever would to attach a stream, and a false positive here means an otherwise-fine session
-// gets torn down and retried for no reason. Callers who want faster passthrough-only detection
-// (e.g. tests) should override via the streamAttachTimeoutMs prop, not by lowering this default.
+// Default for the streamAttachTimeoutMs prop below - see its doc comment. Deliberately generous:
+// a real CloudXR server/network can legitimately take much longer than a mock ever would to
+// attach a stream, and a false positive here means an otherwise-fine session gets torn down and
+// retried for no reason. Callers who want faster passthrough-only detection (e.g. tests) should
+// override via the streamAttachTimeoutMs prop, not by lowering this default.
 const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
+
+// setTimeout's delay is stored as a 32-bit signed int internally; a value above this overflows
+// and fires (almost) immediately instead of waiting - the opposite of what a long configured
+// timeout is asking for. Both the base value (user/URL-configurable, no upper bound today) and
+// its doubled-per-attempt growth need to stay under this.
+const MAX_SET_TIMEOUT_MS = 2147483647;
 
 /**
  * Props for the CloudXRComponent.
@@ -222,6 +228,50 @@ export default function CloudXRComponent({
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamAttachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // False from session creation until a real onStreamStarted fires; lets the effect below tell
+  // "still waiting to attach" apart from "already connected" when it re-registers mid-connection
+  // (see the config-change re-arm logic further down).
+  const hasStreamStartedRef = useRef(false);
+  // The delegates object currently wired to cxrSessionRef.current - only ever reassigned inside
+  // handleSessionStart, but read from outside its closure (the config-change re-arm check below)
+  // to redispatch through the exact same callbacks a real stream event would use.
+  const cloudXRDelegatesRef = useRef<CloudXR.SessionDelegates | null>(null);
+
+  /**
+   * Arms (or re-arms) the passthrough-only stream-attach timer for *cxrSession*: if
+   * onStreamStarted hasn't fired by the deadline, disconnects the session (so it can never later
+   * fire a stray onStreamStarted reporting a false Connected once we've moved on to a retry) and
+   * dispatches a synthetic recoverable StreamingError through onStreamStopped, so it gets the
+   * same bounded-retry treatment a real stream error does. Deadline doubles per reconnect attempt
+   * and is capped at MAX_SET_TIMEOUT_MS (setTimeout's own 32-bit-int delay limit - above it, the
+   * browser fires (almost) immediately instead of waiting, the opposite of what a long configured
+   * timeout is asking for).
+   */
+  const armStreamAttachTimer = useCallback(
+    (cxrSession: CloudXR.Session) => {
+      const attemptForThisTimer = reconnectAttemptRef.current;
+      const attachTimeoutMs = Math.min(
+        streamAttachBaseTimeoutMs * 2 ** attemptForThisTimer,
+        MAX_SET_TIMEOUT_MS
+      );
+      streamAttachTimerRef.current = setTimeout(() => {
+        streamAttachTimerRef.current = null;
+        console.warn(
+          `CloudXR stream did not attach within ${attachTimeoutMs}ms ` +
+            `(attempt ${attemptForThisTimer + 1})`
+        );
+        try {
+          cxrSession.disconnect();
+        } catch {
+          // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        }
+        cloudXRDelegatesRef.current?.onStreamStopped?.({
+          message: `Stream did not attach within ${attachTimeoutMs}ms`,
+        } as CloudXR.StreamingError);
+      }, attachTimeoutMs);
+    },
+    [streamAttachBaseTimeoutMs]
+  );
 
   // Metrics trackers for averaging performance metrics
   // Use prop values if provided, otherwise use defaults
@@ -272,6 +322,15 @@ export default function CloudXRComponent({
   // Set up event listeners in useEffect to add them only once
   useEffect(() => {
     const webXRManager = threeRenderer.xr;
+
+    // This effect re-registers on every `config` change (e.g. the operator edits a setting
+    // while a stream is still connecting). The cleanup below already cleared
+    // streamAttachTimerRef, but a fresh sessionstart event won't fire just because the effect
+    // re-ran - the WebXR session is already live. Without this, the in-flight connection would
+    // keep running with no passthrough-only deadline for the rest of this attempt.
+    if (cxrSessionRef.current && !hasStreamStartedRef.current) {
+      armStreamAttachTimer(cxrSessionRef.current);
+    }
 
     if (webXRManager) {
       const handleSessionStart = async () => {
@@ -433,6 +492,7 @@ export default function CloudXRComponent({
               // A successful (re)connect clears the counter, so an unrelated later failure
               // gets its own full budget of attempts rather than inheriting this one's count.
               reconnectAttemptRef.current = 0;
+              hasStreamStartedRef.current = true;
               if (streamAttachTimerRef.current !== null) {
                 clearTimeout(streamAttachTimerRef.current);
                 streamAttachTimerRef.current = null;
@@ -578,6 +638,7 @@ export default function CloudXRComponent({
               }
             },
           };
+          cloudXRDelegatesRef.current = cloudXRDelegates;
 
           // Creates and connects a CloudXR session against the options/delegates above. Called
           // once here for the initial connect, and again (unchanged) by onStreamStopped's retry
@@ -606,6 +667,7 @@ export default function CloudXRComponent({
 
             // Store the session in the ref so it persists across re-renders
             cxrSessionRef.current = cxrSession;
+            hasStreamStartedRef.current = false;
 
             // Notify parent that session is ready
             onSessionReady?.(cxrSession);
@@ -620,20 +682,8 @@ export default function CloudXRComponent({
               // Passthrough-only detection: the session can enter XR and call connect()
               // successfully while the stream never actually attaches, with no error callback to
               // signal it - isXRMode alone can't tell that state apart from a slow-but-fine
-              // connect. If onStreamStarted hasn't cleared this by the deadline, dispatch a
-              // synthetic recoverable StreamingError through the same onStreamStopped path a real
-              // one uses, so it gets the same bounded-retry treatment.
-              const attachTimeoutMs = streamAttachBaseTimeoutMs * 2 ** reconnectAttemptRef.current;
-              streamAttachTimerRef.current = setTimeout(() => {
-                streamAttachTimerRef.current = null;
-                console.warn(
-                  `CloudXR stream did not attach within ${attachTimeoutMs}ms ` +
-                    `(attempt ${reconnectAttemptRef.current + 1})`
-                );
-                cloudXRDelegates.onStreamStopped?.({
-                  message: `Stream did not attach within ${attachTimeoutMs}ms`,
-                } as CloudXR.StreamingError);
-              }, attachTimeoutMs);
+              // connect. See armStreamAttachTimer's doc comment.
+              armStreamAttachTimer(cxrSession);
             } catch (error) {
               onStatusChange?.(false, 'Connection Failed');
               // Report error via callback
