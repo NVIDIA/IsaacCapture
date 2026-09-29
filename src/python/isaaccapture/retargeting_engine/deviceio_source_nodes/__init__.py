@@ -11,6 +11,19 @@ from .head_source import HeadSource
 from .hands_source import HandsSource
 from .controllers_source import ControllersSource
 from .pedals_source import Generic3AxisPedalSource
+
+# EvdevKeyCode is generated from Chromium's key table in the native module: members are named
+# by W3C KeyboardEvent.code (EvdevKeyCode.KeyW) and valued by evdev code.
+from isaaccapture.deviceio_trackers import EvdevKeyCode
+from .keyboard_source import (
+    KeyboardHeldType,
+    KeyboardPressedType,
+    KeyboardSource,
+    KeyEventHandle,
+    KeyEventSource,
+)
+from .source_lookup import find_sources
+from .key_event_testing import FakeKeyEventSource
 from .joint_state_source import JointStateSource
 from .full_body_source import FullBodySource
 from .message_channel_source import MessageChannelSource
@@ -26,12 +39,14 @@ from .deviceio_tensor_types import (
     HandPoseTrackedType,
     ControllerSnapshotTrackedType,
     Generic3AxisPedalOutputTrackedType,
+    KeyboardOutputTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
     DeviceIOHeadPoseTracked,
     DeviceIOHandPoseTracked,
     DeviceIOControllerSnapshotTracked,
     DeviceIOGeneric3AxisPedalOutputTracked,
+    DeviceIOKeyboardOutputTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
     MessageChannelMessagesTrackedType,
@@ -49,6 +64,14 @@ __all__ = [
     "HandsSource",
     "ControllersSource",
     "Generic3AxisPedalSource",
+    "EvdevKeyCode",
+    "KeyboardHeldType",
+    "KeyboardPressedType",
+    "KeyboardSource",
+    "KeyEventHandle",
+    "KeyEventSource",
+    "find_sources",
+    "FakeKeyEventSource",
     "JointStateSource",
     "FullBodySource",
     "MessageChannelSource",
@@ -61,6 +84,7 @@ __all__ = [
     "HandPoseTrackedType",
     "ControllerSnapshotTrackedType",
     "Generic3AxisPedalOutputTrackedType",
+    "KeyboardOutputTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
     "MessageChannelMessagesTrackedType",
@@ -70,6 +94,7 @@ __all__ = [
     "DeviceIOHandPoseTracked",
     "DeviceIOControllerSnapshotTracked",
     "DeviceIOGeneric3AxisPedalOutputTracked",
+    "DeviceIOKeyboardOutputTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
     "DeviceIOMessageChannelMessagesTracked",
