@@ -58,21 +58,22 @@ jobs:
           set -euo pipefail
 
           # ── Determine the commit range ──────────────────────────────────────
+          # Checked: commits reachable from HEAD and from none of BASE.
           if [[ "$EVENT" == "pull_request" ]]; then
             # GitHub provides the exact base and head SHAs for the PR.
-            BASE="$PR_BASE"
+            BASE=("$PR_BASE")
             HEAD="$PR_HEAD"
           else
             # push event — HEAD is always the new tip.
             HEAD="$PUSH_AFTER"
             CURRENT_BRANCH="${GITHUB_REF_NAME:-}"
+            ZEROS="0000000000000000000000000000000000000000"
 
             if [[ "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]; then
               # Direct push to the default branch: check only the commits
               # that were just pushed (before..after).  Fail closed when the
               # range is ambiguous — force-push or initial push — rather than
               # silently checking only the tip commit.
-              ZEROS="0000000000000000000000000000000000000000"
               if [[ "$PUSH_BEFORE" == "$ZEROS" ]]; then
                 echo "::error::Cannot determine commit range: initial or force-push to $DEFAULT_BRANCH with no resolvable base."
                 echo "  Open a pull request so commits are verified against a known base."
@@ -83,15 +84,23 @@ jobs:
                 echo "  Open a pull request so commits are verified against a known base."
                 exit 1
               fi
-              BASE="$PUSH_BEFORE"
+              BASE=("$PUSH_BEFORE")
+            elif [[ "$CURRENT_BRANCH" == release/* && "$PUSH_BEFORE" != "$ZEROS" ]] \
+                && git cat-file -e "$PUSH_BEFORE" 2>/dev/null; then
+              # Push to a release branch: only the commits just pushed.  A new
+              # or force-pushed release branch falls through to the case below.
+              BASE=("$PUSH_BEFORE")
             else
-              # Push to a feature/fix branch: check every commit that is on
-              # this branch but not yet on the default branch.  This is the
-              # correct range regardless of force-pushes or rebases — it
-              # naturally excludes existing main commits (which predate this
-              # requirement) and only checks the contributor's new work.
-              git fetch --quiet origin "$DEFAULT_BRANCH" 2>/dev/null || true
-              BASE="origin/$DEFAULT_BRANCH"
+              # Any other push: every commit not yet on a long-lived branch
+              # (the default branch or release/*), whichever it was forked from.
+              # Do not infer a parent branch from merge-bases instead: any
+              # pushed branch could then vouch for an unsigned commit.
+              git fetch --quiet origin \
+                "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" \
+                '+refs/heads/release/*:refs/remotes/origin/release/*' 2>/dev/null || true
+              mapfile -t BASE < <(git for-each-ref --format='%(refname)' \
+                "refs/remotes/origin/$DEFAULT_BRANCH" refs/remotes/origin/release/ \
+                | grep -vxF "refs/remotes/origin/$CURRENT_BRANCH")
             fi
           fi
 
@@ -123,7 +132,7 @@ jobs:
               fi
             done < <(echo "$msg" | grep -P "^Signed-off-by:")
 
-          done < <(git rev-list --no-merges "$BASE..$HEAD")
+          done < <(git rev-list --no-merges "$HEAD" --not "${BASE[@]}")
 
           if [[ "$fail" -ne 0 ]]; then
             echo ""
@@ -132,5 +141,5 @@ jobs:
             exit 1
           fi
 
-          count=$(git rev-list --count --no-merges "$BASE..$HEAD")
+          count=$(git rev-list --count --no-merges "$HEAD" --not "${BASE[@]}")
           echo "All $count commit(s) carry a valid Signed-off-by. ✓"
