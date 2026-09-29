@@ -20,7 +20,6 @@ pybind11_add_module(schema_py
     se3_tracker_bindings.h
     schema_module.cpp
     steering_wheel_bindings.h
-    vehicle_control_bindings.h
 )
 
 target_link_libraries(schema_py

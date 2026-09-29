@@ -351,23 +351,3 @@ def __getattr__(name: str):
         )
         return globals()[new_name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def SteeringWheelInput() -> TensorGroupType:
-    """
-    Standard TensorGroupType for steering wheel and pedal axis data.
-
-    Matches the scalar axis fields in SteeringWheelOutput. Axis values are
-    normalized joystick values in [-1, 1].
-    """
-    return TensorGroupType(
-        "steering_wheel",
-        [
-            FloatType("wheel_steering"),
-            FloatType("wheel_throttle"),
-            FloatType("wheel_brake"),
-            FloatType("wheel_clutch"),
-            FloatType("wheel_hat_x"),
-            FloatType("wheel_hat_y"),
-        ],
-    )

@@ -19,7 +19,6 @@ from isaaccapture.schema import (
     HandPose,
     ControllerSnapshot,
     Generic3AxisPedalOutput,
-    SteeringWheelOutput,
     JointStateOutput,
     FullBodyPose,
     MessageChannelMessagesTracked,
@@ -239,17 +238,3 @@ def __getattr__(name: str):
         )
         return globals()[new_name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-class SteeringWheelOutputTrackedType(_PayloadTensorType):
-    """Steering wheel payload, or None when inactive."""
-
-    _payload_cls = SteeringWheelOutput
-
-
-def DeviceIOSteeringWheelOutputTracked() -> TensorGroupType:
-    """Tracked steering wheel data from DeviceIO SteeringWheelTracker."""
-    return TensorGroupType(
-        "deviceio_steering_wheel_output",
-        [SteeringWheelOutputTrackedType("steering_wheel_tracked")],
-    )
