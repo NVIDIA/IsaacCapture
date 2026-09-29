@@ -57,7 +57,11 @@ import { applyTargetFrameRate } from '../../src/config/frameRate';
 const HEADLESS_CLEAR_COLOR = 0x00194d;
 
 /** Default for the streamAttachTimeoutMs prop below - see its doc comment. */
-const STREAM_ATTACH_BASE_TIMEOUT_MS = 8000;
+// Deliberately generous: a real CloudXR server/network can legitimately take much longer than a
+// mock ever would to attach a stream, and a false positive here means an otherwise-fine session
+// gets torn down and retried for no reason. Callers who want faster passthrough-only detection
+// (e.g. tests) should override via the streamAttachTimeoutMs prop, not by lowering this default.
+const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
 
 /**
  * Props for the CloudXRComponent.
@@ -105,7 +109,7 @@ interface CloudXRComponentProps {
    * only whether the resulting synthetic error gets retried depends on `reconnect`. Doubles on
    * every reconnect attempt (this value, then x2, then x4, ...) so a connection that's genuinely
    * just slow, not stuck, gets more time on each retry instead of being cut off at the same fixed
-   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (8000ms).
+   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (2 minutes).
    */
   streamAttachTimeoutMs?: number;
 
