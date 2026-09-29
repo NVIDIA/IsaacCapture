@@ -13,43 +13,6 @@ commands to the terminal.
    :depth: 1
    :backlinks: none
 
-.. _try-on-brev:
-
-Try It on Brev — Zero Setup
----------------------------
-
-Experience **Isaac Teleop** remote teleoperation with no local install. Brev provisions the
-server side — CloudXR runtime, retargeting pipeline, and an
-`Isaac Lab <https://developer.nvidia.com/isaac/lab>`__ simulation — on a cloud GPU.
-Just grab the instance IP and connect from your headset.
-
-.. note::
-
-   **Server (Brev):** CloudXR + Isaac Teleop retargeting + Isaac Lab sim on a cloud GPU.
-
-   **Client (you):** open the `Isaac Teleop Web Client`_
-   in your headset or browser, enter the Brev instance IP, accept the certificate, and click
-   **Connect** — see step :ref:`connect-xr-headset`.
-
-   Isaac Teleop is not limited to simulation; it drives real robots and ROS 2 pipelines too.
-
-.. grid:: 2
-   :gutter: 2
-
-   .. grid-item-card:: Launch on Brev — Isaac Lab 2.3
-      :link: https://brev.nvidia.com/launchable/deploy?launchableID=env-3B3ETyweD8hOcZfNzaE12cnGNBq
-      :link-type: url
-
-      Stable
-
-   .. grid-item-card:: Launch on Brev — Isaac Lab 3.0 beta 1
-      :link: https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3B2jdZR8Ct0vQCzwseLuOZXoMyk
-      :link-type: url
-
-      Latest · recommended upgrade path
-
-----
-
 .. _check-out-code-base:
 
 1. Check out code base (for examples)
