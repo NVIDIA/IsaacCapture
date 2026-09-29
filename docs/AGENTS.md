@@ -86,5 +86,5 @@ and `logo_dark`.
 
 ## Removing cache overrides
 
-Document the default cache location and migration impact without advertising
-alternative ways to override the cache directory.
+Keep cache-removal documentation focused on migration impact. Omit asset-fetch
+implementation walkthroughs and alternative override instructions.
