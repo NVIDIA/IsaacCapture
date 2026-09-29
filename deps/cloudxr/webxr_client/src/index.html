@@ -1487,17 +1487,17 @@ limitations under the License.
 
               <div class="config-section">
                 <label for="cloudxrStreamAttachTimeoutMs" class="input-label"
-                  >Stream Attach Timeout (ms, default: 8000)</label
+                  >Stream Attach Timeout (ms, default: 120000 / 2 minutes)</label
                 >
                 <input
                   id="cloudxrStreamAttachTimeoutMs"
                   class="ui-input config-input"
                   type="number"
                   min="0"
-                  step="100"
+                  step="1000"
                   placeholder="Stream attach timeout in ms"
                   spellcheck="false"
-                  value="8000"
+                  value="120000"
                 />
                 <div class="config-text">
                   How long to wait for the video stream to attach before treating the session as

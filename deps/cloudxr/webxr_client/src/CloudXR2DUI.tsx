@@ -572,7 +572,7 @@ export class CloudXR2DUI {
       reconnectEnabled: true,
       reconnectMaxAttempts: 3,
       reconnectDelayMs: 3000,
-      streamAttachTimeoutMs: 8000,
+      streamAttachTimeoutMs: 120000,
       teleopPath: DEFAULT_TELEOP_PATH,
     };
   }
