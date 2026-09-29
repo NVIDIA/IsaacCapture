@@ -72,7 +72,10 @@ async function connectAndCapture(
   page.on('console', msg => consoleLines.push(msg.text()));
 
   await page.goto('http://localhost:8082/');
-  await waitForConsoleText(consoleLines, 'IWER DevUI initialized with XR device.');
+  // See AppMockTest.spec.js: "IWER DevUI initialized with XR device." logs before
+  // installRuntime() and is skipped on the supported no-DevUI path - "IWER runtime installed."
+  // is the reliable, unconditional signal that navigator.xr is actually usable.
+  await waitForConsoleText(consoleLines, 'IWER runtime installed.');
 
   if (position !== undefined) await setFormValue(page, 'controlPanelPosition', position);
   if (distance !== undefined) await setFormValue(page, 'controlPanelDistance', distance);
