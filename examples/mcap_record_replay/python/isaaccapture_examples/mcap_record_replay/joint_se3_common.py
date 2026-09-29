@@ -3,8 +3,7 @@
 
 """Shared helpers for the raw-hand JointSe3Pose scripts (live / record / replay).
 
-Kept out of common.py so these scripts stay standalone: they need viser and the schema,
-not the retargeting engine.
+These helpers depend on viser and the schema, not the retargeting engine.
 """
 
 import viser

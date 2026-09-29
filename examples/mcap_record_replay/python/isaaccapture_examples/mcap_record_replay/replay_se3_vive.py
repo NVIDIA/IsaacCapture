@@ -13,8 +13,10 @@ With no arguments it replays the most recent recording under ./recordings/,
 auto-discovers its collections, and plays back at the recording's own capture
 rate. Open the printed viser URL to see the trackers in 3D.
 
+Replay repeats until Ctrl+C.
+
 Usage:
-    python -m isaaccapture_examples.mcap_record_replay.replay_se3_vive [recording.mcap] [--loop] [--rate N] [--no-viz] \
+    python -m isaaccapture_examples.mcap_record_replay.replay_se3_vive [recording.mcap] [--rate N] [--no-viz] \
         [--collections a,b,c]
 """
 
@@ -189,9 +191,6 @@ def main(argv: list[str]) -> int:
         help="Comma-separated collection ids to replay (default: auto-discover from the MCAP)",
     )
     parser.add_argument(
-        "--loop", action="store_true", help="Replay in a loop until Ctrl+C"
-    )
-    parser.add_argument(
         "--rate",
         type=float,
         default=None,
@@ -242,31 +241,22 @@ def main(argv: list[str]) -> int:
 
     print(f"[replay-se3] replaying {mcap_path}")
 
-    while True:
-        # Fresh trackers + session per pass (replay consumes the file front-to-back).
-        trackers = {cid: Se3Tracker(cid) for cid in collections}
-        config = McapReplayConfig(
-            str(mcap_path), tracker_names=[(t, cid) for cid, t in trackers.items()]
-        )
-        with ReplaySession.run(config) as session:
-            frames, samples = run_once(session, trackers, viz, rate)
-        print(f"[replay-se3] done — {frames} frames")
-        for cid in collections:
-            print(f"[replay-se3]   {cid}: {samples[cid]} frames with data")
-        if not args.loop:
-            break
-        print("[replay-se3] looping…")
+    try:
+        while True:
+            # Fresh trackers + session per pass (replay consumes the file front-to-back).
+            trackers = {cid: Se3Tracker(cid) for cid in collections}
+            config = McapReplayConfig(
+                str(mcap_path), tracker_names=[(t, cid) for cid, t in trackers.items()]
+            )
+            with ReplaySession.run(config) as session:
+                frames, samples = run_once(session, trackers, viz, rate)
+            print(f"[replay-se3] done — {frames} frames")
+            for cid in collections:
+                print(f"[replay-se3]   {cid}: {samples[cid]} frames with data")
+            print("[replay-se3] looping…")
+    except KeyboardInterrupt:
+        pass
 
-    if viz:
-        print(
-            "[replay-se3] viser still up at "
-            f"http://localhost:{args.port} — Ctrl+C to exit"
-        )
-        try:
-            while True:
-                time.sleep(1.0)
-        except KeyboardInterrupt:
-            pass
     return 0
 
 

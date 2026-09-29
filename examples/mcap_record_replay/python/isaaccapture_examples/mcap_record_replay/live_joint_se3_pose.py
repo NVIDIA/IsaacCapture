@@ -20,7 +20,7 @@ Prerequisites (separate terminals):
 
 Usage:
     source ~/.cloudxr/run/cloudxr.env
-    uv run live_joint_se3_pose.py [--collections a,b] [--port 8080] [--separation M]
+    python -m isaaccapture_examples.mcap_record_replay.live_joint_se3_pose [--collections a,b] [--port 8080] [--separation M]
 
 Press Ctrl+C to stop.
 """
@@ -33,7 +33,7 @@ from isaaccapture.deviceio_session import DeviceIOSession
 from isaaccapture.deviceio_trackers import JointSe3PoseTracker
 from isaaccapture.oxr import OpenXRSession
 
-from joint_se3_common import DEFAULT_SEPARATION_M, TipViz, make_server
+from .joint_se3_common import DEFAULT_SEPARATION_M, TipViz, make_server
 
 DEFAULT_COLLECTIONS = ["manus_sensors_left", "manus_sensors_right"]
 

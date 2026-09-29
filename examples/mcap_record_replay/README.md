@@ -25,13 +25,14 @@ lockfile.
 
 The live and replay viewers bind every interface, so a browser on another
 machine can reach them at `http://<this-host>:8080`. Pass `--host 127.0.0.1` to
-keep a viewer local.
+keep a viewer local. Replay repeats until Ctrl+C; no loop flag is needed.
 
 | Channel | Live | Record | Replay |
 | --- | --- | --- | --- |
 | Hands | `live_hand` | `record_hand` | `replay_hand` |
 | Controllers | `live_controller` | `record_controller` | `replay_controller` |
 | Full body | `live_full_body` | `record_full_body` | `replay_full_body` |
+| Raw hand joint SE3 poses | `live_joint_se3_pose` | `record_joint_se3_pose` | `replay_joint_se3_pose` |
 | VIVE SE3 trackers | — | `record_se3_vive` | `replay_se3_vive` |
 
 `record_*` takes an optional duration in seconds and an optional output path.

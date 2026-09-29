@@ -16,8 +16,10 @@ index"), taken from the collection id.
 The same frames are drawn in viser, as in live_joint_se3_pose.py: labelled tips, the two
 hands pushed apart along X. Open the URL it prints.
 
+Replay repeats until Ctrl+C.
+
 Usage:
-    uv run replay_joint_se3_pose.py [recording.mcap] [--loop] [--rate N] [--collections a,b]
+    python -m isaaccapture_examples.mcap_record_replay.replay_joint_se3_pose [recording.mcap] [--rate N] [--collections a,b]
                                     [--host H] [--port 8080] [--separation M]
 """
 
@@ -33,7 +35,7 @@ from isaaccapture.deviceio_session import McapReplayConfig, ReplaySession
 from isaaccapture.deviceio_trackers import JointSe3PoseTracker
 from isaaccapture.schema import JointName
 
-from joint_se3_common import (
+from .joint_se3_common import (
     DEFAULT_SEPARATION_M,
     FINGERS,
     TipViz,
@@ -51,17 +53,17 @@ def _summary(mcap_path: Path):
 
 
 def resolve_mcap(path_arg: str | None) -> Path:
-    """Use the given path, or the newest .mcap under ../recordings/."""
+    """Use the given path, or the newest .mcap under ./recordings/."""
     if path_arg:
         return Path(path_arg)
-    recordings = Path(__file__).resolve().parent.parent / "recordings"
+    recordings = Path.cwd() / "recordings"
     candidates = list(recordings.glob("joint_se3_pose_*.mcap")) or list(
         recordings.glob("*.mcap")
     )
     if not candidates:
         sys.exit(
             f"[replay-joints] no .mcap files in {recordings}. "
-            "Run record_joint_se3_pose.py first."
+            "Run python -m isaaccapture_examples.mcap_record_replay.record_joint_se3_pose first."
         )
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
@@ -162,15 +164,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "mcap",
         nargs="?",
-        help="Recording to replay (default: newest under ../recordings/)",
+        help="Recording to replay (default: newest under ./recordings/)",
     )
     parser.add_argument(
         "--collections",
         default=None,
         help="Comma-separated collection ids to replay (default: auto-discover from the MCAP)",
-    )
-    parser.add_argument(
-        "--loop", action="store_true", help="Replay in a loop until Ctrl+C"
     )
     parser.add_argument(
         "--host",
@@ -218,27 +217,24 @@ def main(argv: list[str]) -> int:
 
     server = make_server(args.host, args.port, "[replay-joints]")
     viz = {cid: TipViz(server, cid, args.separation) for cid in collections}
-    if not args.loop:
-        # The server dies with the process at end-of-file, which is a blink for a short
-        # recording.
-        print("[replay-joints] pass --loop to keep the viser view up")
 
-    while True:
-        # Fresh trackers + session per pass (replay consumes the file front-to-back).
-        trackers = {cid: JointSe3PoseTracker(cid) for cid in collections}
-        config = McapReplayConfig(
-            str(mcap_path), tracker_names=[(t, cid) for cid, t in trackers.items()]
-        )
-        with ReplaySession.run(config) as session:
-            frames, samples = run_once(session, trackers, viz, rate)
-        print(f"[replay-joints] done — {frames} frames")
-        for cid in collections:
-            side = hand_side(cid)
-            named = f"{cid} ({side})" if side else cid
-            print(f"[replay-joints]   {named}: {samples[cid]} frames with data")
-        if not args.loop:
-            break
-        print("[replay-joints] looping…")
+    try:
+        while True:
+            # Fresh trackers + session per pass (replay consumes the file front-to-back).
+            trackers = {cid: JointSe3PoseTracker(cid) for cid in collections}
+            config = McapReplayConfig(
+                str(mcap_path), tracker_names=[(t, cid) for cid, t in trackers.items()]
+            )
+            with ReplaySession.run(config) as session:
+                frames, samples = run_once(session, trackers, viz, rate)
+            print(f"[replay-joints] done — {frames} frames")
+            for cid in collections:
+                side = hand_side(cid)
+                named = f"{cid} ({side})" if side else cid
+                print(f"[replay-joints]   {named}: {samples[cid]} frames with data")
+            print("[replay-joints] looping…")
+    except KeyboardInterrupt:
+        pass
 
     return 0
 

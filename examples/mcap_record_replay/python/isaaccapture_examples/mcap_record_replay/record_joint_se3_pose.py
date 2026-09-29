@@ -17,7 +17,7 @@ Prerequisites (separate terminals):
 
 Usage:
     source ~/.cloudxr/run/cloudxr.env
-    uv run record_joint_se3_pose.py [duration_s] [output.mcap] [--collections a,b]
+    python -m isaaccapture_examples.mcap_record_replay.record_joint_se3_pose [duration_s] [output.mcap] [--collections a,b]
 """
 
 import argparse
@@ -75,7 +75,7 @@ def main(argv: list[str]) -> int:
         mcap_path = Path(args.output)
         mcap_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        out_dir = Path(__file__).resolve().parent.parent / "recordings"
+        out_dir = Path.cwd() / "recordings"
         out_dir.mkdir(exist_ok=True)
         mcap_path = out_dir / f"joint_se3_pose_{datetime.now():%Y%m%d_%H%M%S}.mcap"
 

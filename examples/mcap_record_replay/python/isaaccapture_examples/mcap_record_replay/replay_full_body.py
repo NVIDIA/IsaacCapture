@@ -9,11 +9,11 @@ headless on any machine. Open the URL viser prints (default
 http://localhost:8080) in a browser to see the body skeleton.
 
 Usage:
-    python -m isaaccapture_examples.mcap_record_replay.replay_full_body [path/to/file.mcap] [--port 8080] [--loop]
+    python -m isaaccapture_examples.mcap_record_replay.replay_full_body [path/to/file.mcap] [--port 8080]
 
 If no path is given, the newest ``full_body_*.mcap`` under ``./recordings/`` is
 used.
-``--loop`` keeps replaying the file end-to-end until the process is killed.
+Replay repeats until Ctrl+C.
 
 See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
@@ -127,11 +127,6 @@ def main(argv: list[str]) -> int:
         help="Viser HTTP bind address (default: 0.0.0.0, all interfaces; pass 127.0.0.1 to keep it local)",
     )
     parser.add_argument("--port", type=int, default=8080, help="Viser HTTP port")
-    parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Replay the file in a loop until Ctrl+C",
-    )
     args = parser.parse_args(argv[1:])
 
     mcap_path = resolve_mcap(args.mcap)
@@ -147,18 +142,13 @@ def main(argv: list[str]) -> int:
     )
     print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
-    while True:
-        run_once(mcap_path, duration_s, viz)
-        if not args.loop:
-            break
-        print("[replay] looping…")
-
-    print("[replay] done — viser server still up; Ctrl+C to exit")
     try:
         while True:
-            time.sleep(1.0)
+            run_once(mcap_path, duration_s, viz)
+            print("[replay] looping…")
     except KeyboardInterrupt:
         pass
+
     return 0
 
 
