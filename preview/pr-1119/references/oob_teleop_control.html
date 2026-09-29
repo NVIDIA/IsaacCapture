@@ -486,7 +486,7 @@ page access and CloudXR streaming)</p></li>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
 parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;HOST_IP&gt;</span></code> with the streaming host’s LAN IP. The <code class="docutils literal notranslate"><span class="pre">port</span></code> must
 match the proxy port (default 48322).</p>
 <div class="admonition note">
@@ -820,7 +820,7 @@ Pass it as:</p>
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
 <p>The web client connects to the hub when the page URL contains
 <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code> plus <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
 <p>The client builds <code class="docutils literal notranslate"><span class="pre">wss://{serverIP}:{port}/oob/v1/ws</span></code> and:</p>
 <ol class="arabic simple">
 <li><p>Registers as role <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code></p></li>
