@@ -202,6 +202,15 @@ function Scene({ streamTestEnabled }: { streamTestEnabled: boolean }) {
             sawDisconnectedAfterCancel = true;
           }
           appendLog(`[status] connected=${isConnected} ${status}`);
+          if (status === 'Connected') {
+            // MockCloudXR.render() only renders the scene (and emits PerFrame metrics) once
+            // warm-up completes, which now only happens once a test queues a frame via
+            // videoFrameReceived() - see that method's doc comment. This test doesn't care
+            // about warm-up simulation, so it simulates one real frame arriving immediately,
+            // matching how a real client typically behaves (see StreamAttachTimeoutTest.tsx
+            // for a harness that deliberately drives warm-up timing instead).
+            activeSession?.videoFrameReceived();
+          }
         }}
         onError={error => {
           hadError = true;

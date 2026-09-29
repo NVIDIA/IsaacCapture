@@ -20,10 +20,16 @@
  * without a real CloudXR server.
  *
  * Drives `CloudXR.SessionDelegates` through a plausible lifecycle (connecting -> connected,
- * periodic onLog/onMetrics, onStreamStopped on disconnect) and, in place of decoding a real
- * video stream, renders a small placeholder scene (see webglMockScene.ts) into each eye's
- * viewport of the XRWebGLLayer handed to {@link MockCloudXR.render}, using plain WebGL2 rather
- * than three.js - see webglMockScene.ts's header comment for why.
+ * decoder warm-up, periodic onLog/onMetrics, onStreamStopped on disconnect) and, in place of
+ * decoding a real video stream, renders a small placeholder scene (see webglMockScene.ts) into
+ * each eye's viewport of the XRWebGLLayer handed to {@link MockCloudXR.render}, using plain
+ * WebGL2 rather than three.js - see webglMockScene.ts's header comment for why. Decoder warm-up
+ * (render() shows black until it completes) advances only when a test calls
+ * {@link MockCloudXR.videoFrameReceived} to queue a frame - render() (run by
+ * CloudXRComponent's own loop, not a background clock here) is what actually consumes it and
+ * does the counting/logging, same relationship as the real SDK's decoded-video callback and
+ * render(). Zero warm-up frames by default, configurable via
+ * setWarmupTotalFrames()/setWarmupFirstStatusFrame().
  */
 
 // Imports the real SDK's concrete entry file, not the bare '@nvidia/cloudxr' specifier: webpack
@@ -36,6 +42,17 @@ import { mat4InvertRigid, rotateVectorByQuaternion, WebGLMockScene } from './web
 
 const DEFAULT_CONNECT_DELAY_MS = 500;
 const NETWORK_METRICS_INTERVAL_MS = 1000;
+// No simulated warm-up delay by default - render() shows the scene from the first frame, like
+// pre-warmup-simulation mock behavior. Set via setWarmupTotalFrames() for tests that need it.
+const DEFAULT_WARMUP_TOTAL_FRAMES = 0;
+// Matches the real SDK's own warm-up progress cadence: it logs every 10th warm-up frame, not
+// every frame.
+const WARMUP_LOG_INTERVAL = 10;
+// Frame the *first* warm-up progress log fires on - matches WARMUP_LOG_INTERVAL by default (the
+// real SDK's first log is also its 10th warm-up frame), but settable separately via
+// setWarmupFirstStatusFrame() so a test can get fast confirmation that warm-up has begun without
+// waiting for 10 real rendered frames.
+const DEFAULT_WARMUP_FIRST_STATUS_FRAME = WARMUP_LOG_INTERVAL;
 
 /**
  * Sentinel `gl` value for {@link CloudXR.SessionOptions.gl}: a MockCloudXR constructed with this
@@ -101,12 +118,35 @@ export class MockCloudXR implements CloudXR.Session {
   private networkMetricsTimer: ReturnType<typeof setInterval> | null = null;
   private frameCount = 0;
   private lastRenderTimestamp: DOMHighResTimeStamp | null = null;
+  // Monotonic per-render() counter, reset to 0 at the top of each connect()'s Connected
+  // transition (see finishConnecting()). Exposed read-only via getCurrentFrameID() - a stand-in
+  // for the real client's own outgoing per-frame ID sequence, for tests that want a frame number
+  // to hand to videoFrameReceived().
+  private currentFrameId = 0;
 
   private connectDelayMs = DEFAULT_CONNECT_DELAY_MS;
   private networkQuality: CloudXR.QualityScore = CloudXR.QualityScore.Excellent;
+  // Mailbox written by videoFrameReceived(), consumed (once) by the next render() call - same
+  // relationship as the real SDK's own per-frame state, written by its decoded-video handling
+  // and read by render(). hasPendingFrame distinguishes "nothing received yet" from a pending
+  // frameId of literally `undefined` (fall back to the internal warm-up counter - see
+  // videoFrameReceived's doc comment).
+  private hasPendingFrame = false;
+  private pendingFrameId: number | undefined = undefined;
+  // Set via setWarmupTotalFrames(); persists across connect()s on this instance the same way
+  // connectDelayMs does. `null` simulates warm-up that never completes - drives
+  // CloudXRComponent's warmupEndTimeoutMs in a test. Only consulted when a pending frame's
+  // frameId is `undefined` - see videoFrameReceived's doc comment.
+  private warmupTotalFrames: number | null = DEFAULT_WARMUP_TOTAL_FRAMES;
+  private warmupFramesSeen = 0;
+  // Set via setWarmupFirstStatusFrame(); see DEFAULT_WARMUP_FIRST_STATUS_FRAME's doc comment.
+  private warmupFirstStatusFrame = DEFAULT_WARMUP_FIRST_STATUS_FRAME;
+  // True once this connect()'s warm-up has completed - render() renders black (no scene) until
+  // then, matching the real SDK: decoder warm-up frames carry no pose-backed video to show.
+  private warmupComplete = false;
 
-  // Scene time is explicit rather than timestamp-driven, so the render is static/reproducible
-  // by default; see MockCloudXR.setSceneTime / MockCloudXRController.setSceneTime.
+  // Scene time is explicit rather than timestamp-driven, so the render is static/reproducible by
+  // default, set only via videoFrameReceived()'s optional applicationTime.
   private sceneTime = 0;
 
   private scene: WebGLMockScene | null = null;
@@ -166,6 +206,16 @@ export class MockCloudXR implements CloudXR.Session {
     this.connectTimer = setTimeout(() => {
       this.connectTimer = null;
       this.sessionState = CloudXR.SessionState.Connected;
+      // Reset per-attempt warm-up state *before* onStreamStarted, not after: that delegate call
+      // is synchronous, and a caller reacting to it (e.g. onStatusChange('Connected') calling
+      // videoFrameReceived() - see CloudXRComponentTest.tsx) can set hasPendingFrame within this
+      // same call stack. Resetting afterward would silently wipe out a pending frame queued that
+      // way.
+      this.warmupComplete = false;
+      this.warmupFramesSeen = 0;
+      this.currentFrameId = 0;
+      this.hasPendingFrame = false;
+      this.pendingFrameId = undefined;
       this.log(CloudXR.LogLevel.Info, 'Mock stream started');
       this.delegates.onStreamStarted?.();
       this.networkMetricsTimer = setInterval(
@@ -228,12 +278,36 @@ export class MockCloudXR implements CloudXR.Session {
     return pose !== null;
   }
 
+  /**
+   * Also consumes any frame videoFrameReceived() queued (see processPendingFrame's doc
+   * comment) - matching the real SDK's own render(), which reads whatever per-frame state its
+   * decoded-video handling last wrote, rather than doing any counting/logging itself.
+   */
   render(timestamp: DOMHighResTimeStamp, frame: XRFrame, layer: XRWebGLLayer): void {
     if (this.sessionState !== CloudXR.SessionState.Connected) {
       return;
     }
     const pose = frame.getViewerPose(this.options.referenceSpace);
     if (!pose) {
+      return;
+    }
+    this.currentFrameId++;
+    if (this.hasPendingFrame) {
+      this.processPendingFrame();
+    }
+
+    if (!this.warmupComplete) {
+      // Decoder warm-up frames carry no pose-backed video to show - see processPendingFrame,
+      // which counts warm-up frames (from a frame videoFrameReceived() queued) and flips this
+      // flag.
+      if (this.options.gl !== NullWebGLContext) {
+        const gl = this.options.gl;
+        this.delegates.onWebGLStateChangeBegin?.();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        this.delegates.onWebGLStateChangeEnd?.();
+      }
       return;
     }
 
@@ -259,6 +333,12 @@ export class MockCloudXR implements CloudXR.Session {
       this.delegates.onWebGLStateChangeEnd?.();
     }
 
+    // Deliberately unreachable while still warming up (the early return above): in the real SDK,
+    // StreamingFramerate/StreamingFrameCount only update on a real, pose-correlated frame - its
+    // warm-up handling never reaches the code path that feeds these into the PerFrame metrics
+    // batch. A frozen StreamingFrameCount/StreamingFramerate while the session otherwise reads
+    // Connected is exactly the customer-visible symptom of a stuck decoder warm-up - don't move
+    // this above the warm-up check, even for convenience.
     this.frameCount++;
     this.delegates.onMetrics?.(
       {
@@ -295,12 +375,105 @@ export class MockCloudXR implements CloudXR.Session {
   }
 
   /**
-   * Sets the scene's animation time (seconds). The scene is static between calls: render() poses
-   * animated objects from this value rather than the real render timestamp, so a given scene time
-   * always renders the same frame.
+   * Sets how many warm-up frames the *next* connect() simulates before completing.
+   * `null` simulates warm-up that never completes - drives CloudXRComponent's
+   * warmupEndTimeoutMs.
    */
-  setSceneTime(seconds: number): void {
-    this.sceneTime = seconds;
+  setWarmupTotalFrames(totalFrames: number | null): void {
+    this.warmupTotalFrames = totalFrames;
+  }
+
+  /**
+   * Sets which warm-up frame the *next* connect()'s first progress log fires on (subsequent
+   * logs still follow WARMUP_LOG_INTERVAL). See DEFAULT_WARMUP_FIRST_STATUS_FRAME's doc comment.
+   */
+  setWarmupFirstStatusFrame(frame: number): void {
+    this.warmupFirstStatusFrame = frame;
+  }
+
+  /**
+   * Returns the current render() frame counter for this connect() (see currentFrameId's field
+   * comment) - a convenience for a test that wants a real, monotonically increasing frame number
+   * to pass as videoFrameReceived()'s frameId, rather than picking an arbitrary one.
+   */
+  getCurrentFrameID(): number {
+    return this.currentFrameId;
+  }
+
+  /**
+   * Simulates one decoded video frame arriving from the server - but, matching the real SDK's
+   * architecture, this only writes the mailbox (pendingFrameId) that the *next* render() call
+   * consumes; it does no counting or logging itself. A test calls this explicitly to drive
+   * warm-up progress and/or animation deterministically - there is no background clock doing
+   * either automatically, but render() itself keeps running on every real XR frame (driven by
+   * CloudXRComponent's own loop), so a pending frame set here is consumed on the very next one.
+   *
+   * `frameId` mirrors the real SDK's own warm-up/real-frame decision: a client-sent pose gets
+   * correlated with the decoded frame it produced via an RTP-derived frame ID, and a value of
+   * `0` is the sentinel for "server encoder warm-up frame, not tied to any client pose."
+   * `frameId === 0` simulates that sentinel here; any other `frameId` simulates a real,
+   * pose-correlated frame. Omitting `frameId` entirely (undefined) falls back to the internal
+   * warm-up counter instead of a real ID - for a test that only cares about warm-up progress/
+   * timing, not the ID protocol.
+   *
+   * @param frameId - Simulated RTP-derived frame ID. `0` = warm-up frame (matches the real
+   *   warm-up sentinel); any other number = a real, pose-correlated frame. Omit entirely to
+   *   fall back to the internal warm-up counter instead of a real ID.
+   * @param applicationTime - Sets the scene's animation time to this many milliseconds (absolute,
+   *   not a delta). Omit to leave it unchanged. The scene is otherwise static between calls:
+   *   render() poses animated objects from this value rather than the real render timestamp, so
+   *   a given sequence of calls always renders the same frames.
+   */
+  videoFrameReceived(frameId?: number, applicationTime?: number): void {
+    if (applicationTime !== undefined) {
+      this.sceneTime = applicationTime / 1000;
+    }
+    this.pendingFrameId = frameId;
+    this.hasPendingFrame = true;
+  }
+
+  /**
+   * Consumes the mailbox videoFrameReceived() writes (see that method's doc comment) - called
+   * once per render() call, only when a frame is actually pending, so repeated render() calls
+   * between two videoFrameReceived() calls don't double-count the same frame. Does the counting
+   * and logging that method used to do directly: while still warming up, logs progress on
+   * warmupFirstStatusFrame and every WARMUP_LOG_INTERVALth frame after that (matching the real
+   * SDK's own warm-up progress cadence, but with the first log's frame number separately
+   * configurable via setWarmupFirstStatusFrame() for faster test feedback). Once warm-up
+   * completes, sets warmupComplete so render() switches from black to the scene on its next
+   * call.
+   */
+  private processPendingFrame(): void {
+    this.hasPendingFrame = false;
+    if (this.warmupComplete) {
+      return;
+    }
+    const frameId = this.pendingFrameId;
+    const isWarmupFrame =
+      frameId === undefined
+        ? this.warmupTotalFrames === null || this.warmupFramesSeen < this.warmupTotalFrames
+        : frameId === 0;
+    if (isWarmupFrame) {
+      this.warmupFramesSeen++;
+      if (
+        this.warmupFramesSeen === this.warmupFirstStatusFrame ||
+        this.warmupFramesSeen % WARMUP_LOG_INTERVAL === 0
+      ) {
+        this.log(
+          CloudXR.LogLevel.Info,
+          `Decoder warm-up in progress: ${this.warmupFramesSeen} initialization frames received`
+        );
+      }
+      return;
+    }
+    this.warmupComplete = true;
+    // Unlike the real SDK (which only logs this when at least one warm-up frame occurred), the
+    // mock always logs completion here - including the framesSeen === 0 default - so
+    // CloudXRComponent's onWarmupStatus/completed signal is always observable.
+    this.log(
+      CloudXR.LogLevel.Info,
+      `Stream rendering started after ${this.warmupFramesSeen} decoder warm-up frame${this.warmupFramesSeen === 1 ? '' : 's'}`
+    );
   }
 
   /** Delivers `data` through `onServerMessageReceived`, as if the server had sent it. */
@@ -450,9 +623,27 @@ export class MockCloudXRController {
     this.mock.setNetworkQuality(quality);
   }
 
-  /** Sets the scene's animation time (seconds); the render is static until this is called again. */
-  setSceneTime(seconds: number): void {
-    this.mock.setSceneTime(seconds);
+  /** Sets how many warm-up frames to simulate before completing (null = never) for the next connect(). */
+  setWarmupTotalFrames(totalFrames: number | null): void {
+    this.mock.setWarmupTotalFrames(totalFrames);
+  }
+
+  /** Sets which warm-up frame the first progress log fires on for the next connect(). */
+  setWarmupFirstStatusFrame(frame: number): void {
+    this.mock.setWarmupFirstStatusFrame(frame);
+  }
+
+  /** Returns the current render() frame counter for this connect() (0 until the first render()). */
+  getCurrentFrameID(): number {
+    return this.mock.getCurrentFrameID();
+  }
+
+  /**
+   * Simulates one decoded video frame arriving. `frameId` 0 = warm-up frame, other = real frame,
+   * omitted = fall back to the internal warm-up counter; see MockCloudXR.videoFrameReceived.
+   */
+  videoFrameReceived(frameId?: number, applicationTime?: number): void {
+    this.mock.videoFrameReceived(frameId, applicationTime);
   }
 
   /** Delivers a fake inbound server message. */
