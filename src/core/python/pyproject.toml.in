@@ -63,7 +63,8 @@ include = [
 [tool.setuptools.package-data]
 isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed"]
 "isaaccapture.deviceio" = ["*.so", "*.pyd", "*.pyi"]
-"isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi"]
+# CHROMIUM_LICENSE: the notice for the key table compiled into _deviceio_trackers.
+"isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi", "CHROMIUM_LICENSE"]
 "isaaccapture.deviceio_session" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.mcap" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.oxr" = ["*.so", "*.pyd", "*.pyi"]

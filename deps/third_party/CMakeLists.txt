@@ -278,3 +278,21 @@ if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)
 
     include("${CMAKE_CURRENT_LIST_DIR}/Mujoco.cmake")
 endif()
+
+# ==============================================================================
+# Chromium physical key table (vendored source, BSD-3-Clause; see chromium/README.md)
+# ==============================================================================
+# Header-only: consumers write <chromium/dom_code_data.inc>.
+add_library(chromium_dom_codes INTERFACE)
+target_include_directories(chromium_dom_codes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/chromium/include)
+add_library(third_party::chromium_dom_codes ALIAS chromium_dom_codes)
+
+# Binary redistributions of the table must carry Chromium's notice: copies its LICENSE next to
+# `target`'s output as CHROMIUM_LICENSE after each build.
+function(chromium_dom_codes_stage_license target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/chromium/LICENSE"
+                "$<TARGET_FILE_DIR:${target}>/CHROMIUM_LICENSE"
+        COMMENT "Staging Chromium's LICENSE beside $<TARGET_FILE_NAME:${target}>")
+endfunction()

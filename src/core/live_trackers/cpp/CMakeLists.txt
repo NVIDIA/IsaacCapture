@@ -15,6 +15,7 @@ add_library(live_trackers STATIC
     live_full_body_tracker_xsens_impl.cpp
     live_tensor_push_tracker_impl.cpp
     live_haptic_command_reader_tracker_impl.cpp
+    live_keyboard_tracker_impl.cpp
     ${GENERATED_TRACKER_LIVE_SOURCES}
     inc/live_trackers/schema_tracker_base.hpp
     inc/live_trackers/schema_tracker.hpp
@@ -28,6 +29,7 @@ add_library(live_trackers STATIC
     live_full_body_tracker_xsens_impl.hpp
     live_tensor_push_tracker_impl.hpp
     live_haptic_command_reader_tracker_impl.hpp
+    live_keyboard_tracker_impl.hpp
 )
 
 target_include_directories(live_trackers
