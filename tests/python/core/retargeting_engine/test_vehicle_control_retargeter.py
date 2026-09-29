@@ -8,7 +8,7 @@ import math
 
 import pytest
 
-from isaacteleop.retargeters import (
+from isaaccapture.retargeters import (
     VehicleControlRetargeter,
     VehicleControlRetargeterConfig,
     axis_to_pedal,

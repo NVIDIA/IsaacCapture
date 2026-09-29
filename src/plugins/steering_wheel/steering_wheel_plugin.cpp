@@ -150,11 +150,10 @@ void SteeringWheelPlugin::close_device()
     close(device_fd_);
     device_fd_ = -1;
 
-     // Reset cached state so we don't keep publishing stale controls while disconnected.
-     axes_.assign(axes_.size(), 0.0f);
-     buttons_.assign(buttons_.size(), 0);
-     hat_ = { 0, 0 };
-
+    // Reset cached state so we don't keep publishing stale controls while disconnected.
+    axes_.assign(axes_.size(), 0.0f);
+    buttons_.assign(buttons_.size(), 0);
+    hat_ = { 0, 0 };
 }
 
 void SteeringWheelPlugin::push_current_state()
