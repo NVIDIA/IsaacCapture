@@ -26,8 +26,13 @@ from .oob_teleop_env import (
 log = logging.getLogger(__name__)
 
 
-class _UsbTransportLost(adb.OobAdbError):
-    """Host-owned USB topology disappeared while the browser was active."""
+class _TransportDisrupted(adb.OobAdbError):
+    """A USB-local substrate failed while browser survival remains possible."""
+
+    def __init__(self, reason: str, *, adb_ready: bool, network_present: bool) -> None:
+        super().__init__(reason)
+        self.adb_ready = adb_ready
+        self.network_present = network_present
 
 
 @dataclass(frozen=True)
@@ -249,13 +254,32 @@ class OobLifecycle:
         self.browser_client = None
         self.connect_dispatched = False
 
-    async def _enter_transport_recovery(self, reason: str, state: str) -> None:
+    async def _enter_transport_recovery(
+        self,
+        reason: str,
+        state: str,
+        *,
+        adb_ready: bool,
+        network_present: bool,
+    ) -> None:
         """Preserve browser intent and publish one USB-loss transition."""
         entering = not self._transport_lost
         await self._remember_transport_loss()
         if entering and self._transport_lost:
             self._restart_episode()
-        await self._publish("degraded", state, reason)
+        await self._publish(
+            "degraded",
+            state,
+            reason,
+            adbReady=adb_ready,
+            networkPresent=network_present,
+        )
+
+    def _transport_retry_interval(self) -> float:
+        """Poll an interrupted active session promptly without busy looping."""
+        if self._restore_existing_browser:
+            return min(self.config.interval_sec, 1.0)
+        return self.config.interval_sec
 
     async def _run_adb_command(self, command: list[str], *, timeout: float) -> object:
         """Finish an in-flight ADB mutation before cancellation cleanup runs."""
@@ -562,16 +586,10 @@ class OobLifecycle:
             )
             return
         if report.get("streaming") and fresh_post_repair:
-            if self.clock() >= self._client_grace_deadline:
-                # Streaming alone is not the complete host-owned topology: if
-                # CDP never becomes attachable, rebuild the browser once after
-                # the bounded grace rather than reporting a false ACTIVE state.
-                await self._automate()
-                return
             await self._publish(
-                "browser_ready",
+                "degraded",
                 "VERIFYING_EXISTING_BROWSER",
-                "Stream resumed; waiting for CDP forwarding and monitoring",
+                "Stream resumed; retrying passive CDP monitoring",
                 adbReady=True,
                 networkPresent=True,
                 reverseRulesVerified=True,
@@ -580,7 +598,7 @@ class OobLifecycle:
                 healthProbeAcknowledged=True,
                 streaming=True,
                 clientMetricsFresh=True,
-                turnEndToEndHealthy=False,
+                turnEndToEndHealthy=True,
                 streamPhase=phase,
             )
             return
@@ -634,6 +652,12 @@ class OobLifecycle:
     async def _verify_browser(self) -> None:
         """Wait for OOB proof after CONNECT without repeating the click on timeout."""
         if self.monitor is not None and self.monitor.done():
+            if self.usb_local:
+                raise _TransportDisrupted(
+                    "CDP monitor ended while verifying the browser",
+                    adb_ready=True,
+                    network_present=True,
+                )
             raise adb.OobAdbError("CDP monitor ended")
         assert self.browser_probe_after is not None
         report = await self.hub.probe_browser(self.generation, self.browser_probe_after)
@@ -670,17 +694,48 @@ class OobLifecycle:
             (h for h in state["headsets"] if h["clientId"] == self.browser_client), None
         )
         if client is None:
+            if self.usb_local:
+                raise _TransportDisrupted(
+                    "Browser OOB control client disconnected",
+                    adb_ready=True,
+                    network_present=True,
+                )
             self.browser_ready = False
             raise adb.OobAdbError("Browser OOB client disconnected")
         if self.monitor is not None and self.monitor.done():
             self.monitor = None
         if self.monitor is None:
-            await self._attach_existing_monitor()
+            attached = await self._attach_existing_monitor()
+            if self.usb_local and not attached:
+                raise _TransportDisrupted(
+                    "CDP monitor unavailable for the existing browser",
+                    adb_ready=True,
+                    network_present=True,
+                )
         phase = client.get("streamPhase") or (
             "streaming" if client.get("streaming") else "idle"
         )
+        if (
+            self.usb_local
+            and phase == "retrying"
+            and not self._restore_existing_browser
+        ):
+            raise _TransportDisrupted(
+                "Browser is retrying after a stream transport disruption",
+                adb_ready=True,
+                network_present=True,
+            )
         terminal_event = client.get("terminalEventId")
         if terminal_event and terminal_event not in self._handled_terminal_events:
+            if self.usb_local:
+                # Repair host-owned substrate before trusting any browser
+                # fallback. The terminal remains unseen so post-repair logic
+                # can dispatch at most one same-tab CONNECT if still needed.
+                raise _TransportDisrupted(
+                    f"Browser stream reached terminal event {terminal_event}",
+                    adb_ready=True,
+                    network_present=True,
+                )
             self._handled_terminal_events.add(terminal_event)
             if not await self._same_tab_connect(f"terminal:{terminal_event}"):
                 # Continue the bounded existing-browser path without rebuilding
@@ -708,6 +763,12 @@ class OobLifecycle:
                 self.generation, 0, client_id=self.browser_client
             )
             if report is None:
+                if self.usb_local:
+                    raise _TransportDisrupted(
+                        "Browser control heartbeat lost while metrics were stale",
+                        adb_ready=True,
+                        network_present=True,
+                    )
                 self.browser_ready = False
                 raise adb.OobAdbError("Browser heartbeat lost while metrics were stale")
         health = "active" if streaming and fresh and after_connect else "browser_ready"
@@ -743,19 +804,36 @@ class OobLifecycle:
         """Rebuild on a real TURN or reverse-rule loss, even before OOB proof."""
         if not self.usb_local:
             return
-        restarted = await self._ensure_coturn()
+        try:
+            restarted = await self._ensure_coturn()
+        except adb.OobAdbError as exc:
+            raise _TransportDisrupted(
+                f"TURN prerequisite unavailable: {exc}",
+                adb_ready=True,
+                network_present=True,
+            ) from exc
         verification = await asyncio.to_thread(
             adb.probe_adb_reverse_rules,
             [usb_ui_port(), self.resolved_port, usb_backend_port(), self.turn_port],
         )
         if not verification.adb_available:
-            raise _UsbTransportLost("ADB unavailable while verifying reverse rules")
+            raise _TransportDisrupted(
+                "ADB unavailable while verifying reverse rules",
+                adb_ready=False,
+                network_present=False,
+            )
         if verification.missing_ports:
-            raise _UsbTransportLost(
-                f"USB reverse rules missing: {verification.missing_ports}"
+            raise _TransportDisrupted(
+                f"USB reverse rules missing: {verification.missing_ports}",
+                adb_ready=True,
+                network_present=True,
             )
         if restarted:
-            raise _UsbTransportLost("coturn restarted; renewing browser connection")
+            raise _TransportDisrupted(
+                "coturn restarted; renewing browser connection",
+                adb_ready=True,
+                network_present=True,
+            )
 
     async def run(self) -> None:
         """Keep one headset recovered through ADB, browser, and streaming states.
@@ -839,13 +917,18 @@ class OobLifecycle:
                         reason = "Headset offline; reconnect the USB cable"
                     else:
                         reason = devices.diagnostic or "Waiting for selected headset"
-                    await self._enter_transport_recovery(reason, "WAITING_FOR_ADB")
-                    await self.sleep(self.config.interval_sec)
+                    await self._enter_transport_recovery(
+                        reason,
+                        "WAITING_FOR_ADB",
+                        adb_ready=False,
+                        network_present=False,
+                    )
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 self._ready_count += 1
                 self.last_adb_at = time.time()
-                if self._ready_count < 2:
-                    await self.sleep(self.config.interval_sec)
+                if self._ready_count < 2 and not self._restore_existing_browser:
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 network = await asyncio.to_thread(
                     adb.probe_headset_network, serial=self.selected
@@ -857,8 +940,10 @@ class OobLifecycle:
                     await self._enter_transport_recovery(
                         "ADB unavailable: " + network.diagnostic,
                         "WAITING_FOR_ADB",
+                        adb_ready=False,
+                        network_present=False,
                     )
-                    await self.sleep(self.config.interval_sec)
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 if network.state is adb.HeadsetNetworkState.NETWORK_PRESENT:
                     self.last_network_at = time.time()
@@ -866,14 +951,15 @@ class OobLifecycle:
                     self.usb_local
                     and network.state is adb.HeadsetNetworkState.NO_NETWORK
                 ):
-                    # PREPARING_DEVICE cannot proceed until WebRTC sees a network.
-                    await self._publish(
-                        "degraded",
-                        "PREPARING_DEVICE",
+                    # Preserve the page while the headset network returns;
+                    # transport repair runs before any browser fallback.
+                    await self._enter_transport_recovery(
                         "Headset has no non-loopback network",
-                        adbReady=True,
+                        "PREPARING_DEVICE",
+                        adb_ready=True,
+                        network_present=False,
                     )
-                    await self.sleep(self.config.interval_sec)
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 preserving_browser = (
                     self._transport_lost and self._restore_existing_browser
@@ -920,7 +1006,7 @@ class OobLifecycle:
                         adbReady=True,
                         networkPresent=True,
                     )
-                    await self.sleep(self.config.interval_sec)
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 if preserving_browser:
                     try:
@@ -954,7 +1040,7 @@ class OobLifecycle:
                             adbReady=True,
                             networkPresent=True,
                         )
-                    await self.sleep(self.config.interval_sec)
+                    await self.sleep(self._transport_retry_interval())
                     continue
                 if (
                     self.clock() >= self.episode_start + self.config.timeout_sec
@@ -996,11 +1082,16 @@ class OobLifecycle:
                             if self.usb_local:
                                 await self._rebuild_usb()
                             await self._automate()
-                except _UsbTransportLost as exc:
+                except _TransportDisrupted as exc:
                     # Enumeration can miss a quick cable flap. Reverse/TURN
                     # evidence enters the same preservation path immediately,
                     # without the ordinary retry sleep or browser teardown.
-                    await self._enter_transport_recovery(str(exc), "REBUILDING_USB")
+                    await self._enter_transport_recovery(
+                        str(exc),
+                        "REBUILDING_USB",
+                        adb_ready=exc.adb_ready,
+                        network_present=exc.network_present,
+                    )
                     continue
                 except asyncio.CancelledError:
                     raise

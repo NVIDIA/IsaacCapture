@@ -611,7 +611,11 @@ On startup the launcher:
    The WebXR client owns its bounded reconnect attempts. Fresh post-repair
    stream metrics resume the existing session; a stable terminal event allows
    one same-tab CONNECT click, and only a missing/unusable tab falls back to
-   full browser launch automation.
+   full browser launch automation. ADB loss, missing reverse rules, TURN
+   failure or restart, and control/CDP/stream transport loss all enter this
+   preservation-first repair path. While preserving an active browser, the
+   launcher checks recovery prerequisites at most once per second instead of
+   waiting for the ordinary five-second observation cadence.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (``https://127.0.0.1:<usb_ui_port>``)

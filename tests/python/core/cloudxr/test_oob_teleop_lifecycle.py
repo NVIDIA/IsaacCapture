@@ -153,7 +153,7 @@ async def test_replug_repair_observes_after_deadline_until_topology_changes():
         with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
 
-    assert rebuild_times == [1.0, 2.0, 4.0]
+    assert rebuild_times == [0.0, 1.0, 4.0]
     expired = [
         status
         for status in hub.statuses
@@ -566,7 +566,11 @@ async def test_late_coturn_fault_opens_new_episode():
     assert lifecycle._restore_existing_browser is True
     assert rebuilds == [True]
     automate.assert_not_called()
-    assert any("coturn restarted" in status["reason"] for status in hub.statuses)
+    transition = next(
+        status for status in hub.statuses if "coturn restarted" in status["reason"]
+    )
+    assert transition["adbReady"] is True
+    assert transition["networkPresent"] is True
 
 
 async def test_wifi_restoration_reopens_expired_episode():
@@ -611,6 +615,102 @@ async def test_wifi_restoration_reopens_expired_episode():
             await lifecycle.run()
     assert lifecycle.episode_start == 100.0
     assert lifecycle.attempts == 1
+
+
+async def test_usb_network_loss_preserves_browser_and_uses_fast_retry():
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+    sleeps = []
+
+    async def stop_after_transition(seconds):
+        sleeps.append(seconds)
+        raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(60, 5),
+        sleep=stop_after_transition,
+    )
+    lifecycle.selected = "original"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "surviving-page"
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NO_NETWORK),
+        ),
+        patch.object(lifecycle, "_automate") as automate,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert sleeps == [1.0]
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    automate.assert_not_called()
+    transition = hub.statuses[-1]
+    assert transition["adbReady"] is True
+    assert transition["networkPresent"] is False
+
+
+async def test_returning_transport_skips_second_ready_debounce():
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=lambda _seconds: pytest.fail(
+            "returning transport must repair immediately"
+        ),
+    )
+    lifecycle.selected = "original"
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    rebuilds = []
+
+    async def stop_at_rebuild():
+        rebuilds.append(True)
+        raise asyncio.CancelledError
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value="",
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
+        patch.object(lifecycle, "_rebuild_usb", new=stop_at_rebuild),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert lifecycle._ready_count == 1
+    assert rebuilds == [True]
 
 
 async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failure():
@@ -922,6 +1022,84 @@ async def test_registered_browser_disconnect_triggers_new_connect():
     assert hub.statuses[-1]["health"] == "browser_ready"
 
 
+async def test_usb_control_disconnect_enters_preservation_before_automation():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "lost-control-client"
+
+    with patch.object(lifecycle, "_automate") as automate:
+        with pytest.raises(adb.OobAdbError, match="control client disconnected") as exc:
+            await lifecycle._observe_stream()
+        await lifecycle._enter_transport_recovery(
+            str(exc.value),
+            "REBUILDING_USB",
+            adb_ready=exc.value.adb_ready,
+            network_present=exc.value.network_present,
+        )
+
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    assert lifecycle.browser_ready is False
+    automate.assert_not_called()
+    assert hub.statuses[-1]["adbReady"] is True
+    assert hub.statuses[-1]["networkPresent"] is True
+
+
+async def test_usb_retrying_phase_repairs_transport_before_browser_fallback():
+    hub = FakeHub()
+    hub.get_snapshot = lambda: asyncio.sleep(
+        0,
+        result={
+            "headsets": [
+                {
+                    "clientId": "surviving-page",
+                    "streaming": False,
+                    "lastMetricsAt": None,
+                    "streamPhase": "retrying",
+                    "terminalEventId": None,
+                }
+            ]
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "surviving-page"
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=True),
+        patch.object(lifecycle, "_same_tab_connect") as same_tab,
+        patch.object(lifecycle, "_automate") as automate,
+    ):
+        with pytest.raises(adb.OobAdbError, match="retrying") as exc:
+            await lifecycle._observe_stream()
+        await lifecycle._enter_transport_recovery(
+            str(exc.value),
+            "REBUILDING_USB",
+            adb_ready=exc.value.adb_ready,
+            network_present=exc.value.network_present,
+        )
+
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    same_tab.assert_not_called()
+    automate.assert_not_called()
+
+
 async def test_missing_reverse_rule_during_probe_wait_triggers_rebuild():
     hub = FakeHub()
     ready = AdbDevices((("original", "device"),))
@@ -981,7 +1159,13 @@ async def test_missing_reverse_rule_during_probe_wait_triggers_rebuild():
             await lifecycle.run()
 
     assert rebuilds == [True]
-    assert any("USB reverse rules missing" in s["reason"] for s in hub.statuses)
+    transition = next(
+        status
+        for status in hub.statuses
+        if "USB reverse rules missing" in status["reason"]
+    )
+    assert transition["adbReady"] is True
+    assert transition["networkPresent"] is True
 
 
 async def test_quick_cable_flap_repairs_transport_without_browser_automation():
@@ -1156,7 +1340,80 @@ async def test_reverse_probe_adb_loss_enters_same_preservation_recovery():
     assert lifecycle._restore_existing_browser is True
     assert rebuilds == [True]
     automate.assert_not_called()
-    assert any("ADB unavailable" in status["reason"] for status in hub.statuses)
+    transition = next(
+        status for status in hub.statuses if "ADB unavailable" in status["reason"]
+    )
+    assert transition["adbReady"] is False
+    assert transition["networkPresent"] is False
+
+
+async def test_coturn_substrate_failure_enters_immediate_preservation_recovery():
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+
+    async def no_sleep(_):
+        pytest.fail("TURN transport-loss transition must not take the generic sleep")
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=no_sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._last_health = "active"
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "surviving-page"
+    rebuilds = []
+
+    async def failed_coturn():
+        raise adb.OobAdbError("coturn is not listening")
+
+    async def stop_at_rebuild():
+        rebuilds.append(True)
+        raise asyncio.CancelledError
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value="",
+        ),
+        patch.object(lifecycle, "_ensure_coturn", new=failed_coturn),
+        patch.object(lifecycle, "_rebuild_usb", new=stop_at_rebuild),
+        patch.object(lifecycle, "_automate") as automate,
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules"
+        ) as reverse_probe,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    assert rebuilds == [True]
+    automate.assert_not_called()
+    reverse_probe.assert_not_called()
+    transition = next(
+        status
+        for status in hub.statuses
+        if "TURN prerequisite unavailable" in status["reason"]
+    )
+    assert transition["adbReady"] is True
+    assert transition["networkPresent"] is True
 
 
 async def test_prepare_wakes_each_attempt_but_clears_cache_once():
@@ -1490,7 +1747,7 @@ async def test_existing_page_retrying_then_streaming_within_grace_never_clicks()
     assert lifecycle.snapshot["health"] == "active"
 
 
-async def test_fresh_stream_without_cdp_stays_degraded_until_fallback():
+async def test_fresh_stream_without_cdp_never_mutates_live_browser():
     hub = FakeHub()
     now = time.time()
     clock = [0.0]
@@ -1527,12 +1784,13 @@ async def test_fresh_stream_without_cdp_stays_degraded_until_fallback():
         patch.object(lifecycle, "_automate", new=bootstrap),
     ):
         await lifecycle._recover_existing_browser()
-        assert lifecycle.snapshot["health"] == "browser_ready"
-        assert lifecycle.snapshot["turnEndToEndHealthy"] is False
+        assert lifecycle.snapshot["health"] == "degraded"
+        assert lifecycle.snapshot["streaming"] is True
+        assert lifecycle.snapshot["turnEndToEndHealthy"] is True
         assert lifecycle._transport_lost is True
         clock[0] = 21.0
         await lifecycle._recover_existing_browser()
-    assert bootstraps == [True]
+    assert bootstraps == []
 
 
 @pytest.mark.parametrize("phase", ["idle", "retrying"])
@@ -1815,18 +2073,23 @@ async def test_later_terminal_without_cdp_enters_bounded_existing_browser_recove
     lifecycle.browser_ready = True
     lifecycle.browser_client = "page"
 
-    async def no_tab(_key):
-        return False
-
     with (
         patch.object(lifecycle, "_attach_existing_monitor", return_value=True),
-        patch.object(lifecycle, "_same_tab_connect", new=no_tab),
+        patch.object(lifecycle, "_same_tab_connect") as same_tab_connect,
     ):
-        await lifecycle._observe_stream()
+        with pytest.raises(adb.OobAdbError, match="terminal event") as disruption:
+            await lifecycle._observe_stream()
+    same_tab_connect.assert_not_called()
+    await lifecycle._enter_transport_recovery(
+        str(disruption.value),
+        "REBUILDING_USB",
+        adb_ready=disruption.value.adb_ready,
+        network_present=disruption.value.network_present,
+    )
     assert lifecycle._transport_lost is True
     assert lifecycle._restore_existing_browser is True
-    assert lifecycle._repair_started_at is not None
-    assert lifecycle._client_grace_deadline is not None
+    assert lifecycle._repair_started_at is None
+    assert lifecycle._client_grace_deadline is None
 
 
 async def test_stale_pre_repair_metrics_do_not_mark_existing_page_active():
