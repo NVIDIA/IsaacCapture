@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 RealHand. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: realhand_ffg_glove_plugin
+description: "RealHand FFG Glove joint sensors"
+command: "./realhand_ffg_glove_plugin"
+version: "1.0.0"
+devices:
+  - path: "/glove/realhand_ffg_glove_left"
+    type: "joint_state"
+    description: "Left RealHand FFG Glove (21 joint sensors over USB serial)"
+  - path: "/glove/realhand_ffg_glove_right"
+    type: "joint_state"
+    description: "Right RealHand FFG Glove (21 joint sensors over USB serial)"
