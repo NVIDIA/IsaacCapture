@@ -493,7 +493,7 @@ page access and CloudXR streaming)</p></li>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
 parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;HOST_IP&gt;</span></code> with the streaming host’s LAN IP. The <code class="docutils literal notranslate"><span class="pre">port</span></code> must
 match the proxy port (default 48322).</p>
 <div class="admonition note">
@@ -663,22 +663,34 @@ so they match the SDK documentation. The hub stores them as an arbitrary
 <code class="docutils literal notranslate"><span class="pre">healthProbe</span> <span class="pre">{probeId,</span> <span class="pre">lifecycleGeneration}</span></code> to a newly registered
 browser page. That page answers
 <code class="docutils literal notranslate"><span class="pre">healthReport</span> <span class="pre">{probeId,</span> <span class="pre">lifecycleGeneration,</span> <span class="pre">pageTimestamp,</span> <span class="pre">streamStatus,</span>
-<span class="pre">lastMetricsAt,</span> <span class="pre">metricCadences}</span></code>. The hub accepts only the matching probe
-and generation from the target connection. It uses its own receive time for
-freshness; the headset clock is diagnostic only. A matching reply means the
-UI, WSS, and bidirectional browser control path are ready. The lifecycle
+<span class="pre">streamPhase,</span> <span class="pre">terminalEventId,</span> <span class="pre">terminalDetail,</span> <span class="pre">lastMetricsAt,</span> <span class="pre">metricCadences}</span></code>.
+<code class="docutils literal notranslate"><span class="pre">streamPhase</span></code> is one of <code class="docutils literal notranslate"><span class="pre">idle</span></code>, <code class="docutils literal notranslate"><span class="pre">connecting</span></code>, <code class="docutils literal notranslate"><span class="pre">retrying</span></code>, <code class="docutils literal notranslate"><span class="pre">streaming</span></code>,
+or <code class="docutils literal notranslate"><span class="pre">terminal</span></code>. A terminal event ID remains stable while that failure is
+replayed and changes only for a later, distinct terminal failure. Older clients
+that send only the boolean <code class="docutils literal notranslate"><span class="pre">streamStatus</span></code> remain supported. The hub accepts
+only the matching probe and generation from the target connection. It uses its
+own receive time for freshness; the headset clock is diagnostic only. A
+matching reply means the UI, WSS, and bidirectional browser control path are
+ready. The lifecycle
 reports <code class="docutils literal notranslate"><span class="pre">browser_ready</span></code> while waiting for a stream. In USB-local relay
 mode, <code class="docutils literal notranslate"><span class="pre">active</span></code> additionally requires <code class="docutils literal notranslate"><span class="pre">streamStatus=true</span></code> and fresh
 post-CONNECT client metrics; coturn listening and ADB rules alone are only
 TURN prerequisites.</p>
 <p>If CONNECT was dispatched but a fresh browser report has not arrived, the
 lifecycle remains degraded in <code class="docutils literal notranslate"><span class="pre">VERIFYING_BROWSER</span></code> and continues probing
-without clicking CONNECT again. A lost browser/control connection, a broken
-device-side prerequisite, or cable reconnection starts a new automation
-attempt. The browser bundle must implement <code class="docutils literal notranslate"><span class="pre">healthProbe</span></code> / <code class="docutils literal notranslate"><span class="pre">healthReport</span></code>;
-an older non-empty <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js</span></code> is not replaced
-automatically. OOB startup checks for the protocol and fails with an asset
-diagnostic if the local bundle is too old. For source-tree testing, run
+without clicking CONNECT again. After a USB cable replug, the lifecycle enters
+<code class="docutils literal notranslate"><span class="pre">VERIFYING_EXISTING_BROWSER</span></code> and gives the client’s configured reconnect loop
+time to finish. Fresh post-repair stream metrics return it to <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code> without
+closing, reloading, or navigating the surviving tab. One terminal event permits
+one same-tab CONNECT click; a full browser launch is reserved for the case where
+no usable tab survives the bounded grace period. The lifecycle is the sole
+owner of CDP/browser mutations; its error monitor only reports evidence.</p>
+<p>A lost browser/control connection or broken device-side prerequisite starts a
+new recovery attempt. The browser bundle must implement <code class="docutils literal notranslate"><span class="pre">healthProbe</span></code> /
+<code class="docutils literal notranslate"><span class="pre">healthReport</span></code>; an older non-empty
+<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js</span></code> is not replaced automatically. OOB
+startup checks for the protocol and fails with an asset diagnostic if the local
+bundle is too old. For source-tree testing, run
 <code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/webxr_client</span></code> and point
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> at its <code class="docutils literal notranslate"><span class="pre">build</span></code> directory before starting
 the service. USB-local static responses use <code class="docutils literal notranslate"><span class="pre">Cache-Control:</span> <span class="pre">no-store</span></code>;
@@ -867,7 +879,7 @@ Pass it as:</p>
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
 <p>The web client connects to the hub when the page URL contains
 <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code> plus <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
 <p>The client builds <code class="docutils literal notranslate"><span class="pre">wss://{serverIP}:{port}/oob/v1/ws</span></code> and:</p>
 <ol class="arabic simple">
 <li><p>Registers as role <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code></p></li>
@@ -963,22 +975,37 @@ recovery resumes even if the other devices remain connected. Without
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
-Expiry changes to observation mode; it never stops the host.</p></td>
+Expiry changes to observation mode; it never stops the host. If this is
+shorter than the browser reconnect budget, the host caps browser grace
+early enough to leave one retry interval for a bounded fallback.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code></p></td>
 <td><p>Positive finite retry and observation interval in seconds (default <code class="docutils literal notranslate"><span class="pre">5</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_ENABLED</span></code></p></td>
+<td><p>Enable the WebXR client’s stream reconnect loop (default <code class="docutils literal notranslate"><span class="pre">true</span></code>).
+The OOB lifecycle waits for this client-owned loop before taking over.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
+<td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">3</span></code>).
+The value is also included in the generated headset URL.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
+<td><p>Non-negative delay between browser-local attempts in milliseconds
+(default <code class="docutils literal notranslate"><span class="pre">3000</span></code>). The host derives its bounded recovery grace from
+this value and the maximum-attempt count.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
 <td><p>HTTPS static web client port for <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> (default <code class="docutils literal notranslate"><span class="pre">8080</span></code>).
 Binds to <code class="docutils literal notranslate"><span class="pre">127.0.0.1:&lt;port&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-maps the port to
 the headset.  <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> uses the WSS proxy port (<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>)
 instead; <code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code> has no effect on it.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -1010,9 +1037,12 @@ the WSS proxy uses (Python <code class="docutils literal notranslate"><span clas
 starts/verifies coturn, and creates <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> rules for 8080
 (static UI), 48322 (WSS), 49100 (backend), and 3478 (TURN).</p></li>
 <li><p>Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
-replugging the same serial rebuilds all four rules, CDP forwarding, and
-browser automation. A fresh browser health report confirms the control
-path; streaming with fresh metrics confirms the relay path.</p></li>
+replugging the same serial first rebuilds all four reverse rules, verifies
+coturn, and repairs CDP forwarding without mutating a surviving browser tab.
+The WebXR client owns its bounded reconnect attempts. Fresh post-repair
+stream metrics resume the existing session; a stable terminal event allows
+one same-tab CONNECT click, and only a missing/unusable tab falls back to
+full browser launch automation.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
@@ -1270,7 +1300,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 29, 2026.
       <br/>
     
   </p>
