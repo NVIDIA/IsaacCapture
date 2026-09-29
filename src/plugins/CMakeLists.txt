@@ -36,3 +36,7 @@ endif()
 if(BUILD_PLUGIN_WUJI_GLOVE)
     add_subdirectory(wuji_glove)
 endif()
+# Gated: requires a sourced ROS 2 environment (rclcpp + sensor_msgs via find_package()).
+if(BUILD_PLUGIN_IO_EXO_GLOVE_ROS2)
+    add_subdirectory(io_exo_glove_ros2)
+endif()

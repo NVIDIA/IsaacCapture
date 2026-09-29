@@ -63,6 +63,7 @@ option(BUILD_PLUGIN_OAK_CAMERA "Build OAK camera plugin (requires vcpkg for Dept
 option(BUILD_PLUGIN_NOITOM_MOCAP "Build Noitom mocap plugin (downloads MocapApi SDK)" OFF)
 option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetches SimpleBLE + nlohmann/json)" OFF)
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
+option(BUILD_PLUGIN_IO_EXO_GLOVE_ROS2 "Build exoskeleton glove ROS 2 (Humble) bridge plugin (Linux only; requires a sourced ROS 2 environment)" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)

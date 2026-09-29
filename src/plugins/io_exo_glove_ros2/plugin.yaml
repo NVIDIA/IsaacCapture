@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: io_exo_glove_ros2
+description: "Exoskeleton glove joint angles (ROS 2 sensor_msgs/JointState) as JointStateOutput"
+command: "./io_exo_glove_ros2_plugin"
+version: "1.0.0"
+devices:
+  - path: "/glove/exo_left"
+    type: "joint_state"
+    description: "Left exoskeleton glove (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"
+  - path: "/glove/exo_right"
+    type: "joint_state"
+    description: "Right exoskeleton glove (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"
