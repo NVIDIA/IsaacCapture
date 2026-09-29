@@ -30,8 +30,9 @@ WSS_PROXY_DEFAULT_PORT = 48322
 # GitHub Pages WebXR client root. The published client lives under a per-ref
 # slug (``main``, ``release-1.3.x``, ``v1.2.3``, ...); the docs build emits one
 # slug per ref it builds. :func:`default_web_client_origin` resolves the slug
-# for the installed version so OOB opens the matching client.
-WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacTeleop/client/"
+# for the installed version so OOB opens the matching client. GitHub redirects
+# renamed repository URLs, but Pages project paths must use the current repo name.
+WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
