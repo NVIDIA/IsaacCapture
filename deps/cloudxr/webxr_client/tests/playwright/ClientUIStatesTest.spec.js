@@ -55,7 +55,7 @@ test.describe('client UI states', () => {
     await expect(page.locator('#errorMessageText')).toHaveText('Immersive mode not supported');
   });
 
-  test('passthrough-only: a session that enters but never streams looks identical to a slow connect', async ({
+  test('passthrough-only: a session that enters but never streams is now detected via streamAttachTimeoutMs', async ({
     page,
   }) => {
     test.setTimeout(30000);
@@ -70,7 +70,17 @@ test.describe('client UI states', () => {
     const consoleLines = [];
     page.on('console', msg => consoleLines.push(msg.text()));
 
-    await page.goto('http://localhost:8082/');
+    // streamAttachTimeoutMs is a URL-configurable param (params.ts) read straight into
+    // CloudXRComponent's prop of the same name (App.tsx) - overridden here so this test doesn't
+    // have to wait out the real 2-minute default to observe the timeout firing.
+    //
+    // reconnectEnabled=false is explicit, not incidental: its checkbox (cloudxrReconnectEnabled)
+    // can come in checked (index.html default, or persisted localStorage from an earlier test in
+    // this same browser context), and if it is, the synthetic attach-timeout error goes through
+    // 3 retries - each with a doubling attach budget - before finally giving up, which both
+    // changes what this test is actually exercising and can outlast a 15s console-wait timeout.
+    // This test wants the no-retry give-up path specifically.
+    await page.goto('http://localhost:8082/?streamAttachTimeoutMs=500&reconnectEnabled=false');
     // See AppMockTest.spec.js: "IWER DevUI initialized with XR device." logs before
     // installRuntime() and is skipped on the supported no-DevUI path - "IWER runtime installed."
     // is the reliable, unconditional signal that navigator.xr is actually usable.
@@ -82,15 +92,21 @@ test.describe('client UI states', () => {
     await waitForConsoleText(consoleLines, 'CloudXR session connect initiated');
     await waitForConsoleText(consoleLines, 'Mock connecting to');
 
-    // Reliability doc's characterization of the gap: "the app only tracks isXRMode true/false" -
-    // give it a few seconds and confirm neither a stream-started signal nor any error/warning
-    // ever distinguishes this from a session that's connecting normally.
-    await page.waitForTimeout(3000);
-    expect(consoleLines.some(l => l.includes('CloudXR stream started'))).toBe(false);
-    expect(consoleLines.some(l => l.includes('Mock stream started'))).toBe(false);
-    // errorMessageBox may legitimately show an unrelated "info" notice (e.g. the HEVC capability
-    // warning) - only the "error" type token (not the base "error-message-box" class) would
-    // indicate the app itself noticed a problem.
-    await expect(page.locator('#errorMessageBox')).not.toHaveClass(/(^|\s)error(\s|$)/);
+    // Reliability doc's characterization of the gap ("the app only tracks isXRMode true/false")
+    // no longer holds: CloudXRComponent.tsx's armStreamAttachTimer now fires a synthetic,
+    // recoverable error once streamAttachTimeoutMs elapses with no onStreamStarted. reconnect
+    // isn't enabled here (no reconnectEnabled=true param), so App.tsx's onError -> showError path
+    // is what surfaces it, the same as any other CloudXR error.
+    //
+    // Checked via console output, not the live #errorMessageBox class/text: that box is a single
+    // shared slot (CloudXR2DUI.tsx's own showStatus() doc comment) that an unrelated capability/
+    // performance "info" notice can legitimately overwrite shortly after our error renders - the
+    // original version of this test hit exactly that race. showStatus() always mirrors its
+    // message to console[type](message) too, which console output doesn't get overwritten.
+    await waitForConsoleText(consoleLines, 'CloudXR stream did not attach within 500ms');
+    await waitForConsoleText(
+      consoleLines,
+      'CloudXR session stopped: Stream did not attach within 500ms'
+    );
   });
 });
