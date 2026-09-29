@@ -237,8 +237,9 @@ Host-side consumption example:
    if thumb is not None:
        position, orientation = thumb.pose.position, thumb.pose.orientation
 
-See :code-file:`examples/mcap_record_replay/python/record_joint_se3_pose.py` for a
-runnable recorder, and ``replay_joint_se3_pose.py`` to play one back without hardware.
+See :code-file:`examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/record_joint_se3_pose.py` for a
+runnable recorder. Run ``python -m isaaccapture_examples.mcap_record_replay.replay_joint_se3_pose``
+to play one back without hardware.
 
 Haptic (inbound vibration)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

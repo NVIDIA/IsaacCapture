@@ -618,11 +618,10 @@ has no such requirement.</p>
 </section>
 <section id="replaying">
 <h3>Replaying<a class="headerlink" href="#replaying" title="Link to this heading">#</a></h3>
-<p>Replay runs headless — no headset required:</p>
+<p>Replay repeats until Ctrl+C — no headset required:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.replay_hand"</span>
 <span class="nv">$R</span><span class="w">                    </span><span class="c1"># newest hands_*.mcap under ./recordings/</span>
 <span class="nv">$R</span><span class="w"> </span>path/to/file.mcap<span class="w">  </span><span class="c1"># explicit file</span>
-<span class="nv">$R</span><span class="w"> </span>--loop<span class="w">             </span><span class="c1"># repeat until Ctrl+C</span>
 <span class="nv">$R</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w">        </span><span class="c1"># change viser port</span>
 </pre></div>
 </div>
@@ -630,7 +629,7 @@ has no such requirement.</p>
 left (green) and right (blue) hand skeletons update each frame.</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">record_controller</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> /
 <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
-<code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, <code class="docutils literal notranslate"><span class="pre">--loop</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
+<code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
 <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
 <p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> (instead of an activated venv) needs an explicit <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">3.11</span></code>
 — without it, <code class="docutils literal notranslate"><span class="pre">uv</span></code> may resolve against the system Python and fail to match

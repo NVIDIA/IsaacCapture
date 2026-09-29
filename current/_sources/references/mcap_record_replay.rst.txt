@@ -218,14 +218,13 @@ has no such requirement.
 Replaying
 ^^^^^^^^^
 
-Replay runs headless — no headset required:
+Replay repeats until Ctrl+C — no headset required:
 
 .. code-block:: bash
 
    R="python -m isaaccapture_examples.mcap_record_replay.replay_hand"
    $R                    # newest hands_*.mcap under ./recordings/
    $R path/to/file.mcap  # explicit file
-   $R --loop             # repeat until Ctrl+C
    $R --port 8090        # change viser port
 
 Open the printed URL (default ``http://localhost:8080``) in a browser to see the
@@ -233,7 +232,7 @@ left (green) and right (blue) hand skeletons update each frame.
 
 The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
 ``replay_full_body`` module pairs use the same CLI (positional MCAP path,
-``--host``, ``--port``, ``--loop``). ``live_full_body`` accepts ``--host``,
+``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
 ``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
 
 ``uv run`` (instead of an activated venv) needs an explicit ``--python 3.11``
