@@ -45,7 +45,7 @@ def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None
     )
     query = parse_qs(urlparse(url).query)
     assert query["reconnectEnabled"] == ["true"]
-    assert query["reconnectMaxAttempts"] == ["3"]
+    assert query["reconnectMaxAttempts"] == ["10"]
     assert query["reconnectDelayMs"] == ["3000"]
 
 

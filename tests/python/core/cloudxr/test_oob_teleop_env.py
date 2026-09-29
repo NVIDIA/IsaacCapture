@@ -315,7 +315,7 @@ def test_client_ui_fields_from_env_empty(clear_teleop_env: None) -> None:
     """Client and host receive the same default bounded-retry settings."""
     assert client_ui_fields_from_env() == {
         "reconnectEnabled": True,
-        "reconnectMaxAttempts": 3,
+        "reconnectMaxAttempts": 10,
         "reconnectDelayMs": 3000,
     }
 

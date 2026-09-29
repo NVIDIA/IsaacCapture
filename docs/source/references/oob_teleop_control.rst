@@ -561,7 +561,7 @@ Environment variables
      - Enable the WebXR client's stream reconnect loop (default ``true``).
        The OOB lifecycle waits for this client-owned loop before taking over.
    * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
-     - Non-negative number of browser-local reconnect attempts (default ``3``).
+     - Non-negative number of browser-local reconnect attempts (default ``10``).
        The value is also included in the generated headset URL.
    * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
      - Non-negative delay between browser-local attempts in milliseconds

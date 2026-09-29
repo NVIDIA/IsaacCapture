@@ -40,7 +40,7 @@ class RecoveryConfig:
     timeout_sec: float = 60.0
     interval_sec: float = 5.0
     client_reconnect_enabled: bool = True
-    client_reconnect_max_attempts: int = 3
+    client_reconnect_max_attempts: int = 10
     client_reconnect_delay_ms: int = 3000
 
     @property
