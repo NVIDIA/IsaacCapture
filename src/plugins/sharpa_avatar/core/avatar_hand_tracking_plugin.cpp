@@ -38,6 +38,7 @@ constexpr size_t kJointFlatbufferSize = 4096;
 constexpr auto kAvatarDataTimeout = std::chrono::seconds(10);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
 constexpr auto kGloveWaitLogInterval = std::chrono::seconds(10);
+constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
 
 size_t side_index(::avatar::DeviceSide side)
 {
@@ -494,18 +495,33 @@ void AvatarTracker::update()
     refresh_data();
     if (m_haptic_reader)
     {
+        const auto now = std::chrono::steady_clock::now();
         for (const ::avatar::DeviceSide side : kDeviceSides)
         {
+            const size_t index = side_index(side);
             const auto& tracked = m_haptic_reader->get_data(*m_deviceio_session, to_string(side));
             const core::HapticCommand* command = tracked.get();
-            if (command != nullptr && command->values() != nullptr && command->values()->size() == kAvatarFingerCount)
+            if (command != nullptr && command != m_last_haptic_commands[index].get())
             {
-                std::array<float, kAvatarFingerCount> powers{};
-                for (size_t i = 0; i < kAvatarFingerCount; ++i)
+                m_last_haptic_commands[index] = tracked;
+                if (command->values() != nullptr && command->values()->size() == kAvatarFingerCount)
                 {
-                    powers[i] = command->values()->Get(i);
+                    std::array<float, kAvatarFingerCount> powers{};
+                    for (size_t i = 0; i < kAvatarFingerCount; ++i)
+                    {
+                        powers[i] = command->values()->Get(i);
+                    }
+                    apply_haptic_command(side, powers);
+                    m_last_haptic_sample_times[index] = now;
+                    m_haptic_stopped[index] = std::all_of(
+                        powers.begin(), powers.end(), [](float power) { return !std::isfinite(power) || power <= 0.0f; });
                 }
-                apply_haptic_command(side, powers);
+            }
+            if (!m_haptic_stopped[index] && m_last_haptic_sample_times[index] &&
+                now - *m_last_haptic_sample_times[index] >= kHapticCommandTimeout)
+            {
+                apply_haptic_command(side, {});
+                m_haptic_stopped[index] = true;
             }
         }
     }

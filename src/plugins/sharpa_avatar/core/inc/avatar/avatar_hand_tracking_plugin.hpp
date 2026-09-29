@@ -144,6 +144,9 @@ private:
     std::array<std::array<std::unique_ptr<core::SchemaPusher>, 2>, 2> m_joint_pushers;
     std::unique_ptr<plugin_utils::WristPoseSource> m_wrist_source;
 
+    std::array<core::Serialized<core::HapticCommand>, 2> m_last_haptic_commands;
+    std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_haptic_sample_times;
+    std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_wait_log;
