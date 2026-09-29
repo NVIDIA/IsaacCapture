@@ -91,16 +91,23 @@ jobs:
               # release branch (e.g. release/1.5.x) would otherwise be diffed
               # against origin/main and pick up years of pre-DCO release-only
               # history.  Git branches don't record their fork point, so
-              # approximate the parent as whichever remote branch shares the
-              # most recent history with HEAD: the one whose merge-base
-              # yields the fewest commits new to this branch.
+              # approximate the parent as the closest branch HEAD actually
+              # descends from: among remote branches that are true ancestors
+              # of HEAD (branch tip == merge-base with HEAD), pick the one
+              # with the fewest commits new to this branch.  Restricting to
+              # ancestors matters — a *descendant* branch (e.g. a PR stacked
+              # on top of this one) has merge-base(HEAD, descendant) == HEAD,
+              # a trivial "0 new commits" match that would otherwise win and
+              # empty out the check range entirely.
               git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true
 
               BASE=""
               best_count=-1
               while IFS= read -r ref; do
                 [[ "$ref" == "origin/$CURRENT_BRANCH" ]] && continue
+                ref_sha=$(git rev-parse "$ref" 2>/dev/null) || continue
                 mb=$(git merge-base HEAD "$ref" 2>/dev/null) || continue
+                [[ "$mb" == "$ref_sha" ]] || continue
                 count=$(git rev-list --count "$mb..HEAD")
                 if [[ "$best_count" -eq -1 || "$count" -lt "$best_count" ]]; then
                   best_count="$count"
