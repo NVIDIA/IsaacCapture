@@ -47,6 +47,10 @@ ties an open disclosure to its panel. Two rules generalize from that. An afforda
 would need a script does not go on the page. And where the CSS feature behind one is not
 universal, the fallback reveals content rather than hiding it.
 
+The one script lives in `source/_static/tools/supported-devices-listing-preview.html`, a
+standalone form device makers fill in to see their row. It is not a docs page and no page
+links to it; it loads `ecosystem.css` itself, so do not copy the table styles into it.
+
 When docutils has no node for an element you need, give `eco_block` an `html_tag` and
 `html_attributes` rather than emitting a `nodes.raw` blob, so the contents stay real nodes
 for non-HTML builders.
