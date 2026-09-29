@@ -60,6 +60,7 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind SE3 tracker types (Se3TrackerPose table) for generic 6-DoF pose sources.
     core::bind_se3_tracker(m);
+
     // Bind steering wheel types (SteeringWheelOutput table).
     core::bind_steering_wheel(m);
 

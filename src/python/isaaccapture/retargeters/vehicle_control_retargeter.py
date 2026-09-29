@@ -53,9 +53,11 @@ class VehicleControlRetargeter:
     def retarget(
         self, sample: SteeringWheelLike | SteeringWheelOutput, *, sequence: int
     ) -> VehicleControlCommand:
-        if not math.isfinite(sample.steering) or \
-            not math.isfinite(sample.throttle) or \
-            not math.isfinite(sample.brake):
+        if (
+            not math.isfinite(sample.steering)
+            or not math.isfinite(sample.throttle)
+            or not math.isfinite(sample.brake)
+        ):
             raise ValueError("Steering wheel sample data contains non-finite values.")
 
         steer = self._apply_deadzone(
@@ -89,6 +91,7 @@ def axis_to_pedal(axis_value: float) -> float:
     """Map inverted full-range pedal axes (1 released, -1 pressed) into [0, 1]."""
 
     return _clamp((-float(axis_value) + 1.0) / 2.0, 0.0, 1.0)
+
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return min(upper, max(lower, float(value)))

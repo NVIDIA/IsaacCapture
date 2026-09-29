@@ -26,10 +26,10 @@ Create the example virtual environment from this directory. The scripts use
 ```bash
 cd examples/vehicle_teleop
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python --find-links ../../build/wheels "isaacteleop[cloudxr]"
+uv pip install --python .venv/bin/python --find-links ../../build/wheels "isaaccapture[cloudxr]"
 source .venv/bin/activate
 cd python
-uv sync --active --inexact --no-install-project --no-install-package isaacteleop
+uv sync --active --inexact --no-install-project --no-install-package isaaccapture
 cd ..
 ```
 
@@ -49,7 +49,7 @@ In our usage, the `opendbc` and `panda` repos are not a "one-size-fits-all" solu
 Start the CloudXR runtime:
 
 ```bash
-python3 -m isaacteleop.cloudxr
+python3 -m isaaccapture.cloudxr
 ```
 
 In a separate terminal, activate the CloudXR environment printed by that command, then start the Isaac Teleop steering worker:

@@ -86,6 +86,8 @@ __all__ = [
 # Deprecated re-exports resolved lazily so access emits a DeprecationWarning; kept out
 # of __all__ and the eager imports above so importing this module stays quiet.
 _DEPRECATED_ALIASES = {
+    "FullBodyPosePicoTrackedType": "FullBodyPoseTrackedType",
+    "DeviceIOFullBodyPosePicoTracked": "DeviceIOFullBodyPoseTracked",
 }
 
 
