@@ -148,6 +148,16 @@ class OobLifecycle:
         self.episode_wall_start = time.time()
         self.attempts = 0
 
+    def _bounded_client_grace_deadline(self) -> float:
+        """Fit browser-owned retry grace inside the host recovery episode."""
+        now = self.clock()
+        desired = now + self.config.client_recovery_grace_sec
+        # Reserve one observation cadence for the host fallback. Very short
+        # episodes therefore take over immediately instead of making fallback
+        # unreachable behind a longer browser retry policy.
+        latest = self.episode_start + self.config.timeout_sec - self.config.interval_sec
+        return min(desired, max(now, latest))
+
     async def _publish(self, health: str, state: str, reason: str, **flags) -> None:
         # Failure after a recovered browser/active session gets a fresh retry budget.
         if health == "degraded" and self._last_health in {"browser_ready", "active"}:
@@ -460,9 +470,7 @@ class OobLifecycle:
             return False
         if not self.connect_dispatched:
             on_dispatched()
-        self._client_grace_deadline = (
-            self.clock() + self.config.client_recovery_grace_sec
-        )
+        self._client_grace_deadline = self._bounded_client_grace_deadline()
         await self._publish(
             "degraded",
             "VERIFYING_EXISTING_BROWSER",
@@ -669,9 +677,7 @@ class OobLifecycle:
                 self._transport_lost = True
                 self._restore_existing_browser = True
                 self._repair_started_at = time.time()
-                self._client_grace_deadline = (
-                    self.clock() + self.config.client_recovery_grace_sec
-                )
+                self._client_grace_deadline = self._bounded_client_grace_deadline()
             return
         # Snapshot timestamps are epoch milliseconds; local time.time() values are seconds.
         fresh = bool(
@@ -924,7 +930,7 @@ class OobLifecycle:
                             await self._rebuild_usb()
                             self._repair_started_at = time.time()
                             self._client_grace_deadline = (
-                                self.clock() + self.config.client_recovery_grace_sec
+                                self._bounded_client_grace_deadline()
                             )
                         await self._recover_existing_browser()
                     except asyncio.CancelledError:

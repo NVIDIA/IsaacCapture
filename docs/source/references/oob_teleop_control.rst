@@ -552,7 +552,9 @@ Environment variables
        ``ANDROID_SERIAL``, exactly one ready device is required for selection.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
-       Expiry changes to observation mode; it never stops the host.
+       Expiry changes to observation mode; it never stops the host. If this is
+       shorter than the browser reconnect budget, the host caps browser grace
+       early enough to leave one retry interval for a bounded fallback.
    * - ``TELEOP_OOB_RETRY_INTERVAL_SEC``
      - Positive finite retry and observation interval in seconds (default ``5``).
    * - ``TELEOP_CLIENT_RECONNECT_ENABLED``

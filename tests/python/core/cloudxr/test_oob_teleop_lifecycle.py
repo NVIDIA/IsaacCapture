@@ -1412,6 +1412,65 @@ async def test_nonstreaming_client_without_cdp_bootstraps_once_after_grace(phase
     assert bootstraps == [20.0]
 
 
+@pytest.mark.parametrize(
+    ("timeout_sec", "interval_sec", "expected_deadline"),
+    [(5.0, 5.0, 0.0), (5.0, 1.0, 4.0)],
+)
+async def test_short_episode_caps_client_grace_and_falls_back_once(
+    timeout_sec, interval_sec, expected_deadline
+):
+    hub = FakeHub()
+    clock = [0.0]
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": False,
+            "lastMetricsAt": None,
+            "streamPhase": "retrying",
+            "terminalEventId": None,
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=timeout_sec, interval_sec=interval_sec),
+        clock=lambda: clock[0],
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = lifecycle._bounded_client_grace_deadline()
+    assert lifecycle.config.client_recovery_grace_sec == 19.0
+    assert lifecycle._client_grace_deadline == expected_deadline
+    bootstraps = []
+
+    async def bootstrap():
+        bootstraps.append(clock[0])
+        lifecycle._transport_lost = False
+        lifecycle._restore_existing_browser = False
+        lifecycle.connect_dispatched = True
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=False),
+        patch.object(lifecycle, "_same_tab_connect", return_value=False),
+        patch.object(lifecycle, "_automate", new=bootstrap),
+    ):
+        if expected_deadline:
+            clock[0] = expected_deadline - 0.1
+            await lifecycle._recover_existing_browser()
+            assert bootstraps == []
+        clock[0] = expected_deadline
+        await lifecycle._recover_existing_browser()
+        clock[0] = timeout_sec
+        await lifecycle._recover_existing_browser()
+
+    assert bootstraps == [expected_deadline]
+
+
 async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry():
     hub = FakeHub()
     event = ["terminal-1"]
