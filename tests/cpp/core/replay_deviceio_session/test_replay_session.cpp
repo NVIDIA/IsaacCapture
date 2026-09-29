@@ -11,6 +11,7 @@
 #include <deviceio_trackers/joint_se3_pose_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
+#include <deviceio_trackers/keyboard_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/se3_tracker.hpp>
 #include <mcap/recording_traits.hpp>
@@ -18,6 +19,7 @@
 #include <schema/hand_generated.h>
 #include <schema/joint_se3_pose_generated.h>
 #include <schema/head_generated.h>
+#include <schema/keyboard_generated.h>
 #include <schema/message_channel_generated.h>
 #include <schema/se3_tracker_generated.h>
 
@@ -93,6 +95,7 @@ using HandChannels = core::McapTrackerChannels<core::HandPoseRecord>;
 using MessageChannelChannels = core::McapTrackerChannels<core::MessageChannelMessagesRecord>;
 using Se3TrackerChannels = core::McapTrackerChannels<core::Se3TrackerPoseRecord>;
 using JointSe3PoseChannels = core::McapTrackerChannels<core::JointSe3PoseOutputRecord>;
+using KeyboardChannels = core::McapTrackerChannels<core::KeyboardOutputRecord>;
 
 // ============================================================================
 // Write helpers
@@ -767,4 +770,57 @@ TEST_CASE("ReplaySession: bad file path throws", "[replay][session][error]")
     config.tracker_names = { { &head_tracker, "tracking" } };
 
     CHECK_THROWS_AS(core::ReplaySession::run(config), std::runtime_error);
+}
+
+// =============================================================================
+// Single tracker — KeyboardTracker (in-process; provider input ignored in replay)
+// =============================================================================
+
+TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider input", "[replay][session][keyboard]")
+{
+    auto path = get_temp_mcap_path();
+    TempFileCleanup cleanup(path);
+    const std::string base_name = "keyboard_source";
+    constexpr uint16_t KEY_W = 17;
+    constexpr uint16_t KEY_K = 37;
+    constexpr uint16_t KEY_Z = 44;
+
+    {
+        auto writer = open_writer(path);
+        KeyboardChannels ch(*writer, base_name, to_string_vec(core::KeyboardRecordingTraits::recording_channels));
+
+        core::KeyboardOutputT frame;
+        frame.pressed_keys = { KEY_W };
+        frame.events = { core::KeyEvent(10, KEY_K, core::KeyAction_Press),
+                         core::KeyEvent(20, KEY_K, core::KeyAction_Release),
+                         core::KeyEvent(30, KEY_W, core::KeyAction_Press) };
+        ch.write(0, core::pack_record<core::KeyboardOutputRecord>(&frame, core::DeviceDataTimestamp(1000, 1000, 1000)));
+        // A frame with no provider attached records only its timestamp.
+        ch.write(0, core::pack_record<core::KeyboardOutputRecord>(nullptr, core::DeviceDataTimestamp(2000, 2000, 2000)));
+        writer->close();
+    }
+
+    core::KeyboardTracker keyboard_tracker;
+    auto provider = keyboard_tracker.create_provider("live");
+    core::McapReplayConfig config;
+    config.filename = path;
+    config.tracker_names = { { &keyboard_tracker, base_name } };
+
+    auto session = core::ReplaySession::run(config);
+    REQUIRE(session != nullptr);
+
+    provider->key_down(KEY_Z); // must not leak into the replayed frame
+    session->update();
+    const auto& first = keyboard_tracker.get_data(*session);
+    REQUIRE(first);
+    REQUIRE(first->pressed_keys()->size() == 1);
+    CHECK(first->pressed_keys()->Get(0) == KEY_W);
+    REQUIRE(first->events()->size() == 3);
+    CHECK(first->events()->Get(0)->code() == KEY_K);
+    CHECK(first->events()->Get(0)->action() == core::KeyAction_Press);
+    CHECK(first->events()->Get(1)->action() == core::KeyAction_Release);
+    CHECK(first->events()->Get(2)->timestamp_ns() == 30);
+
+    session->update();
+    CHECK_FALSE(keyboard_tracker.get_data(*session));
 }

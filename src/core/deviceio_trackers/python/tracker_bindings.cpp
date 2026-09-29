@@ -8,6 +8,7 @@
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
+#include <deviceio_trackers/keyboard_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/tensor_push_tracker.hpp>
 #include <pybind11/numpy.h>
@@ -18,6 +19,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -44,6 +46,12 @@ py::object to_python(const core::Serialized<T>& handle)
 // payload clone on the read path and no aliasing of live tracker storage: what a caller
 // reads this frame keeps its values after the next session.update(), which publishes a new
 // buffer rather than refilling this one.
+
+// Values come from core::keyboard_key_codes() at import; see the EvdevKeyCode binding below.
+// Unscoped so pybind11 lets members compare equal to plain ints, like an IntEnum.
+enum EvdevKeyCode : uint16_t
+{
+};
 
 PYBIND11_MODULE(_deviceio_trackers, m)
 {
@@ -76,6 +84,94 @@ PYBIND11_MODULE(_deviceio_trackers, m)
             [](const core::HeadTracker& self, const core::ITrackerSession& session)
             { return to_python(self.get_head(session)); },
             py::arg("session"), "Get the head tracked state (None if inactive)");
+
+    m.def("evdev_code_from_w3c", &core::evdev_code_from_w3c, py::arg("w3c_code"),
+          "Evdev key code for a W3C KeyboardEvent.code ('KeyW', 'ArrowUp', ...), or None if unmapped.");
+    m.def("w3c_code_from_evdev", &core::w3c_code_from_evdev, py::arg("evdev_code"),
+          "W3C KeyboardEvent.code for an evdev key code, or None when it has no W3C name.");
+
+    m.attr("KEYBOARD_KEY_CODE_COUNT") = core::kKeyboardKeyCodeCount;
+
+    // One member per physical key, named by its W3C KeyboardEvent.code, valued by its evdev code.
+    // Built from Chromium's key table (see third_party/chromium), so no key list is kept by hand.
+    py::enum_<EvdevKeyCode> evdev_key_code(
+        m, "EvdevKeyCode", py::arithmetic(),
+        "Evdev key codes (linux/input-event-codes.h) named by W3C KeyboardEvent.code, e.g. "
+        "EvdevKeyCode.KeyW == 17. Values double as indices into the keyboard key bitmaps.");
+    for (const auto& key : core::keyboard_key_codes())
+    {
+        evdev_key_code.value(std::string(key.w3c_code).c_str(), static_cast<EvdevKeyCode>(key.evdev_code));
+    }
+
+    // Evdev codes arrive as Python ints; one outside [0, KEYBOARD_KEY_CODE_COUNT) is rejected
+    // (False) like any other unsupported code, rather than failing the uint16 conversion.
+    const auto in_range = [](int64_t code) { return code >= 0 && code < core::kKeyboardKeyCodeCount; };
+
+    py::class_<core::KeyboardProvider, std::shared_ptr<core::KeyboardProvider>>(
+        m, "KeyboardProvider",
+        "One focused input surface feeding a KeyboardTracker. Report press/release only while the "
+        "surface has focus, and call release_all() on blur, close or disconnect. Make one surface's "
+        "calls one at a time, in the order the surface observed them: a press observed before focus "
+        "loss must complete before release_all(). The methods are thread-safe, but that does not order "
+        "calls: a press delivered after release_all() stays held.")
+        .def(
+            "key_down",
+            [in_range](core::KeyboardProvider& self, int64_t code, std::optional<int64_t> timestamp_ns)
+            { return in_range(code) && self.key_down(static_cast<uint16_t>(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(),
+            "Report a press by evdev code. Returns False when this provider already holds the key "
+            "(autorepeat), the code is outside [0, KEYBOARD_KEY_CODE_COUNT), or the provider is closed. "
+            "Pressing a key another provider holds returns True but adds no event.")
+        .def(
+            "key_down",
+            [](core::KeyboardProvider& self, const std::string& code, std::optional<int64_t> timestamp_ns)
+            { return self.key_down(std::string_view(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(),
+            "Report a press by W3C KeyboardEvent.code. Unknown codes are ignored (returns False).")
+        .def(
+            "key_up",
+            [in_range](core::KeyboardProvider& self, int64_t code, std::optional<int64_t> timestamp_ns)
+            { return in_range(code) && self.key_up(static_cast<uint16_t>(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(),
+            "Report a release by evdev code. Returns False when this provider does not hold the key, the "
+            "code is out of range, or the provider is closed.")
+        .def(
+            "key_up",
+            [](core::KeyboardProvider& self, const std::string& code, std::optional<int64_t> timestamp_ns)
+            { return self.key_up(std::string_view(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(), "Report a release by W3C KeyboardEvent.code.")
+        .def(
+            "tap",
+            [in_range](core::KeyboardProvider& self, int64_t code, std::optional<int64_t> timestamp_ns)
+            { return in_range(code) && self.tap(static_cast<uint16_t>(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(),
+            "Report a press and its release together, for surfaces that report presses only. "
+            "Returns False (no-op) while any provider holds the key, for an out-of-range code, or when closed.")
+        .def(
+            "tap",
+            [](core::KeyboardProvider& self, const std::string& code, std::optional<int64_t> timestamp_ns)
+            { return self.tap(std::string_view(code), timestamp_ns); },
+            py::arg("code"), py::arg("timestamp_ns") = py::none(),
+            "tap() by W3C KeyboardEvent.code. Unknown codes are ignored (returns False).")
+        .def("release_all", &core::KeyboardProvider::release_all, py::arg("timestamp_ns") = py::none(),
+             "Release every key this provider holds: focus lost, surface closed, or the host UI took the "
+             "keyboard (e.g. a text field gained focus).")
+        .def("close", &core::KeyboardProvider::close, "Release held keys and detach from the tracker.")
+        .def_property_readonly("name", &core::KeyboardProvider::name)
+        .def_property_readonly("closed", &core::KeyboardProvider::is_closed)
+        .def("__enter__", [](std::shared_ptr<core::KeyboardProvider> self) { return self; })
+        .def("__exit__", [](core::KeyboardProvider& self, py::object, py::object, py::object) { self.close(); });
+
+    py::class_<core::KeyboardTracker, core::ITracker, std::shared_ptr<core::KeyboardTracker>>(
+        m, "KeyboardTracker", "In-process keyboard merged from every attached KeyboardProvider.")
+        .def(py::init<>())
+        .def("create_provider", &core::KeyboardTracker::create_provider, py::arg("name"),
+             "Create a provider for one input surface (window, browser tab, ...).")
+        .def(
+            "get_keyboard_data",
+            [](const core::KeyboardTracker& self, const core::ITrackerSession& session)
+            { return to_python(self.get_data(session)); },
+            py::arg("session"), "Get this frame's KeyboardOutput (None when no provider is attached)");
 
     py::class_<core::ControllerTracker, core::ITracker, std::shared_ptr<core::ControllerTracker>>(m, "ControllerTracker")
         .def(py::init<>())
