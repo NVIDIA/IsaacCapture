@@ -15,8 +15,6 @@ const { test, expect } = require('@playwright/test');
  */
 
 test('opens the real app against MockCloudXR and connects', async ({ page }) => {
-  test.setTimeout(30000);
-
   const consoleLines = [];
   page.on('console', msg => consoleLines.push(msg.text()));
 
@@ -26,9 +24,13 @@ test('opens the real app against MockCloudXR and connects', async ({ page }) => 
   // (a real race in App.tsx's capability-check gating, not a test artifact - see LoadIWER.ts),
   // so clicking on "IWER loaded as fallback." (the first script's onload) is unreliable: it can
   // land before navigator.xr is truly usable and permanently wedge the UI with no retry path.
-  // Wait for IWER's last-emitted ready log instead.
+  // "IWER DevUI initialized with XR device." isn't a safe wait signal either: it logs BEFORE
+  // installRuntime() (not after), and it's skipped entirely on the supported no-DevUI path,
+  // which would falsely fail this test even against a perfectly usable app. Wait for
+  // LoadIWER.ts's own "IWER runtime installed." instead - unconditional, and only logged once
+  // installRuntime() has actually succeeded.
   await expect
-    .poll(() => consoleLines.some(l => l.includes('IWER DevUI initialized with XR device.')), {
+    .poll(() => consoleLines.some(l => l.includes('IWER runtime installed.')), {
       timeout: 15000,
       message: () => `IWER never finished installing; console so far:\n${consoleLines.join('\n')}`,
     })
