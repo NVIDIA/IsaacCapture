@@ -1348,6 +1348,70 @@ async def test_fresh_stream_without_cdp_stays_degraded_until_fallback():
     assert bootstraps == [True]
 
 
+@pytest.mark.parametrize("phase", ["idle", "retrying"])
+async def test_nonstreaming_client_without_cdp_bootstraps_once_after_grace(phase):
+    hub = FakeHub()
+    clock = [0.0]
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": False,
+            "lastMetricsAt": None,
+            "streamPhase": phase,
+            "terminalEventId": None,
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=60),
+        clock=lambda: clock[0],
+    )
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = 20.0
+    same_tab_attempts = []
+    bootstraps = []
+
+    async def no_tab(key):
+        same_tab_attempts.append(key)
+        return False
+
+    async def bootstrap():
+        bootstraps.append(clock[0])
+        # Mirror the ownership transition at the start of the real _automate.
+        lifecycle._transport_lost = False
+        lifecycle._restore_existing_browser = False
+        lifecycle.connect_dispatched = True
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=False),
+        patch.object(lifecycle, "_same_tab_connect", new=no_tab),
+        patch.object(lifecycle, "_automate", new=bootstrap),
+    ):
+        await lifecycle._recover_existing_browser()
+        clock[0] = 19.9
+        await lifecycle._recover_existing_browser()
+        assert same_tab_attempts == []
+        assert bootstraps == []
+
+        clock[0] = 20.0
+        await lifecycle._recover_existing_browser()
+        assert same_tab_attempts == ["grace:0"]
+        assert bootstraps == [20.0]
+
+        # A repeated stale report cannot dispatch another fallback generation.
+        clock[0] = 59.9
+        await lifecycle._recover_existing_browser()
+    assert same_tab_attempts == ["grace:0"]
+    assert bootstraps == [20.0]
+
+
 async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry():
     hub = FakeHub()
     event = ["terminal-1"]

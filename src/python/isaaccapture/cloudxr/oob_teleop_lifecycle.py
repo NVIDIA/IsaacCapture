@@ -584,6 +584,12 @@ class OobLifecycle:
         ):
             if await self._same_tab_connect(f"grace:{self.generation}"):
                 return
+            # The control client survived, but without an attachable CDP tab
+            # there is nowhere to dispatch the one trusted same-tab click.
+            # Leave preservation mode through the normal full bootstrap so a
+            # stable report cannot send us around this fallback again.
+            await self._automate()
+            return
         await self._attach_existing_monitor()
         await self._publish(
             "browser_ready",
