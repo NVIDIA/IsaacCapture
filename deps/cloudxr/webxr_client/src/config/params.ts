@@ -51,6 +51,7 @@ const oneOf =
     allowed.includes(raw);
 const isBool = oneOf('true', 'false');
 const isNumber = (raw: string): boolean => raw.trim() !== '' && Number.isFinite(Number(raw));
+const isPositiveNumber = (raw: string): boolean => isNumber(raw) && Number(raw) > 0;
 
 export const URL_PARAMS: UrlParam[] = [
   // --- Form-backed settings (seeded into a control, then read through the form) ---
@@ -173,8 +174,9 @@ export const URL_PARAMS: UrlParam[] = [
   {
     key: 'controlPanelDistance',
     elementId: 'controlPanelDistance',
-    isValid: isNumber,
-    description: 'In-XR control panel distance from the viewer, in meters.',
+    // A distance of 0 puts the panel at the viewer's own position; negative puts it behind them.
+    isValid: isPositiveNumber,
+    description: 'In-XR control panel distance from the viewer, in meters. Must be positive.',
   },
   {
     key: 'controlPanelHeight',
