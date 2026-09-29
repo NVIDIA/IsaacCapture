@@ -76,6 +76,12 @@ export interface ReactUIConfig {
    * attached). Independent of reconnectEnabled - detection always runs; doubles per retry
    * attempt when reconnect is also on. See CloudXRComponent's streamAttachTimeoutMs prop. */
   streamAttachTimeoutMs?: number;
+  /** Timeout (ms) for detecting a stream that attached but produced no decoder warm-up signal at
+   * all. Does not grow per retry attempt. See CloudXRComponent's warmupBeginTimeoutMs prop. */
+  warmupBeginTimeoutMs?: number;
+  /** Timeout (ms) for detecting decoder warm-up that began but never finished. Does not grow per
+   * retry attempt. See CloudXRComponent's warmupEndTimeoutMs prop. */
+  warmupEndTimeoutMs?: number;
   /** Active teleop project path (a key path in `TELEOP_PROJECTS`). */
   teleopPath: string;
 }

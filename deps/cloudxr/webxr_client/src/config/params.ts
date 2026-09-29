@@ -240,6 +240,20 @@ export const URL_PARAMS: UrlParam[] = [
       'Base timeout for detecting a stream that never attaches ("passthrough-only"), in milliseconds. Independent of retry.',
   },
   {
+    key: 'warmupBeginTimeoutMs',
+    elementId: 'cloudxrWarmupBeginTimeoutMs',
+    isValid: isNumber,
+    description:
+      'Timeout for detecting a stream that attached but produced no decoder warm-up signal at all, in milliseconds. Does not grow on retry.',
+  },
+  {
+    key: 'warmupEndTimeoutMs',
+    elementId: 'cloudxrWarmupEndTimeoutMs',
+    isValid: isNumber,
+    description:
+      'Timeout for detecting decoder warm-up that began but never finished, in milliseconds. Does not grow on retry.',
+  },
+  {
     key: 'proxyUrl',
     elementId: 'proxyUrl',
     description: 'Proxy URL for routing (HTTPS); leave empty for direct WSS.',
