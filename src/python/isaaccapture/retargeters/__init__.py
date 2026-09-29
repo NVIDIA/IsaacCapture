@@ -106,6 +106,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         None,
     ),
     # .vehicle_control_retargeter
+    "VehicleControlCommand": (
+        ".vehicle_control_retargeter",
+        "VehicleControlCommand",
+        None,
+    ),
     "VehicleControlRetargeter": (
         ".vehicle_control_retargeter",
         "VehicleControlRetargeter",
@@ -255,6 +260,7 @@ __all__ = [
     "TriHandMotionControllerConfig",
     "FootPedalRootCmdRetargeter",
     "FootPedalRootCmdRetargeterConfig",
+    "VehicleControlCommand",
     "VehicleControlRetargeter",
     "VehicleControlRetargeterConfig",
     "axis_to_pedal",

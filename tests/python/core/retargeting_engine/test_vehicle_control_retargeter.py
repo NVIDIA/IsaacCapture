@@ -3,12 +3,13 @@
 
 """Sim-free unit tests for steering wheel vehicle-control retargeting."""
 
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass, FrozenInstanceError
 import math
 
 import pytest
 
 from isaaccapture.retargeters import (
+    VehicleControlCommand,
     VehicleControlRetargeter,
     VehicleControlRetargeterConfig,
     axis_to_pedal,
@@ -17,176 +18,94 @@ from isaaccapture.retargeters import (
 
 @dataclass(frozen=True)
 class SteeringSample:
-    """Minimal SteeringWheelOutput-compatible sample for pure retargeter tests."""
-
     steering: float = 0.0
     throttle: float = 1.0
     brake: float = 1.0
 
 
-class TestAxisToPedalMath:
-    """The pure inverted-axis mapping used for throttle and brake pedals."""
-
-    def test_released_axis_maps_to_zero_fraction(self):
-        """A fully released inverted pedal axis maps to no pedal application."""
-        assert axis_to_pedal(1.0) == pytest.approx(0.0)
-
-    def test_center_axis_maps_to_half_fraction(self):
-        """A centered full-range axis maps to half pedal application."""
-        assert axis_to_pedal(0.0) == pytest.approx(0.5)
-
-    def test_pressed_axis_maps_to_full_fraction(self):
-        """A fully pressed inverted pedal axis maps to full pedal application."""
-        assert axis_to_pedal(-1.0) == pytest.approx(1.0)
-
-    def test_clamps_out_of_range_axes(self):
-        """Hardware overshoot clamps to the normalized pedal fraction endpoints."""
-        assert axis_to_pedal(1.5) == pytest.approx(0.0)
-        assert axis_to_pedal(-1.5) == pytest.approx(1.0)
+@pytest.mark.parametrize(
+    "axis, expected", [(1.0, 0.0), (0.0, 0.5), (-1.0, 1.0), (1.5, 0.0), (-1.5, 1.0)]
+)
+def test_axis_to_pedal(axis, expected):
+    assert axis_to_pedal(axis) == pytest.approx(expected)
 
 
-class TestVehicleControlRetargeter:
-    """End-to-end math behavior of VehicleControlRetargeter.retarget."""
+@pytest.mark.parametrize(
+    "sample, expected",
+    [
+        pytest.param((0.0, 1.0, 1.0), (0.0, 0.0, 0.0, 0.0), id="released"),
+        pytest.param((0.0, -0.40, 0.20), (0.0, 0.30, 0.30, 0.0), id="throttle"),
+        pytest.param((0.0, 0.50, -0.50), (0.0, -0.50, 0.0, 0.50), id="brake"),
+        pytest.param((0.0, -0.20, -0.20), (0.0, 0.0, 0.0, 0.0), id="cancel"),
+    ],
+)
+def test_retarget_pedals(sample, expected):
+    command = VehicleControlRetargeter().retarget(SteeringSample(*sample), sequence=42)
+    assert isinstance(command, VehicleControlCommand)
+    assert command.sequence == 42
+    assert astuple(command)[1:] == pytest.approx(expected)
 
-    def test_released_pedals_and_centered_steering_are_neutral(self):
-        """Released pedals and centered wheel emit zero steer, accel, throttle, and brake."""
-        command = VehicleControlRetargeter().retarget(
-            SteeringSample(steering=0.0, throttle=1.0, brake=1.0),
-            sequence=42,
-        )
 
-        assert command.sequence == 42
-        assert command.steer == pytest.approx(0.0)
-        assert command.accel == pytest.approx(0.0)
-        assert command.throttle == pytest.approx(0.0)
-        assert command.brake == pytest.approx(0.0)
-
-    def test_deadzone_thresholds_are_inclusive(self):
-        """Steering and pedal values exactly on their deadzone thresholds are suppressed."""
-        retargeter = VehicleControlRetargeter(
-            VehicleControlRetargeterConfig(
-                steering_deadzone=0.05,
-                pedal_deadzone=0.10,
-            )
-        )
-
-        command = retargeter.retarget(
-            SteeringSample(steering=0.05, throttle=0.80, brake=0.80),
-            sequence=1,
-        )
-
-        assert command.steer == pytest.approx(0.0)
-        assert command.accel == pytest.approx(0.0)
-        assert command.throttle == pytest.approx(0.0)
-        assert command.brake == pytest.approx(0.0)
-
-    def test_values_outside_deadzone_pass_through(self):
-        """Values just outside deadzone are not rescaled; they pass through directly."""
-        retargeter = VehicleControlRetargeter(
-            VehicleControlRetargeterConfig(
-                steering_deadzone=0.05,
-                pedal_deadzone=0.10,
-            )
-        )
-
-        command = retargeter.retarget(
-            SteeringSample(steering=-0.06, throttle=0.78, brake=1.0),
-            sequence=1,
-        )
-
-        assert command.steer == pytest.approx(-0.06)
-        assert command.accel == pytest.approx(0.11)
-        assert command.throttle == pytest.approx(0.11)
-        assert command.brake == pytest.approx(0.0)
-
-    def test_calibrate_neutral_rebases_steering(self):
-        """Neutral calibration subtracts the sampled steering offset before scaling/deadzone."""
-        retargeter = VehicleControlRetargeter()
-        retargeter.calibrate_neutral(SteeringSample(steering=0.25))
-
-        centered = retargeter.retarget(
-            SteeringSample(steering=0.25, throttle=1.0, brake=1.0),
-            sequence=1,
-        )
-        turned = retargeter.retarget(
-            SteeringSample(steering=-0.25, throttle=1.0, brake=1.0),
-            sequence=2,
-        )
-
-        assert retargeter.steering_neutral == pytest.approx(0.25)
-        assert centered.steer == pytest.approx(0.0)
-        assert turned.steer == pytest.approx(-0.5)
-
-    def test_positive_accel_splits_to_throttle_only(self):
-        """When throttle fraction exceeds brake fraction, accel is positive throttle."""
-        command = VehicleControlRetargeter().retarget(
-            SteeringSample(steering=0.0, throttle=-0.40, brake=0.20),
-            sequence=1,
-        )
-
-        assert command.accel == pytest.approx(0.30)
-        assert command.throttle == pytest.approx(0.30)
-        assert command.brake == pytest.approx(0.0)
-
-    def test_negative_accel_splits_to_brake_only(self):
-        """When brake fraction exceeds throttle fraction, accel is negative brake."""
-        command = VehicleControlRetargeter().retarget(
-            SteeringSample(steering=0.0, throttle=0.50, brake=-0.50),
-            sequence=1,
-        )
-
-        assert command.accel == pytest.approx(-0.50)
-        assert command.throttle == pytest.approx(0.0)
-        assert command.brake == pytest.approx(0.50)
-
-    def test_equal_pedal_fractions_cancel_to_neutral(self):
-        """Equal throttle and brake fractions cancel before command splitting."""
-        command = VehicleControlRetargeter().retarget(
-            SteeringSample(steering=0.0, throttle=-0.20, brake=-0.20),
-            sequence=1,
-        )
-
-        assert command.accel == pytest.approx(0.0)
-        assert command.throttle == pytest.approx(0.0)
-        assert command.brake == pytest.approx(0.0)
-
-    def test_scaled_outputs_clamp_to_command_range(self):
-        """Configured scale can amplify inputs, but steer and accel remain bounded."""
-        retargeter = VehicleControlRetargeter(
-            VehicleControlRetargeterConfig(
-                steer_scale=3.0,
-                throttle_scale=2.0,
-                brake_scale=2.0,
-            )
-        )
-
-        forward = retargeter.retarget(
-            SteeringSample(steering=0.50, throttle=-1.0, brake=1.0),
-            sequence=1,
-        )
-        reverse = retargeter.retarget(
-            SteeringSample(steering=-0.50, throttle=1.0, brake=-1.0),
-            sequence=2,
-        )
-
-        assert forward.steer == pytest.approx(1.0)
-        assert forward.accel == pytest.approx(1.0)
-        assert forward.throttle == pytest.approx(1.0)
-        assert forward.brake == pytest.approx(0.0)
-        assert reverse.steer == pytest.approx(-1.0)
-        assert reverse.accel == pytest.approx(-1.0)
-        assert reverse.throttle == pytest.approx(0.0)
-        assert reverse.brake == pytest.approx(1.0)
-
-    @pytest.mark.parametrize(
-        "sample",
-        [
-            SteeringSample(steering=math.nan),
-            SteeringSample(throttle=math.inf),
-            SteeringSample(brake=-math.inf),
-        ],
+@pytest.mark.parametrize(
+    "sample, expected",
+    [
+        pytest.param((0.05, 0.80, 0.80), (0.0, 0.0, 0.0, 0.0), id="at-deadzone"),
+        pytest.param(
+            (-0.06, 0.78, 1.0), (-0.06, 0.11, 0.11, 0.0), id="outside-deadzone"
+        ),
+    ],
+)
+def test_deadzone_boundaries(sample, expected):
+    retargeter = VehicleControlRetargeter(
+        VehicleControlRetargeterConfig(steering_deadzone=0.05, pedal_deadzone=0.10)
     )
-    def test_rejects_non_finite_input(self, sample):
-        """Non-finite wheel samples fail fast instead of leaking NaN/Inf commands."""
-        with pytest.raises(ValueError, match="non-finite"):
-            VehicleControlRetargeter().retarget(sample, sequence=1)
+    command = retargeter.retarget(SteeringSample(*sample), sequence=1)
+    assert astuple(command)[1:] == pytest.approx(expected)
+
+
+def test_calibrate_neutral_rebases_steering():
+    retargeter = VehicleControlRetargeter()
+    retargeter.calibrate_neutral(SteeringSample(steering=0.25))
+    centered = retargeter.retarget(SteeringSample(steering=0.25), sequence=1)
+    turned = retargeter.retarget(SteeringSample(steering=-0.25), sequence=2)
+    assert retargeter.steering_neutral == pytest.approx(0.25)
+    assert centered.steer == pytest.approx(0.0)
+    assert turned.steer == pytest.approx(-0.5)
+
+
+@pytest.mark.parametrize(
+    "sample, expected",
+    [
+        ((0.50, -1.0, 1.0), (1.0, 1.0, 1.0, 0.0)),
+        ((-0.50, 1.0, -1.0), (-1.0, -1.0, 0.0, 1.0)),
+    ],
+)
+def test_scaled_outputs_clamp_to_command_range(sample, expected):
+    retargeter = VehicleControlRetargeter(
+        VehicleControlRetargeterConfig(
+            steer_scale=3.0, throttle_scale=2.0, brake_scale=2.0
+        )
+    )
+    command = retargeter.retarget(SteeringSample(*sample), sequence=1)
+    assert astuple(command)[1:] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        SteeringSample(steering=math.nan),
+        SteeringSample(throttle=math.inf),
+        SteeringSample(brake=-math.inf),
+    ],
+)
+def test_rejects_non_finite_input(sample):
+    with pytest.raises(ValueError, match="non-finite"):
+        VehicleControlRetargeter().retarget(sample, sequence=1)
+
+
+def test_vehicle_command_fields_are_readonly():
+    assert astuple(VehicleControlCommand()) == (0, 0.0, 0.0, 0.0, 0.0)
+    command = VehicleControlCommand(42, -0.5, 0.75, 0.75, 0.0)
+    assert astuple(command) == (42, -0.5, 0.75, 0.75, 0.0)
+    with pytest.raises(FrozenInstanceError):
+        command.steer = 1.0

@@ -9,7 +9,16 @@ from dataclasses import dataclass
 import math
 from typing import Protocol
 
-from isaaccapture.schema import SteeringWheelOutput, VehicleControlCommand
+
+@dataclass(frozen=True)
+class VehicleControlCommand:
+    """Retargeting result; the application owns wire and MCAP encoding."""
+
+    sequence: int = 0
+    steer: float = 0.0
+    accel: float = 0.0
+    throttle: float = 0.0
+    brake: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -51,7 +60,7 @@ class VehicleControlRetargeter:
         self._steering_neutral = sample.steering
 
     def retarget(
-        self, sample: SteeringWheelLike | SteeringWheelOutput, *, sequence: int
+        self, sample: SteeringWheelLike, *, sequence: int
     ) -> VehicleControlCommand:
         if (
             not math.isfinite(sample.steering)
