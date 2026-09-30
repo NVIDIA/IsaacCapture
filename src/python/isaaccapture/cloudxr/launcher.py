@@ -160,6 +160,7 @@ class CloudXRLauncher:
         host_client: bool = True,
         run_embedded: bool = False,
         start_wss_proxy: bool | None = None,
+        defer_connect: bool = False,
     ) -> None:
         """Attach to the running runtime, or own one when *run_embedded*.
 
@@ -171,6 +172,8 @@ class CloudXRLauncher:
                 to one this process cannot configure.
             start_wss_proxy: Deprecated no-op; the proxy always starts with
                 the runtime.
+            defer_connect: Wait for :meth:`connect_headset` before OOB headset
+                automation. Requires ``run_embedded=True`` and ``setup_oob=True``.
 
         Every other argument is forwarded to :class:`CloudXRService` and only
         applies when this process owns it.  When attaching they describe a
@@ -182,6 +185,10 @@ class CloudXRLauncher:
             RuntimeError: If the runtime fails to start or come up, or if
                 *run_embedded* is set while a runtime is already serving.
         """
+        if defer_connect and not (run_embedded and setup_oob):
+            raise ValueError(
+                "defer_connect requires run_embedded=True and setup_oob=True"
+            )
         if start_wss_proxy is not None:
             self._warn_start_wss_proxy_deprecated()
 
@@ -199,6 +206,7 @@ class CloudXRLauncher:
                 setup_oob=setup_oob,
                 usb_local=usb_local,
                 host_client=host_client,
+                defer_connect=defer_connect,
             )
             return
 
@@ -798,6 +806,15 @@ class CloudXRLauncher:
         """
         if self._service is not None:
             self._service.stop()
+
+    def connect_headset(self) -> None:
+        """Release deferred OOB automation once the application's XR session is ready.
+
+        Non-blocking and idempotent; connection progress uses the WSS log as usual.
+        """
+        if self._service is None:
+            raise RuntimeError("connect_headset requires an embedded CloudXR service")
+        self._service.connect_headset()
 
     def health_check(self) -> None:
         """Raise :class:`RuntimeError` if the runtime is no longer available.

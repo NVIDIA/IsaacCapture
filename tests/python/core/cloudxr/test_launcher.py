@@ -139,6 +139,32 @@ class TestAttach:
         mocks["from_args"].assert_not_called()
         mocks["popen"].assert_not_called()
 
+    @pytest.mark.parametrize(
+        "options", [{}, {"run_embedded": True}, {"setup_oob": True}]
+    )
+    def test_deferred_connect_requires_an_owned_oob_service(self, options):
+        with pytest.raises(ValueError, match="defer_connect requires"):
+            CloudXRLauncher(defer_connect=True, **options)
+
+    def test_deferred_connect_delegates_to_embedded_service(self):
+        with (
+            _live(False),
+            patch("isaaccapture.cloudxr.launcher.CloudXRService") as service,
+        ):
+            launcher = CloudXRLauncher(
+                run_embedded=True, setup_oob=True, defer_connect=True
+            )
+            assert service.call_args.kwargs["defer_connect"] is True
+            launcher.connect_headset()
+            service.return_value.connect_headset.assert_called_once_with()
+
+    def test_connect_cannot_control_a_borrowed_service(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with _live():
+            launcher = CloudXRLauncher(install_dir=install)
+        with pytest.raises(RuntimeError, match="embedded"):
+            launcher.connect_headset()
+
     def test_stop_does_not_touch_a_borrowed_runtime(self, tmp_path):
         install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
         with _live():

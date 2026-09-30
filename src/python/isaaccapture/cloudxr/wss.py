@@ -565,6 +565,22 @@ def default_cert_paths() -> CertPaths:
     return cert_paths_from_dir(Path(get_env_config().openxr_run_dir()).parent / "certs")
 
 
+async def _wait_for_connect(
+    requested: asyncio.Event | None, stop_future: asyncio.Future
+) -> bool:
+    """Gate headset automation without holding shutdown behind application startup."""
+    if requested is not None and not stop_future.done():
+        waiter = asyncio.create_task(requested.wait())
+        try:
+            await asyncio.wait(
+                (waiter, stop_future), return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+    return not stop_future.done()
+
+
 async def run(
     log_file_path: str | Path | None,
     stop_future: asyncio.Future,
@@ -575,6 +591,7 @@ async def run(
     usb_local: bool = False,
     host_client: bool = False,
     on_listening: Callable[[], None] | None = None,
+    connect_requested: asyncio.Event | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
 
@@ -637,13 +654,15 @@ async def run(
                 initial,
             )
 
-        def handler(ws):
+        async def handler(ws):
             """Route an incoming WebSocket to the OOB hub or the backend proxy."""
             if hub is not None:
                 path = _normalize_request_path(ws.request.path or "/")
                 if path == OOB_WS_PATH:
-                    return hub.handle_connection(ws)
-            return proxy_handler(ws, backend_host, backend_port)
+                    return await hub.handle_connection(ws)
+            # An already-open headset page may reconnect before ADB automation.
+            if await _wait_for_connect(connect_requested, stop_future):
+                await proxy_handler(ws, backend_host, backend_port)
 
         # /client/ on this WSS port for --host-client and --usb-local (same
         # files; USB-local reaches them via adb reverse of PROXY_PORT).
@@ -811,7 +830,11 @@ async def run(
                         f"verified: adb reverse TURN {_usb_turn_port_resolved}",
                     )
 
-                if setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"):
+                if (
+                    setup_oob
+                    and not os.getenv("TELEOP_OOB_HUB_ONLY")
+                    and await _wait_for_connect(connect_requested, stop_future)
+                ):
                     from .oob_teleop_adb import (  # noqa: PLC0415
                         build_teleop_url,
                         monitor_headset_wifi,

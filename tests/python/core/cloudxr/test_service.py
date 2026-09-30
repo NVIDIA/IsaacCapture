@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -279,7 +280,11 @@ class TestCleanupStaleRuntime:
             os.path.join(run_dir, name)
             for name in ("ipc_cloudxr", "runtime_started", "cloudxr.pid")
         ]
-        for path in paths:
+        # A regular file gives EPROTOTYPE on macOS, not ECONNREFUSED. Model
+        # the real failure: a socket left behind after its listener exits.
+        with live_ipc_socket(run_dir):
+            pass
+        for path in paths[1:]:
             Path(path).touch()
         return run_dir, paths
 
@@ -412,6 +417,50 @@ class TestWssProxyStartup:
         # The thread outlives the timeout; stop() is what reaps it.
         service._stop_wss_proxy()
 
+    @pytest.mark.parametrize("defer_connect", [False, True])
+    def test_headset_connection_is_explicit_only_when_deferred(
+        self, tmp_path, defer_connect
+    ):
+        from cloudxr_py_test_ns.wss import _wait_for_connect
+
+        connected = threading.Event()
+
+        async def proxy(*, stop_future, on_listening, connect_requested, **kwargs):
+            on_listening()
+            if await _wait_for_connect(connect_requested, stop_future):
+                connected.set()
+            await stop_future
+
+        with mock_service_deps(tmp_path, wss=False), _stub_wss(proxy):
+            service = CloudXRService(setup_oob=True, defer_connect=defer_connect)
+            try:
+                if defer_connect:
+                    assert not connected.wait(0.05)
+                    service.connect_headset()
+                    service.connect_headset()  # Releasing the same gate is harmless.
+                assert connected.wait(1)
+            finally:
+                service._stop_wss_proxy()
+
+    def test_stopping_before_connect_does_not_launch_headset(self, tmp_path):
+        from cloudxr_py_test_ns.wss import _wait_for_connect
+
+        connected = []
+
+        async def proxy(*, stop_future, on_listening, connect_requested, **kwargs):
+            on_listening()
+            if await _wait_for_connect(connect_requested, stop_future):
+                connected.append(True)
+
+        with mock_service_deps(tmp_path, wss=False), _stub_wss(proxy):
+            service = CloudXRService(setup_oob=True, defer_connect=True)
+            thread = service._wss_thread
+            service._stop_wss_proxy()
+            assert not thread.is_alive()
+            assert connected == []
+            with pytest.raises(RuntimeError, match="not running"):
+                service.connect_headset()
+
 
 # ============================================================================
 # TestSignalHandlers
@@ -523,3 +572,51 @@ class TestSignalHandlers:
             signal.signal(signal.SIGINT, orig_sigint)
 
         assert not stop_called, "signal handler must not call stop() directly"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("connect", [True, False])
+async def test_early_websocket_waits_for_app_or_shutdown(monkeypatch, connect):
+    from unittest.mock import AsyncMock
+    from cloudxr_py_test_ns import wss
+
+    requested = asyncio.Event()
+    listening = asyncio.Event()
+    stop = asyncio.get_running_loop().create_future()
+    handlers = []
+
+    @contextlib.asynccontextmanager
+    async def serve(handler, **kwargs):
+        handlers.append(handler)
+        yield
+
+    proxy = AsyncMock()
+    # Keep this signaling test independent of an installed CloudXR environment.
+    monkeypatch.setattr(wss, "default_cert_paths", lambda: None)
+    monkeypatch.setattr(wss, "ensure_certificate", lambda *args: None)
+    monkeypatch.setattr(wss, "build_ssl_context", lambda *args: None)
+    monkeypatch.setattr(wss, "ws_serve", serve)
+    monkeypatch.setattr(wss, "proxy_handler", proxy)
+    task = asyncio.create_task(
+        wss.run(
+            None,
+            stop,
+            on_listening=listening.set,
+            connect_requested=requested,
+        )
+    )
+    try:
+        await asyncio.wait_for(listening.wait(), timeout=1)
+        client = asyncio.create_task(handlers[0](object()))
+        await asyncio.sleep(0)
+        proxy.assert_not_called()
+        if connect:
+            requested.set()
+        else:
+            stop.set_result(None)
+        await asyncio.wait_for(client, timeout=1)
+        assert proxy.call_count == int(connect)
+    finally:
+        if not stop.done():
+            stop.set_result(None)
+        await asyncio.wait_for(task, timeout=1)

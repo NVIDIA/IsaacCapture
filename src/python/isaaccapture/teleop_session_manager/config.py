@@ -10,7 +10,7 @@ These classes provide a clean, declarative way to configure teleop sessions.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -368,6 +368,11 @@ class TeleopSessionConfig:
         trackers: Optional list of manual trackers (usually not needed - auto-discovered!)
         plugins: List of plugin configurations
         verbose: Whether to print detailed progress information during setup
+        oxr_session_factory: Optional callback taking the complete required-extension
+            list and returning external OpenXR handles. Called before DeviceIO starts.
+            The caller owns the session and must stop rendering before context exit,
+            then destroy it after exit. Requires LIVE mode; mutually exclusive with
+            oxr_handles and joint_publisher.
         oxr_handles: Optional pre-existing OpenXRSessionHandles from an external runtime
             (e.g. Kit's XR system). When provided, TeleopSession will use these handles
             instead of creating its own OpenXR session via OpenXRSession.create().
@@ -458,9 +463,20 @@ class TeleopSessionConfig:
     )
     joint_publisher: Optional["RobotTwinPublisher"] = None
     twin_render: TwinRenderConfig = field(default_factory=TwinRenderConfig)
+    # Called with all tracker extensions before DeviceIO starts. The caller owns
+    # the returned session and must stop rendering before TeleopSession exits.
+    oxr_session_factory: Optional[Callable[[List[str]], OpenXRSessionHandles]] = None
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
+        if self.oxr_session_factory is not None and (
+            self.mode != SessionMode.LIVE
+            or self.oxr_handles is not None
+            or self.joint_publisher is not None
+        ):
+            raise ValueError(
+                "oxr_session_factory requires LIVE mode without oxr_handles or joint_publisher"
+            )
         if self.mode == SessionMode.REPLAY and self.mcap_config is None:
             raise ValueError("mcap_config is required when mode is SessionMode.REPLAY")
 
