@@ -119,6 +119,7 @@ class CloudXRService:
         usb_local: bool = False,
         host_client: bool = False,
         recovery_config=None,
+        defer_connect: bool = False,
     ) -> None:
         """Start the CloudXR runtime and the WSS proxy.
 
@@ -148,12 +149,17 @@ class CloudXRService:
             host_client: Serve the web client at ``/client/`` on the WSS
                 proxy port.  Assets are fetched once from GitHub Pages into
                 ``TELEOP_WEB_CLIENT_STATIC_DIR`` or ``~/.cloudxr/static-client``.
+            defer_connect: Hold OOB headset automation until :meth:`connect_headset`.
+                Requires *setup_oob*; the runtime and WSS listener start immediately.
 
         Raises:
             RuntimeError: If the EULA is not accepted, another runtime is
                 already serving *install_dir*, or the runtime or WSS proxy
                 fails to start within its timeout.
         """
+        if defer_connect and not setup_oob:
+            raise ValueError("defer_connect requires setup_oob=True")
+        self._connect_requested = asyncio.Event() if defer_connect else None
         self._install_dir = install_dir
         self._env_config = str(env_config) if env_config is not None else None
         self._device_profile = device_profile
@@ -749,6 +755,15 @@ class CloudXRService:
     # WSS proxy (background thread with its own event loop)
     # ------------------------------------------------------------------
 
+    def connect_headset(self) -> None:
+        """Start deferred headset automation without blocking the caller's frame loop."""
+        if self._connect_requested is None:
+            raise RuntimeError("connect_headset requires defer_connect=True")
+        self.health_check()
+        if self._wss_loop is None or self._wss_loop.is_closed():
+            raise RuntimeError("CloudXR WSS proxy is not running")
+        self._wss_loop.call_soon_threadsafe(self._connect_requested.set)
+
     def _start_wss_proxy_thread(
         self, log_path: Path, timeout_sec: float = WSS_STARTUP_TIMEOUT_SEC
     ) -> None:
@@ -801,6 +816,7 @@ class CloudXRService:
                         recovery_config=self._recovery_config,
                         on_oob_status=self._publish_oob_status,
                         on_oob_fatal=self._on_oob_fatal,
+                        connect_requested=self._connect_requested,
                     )
                 )
                 if (
