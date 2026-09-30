@@ -10,14 +10,21 @@ that ordering lives here.
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
+from acceptance_common.panel.status import WORST_FIRST, worst_first
+from acceptance_common.panel.status import Group as Gate
+from acceptance_common.panel.status import grouped, picked
 
-from ..report import CheckResult, Mark, Report
+from ..report import CheckResult, Report
 
-# Worst first, and it is an order of claims rather than of severities: a failure beats
-# an unanswered check, which beats a number nobody judged, which beats an advisory.
-WORST_FIRST = (Mark.FAIL, Mark.UNANSWERED, Mark.MEAS, Mark.NOTE, Mark.PASS)
+__all__ = [
+    "DECISIVE",
+    "GATE_TITLES",
+    "WORST_FIRST",
+    "Gate",
+    "decisive",
+    "gates",
+    "worst_first",
+]
 
 # The few results that decide whether the rest of the report is worth reading at all.
 # Joint validity first: a take whose joints were never valid is void whatever else it
@@ -48,42 +55,9 @@ GATE_TITLES: tuple[tuple[str, str], ...] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class Gate:
-    code: str
-    title: str
-    results: tuple[CheckResult, ...]
-
-    @property
-    def mark(self) -> Mark:
-        """The worst mark in the group."""
-        return min((r.mark for r in self.results), key=WORST_FIRST.index)
-
-    @property
-    def tally(self) -> str:
-        counts = Counter(r.mark for r in self.results)
-        return ", ".join(
-            f"{counts[mark]} {mark}" for mark in WORST_FIRST if counts[mark]
-        )
-
-
-def worst_first(results: tuple[CheckResult, ...]) -> tuple[CheckResult, ...]:
-    """Stable, so results keep the report's dependency order inside one mark."""
-    return tuple(sorted(results, key=lambda r: WORST_FIRST.index(r.mark)))
-
-
 def gates(report: Report) -> tuple[Gate, ...]:
-    """Groups with checks in them, in the declared order. An empty group is not shown."""
-    grouped: dict[str, list[CheckResult]] = {}
-    for result in report.results:
-        grouped.setdefault(result.gate, []).append(result)
-    return tuple(
-        Gate(code, title, worst_first(tuple(grouped[code])))
-        for code, title in GATE_TITLES
-        if code in grouped
-    )
+    return grouped(report, GATE_TITLES)
 
 
 def decisive(report: Report) -> tuple[CheckResult, ...]:
-    by_name = {result.name: result for result in report.results}
-    return tuple(by_name[name] for name in DECISIVE if name in by_name)
+    return picked(report, DECISIVE)

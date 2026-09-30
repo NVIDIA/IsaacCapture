@@ -7,8 +7,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import nan
+from typing import Protocol
 
 Vec3 = tuple[float, float, float]
+
+
+class Topology(Protocol):
+    @property
+    def joint_names(self) -> tuple[str, ...]: ...
+
+    def bones(self) -> tuple[tuple[int, int], ...]: ...
 
 
 @dataclass(frozen=True, slots=True)

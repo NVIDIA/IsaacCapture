@@ -5,23 +5,14 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
 import numpy as np
 import viser
 
-from .sample import Sample
+from .sample import Sample, Topology
 
 LIVE_JOINT_COLOUR = (86, 196, 138)
 HELD_JOINT_COLOUR = (214, 74, 62)
 BONE_COLOUR = (150, 158, 172)
-
-
-class Topology(Protocol):
-    @property
-    def joint_names(self) -> tuple[str, ...]: ...
-
-    def bones(self) -> tuple[tuple[int, int], ...]: ...
 
 
 class Skeleton:

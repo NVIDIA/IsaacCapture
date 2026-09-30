@@ -50,7 +50,9 @@ def test_everything_else_imports_with_viser_blocked():
     probe = (
         "import sys; sys.modules['viser'] = None;"
         "import acceptance_common.report, acceptance_common.labels,"
-        " acceptance_common.mcap_reader, acceptance_common.panel.sample;"
+        " acceptance_common.mcap_reader, acceptance_common.panel.sample,"
+        " acceptance_common.panel.track, acceptance_common.panel.status,"
+        " acceptance_common.panel.render;"
         "import acceptance_common.checks.continuity, acceptance_common.checks.coverage,"
         " acceptance_common.checks.quaternion, acceptance_common.checks.rate,"
         " acceptance_common.checks.schema, acceptance_common.checks.timestamps,"
