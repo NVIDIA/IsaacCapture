@@ -141,6 +141,33 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "JointStateRetargeterConfig",
         None,
     ),
+    # .ee_pose_jump_guard
+    "EE_POSE_JUMP_GUARD_STATUS_KEY": (
+        ".ee_pose_jump_guard",
+        "EE_POSE_JUMP_GUARD_STATUS_KEY",
+        None,
+    ),
+    "EePoseJumpGuard": (".ee_pose_jump_guard", "EePoseJumpGuard", None),
+    "EePoseJumpGuardConfig": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardConfig",
+        None,
+    ),
+    "EePoseJumpGuardDisposition": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardDisposition",
+        None,
+    ),
+    "EePoseJumpGuardState": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardState",
+        None,
+    ),
+    "EePoseJumpGuardStatusIndex": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardStatusIndex",
+        None,
+    ),
     # .rate_limiter (safety harness: per-frame velocity bounds for EE / joint streams)
     # .controller_pose
     "ControllerPoseSource": (".controller_pose", "ControllerPoseSource", None),
@@ -259,6 +286,13 @@ __all__ = [
     # Generic joint-space device retargeters (leader arms, exoskeletons, ...)
     "JointStateRetargeter",
     "JointStateRetargeterConfig",
+    # EE-pose discontinuity guard
+    "EE_POSE_JUMP_GUARD_STATUS_KEY",
+    "EePoseJumpGuard",
+    "EePoseJumpGuardConfig",
+    "EePoseJumpGuardDisposition",
+    "EePoseJumpGuardState",
+    "EePoseJumpGuardStatusIndex",
     # Safety-harness rate limiters (per-frame velocity bounds)
     "ControllerPoseSource",
     "EePoseRateLimiter",
