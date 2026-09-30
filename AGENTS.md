@@ -205,7 +205,8 @@ pre-commit install --hook-type commit-msg
 
 ## Remote pushes
 
-- Before pushing, compare `git remote get-url` with the user-specified owner and
+- Before pushing, compare every URL from
+  `git remote get-url --push --all <remote>` with the user-specified owner and
   repository. Do not infer the destination from the account, remote alias, or
   branch name.
 - Before updating an existing pull request, verify its exact head owner,
