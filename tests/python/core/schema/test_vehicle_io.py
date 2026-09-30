@@ -22,6 +22,8 @@ def test_steering_wheel_output_defaults():
     assert output.buttons == []
     assert output.hat_x == 0
     assert output.hat_y == 0
+    assert output.connected is False
+    assert output.sample_time_monotonic_ns == 0
 
 
 def test_steering_wheel_output_constructs_with_values():
@@ -36,10 +38,14 @@ def test_steering_wheel_output_constructs_with_values():
 
 
 def test_steering_wheel_wrappers_hold_data():
-    output = SteeringWheelOutput(0.0, 1.0, 0.0, 0.0)
+    output = SteeringWheelOutput(
+        0.0, 1.0, 0.0, 0.0, connected=True, sample_time_monotonic_ns=123
+    )
     timestamp = DeviceDataTimestamp(10, 20, 30)
 
     record = SteeringWheelOutputRecord(output, timestamp)
 
     assert record.data.throttle == pytest.approx(1.0)
+    assert record.data.connected is True
+    assert record.data.sample_time_monotonic_ns == 123
     assert record.timestamp.sample_time_local_common_clock == 20

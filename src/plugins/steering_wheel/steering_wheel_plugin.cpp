@@ -168,6 +168,9 @@ void SteeringWheelPlugin::push_current_state()
     out.hat_y = hat_[1];
 
     const auto sample_time_ns = core::os_monotonic_now_ns();
+    // Zero axes are not neutral after calibration or pedal scaling.
+    out.connected = device_fd_ >= 0;
+    out.sample_time_monotonic_ns = sample_time_ns;
 
     flatbuffers::FlatBufferBuilder builder(kMaxFlatbufferSize);
     auto offset = core::SteeringWheelOutput::Pack(builder, &out);

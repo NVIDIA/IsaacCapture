@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import select
 import signal
 import sys
@@ -18,7 +19,11 @@ from isaaccapture.retargeters import (
 )
 from isaaccapture.schema import SteeringWheelOutput
 
-from vehicle_teleop.vehicle_command import VehicleControlCommand, clamp
+from vehicle_teleop.vehicle_command import (
+    VehicleControlCommand,
+    clamp,
+    isaac_command_to_wire_command,
+)
 
 
 DEFAULT_BIND = "tcp://*:5555"
@@ -91,10 +96,11 @@ class TerminalKeyReader:
             self._old_term = None
 
     def read_key(self) -> str | None:
-        ready, _, _ = select.select([self._input_stream], [], [], 0)
+        ready, _, _ = select.select([self._fd], [], [], 0)
         if not ready:
             return None
-        return self._input_stream.read(1)
+        # Buffered text reads can hide queued keys from select().
+        return os.read(self._fd, 1).decode("ascii", errors="ignore")
 
 
 class IsaacKeyboardControlWorker:
@@ -145,6 +151,8 @@ class IsaacKeyboardControlWorker:
             key = reader.read_key()
             if key is not None:
                 self._state.apply_key(key)
+            if self._state.quit_requested:
+                break
             self._publish_next_command()
             time.sleep(max(0.0, period_s - (time.monotonic() - started)))
 
@@ -174,19 +182,6 @@ class IsaacKeyboardControlWorker:
     def _publish(self, command: VehicleControlCommand) -> None:
         payload = json.dumps(command.to_dict(), separators=(",", ":"))
         self._socket.send_string(f"{self._topic} {payload}")
-
-
-def isaac_command_to_wire_command(
-    command, *, timestamp_ns: int
-) -> VehicleControlCommand:
-    return VehicleControlCommand(
-        sequence=int(command.sequence),
-        timestamp_ns=timestamp_ns,
-        steer=float(command.steer),
-        accel=float(command.accel),
-        throttle=float(command.throttle),
-        brake=float(command.brake),
-    )
 
 
 def parse_float_arg(value: str) -> float:
