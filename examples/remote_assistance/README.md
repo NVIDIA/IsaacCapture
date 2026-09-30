@@ -354,8 +354,10 @@ process's certificate trust. No system-wide CA installation or TLS verification
 bypass is required. The headset still uses the existing CloudXR connection and
 certificate; it does not connect to this LiveKit signaling endpoint.
 
-**3. Start the network server on Edge Compute.** First stop the localhost SFU
-when intentionally switching profiles (this interrupts its current sessions):
+**3. Start Edge Compute Process 0 — Essential — LiveKit SFU.** This is the
+network profile of Process 0 listed above, including NGINX for TLS signaling.
+First stop the localhost SFU when intentionally switching profiles (this
+interrupts its current sessions):
 
 ```bash
 cd ~/IsaacTeleop
@@ -439,11 +441,33 @@ suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
 wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
 
 **7. Start the processes on Robot Site first.** Keep the Edge network server
-from step 3 running. For Robot control, start MuJoCo (process 0, simulation only)
-and SONIC (process 1) using the [Robot Site instructions](#robot-site) above,
-then start the robot bridge below. For Camera Televiz, start the camera sender.
-You can use either group or both; run each process in its own terminal and leave
-it running while you move to Edge Compute in step 8.
+from step 3 running. For simulation, first start MuJoCo (process 0) using the
+[Robot Site instructions](#robot-site) above. SONIC (process 1) is required on
+Robot Site for this robot deployment workflow. Start it and the robot bridge
+below; add the camera sender when using Camera Televiz. Run each process in its
+own terminal and leave it running while you move to Edge Compute in step 8.
+
+**Process 1 — Robot — SONIC Policy Deployment / ZMQ Manager.** On the
+**Robot Site host**, enter the development container:
+
+```bash
+cd ~/GR00T-WholeBodyControl/gear_sonic_deploy
+export TensorRT_ROOT=$HOME/TensorRT
+./docker/run-ros2-dev.sh
+```
+
+Wait for the container shell. Then, **inside the container**, run:
+
+```bash
+cd /workspace/g1_deploy
+source scripts/setup_env.sh
+./deploy.sh --cp policy/low_latency/model \
+  --obs-config policy/low_latency/observation_config.yaml \
+  --input-type zmq_manager sim
+```
+
+Use `real` instead of `sim` for your physical-robot workflow. Keep this terminal
+running and open a separate host terminal for the robot bridge:
 
 ```bash
 # Process 2 — Robot — robot bridge
