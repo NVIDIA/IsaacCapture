@@ -49,7 +49,7 @@ In our usage, the `opendbc` and `panda` repos are not a "one-size-fits-all" solu
 Start the CloudXR runtime:
 
 ```bash
-python3 -m isaaccapture.cloudxr
+.venv/bin/python -m isaaccapture.cloudxr.service run
 ```
 
 In a separate terminal, activate the CloudXR environment printed by that command, then start the Isaac Teleop steering worker:
@@ -60,6 +60,11 @@ source ~/.cloudxr/run/cloudxr.env
 ```
 
 By default, the worker binds to `tcp://*:5555` on topic `vehicle_control`.
+
+The native plugin and steering worker must run on the same host for sample-age
+checks. A disconnected wheel or a sample older than `--sample-timeout-s` (default
+0.5 seconds) makes the worker publish neutral and exit. Restart it to recalibrate
+after reconnecting. Rebuild both the plugin and Python package for these checks.
 
 Useful options:
 

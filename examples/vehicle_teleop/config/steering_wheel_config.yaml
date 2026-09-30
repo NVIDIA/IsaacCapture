@@ -6,10 +6,3 @@ g920_racing_wheel:
   throttle: 2
   brake: 3
   clutch: 1
-  handbrake: 4
-  reverse: 10
-
-sensitivity:
-  mode: 0
-  min: 0.5
-  max: 0.5

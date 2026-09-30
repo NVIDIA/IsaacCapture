@@ -23,6 +23,11 @@ table SteeringWheelOutput {
   hat_x: int (id: 5);
 
   hat_y: int (id: 6);
+
+  connected: bool (id: 7);
+
+  // Producer's CLOCK_MONOTONIC time; live consumers must run on the same host.
+  sample_time_monotonic_ns: long (id: 8);
 }
 
 // Tracked wrapper for the in-memory tracker API (data is null when no wheel data available).

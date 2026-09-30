@@ -47,3 +47,16 @@ class VehicleControlCommand:
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return min(upper, max(lower, float(value)))
+
+
+def isaac_command_to_wire_command(
+    command, *, timestamp_ns: int
+) -> VehicleControlCommand:
+    return VehicleControlCommand(
+        sequence=int(command.sequence),
+        timestamp_ns=timestamp_ns,
+        steer=float(command.steer),
+        accel=float(command.accel),
+        throttle=float(command.throttle),
+        brake=float(command.brake),
+    )

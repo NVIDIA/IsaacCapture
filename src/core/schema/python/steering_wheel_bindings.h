@@ -24,7 +24,7 @@ inline void bind_steering_wheel(py::module& m)
     serialized_class<SteeringWheelOutput>(m, "SteeringWheelOutput", "Encoded steering wheel payload.")
         .def(py::init(
                  [](float steering, float throttle, float brake, float clutch, std::vector<uint8_t> buttons, int hat_x,
-                    int hat_y)
+                    int hat_y, bool connected, int64_t sample_time_monotonic_ns)
                  {
                      SteeringWheelOutputT native;
                      native.steering = steering;
@@ -34,10 +34,13 @@ inline void bind_steering_wheel(py::module& m)
                      native.buttons = std::move(buttons);
                      native.hat_x = hat_x;
                      native.hat_y = hat_y;
+                     native.connected = connected;
+                     native.sample_time_monotonic_ns = sample_time_monotonic_ns;
                      return pack<SteeringWheelOutput>(native);
                  }),
              py::arg("steering") = 0.0f, py::arg("throttle") = 0.0f, py::arg("brake") = 0.0f, py::arg("clutch") = 0.0f,
-             py::arg("buttons") = std::vector<uint8_t>{}, py::arg("hat_x") = 0, py::arg("hat_y") = 0)
+             py::arg("buttons") = std::vector<uint8_t>{}, py::arg("hat_x") = 0, py::arg("hat_y") = 0,
+             py::arg("connected") = false, py::arg("sample_time_monotonic_ns") = 0)
         .def_property_readonly("steering", field(&SteeringWheelOutput::steering))
         .def_property_readonly("throttle", field(&SteeringWheelOutput::throttle))
         .def_property_readonly("brake", field(&SteeringWheelOutput::brake))
@@ -45,6 +48,8 @@ inline void bind_steering_wheel(py::module& m)
         .def_property_readonly("buttons", vector_field(&SteeringWheelOutput::buttons))
         .def_property_readonly("hat_x", field(&SteeringWheelOutput::hat_x))
         .def_property_readonly("hat_y", field(&SteeringWheelOutput::hat_y))
+        .def_property_readonly("connected", field(&SteeringWheelOutput::connected))
+        .def_property_readonly("sample_time_monotonic_ns", field(&SteeringWheelOutput::sample_time_monotonic_ns))
         .def("__repr__",
              [](const Serialized<SteeringWheelOutput>& output)
              {

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import signal
 import subprocess
@@ -25,7 +26,10 @@ from isaaccapture.retargeters import (
 from isaaccapture.schema import SteeringWheelOutput
 
 from vehicle_teleop.command_log import McapCommandLogger, SteeringWheelSample
-from vehicle_teleop.vehicle_command import VehicleControlCommand
+from vehicle_teleop.vehicle_command import (
+    VehicleControlCommand,
+    isaac_command_to_wire_command,
+)
 
 
 DEFAULT_BIND = "tcp://*:5555"
@@ -153,6 +157,7 @@ class IsaacRemoteSteeringWorker:
         self._axis_args = resolve_axis_mapping(args)
         self._start_plugin = not args.no_start_plugin
         self._first_sample_timeout_s = args.first_sample_timeout_s
+        self._sample_timeout_ns = int(args.sample_timeout_s * 1e9)
         self._verbose = args.verbose
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.PUB)
@@ -231,7 +236,12 @@ class IsaacRemoteSteeringWorker:
             time.sleep(max(0.0, period_s - (time.monotonic() - started)))
 
     def _publish_next_command(self) -> None:
-        sample = self._read_isaac_sample()
+        try:
+            sample = self._read_isaac_sample()
+        except RuntimeError:
+            # Send neutral before OpenXR/plugin teardown can delay shutdown.
+            self._publish_neutral()
+            raise
         command = isaac_command_to_wire_command(
             self._retargeter.retarget(sample, sequence=self._sequence),
             timestamp_ns=time.time_ns(),
@@ -269,6 +279,16 @@ class IsaacRemoteSteeringWorker:
                 "Check that the native steering_wheel_plugin is running and publishing "
                 f"collection {self._collection_id!r}."
             )
+        if not tracked.connected:
+            raise RuntimeError("Steering wheel disconnected")
+        # Trackers retain the last payload; command publication cannot prove freshness.
+        sample_time = tracked.sample_time_monotonic_ns
+        if sample_time <= 0 or not (
+            0 <= time.monotonic_ns() - sample_time <= self._sample_timeout_ns
+        ):
+            raise RuntimeError(
+                "Steering wheel sample is stale or has an invalid timestamp"
+            )
         return tracked
 
     def _wait_for_first_sample(self) -> SteeringWheelOutput:
@@ -304,19 +324,6 @@ class IsaacRemoteSteeringWorker:
         signal.signal(signal.SIGTERM, self.stop)
 
 
-def isaac_command_to_wire_command(
-    command, *, timestamp_ns: int
-) -> VehicleControlCommand:
-    return VehicleControlCommand(
-        sequence=int(command.sequence),
-        timestamp_ns=timestamp_ns,
-        steer=float(command.steer),
-        accel=float(command.accel),
-        throttle=float(command.throttle),
-        brake=float(command.brake),
-    )
-
-
 def wire_sample_from_isaac_sample(
     sample: SteeringWheelOutput, *, timestamp_ns: int
 ) -> SteeringWheelSample:
@@ -331,8 +338,8 @@ def wire_sample_from_isaac_sample(
 def parse_float_arg(value: str) -> float:
     """Parse a strictly positive floating-point command-line argument."""
     parsed = float(value)
-    if parsed <= 0.0:
-        raise argparse.ArgumentTypeError("value must be > 0")
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("value must be finite and > 0")
     return parsed
 
 
@@ -405,9 +412,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--first-sample-timeout-s",
-        type=float,
+        type=parse_float_arg,
         default=DEFAULT_FIRST_SAMPLE_TIMEOUT_S,
         help="Seconds to wait for the first IsaacTeleop steering sample before failing.",
+    )
+    parser.add_argument(
+        "--sample-timeout-s",
+        type=parse_float_arg,
+        default=0.5,
+        help="Maximum sample age in seconds before publishing neutral and exiting.",
     )
     parser.add_argument(
         "--log-mcap",
