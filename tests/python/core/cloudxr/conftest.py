@@ -261,7 +261,10 @@ class FakeAdb:
         self.calls.append(list(args))
 
         def result(rc: int, stdout: str = "") -> subprocess.CompletedProcess:
-            return subprocess.CompletedProcess(args, rc, stdout, "")
+            completed = subprocess.CompletedProcess(args, rc, stdout, "")
+            if kwargs.get("check", False):
+                completed.check_returncode()
+            return completed
 
         if args[:2] == ["adb", "get-state"]:
             return result(0 if self.device_state == "device" else 1, self.device_state)
@@ -284,7 +287,12 @@ class FakeAdb:
             return result(
                 0, ""
             )  # unknown vendor - falls back to the generic VIEW intent
-        if "--remove" in args:
+        if (
+            len(args) == 4
+            and args[:3]
+            in (["adb", "forward", "--remove"], ["adb", "reverse", "--remove"])
+            and args[3].startswith("tcp:")
+        ):
             return result(0)
         if args[:2] == ["adb", "forward"]:
             return result(self.forward_rc)
