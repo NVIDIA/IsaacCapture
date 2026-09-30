@@ -357,6 +357,51 @@ proxies signaling only; encrypted WebRTC video/control travels directly between
 each client and the SFU. The server advertises the selected Edge IP for media,
 so using a different interface's address can break media even if signaling works.
 
+**Ubuntu firewall commands (UFW).** Run these on **Edge Compute**, in a host
+terminal. First check whether UFW is active:
+
+```bash
+sudo ufw status verbose
+```
+
+If it reports `Status: active`, allow the Robot Site to reach the three ports:
+
+```bash
+# Replace these with the current Wi-Fi addresses of your two computers.
+ROBOT_IP=10.29.91.174
+EDGE_IP=10.29.91.247
+sudo ufw allow proto tcp from "$ROBOT_IP" to "$EDGE_IP" port 8443
+sudo ufw allow proto udp from "$ROBOT_IP" to "$EDGE_IP" port 7882
+sudo ufw allow proto tcp from "$ROBOT_IP" to "$EDGE_IP" port 7881
+sudo ufw status numbered
+```
+
+These rules take effect immediately and persist across reboots; no reload is
+needed. Update them if either computer's address changes. To remove a rule later,
+use the same command with `ufw delete allow` instead of `ufw allow`.
+
+If UFW reports `Status: inactive`, it is not blocking these connections: proceed
+to step 4. Do not enable it just for this test; enabling a firewall requires
+accounting for existing SSH and CloudXR access too. If another firewall manager
+or corporate policy controls the computer, use that system's equivalent rules.
+
+On **Robot Site**, no new inbound server ports are needed with the usual UFW
+policy of allowing outgoing traffic and established replies. Check
+`sudo ufw status verbose` there too. If its outgoing policy is `deny`, permit
+outbound access explicitly on **Robot Site**:
+
+```bash
+EDGE_IP=10.29.91.247
+sudo ufw allow out proto tcp to "$EDGE_IP" port 8443
+sudo ufw allow out proto udp to "$EDGE_IP" port 7882
+sudo ufw allow out proto tcp to "$EDGE_IP" port 7881
+```
+
+These commands configure the computer's firewall only. Network isolation or
+upstream restrictions require the network administrator's help. The generated
+containers use host networking, so these are host input rules, not Docker
+port-forwarding rules. See [Ubuntu's UFW documentation](https://ubuntu.com/server/docs/firewalls/).
+
 **4. Check reachability from Robot Site**, before starting robot control:
 
 ```bash
