@@ -226,7 +226,7 @@ subject turns, a dropped block that is a spike rather than a slightly lower mean
 The modules are organised by **what input they need**, which deliberately does not mirror
 the G-numbering. The G-numbers are the narrative for the submitter; these are the layers:
 
-| Layer | Needs | Per-device cost |
+| Layer | Needs | Per-schema cost |
 |---|---|---|
 | Envelope — the Record wrapper only | nothing | none |
 | Payload — field roles | one descriptor | a descriptor |
@@ -248,6 +248,10 @@ Other structural decisions that are settled:
 - **`full_body` is one profile, `hand` is the known next one.** The geometry checks read
   topology, symmetry pairs, proportion priors and *which checks apply* from the profile —
   gravity alignment is body-only.
+  - **A profile belongs to a schema, never to a device.** Where devices legitimately differ
+    (which optional joints they fill, how they source the wrist), write a rule every device
+    is judged by — never a per-device table. A new device must be checkable with no edit
+    here; the device name is provenance only.
 - **This directory sits outside `src/`** because `src/python/CMakeLists.txt` globs `.py`
   recursively: a file placed under it would change the wheel with no edit to any build
   file. `acceptance/` holds one directory per recordable `.fbs`, and each splits three
