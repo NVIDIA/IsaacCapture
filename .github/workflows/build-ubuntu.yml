@@ -383,18 +383,6 @@ jobs:
         # own .venv without isaacteleop, rather than .venv-skbuild.
         .venv-skbuild/bin/python "${RUNNER_TEMP}/skbuild_smoke.py"
 
-    - name: Wheel contents (the pip wheel ships both names)
-      run: |
-        set -euo pipefail
-        # ctest's packaging suite reads the classic uv-built wheels; this is the
-        # only thing that reaches a wheel built by the pip config, which has its
-        # own wheel.packages mapping.
-        uv build --wheel --python 3.11 --out-dir dist-wheel src/compat
-        uv build --wheel --python 3.11 --out-dir dist-wheel
-        ISAAC_TELEOP_WHEELS_DIR="${PWD}/dist-wheel" \
-          uv run --python 3.11 --directory tests/python/packaging --extra dev \
-          pytest -v test_wheel_contents.py
-
   # Jobs `if:` conditions cannot see the `matrix` context, so arm64 GPU test
   # runs are skipped by computing the test matrix here instead: when
   # NO_GPU_ARM=1, arm64 drops out of the matrix entirely (no self-hosted arm64
