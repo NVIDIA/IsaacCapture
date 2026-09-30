@@ -36,16 +36,30 @@
  */
 
 import { ReadonlySignal } from '@preact/signals-react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Handle, HandleState, HandleTarget } from '@react-three/handle';
 import { Container, Image, Text } from '@react-three/uikit';
 import { Button } from '@react-three/uikit-default';
-import React, { useEffect, useRef, useState } from 'react';
-import { Color, Group, Mesh, MeshStandardMaterial, Object3D, Vector3 } from 'three';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Camera,
+  Color,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  Object3D,
+  Quaternion,
+  Vector3,
+} from 'three';
 import { damp } from 'three/src/math/MathUtils.js';
 
 import { PerformanceCanvasImage } from '@helpers/react/PerformanceCanvasImage';
 import { useXRButton } from '@helpers/react/useXRButton';
+import {
+  ControlPanelLayoutOptions,
+  ControlPanelPosition,
+  getControlPanelPositionVector,
+} from '@helpers/react/utils';
 
 import arrowLeftStartOnRectangleSvg from './icons/arrow-left-start-on-rectangle.svg';
 import arrowUturnLeftSvg from './icons/arrow-uturn-left.svg';
@@ -54,6 +68,11 @@ import { useRecorder } from './RecorderContext';
 
 // Face-camera rotation constants
 const FACE_CAMERA_DAMPING = 10; // Higher = faster rotation toward camera
+
+const WORLD_FORWARD = new Vector3(0, 0, -1);
+const WORLD_UP = new Vector3(0, 1, 0);
+// Synthesized via CDP by oob_teleop_adb.py's _cdp_send_reset_panel_key - keep in sync.
+const RESET_PANEL_KEY = 'r'; // compared against event.key.toLowerCase()
 
 /** Display size for the Performance metrics slot (width and height passed to PerformanceCanvasImage and its container). */
 const METRIC_SLOT_WIDTH = 512;
@@ -74,6 +93,15 @@ interface CloudXRUIProps {
   countdownDisabled?: boolean;
   position?: [number, number, number];
   rotation?: [number, number, number];
+  /** Same setting used for the initial world-space `position` above - reused by
+   * resetPanelRelativeToHead so a reset reproduces the same left/center/right choice. */
+  controlPanelPosition?: ControlPanelPosition;
+  /** Same layout constants used to compute `position` above. */
+  controlPanelLayout?: ControlPanelLayoutOptions;
+  /** When true, the panel continuously follows the headset every frame (resetPanelRelativeToHead
+   * re-runs each frame instead of once) instead of staying at a fixed room position. Dragging is
+   * disabled while this is on - see the Handle's `bind` prop below. */
+  trackHeadset?: boolean;
   /** Computed signal for render FPS text - updates without React re-render */
   renderFpsText?: ReadonlySignal<string>;
   /** Computed signal for pose send FPS text - the rate operator intent reaches the robot */
@@ -191,18 +219,6 @@ const uiPositionHelper = new Vector3();
 const HANDLE_COLOR_DEFAULT = new Color('#666666');
 const HANDLE_COLOR_HOVER = new Color('#aaaaaa');
 
-// Workaround for @pmndrs/handle defaultApply behavior: defaultApply copies
-// state.current.quaternion to the target on every drag frame AND on drag release.
-// With rotate={false}, state.current.quaternion is always the drag-start quaternion,
-// so it resets our face-camera rotation on every frame (priority -1 runs before
-// face-camera priority 0) and wipes it entirely on drag release.
-// By providing a custom apply that skips quaternion, face-camera owns rotation fully.
-// Scale is intentionally omitted too: scale={false} keeps it constant, so copying
-// it would be a no-op. If scale is ever enabled on this Handle, add it back here.
-function applyPositionSkipRotation(state: HandleState<unknown>, target: Object3D): void {
-  target.position.copy(state.current.position);
-}
-
 function RecordingButton({
   id,
   label,
@@ -248,6 +264,9 @@ export default function CloudXR3DUI({
   onCountdownDecrease,
   countdownDisabled = false,
   position = [1.8, 1.75, -1.3],
+  controlPanelPosition = 'center',
+  controlPanelLayout = { distance: 1.8, height: 1.85, angleDegrees: 70 },
+  trackHeadset = false,
   rotation = [0, 0, 0], // Note: Y rotation is controlled by face-camera logic
   renderFpsText,
   poseSendFpsText,
@@ -284,10 +303,15 @@ export default function CloudXR3DUI({
   /** Control panel hidden: small Show control (see settings to hide control panel on XR enter). */
   const [panelHidden, setPanelHidden] = useState(false);
   const prevXRMode = useRef(false);
+  // Set on the same isXRMode false->true transition below, consumed (and cleared) by the
+  // useFrame block further down - see resetPanelRelativeToHead's doc comment for why the
+  // placement itself can't happen here, in a plain effect.
+  const needsInitialPlacement = useRef(false);
 
   useEffect(() => {
     if (isXRMode && !prevXRMode.current) {
       setPanelHidden(panelHiddenAtStart);
+      needsInitialPlacement.current = true;
     }
     prevXRMode.current = isXRMode;
   }, [isXRMode, panelHiddenAtStart]);
@@ -305,6 +329,165 @@ export default function CloudXR3DUI({
     }
   }, [position[0], position[1], position[2]]);
 
+  const { camera } = useThree();
+
+  /**
+   * The head-relative offset applied every frame while trackHeadset is on: X/Z rotate with the
+   * head's yaw (see worldPositionFromHeadOffset), Y is an absolute world height, not relative to
+   * the head - same reasoning as worldPositionFromHeadOffset below. Starts at the
+   * config-derived default and is overwritten by a completed drag (see handleApply) - so once
+   * the operator repositions the panel, tracking continues from *that* spot for the rest of the
+   * session instead of snapping back to the default.
+   */
+  const headOffsetRef = useRef(new Vector3());
+  useEffect(() => {
+    const [localX, panelHeight, localZ] = getControlPanelPositionVector(
+      controlPanelPosition,
+      controlPanelLayout
+    );
+    headOffsetRef.current.set(localX, panelHeight, localZ);
+  }, [controlPanelPosition, controlPanelLayout]);
+
+  /**
+   * Projects *offset* (see headOffsetRef's doc comment) into world space relative to *cam*.
+   *
+   * *cam*'s yaw is used on the horizontal (XZ) plane only, matching the face-camera effect below
+   * - using the raw camera quaternion (which includes pitch) would place the panel above or
+   * below eye level, or tilted, whenever the operator's head isn't level.
+   *
+   * IMPORTANT: only call this with a camera whose transform is known-current for this frame
+   * (i.e. from useFrame's `state.camera`, or - as in the keydown handler below - useThree()'s
+   * camera when called well after session start, never from a plain mount-time effect). A WebXR
+   * session can only produce a frame callback once it has a real tracked pose, so useFrame is the
+   * only place that's guaranteed fresh; a plain useEffect keyed on isXRMode can fire before the
+   * first tracked frame lands, reading a stale/default transform instead.
+   */
+  const worldPositionFromHeadOffset = useCallback((cam: Camera, offset: Vector3): Vector3 => {
+    const forward = WORLD_FORWARD.clone().applyQuaternion(cam.quaternion);
+    forward.y = 0;
+    forward.normalize();
+    const yawQuat = new Quaternion().setFromUnitVectors(WORLD_FORWARD, forward);
+    const horizontal = new Vector3(offset.x, 0, offset.z).applyQuaternion(yawQuat);
+    return new Vector3(cam.position.x + horizontal.x, offset.y, cam.position.z + horizontal.z);
+  }, []);
+
+  /**
+   * The one place *offset* actually gets applied to groupRef.position from a head-relative
+   * offset (a discrete event - reset, or a drag's final release - never the continuous
+   * per-frame tracking in useFrame below, which calls worldPositionFromHeadOffset directly and
+   * silently to avoid spamming the console every frame). Logs all three poses in a single line
+   * so a test can assert the panel actually lands near the headset instead of at a fixed world
+   * coordinate - see the console lines, not the scene graph, since there's no other way to
+   * observe a Three.js object's world position from outside the page.
+   */
+  const applyPanelPosition = useCallback(
+    (cam: Camera, offset: Vector3): Vector3 => {
+      const target = worldPositionFromHeadOffset(cam, offset);
+      if (groupRef.current) {
+        groupRef.current.position.copy(target);
+      }
+      console.debug(
+        `[CloudXRUI] headset=(${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)}) ` +
+          `relative=(${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)}) ` +
+          `world=(${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
+      );
+      return target;
+    },
+    [worldPositionFromHeadOffset]
+  );
+
+  /**
+   * Un-hides the panel, resets headOffsetRef back to the config-derived default (discarding any
+   * drag-derived offset - a reset should mean "back to the configured position", not "keep
+   * whatever I last dragged to"), and repositions it via worldPositionFromHeadOffset. There is no
+   * way to detect a panel that's hidden or dragged out of reach (see CloudXR2DUI's
+   * panelHiddenAtStart docs) - the drag handle needed to recover it can itself be unreachable -
+   * so this offers a fix instead: the operator (or the host, via oob_teleop_adb.py's
+   * _cdp_send_reset_panel_key synthesizing RESET_PANEL_KEY over CDP) can always bring the panel
+   * back regardless of where it ended up.
+   */
+  const resetPanelRelativeToHead = useCallback(
+    (cam: Camera) => {
+      if (!groupRef.current) {
+        return;
+      }
+      const [localX, panelHeight, localZ] = getControlPanelPositionVector(
+        controlPanelPosition,
+        controlPanelLayout
+      );
+      headOffsetRef.current.set(localX, panelHeight, localZ);
+      applyPanelPosition(cam, headOffsetRef.current);
+      setPanelHidden(false);
+    },
+    [controlPanelPosition, controlPanelLayout, applyPanelPosition]
+  );
+
+  /**
+   * Handle's own apply, run at priority -1 (before this component's face-camera/tracking
+   * useFrame below, which runs at the default priority 0) every frame a drag is active. Always
+   * copies position (matching the original applyPositionSkipRotation it replaces - quaternion is
+   * deliberately never copied, see below). While trackHeadset is on, also converts the dragged
+   * world position back into a head-relative offset on every update, not just the last one: the
+   * continuous tracking in useFrame recomputes world position from headOffsetRef using this same
+   * frame's camera pose, so once this runs (first, priority -1) it reproduces the exact position
+   * just set here rather than fighting it - no separate "drag in progress" flag needed to make
+   * the two agree. Logging only happens on state.last, so an active multi-frame drag doesn't
+   * spam the console on every intermediate update.
+   *
+   * Quaternion is skipped because of a @pmndrs/handle defaultApply quirk: defaultApply copies
+   * state.current.quaternion to the target on every drag frame AND on drag release. With
+   * rotate={false}, state.current.quaternion is always the drag-start quaternion, so it resets
+   * face-camera rotation on every frame and wipes it entirely on drag release. Scale is
+   * intentionally omitted too: scale={false} keeps it constant, so copying it would be a no-op.
+   * If scale is ever enabled on this Handle, add it back here.
+   */
+  const handleApply = useCallback(
+    (state: HandleState<unknown>, target: Object3D) => {
+      target.position.copy(state.current.position);
+      if (!trackHeadset) {
+        return;
+      }
+      const forward = WORLD_FORWARD.clone().applyQuaternion(camera.quaternion);
+      forward.y = 0;
+      forward.normalize();
+      const yawQuat = new Quaternion().setFromUnitVectors(WORLD_FORWARD, forward);
+      const worldDelta = new Vector3(
+        target.position.x - camera.position.x,
+        0,
+        target.position.z - camera.position.z
+      ).applyQuaternion(yawQuat.clone().invert());
+      headOffsetRef.current.set(worldDelta.x, target.position.y, worldDelta.z);
+      if (state.last) {
+        // Re-applies the same position target already holds (from state.current.position above)
+        // - this call exists for its single log line, going through the same applyPanelPosition
+        // every other offset change does, not because the position itself needs recomputing.
+        applyPanelPosition(camera, headOffsetRef.current);
+      }
+    },
+    [trackHeadset, camera, applyPanelPosition]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== RESET_PANEL_KEY) {
+        return;
+      }
+      // Unlike a function key, a plain letter can be typed into any of the 2D settings form's
+      // text inputs - don't reset the panel out from under someone typing a server IP.
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      resetPanelRelativeToHead(camera);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [camera, resetPanelRelativeToHead]);
+
   const isCompact = minimizeOnPlay && playInProgress;
   const isMinimizedLayout = isCompact || panelHidden;
   const handleWidth = panelHidden ? 0.12 : isCompact ? 0.28 : 1.0;
@@ -321,6 +504,25 @@ export default function CloudXR3DUI({
   useFrame((state, dt) => {
     if (groupRef.current == null) {
       return;
+    }
+    // First real XR frame since session start (see resetPanelRelativeToHead's doc comment for
+    // why it must happen here, not in the isXRMode effect that set the flag).
+    if (needsInitialPlacement.current) {
+      resetPanelRelativeToHead(state.camera);
+      needsInitialPlacement.current = false;
+    } else if (trackHeadset) {
+      // Continuous version of the same reset: every frame instead of once, using whatever
+      // headOffsetRef currently holds (the config default, or wherever the operator is currently
+      // dragging to - see handleApply, which updates it every frame too, not just on release),
+      // and without the un-hide/logging side effects (calling resetPanelRelativeToHead here would
+      // force the panel visible every frame, defeating the hide-panel button, and would spam the
+      // console). Runs even mid-drag: Handle's own apply already ran this frame (priority -1,
+      // before this useFrame) and updated headOffsetRef from the same camera pose this frame
+      // will use, so recomputing world position from it here reproduces what Handle just set
+      // instead of fighting it.
+      groupRef.current.position.copy(
+        worldPositionFromHeadOffset(state.camera, headOffsetRef.current)
+      );
     }
     state.camera.getWorldPosition(cameraPositionHelper);
     groupRef.current.getWorldPosition(uiPositionHelper);
@@ -352,14 +554,17 @@ export default function CloudXR3DUI({
         rotation={rotation}
         pointerEventsType={{ deny: 'grab' }}
       >
-        {/* Drag Handle Bar - grab to reposition the panel */}
+        {/* Drag Handle Bar - grab to reposition the panel. Works the same whether trackHeadset is
+            on or off; while it's on, handleApply also updates headOffsetRef on release so
+            continuous tracking (useFrame below) keeps following from the new spot instead of
+            snapping back to wherever it was configured. */}
         <Handle
           handleRef={handleRef}
           targetRef={groupRef}
           scale={false}
           multitouch={false}
           rotate={false}
-          apply={applyPositionSkipRotation}
+          apply={handleApply}
         >
           <mesh
             ref={handleRef}

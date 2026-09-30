@@ -60,6 +60,15 @@ export function savePerProject<T>(
 /** React UI options (e.g. in-XR control panel position). */
 export interface ReactUIConfig {
   controlPanelPosition?: ControlPanelPosition;
+  /** Distance from viewer to panel (meters). Overrides the default in ControlPanelLayoutOptions. */
+  controlPanelDistance?: number;
+  /** Height of panel, floor-relative (meters). Overrides the default in ControlPanelLayoutOptions. */
+  controlPanelHeight?: number;
+  /** Angle in degrees for left/right positions from center. Overrides the default in ControlPanelLayoutOptions. */
+  controlPanelAngleDegrees?: number;
+  /** When true, the control panel continuously follows the headset instead of staying at a
+   * fixed room position; dragging is disabled while this is on. */
+  controlPanelTrackHeadset?: boolean;
   /** When true, the control panel is hidden at immersive XR enter (small “show control panel” control only). */
   panelHiddenAtStart?: boolean;
   /** When true, all WebGL rendering is skipped. */

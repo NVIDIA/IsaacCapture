@@ -51,6 +51,7 @@ const oneOf =
     allowed.includes(raw);
 const isBool = oneOf('true', 'false');
 const isNumber = (raw: string): boolean => raw.trim() !== '' && Number.isFinite(Number(raw));
+const isPositiveNumber = (raw: string): boolean => isNumber(raw) && Number(raw) > 0;
 
 export const URL_PARAMS: UrlParam[] = [
   // --- Form-backed settings (seeded into a control, then read through the form) ---
@@ -169,6 +170,33 @@ export const URL_PARAMS: UrlParam[] = [
     elementId: 'controlPanelPosition',
     isValid: oneOf('left', 'center', 'right'),
     description: 'In-XR control panel start position: left, center, or right.',
+  },
+  {
+    key: 'controlPanelDistance',
+    elementId: 'controlPanelDistance',
+    // A distance of 0 puts the panel at the viewer's own position; negative puts it behind them.
+    isValid: isPositiveNumber,
+    description: 'In-XR control panel distance from the viewer, in meters. Must be positive.',
+  },
+  {
+    key: 'controlPanelHeight',
+    elementId: 'controlPanelHeight',
+    isValid: isNumber,
+    description: 'In-XR control panel height, in meters (floor-relative).',
+  },
+  {
+    key: 'controlPanelAngleDegrees',
+    elementId: 'controlPanelAngleDegrees',
+    isValid: isNumber,
+    description: 'In-XR control panel angle from center for the left/right positions, in degrees.',
+  },
+  {
+    key: 'controlPanelTrackHeadset',
+    elementId: 'controlPanelTrackHeadset',
+    kind: 'checked',
+    isValid: isBool,
+    description:
+      'Keep the in-XR control panel at a fixed position/rotation relative to the headset instead of the room (true/false).',
   },
   {
     key: 'controllerModelVisibility',
