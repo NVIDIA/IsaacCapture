@@ -30,7 +30,8 @@ SPDX-License-Identifier: Apache-2.0
   List Robot Site before Edge Compute in the process overview; keep the table,
   process headings and network setup references aligned when reordering them.
   Include SONIC's host/container launch commands directly in network startup;
-  identify the network SFU as Edge Process 0.
+  identify processes with comments above their command blocks in network setup,
+  including the network SFU as Edge Process 0.
 - Mark host-to-container transitions explicitly in deployment instructions;
   an environment prompt prefix does not establish that Docker was entered.
 - Pair network port tables with site-specific firewall commands, status checks,

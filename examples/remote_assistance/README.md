@@ -354,12 +354,13 @@ process's certificate trust. No system-wide CA installation or TLS verification
 bypass is required. The headset still uses the existing CloudXR connection and
 certificate; it does not connect to this LiveKit signaling endpoint.
 
-**3. Start Edge Compute Process 0 — Essential — LiveKit SFU.** This is the
-network profile of Process 0 listed above, including NGINX for TLS signaling.
+**3. Start the network server on Edge Compute.** This profile includes NGINX
+for TLS signaling.
 First stop the localhost SFU when intentionally switching profiles (this
 interrupts its current sessions):
 
 ```bash
+# Process 0 — Essential — LiveKit SFU
 cd ~/IsaacTeleop
 docker compose -f examples/remote_assistance/compose.yaml down
 docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" up -d
