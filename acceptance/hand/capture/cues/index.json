@@ -1,0 +1,17 @@
+{
+  "voice": "en_GB-alba-medium",
+  "length_scale": "1.25",
+  "text_sha1": {
+    "open_hand_open": "d8c947cd1f4be358",
+    "fist": "ef1bfebddea6a67b",
+    "right_grasps_left_fist": "1ebe62bb9e150c60",
+    "left_grasps_right_fist": "a607ee9ec9b69a53",
+    "pinch_index": "795b6da135be78ec",
+    "pinch_middle": "38c2c62b379985bc",
+    "pinch_ring": "33578170b22ee4d6",
+    "pinch_little": "4a640d00b81e7f38",
+    "wrist_rotate": "f73ee00b0ba1c639",
+    "open_hand_close": "d9576f70c759b806",
+    "closing": "5b9a4c18a75801ef"
+  }
+}

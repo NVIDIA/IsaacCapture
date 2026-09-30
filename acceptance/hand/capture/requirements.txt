@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# isaacteleop itself is the locally built wheel, which setup_env.sh installs by path.
+viser>=1.1.0
+mcap
+# Paired with the flatc the checker's setup_env.sh downloads.
+flatbuffers==24.3.25
