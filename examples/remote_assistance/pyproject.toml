@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isaac-remote-assistance-example"
+version = "0.1.0"
+description = "Robot-to-edge LiveKit transport for the Remote Assistance prototype"
+requires-python = ">=3.11"
+dependencies = [
+    "livekit==1.1.20",
+    "livekit-api==1.2.1",
+    "numpy>=1.26,<3",
+    "pyyaml>=6",
+    "pyzmq>=26,<28",
+]
+
+[project.optional-dependencies]
+camera = ["opencv-python>=4.5,<5"]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["remote_assistance*"]

@@ -206,12 +206,12 @@ def _stereo_for(cam: dict, placements_cfg: dict) -> Tuple[bool, float]:
     return stereo, float(pspec.get("stereo_plane_distance_cm", 0.0))
 
 
-def build_local_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
-    """source=local: open each enabled camera directly."""
+def _build_camera_entries(cfg: dict, is_xr: bool, factory) -> List[SourceEntry]:
+    """Attach the configured display placement to each constructed source."""
     placements_cfg = cfg.get("display", {}).get("placements", {})
     entries: List[SourceEntry] = []
     for cam in _enabled_cameras(cfg):
-        cam_sources = build_local_camera(cam)
+        cam_sources = factory(cam)
         # Aspect comes from the built source's spec, not the YAML — video
         # sources may omit width/height and size themselves from the file.
         first = cam_sources[0].spec
@@ -239,6 +239,19 @@ def build_local_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
                 )
             )
     return entries
+
+
+def build_local_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
+    """source=local: open each enabled camera directly."""
+    return _build_camera_entries(cfg, is_xr, build_local_camera)
+
+
+def build_livekit_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
+    """source=livekit: subscribe on the edge without opening robot devices."""
+    from sources.livekit import LiveKitSource
+
+    settings = cfg["livekit"]
+    return _build_camera_entries(cfg, is_xr, lambda cam: [LiveKitSource(cam, settings)])
 
 
 def build_rtp_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:

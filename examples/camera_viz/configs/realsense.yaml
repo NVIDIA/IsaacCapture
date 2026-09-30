@@ -1,20 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# V4L2 source configured for the Intel RealSense Depth Camera 435i.
+# V4L2 source configured locally for the Dell Display 4MP Webcam.
 # Same YAML drives both camera_viz (receiver) and camera_streamer (RTP sender).
 # Flip top-level ``source: local|rtp`` to control what camera_viz opens;
 # camera_streamer always reads cameras + rtp ports + streaming.host.
 #
-# RealSense 435i V4L2 node layout:
-#   /dev/video0, /dev/video2  — depth (capture)
-#   /dev/video1, /dev/video3  — depth metadata (no capture)
-#   /dev/video4               — RGB color (capture)  ← used here
-#   /dev/video5               — RGB metadata (no capture)
-#
-# To inspect available resolutions and formats on the color node:
-#   sudo apt install v4l-utils
-#   v4l2-ctl --device=/dev/video4 --list-formats-ext
+# Supported 60 fps mode on /dev/video0: MJPG at 1920x1080.
 
 source: local                   # local | rtp
 streaming:
@@ -26,11 +18,11 @@ cameras:
   - name: cam
     enabled: true
     type: v4l2
-    device: /dev/video4         # RealSense 435i RGB color node
+    device: /dev/video0
     width: 1920
     height: 1080
-    fps: 30
-    # fourcc: MJPG              # only if the device offers MJPG (RealSense V4L2 is YUYV-only)
+    fps: 60
+    fourcc: MJPG
     rtp:                        # used by camera_streamer + source: rtp receivers
       port: 5000
       bitrate_mbps: 15          # camera_streamer default; lower for tight uplinks
@@ -39,8 +31,8 @@ cameras:
 display:
   mode: xr                      # xr | window (xr is the default)
   window:
-    width: 1920
-    height: 1080
+    width: 640
+    height: 360
   xr:
     near_z: 0.05
     far_z: 100.0

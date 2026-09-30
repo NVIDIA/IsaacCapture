@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Development-only credentials, bound to loopback for the one-computer POC.
+development: true
+port: 7880
+bind_addresses: [127.0.0.1]
+keys:
+  devkey: secret
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  node_ip: 127.0.0.1
+  enable_loopback_candidate: true
+  interfaces:
+    includes: [lo]
+  data_channel_max_buffered_amount: 1048576
+logging:
+  level: info

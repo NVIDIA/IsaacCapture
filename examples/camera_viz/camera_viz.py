@@ -177,8 +177,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     resolve_video_paths(cfg, args.config.parent)
 
     source_mode = cfg.get("source", "local").lower()
-    if source_mode not in ("local", "rtp"):
-        raise ValueError(f"camera_viz: source must be local|rtp, got {source_mode!r}")
+    if source_mode not in ("local", "rtp", "livekit"):
+        raise ValueError(
+            f"camera_viz: source must be local|rtp|livekit, got {source_mode!r}"
+        )
 
     effective_mode = (args.mode or cfg.get("display", {}).get("mode", "xr")).lower()
     config.check_shapes_are_displayable(cfg, effective_mode)
@@ -270,6 +272,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         if source_mode == "local":
             entries = config.build_local_entries(cfg, is_xr)
+        elif source_mode == "livekit":
+            entries = config.build_livekit_entries(cfg, is_xr)
         else:
             entries = config.build_rtp_entries(cfg, is_xr)
 

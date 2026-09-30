@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Capture mode for the 1440p30 LiveKit latency comparison.
+source: livekit
+livekit:
+  url: ws://127.0.0.1:7880
+  room: remote-assistance
+  development: true
+  publisher: robot-camera
+  viewer_identity: edge-video
+  codec: h264
+  video_encoder: auto
+  # The SDK's NVDEC path returned frozen frames on this test host.
+  video_decoder: software
+  bitrate_mbps: 15
+  video_stale_ms: 1000
+cameras:
+  - name: cam
+    type: v4l2
+    device: /dev/video0
+    width: 2560
+    height: 1440
+    fps: 30
+    fourcc: MJPG
+display:
+  mode: xr
+  window:
+    width: 640
+    height: 360
+  xr:
+    near_z: 0.05
+    far_z: 100.0
+    system_wait_seconds: -1
+  clear_color: [0.0, 0.0, 0.0, 0.0]
+  placements:
+    cam:
+      lock_mode: lazy
+      distance: 1.0

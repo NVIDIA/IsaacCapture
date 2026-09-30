@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: isaac-remote-assistance
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.7
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit-local.yaml:/etc/livekit.yaml:ro

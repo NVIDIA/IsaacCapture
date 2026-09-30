@@ -61,6 +61,9 @@ only point here — edit the rules in the doc, not the shims.
 
 ## Shell scripts
 
+- For process cleanup, verify ownership and command lines, then signal explicit
+  PIDs. Never use an unchecked variable with `pkill -f`: an empty pattern can
+  match every process owned by the user. Apply this rule to suggested commands too.
 - In **bash** scripts (`#!/bin/bash`, `#!/usr/bin/env bash`, or files `source`d
   only by bash), use **`[[ ... ]]`** for conditional tests, never the POSIX
   single-bracket **`[ ... ]`**. `[[` is safer (no word-splitting or glob

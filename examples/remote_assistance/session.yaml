@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Single-computer SONIC simulator setup. Manager publishes on 5558, bridge on 5556.
+livekit:
+  url: ws://127.0.0.1:7880
+  room: remote-assistance
+  development: true
+  max_age_ms: 300
+edge:
+  identity: edge-session
+  subscribe: tcp://127.0.0.1:5558
+  publish: tcp://127.0.0.1:5559
+robot:
+  identity: robot-session
+  subscribe: tcp://127.0.0.1:5557
+  publish: tcp://127.0.0.1:5556
+routes:
+  - {from: edge, prefix: pose, topic: ra/v1/devices/pose, reliable: false, latest: true}
+  - {from: edge, prefix: planner, topic: ra/v1/devices/planner, reliable: false, latest: true}
+  - {from: edge, prefix: command, topic: ra/v1/devices/command, reliable: true, latest: false}
+  - {from: edge, prefix: manager_state, topic: ra/v1/devices/manager_state, reliable: false, latest: true}
+  - {from: robot, prefix: g1_debug, topic: ra/v1/devices/observation, reliable: false, latest: true}
+  - {from: edge, prefix: goal, topic: ra/v1/hybrid/goal, reliable: true, latest: false}
+  - {from: robot, prefix: execution_state, topic: ra/v1/hybrid/execution_state, reliable: false, latest: true}
