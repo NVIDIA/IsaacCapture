@@ -207,7 +207,7 @@ configured (for example Monado) or when a host singleton must not be duplicated
 .. code-block:: bash
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
-   python examples/latency_probe/python/latency_probe_example.py --no-launch-cloudxr-runtime
+   python examples/teleop/python/gripper_retargeting_example_simple.py --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
 ------------------------------------
