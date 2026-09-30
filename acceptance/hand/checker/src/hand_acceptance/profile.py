@@ -81,12 +81,12 @@ class HandProfile:
     joint_names = JOINT_NAMES
 
     @staticmethod
-    def bones() -> tuple[tuple[str, str], ...]:
+    def bones() -> tuple[tuple[int, int], ...]:
         pairs = list(judged_bones())
         for finger, metacarpal in METACARPALS.items():
             pairs.remove((WRIST, PROXIMAL[finger]))
             pairs += [(WRIST, metacarpal), (metacarpal, PROXIMAL[finger])]
-        return tuple((JOINT_NAMES[a], JOINT_NAMES[b]) for a, b in pairs)
+        return tuple(pairs)
 
 
 HAND = HandProfile()
