@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # Remote Assistance: LiveKit prototype
 
 Video and robot control pass through LiveKit between Robot Site and Edge Compute.
-CloudXR connects the operator's headset to Edge Compute. NGINX is a later addition.
+CloudXR connects the operator's headset to Edge Compute. The network profile uses
+NGINX for TLS signaling; media and control data still pass through LiveKit.
 
 ## Multiple Site Process Setup
 
@@ -59,12 +60,11 @@ NVIDIA Container Toolkit configuration and any Docker daemon restart belong to
 machine preparation, before starting LiveKit or SONIC containers. They are not
 part of each session's startup.
 
-**Current configuration:** the supplied YAML files use localhost and development
-credentials for the single-computer test. The process placement below is also the
-intended multiple-computer layout, but moving machines requires configuring a
-reachable SFU address/media ports and credentials first. Run one SFU on Edge
-Compute; Robot Site connects to that same SFU. Keep the ZMQ endpoints local to
-each site. See the network configuration notes under Delivery and Lifecycle.
+**Choose a profile:** the checked-in YAML files use localhost and development
+credentials for the single-computer test. For two computers, first follow
+[Network setup](#network-setup-for-two-computers) below to generate private site
+bundles, then use those bundles in the same processes. Run one SFU on Edge Compute;
+Robot Site connects to it. Keep ZMQ endpoints local to each site.
 
 ### Edge Compute
 
@@ -192,8 +192,8 @@ Captures the local V4L2 camera and publishes video to LiveKit. Only this process
 should own the camera device; stop a direct-camera viewer before starting it.
 Camera capture and robot control remain separate processes in the same room.
 
-Capture size and rate come from `livekit-webcam.yaml` (currently 2560×1440 at
-30 fps, MJPG). For 1080p60, set width/height/fps to 1920/1080/60. Keep sender and
+Capture size and rate come from `livekit-webcam.yaml` (currently 1920×1080 at
+60 fps, MJPG). For 1440p30, set width/height/fps to 2560/1440/30. Keep sender and
 viewer configurations consistent and restart both after changing the mode.
 
 ## Delivery and Lifecycle
@@ -279,20 +279,160 @@ path produced frozen pixels despite reporting fresh frames. This sets the SDK's
 process-wide `LK_DISABLE_NVDEC` before connection, while leaving CUDA available
 for Televiz. Changing to `auto` requires a fresh viewer process.
 
-### Network configuration for separate computers
+### Network setup for two computers
 
-The supplied `livekit-local.yaml` is for local testing. Before moving Robot Site
-to another machine, configure a routable SFU address and media ports. The current
-ports are 7880/TCP for signaling, 7881/TCP for media fallback and 7882/UDP for media.
-Both sites must connect to the same SFU and room.
+This profile supports Linux hosts with direct IPv4 connectivity over a LAN or
+VPN. Both computers must be able to reach the Edge Compute address. Being on
+the same Wi-Fi SSID does not prove this: guest networks may isolate clients or
+block UDP. If that happens, use an approved network/VPN or ask the network team
+for connectivity; NGINX cannot bypass client isolation. Internet NAT traversal
+and TURN deployment are not included in this profile.
 
-Replace development keys with generated server credentials and room-scoped JWTs.
-Set `development: false`, set `url` to the reachable SFU, and set `token_env` to
-the environment variable containing each process's token. `edge.livekit` and
-`robot.livekit` can override shared settings in `session.yaml`. Camera sender,
-viewer and probe need distinct identities/tokens. Use TLS for remote signaling;
-NGINX can be added later for TLS termination. WebRTC media connectivity and TURN,
-when needed, remain separate requirements.
+**1. Generate the bundles once on Edge Compute.** Install the package as above
+and ensure `openssl` is available. Replace `EDGE_WIFI_IP` with the address from
+`ip -brief -4 address` on the interface shared with Robot Site:
+
+```bash
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python -m remote_assistance.network_setup \
+  --edge-ip EDGE_WIFI_IP \
+  --output "$HOME/remote-assistance-network" \
+  --hours 24
+```
+
+This creates two private directories:
+
+- `edge/`: LiveKit and NGINX configurations, TLS keys/certificates, edge bridge,
+  viewer and probe tokens, and application YAML files.
+- `robot/`: robot bridge and camera tokens, application YAML files and the public
+  test CA certificate. It contains no server signing key or TLS private key.
+
+The generator copies the current camera settings, selects a unique room, and
+issues separate participant tokens. Tokens expire after 24 hours by default
+(`--hours` accepts 1–168); test TLS certificates expire after seven days.
+Files are private and ignored by Git. **Never commit the generated bundles.**
+The command refuses to overwrite an existing output directory. To renew tokens
+or change the Edge IP, generate a new bundle directory, stop the old network
+profile, transfer the new robot bundle, and restart server and clients together.
+This rotates credentials and the test CA. Token expiry affects new joins;
+it is not an immediate disconnect/revocation mechanism for existing sessions.
+
+**2. Transfer only `robot/` to Robot Site**, using an approved secure transfer
+method such as SSH/SCP. For example, after replacing `ROBOT_USER@ROBOT_HOST`:
+
+```bash
+scp -r "$HOME/remote-assistance-network/robot" \
+  ROBOT_USER@ROBOT_HOST:~/remote-assistance-robot
+```
+
+Do not run the generator independently on both machines: they need matching
+server credentials, room and CA. The generated `credentials.env` works after
+relocation, and selects its adjacent CA certificate through `SSL_CERT_FILE`.
+Source it only in the dedicated bridge/camera terminals; it changes that
+process's certificate trust. No system-wide CA installation or TLS verification
+bypass is required. The headset still uses the existing CloudXR connection and
+certificate; it does not connect to this LiveKit signaling endpoint.
+
+**3. Start the network server on Edge Compute.** First stop the localhost SFU
+when intentionally switching profiles (this interrupts its current sessions):
+
+```bash
+cd ~/IsaacTeleop
+docker compose -f examples/remote_assistance/compose.yaml down
+docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" up -d
+```
+
+The generated deployment uses these default ports on Edge Compute:
+
+| Port | Purpose | Accessible from Robot Site? |
+|---|---|---|
+| TCP 8443 | NGINX HTTPS/WSS signaling | Yes |
+| UDP 7882 | LiveKit WebRTC media and data | Yes |
+| TCP 7881 | LiveKit WebRTC fallback | Yes |
+| TCP 7880 | LiveKit HTTP behind NGINX | No; loopback only |
+
+Permit the three client-facing ports through the host firewall and network
+policy. ZMQ 5556–5559 stays local and need not be opened across sites. NGINX
+proxies signaling only; encrypted WebRTC video/control travels directly between
+each client and the SFU. The server advertises the selected Edge IP for media,
+so using a different interface's address can break media even if signaling works.
+
+**4. Check reachability from Robot Site**, before starting robot control:
+
+```bash
+curl --connect-timeout 5 \
+  --cacert "$HOME/remote-assistance-robot/ca.crt" \
+  https://EDGE_WIFI_IP:8443/
+```
+
+A response confirms TCP/TLS reachability, not media connectivity. A timeout
+suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
+wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
+
+**5. Use the generated configurations in the existing process layout.** Start
+Pico, SONIC and MuJoCo exactly as above; only the bridge/camera commands change.
+On Edge Compute, in separate terminals:
+
+```bash
+# Process 2 — Robot — edge bridge
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-network/edge/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
+  "$HOME/remote-assistance-network/edge/session.yaml" --role edge
+```
+
+```bash
+# Process 3 — Camera Televiz — viewer
+cd ~/IsaacTeleop/examples/camera_viz
+source .venv/bin/activate
+source ~/.cloudxr/run/cloudxr.env
+source "$HOME/remote-assistance-network/edge/credentials.env"
+./camera_viz.sh run "$HOME/remote-assistance-network/edge/camera.yaml" --mode xr
+```
+
+On Robot Site, in separate terminals:
+
+```bash
+# Process 2 — Robot — robot bridge
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
+  "$HOME/remote-assistance-robot/session.yaml" --role robot
+```
+
+```bash
+# Process 3 — Camera Televiz — camera sender
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera.yaml"
+```
+
+Adjust `device` in the Robot Site camera YAML for that machine's camera. Match
+width/height/fps in both camera YAML files to a supported capture mode. For a
+camera-free network test, add `--synthetic` to the sender and run this on Edge
+Compute instead of the viewer:
+
+```bash
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-network/edge/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance probe \
+  "$HOME/remote-assistance-network/edge/probe.yaml" --seconds 15 --synthetic
+```
+
+Verify changing pixels, then test robot control with MuJoCo and observe bridge
+counters in both directions. A stable optical baseline on one computer does
+not establish latency or loss behavior over Wi-Fi. Test headset removal and
+network interruption in simulation before physical deployment.
+
+**Stop the network server on Edge Compute** with:
+
+```bash
+docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" down
+```
+
+This stops both NGINX and LiveKit, not the Pico/SONIC processes. The localhost
+Compose shutdown command does not stop the separate network profile.
 
 ### Suspension, resumption and shutdown
 

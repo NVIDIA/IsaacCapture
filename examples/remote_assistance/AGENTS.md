@@ -27,3 +27,6 @@ SPDX-License-Identifier: Apache-2.0
   Televiz process groups; separate one-time provisioning from session commands.
 - Mark host-to-container transitions explicitly in deployment instructions;
   an environment prompt prefix does not establish that Docker was entered.
+- Network profiles must keep server signing/TLS private keys on Edge Compute,
+  distribute only site-scoped client tokens, and verify the generated profile
+  through the actual SDK (including certificate rejection and changing video).
