@@ -32,11 +32,19 @@ on first run):
 
 This will:
 
-1. Verify a USB-connected headset is available via ``adb devices``
-2. Start the WSS proxy with the OOB control hub
+1. Check host prerequisites and start the WSS proxy with the OOB control hub
+2. Wait for one ready headset, even if none is attached at startup
 3. Open the teleop page on the headset via ``adb shell am start``
 4. Accept the self-signed certificate and click CONNECT automatically
    via Chrome DevTools Protocol (CDP)
+
+Ordinary headset absence, an ``offline`` or ``unauthorized`` transport, and
+browser recovery failures leave the host running with a degraded OOB status.
+The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
+observing every 5 seconds. A meaningful device, network, rule, or browser
+change opens a fresh 60-second recovery episode. Override the positive,
+finite values with ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC`` and
+``TELEOP_OOB_RETRY_INTERVAL_SEC``; invalid values fail host preflight.
 
 To start the hub **without** any ``adb`` interaction — useful in containers,
 CI, or wireless-only environments — set ``TELEOP_OOB_HUB_ONLY=1`` and open
@@ -108,9 +116,12 @@ You should see the headset listed under ``"headsets"`` with
          "connected": true,
          "deviceLabel": null,
          "registeredAt": 1776112022805,
+         "lastSeenAt": null,
+         "lastMetricsAt": null,
          "metricsByCadence": {}
        }
-     ]
+     ],
+     "lifecycle": {"health": "browser_ready", "state": "ACTIVE"}
    }
 
 If ``"headsets"`` is empty, double-check that the URL on the headset includes
@@ -147,7 +158,7 @@ ADB automation
 
 The ``--setup-oob`` flag automates headset setup via USB ``adb``:
 
-1. **adb devices** verifies exactly one device is connected
+1. **adb devices** selects one ready headset and pins its serial for the service lifetime
 2. **am start** opens the teleop bookmark URL in the headset browser with
    the correct ``oobEnable=1``, ``serverIP``, and ``port`` parameters
 3. **CDP connect** forwards the browser's DevTools socket over ``adb``,
@@ -164,7 +175,7 @@ Prerequisites:
 - The headset must be connected via USB with USB debugging enabled
 - The headset must be on the same WiFi network as the streaming host
 
-If any step fails, the hub still starts.  Fall back to
+If any device step fails, the hub keeps serving and retries. Fall back to
 ``chrome://inspect/#devices`` from the PC or tap CONNECT on the headset
 directly.  To re-open the page later without restarting the launcher, pass the
 bookmark URL above to ``python -m isaaccapture.cloudxr.webclient`` (see
@@ -247,6 +258,59 @@ One message is sent per cadence per tick, carrying the last known value of every
 reported so far in that cadence. Metric names are the CloudXR.js ``MetricsName`` values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 ``{name: value}`` map per cadence, so metrics added by a future SDK need no hub change.
+
+Browser health exchange
+^^^^^^^^^^^^^^^^^^^^^^^
+
+After each automated CONNECT, the hub sends
+``healthProbe {probeId, lifecycleGeneration}`` to a newly registered
+browser page. That page answers
+``healthReport {probeId, lifecycleGeneration, pageTimestamp, streamStatus,
+streamPhase, terminalEventId, terminalDetail, lastMetricsAt, metricCadences}``.
+``streamPhase`` is one of ``idle``, ``connecting``, ``retrying``, ``streaming``,
+or ``terminal``. A terminal event ID remains stable while that failure is
+replayed and changes only for a later, distinct terminal failure. Older clients
+that send only the boolean ``streamStatus`` remain supported. The hub accepts
+only the matching probe and generation from the target connection. It uses its
+own receive time for freshness; the headset clock is diagnostic only. A
+matching reply means the UI, WSS, and bidirectional browser control path are
+ready. The lifecycle
+reports ``browser_ready`` while waiting for a stream. In USB-local relay
+mode, ``active`` additionally requires ``streamStatus=true`` and fresh
+post-CONNECT client metrics; coturn listening and ADB rules alone are only
+TURN prerequisites.
+
+If CONNECT was dispatched but a fresh browser report has not arrived, the
+lifecycle remains degraded in ``VERIFYING_BROWSER`` and continues probing
+without clicking CONNECT again. After a USB cable replug, the lifecycle enters
+``VERIFYING_EXISTING_BROWSER`` and gives the client's configured reconnect loop
+time to finish. Fresh post-repair stream metrics return it to ``ACTIVE`` without
+closing, reloading, or navigating the surviving tab. One terminal event permits
+one same-tab CONNECT click; a full browser launch is reserved for the case where
+no usable tab survives the bounded grace period. The lifecycle is the sole
+owner of CDP/browser mutations; its error monitor only reports evidence.
+
+A lost browser/control connection or broken device-side prerequisite starts a
+new recovery attempt. The browser bundle must implement ``healthProbe`` /
+``healthReport``; an older non-empty
+``TELEOP_WEB_CLIENT_STATIC_DIR/bundle.js`` is not replaced automatically. OOB
+startup checks for the protocol and fails with an asset diagnostic if the local
+bundle is too old. For source-tree testing, run
+``npm run build`` in ``deps/cloudxr/webxr_client`` and point
+``TELEOP_WEB_CLIENT_STATIC_DIR`` at its ``build`` directory before starting
+the service. USB-local static responses use ``Cache-Control: no-store``;
+the lifecycle also clears this UI origin's browser storage once per selected
+headset session. Before each local-client CONNECT, CDP reloads the page with
+HTTP caching disabled so a previously cached ``bundle.js`` cannot mask the
+updated client.
+
+The same redacted lifecycle snapshot appears in ``service status``, through
+``CloudXRLauncher.oob_status()``, and at
+``<cloudxr-install-dir>/run/oob_status.json``. A normal shutdown removes the
+status file. The ``selectedSerial`` and ``explicitSerial`` fields identify the
+session's headset selection, and ``ignoredSerials`` lists other observed ADB
+devices (up to eight display-safe serials). Selection is scoped to the current
+service session; a previous status file never pins a new session.
 
 .. list-table:: Metrics reported per cadence (CloudXR.js 6.3.0)
    :header-rows: 1
@@ -480,11 +544,29 @@ Environment variables
        combination at startup.
    * - ``ANDROID_SERIAL``
      - Pin a specific adb device when more than one is connected. The
-       launcher refuses to start with multiple devices unless this is
-       set; the value must match a serial currently in ``device`` state
-       (per ``adb devices``). This is the standard adb env var — every
-       ``adb`` subprocess inherits it, so no code path needs ``-s
-       <serial>``.
+       lifecycle waits if multiple devices are ready before its first
+       selection. Once selected, every device command uses ``-s <serial>``.
+       If the selected serial disappears, becomes offline, or is unauthorized,
+       the service waits for it and ignores other devices. When it returns,
+       recovery resumes even if the other devices remain connected. Without
+       ``ANDROID_SERIAL``, exactly one ready device is required for selection.
+   * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
+     - Positive finite recovery-episode duration in seconds (default ``60``).
+       Expiry changes to observation mode; it never stops the host. If this is
+       shorter than the browser reconnect budget, the host caps browser grace
+       early enough to leave one retry interval for a bounded fallback.
+   * - ``TELEOP_OOB_RETRY_INTERVAL_SEC``
+     - Positive finite retry and observation interval in seconds (default ``5``).
+   * - ``TELEOP_CLIENT_RECONNECT_ENABLED``
+     - Enable the WebXR client's stream reconnect loop (default ``true``).
+       The OOB lifecycle waits for this client-owned loop before taking over.
+   * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
+     - Non-negative number of browser-local reconnect attempts (default ``10``).
+       The value is also included in the generated headset URL.
+   * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
+     - Non-negative delay between browser-local attempts in milliseconds
+       (default ``3000``). The host derives its bounded recovery grace from
+       this value and the maximum-attempt count.
    * - ``USB_BACKEND_PORT``
      - CloudXR backend port the headset reaches via ``adb reverse`` in
        ``--usb-local`` mode (default ``49100``).
@@ -507,26 +589,32 @@ coturn endpoint).  Always use both flags together:
 
 On startup the launcher:
 
-1. Pre-flights: ``adb`` on PATH, ``coturn`` installed, exactly one device
-   connected, headset has at least one non-loopback IP (Wi-Fi up — see
-   troubleshooting below for why this is required even though no packets
-   traverse the network).
+1. Pre-flights host tools, ports, and static assets. It can start with no
+   headset attached.
 2. Resolves the WebXR static directory from
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
    the published client (see :doc:`../getting_started/build_from_source/webxr`).
-3. Serves that directory at ``/client/`` on the WSS proxy port
-   (``PROXY_PORT``, default 48322) — the same HTTP/WSS multiplexer as
-   ``--host-client`` (page and signaling share one origin).
-4. ``adb reverse`` for 48322 (WSS + ``/client/``), 49100 (backend),
-   3478 (coturn TURN).
-5. Starts coturn locally on 127.0.0.1:3478 for WebRTC ICE relay.
-6. Launches the teleop URL on the headset and auto-clicks CONNECT via CDP.
+3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
+   proxy's existing TLS listener.
+4. After the selected headset is ready, checks its non-loopback network,
+   starts/verifies coturn, and creates ``adb reverse`` rules for 48322
+   (WSS and static UI), 49100 (backend), and 3478 (TURN).
+5. Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
+   replugging the same serial first rebuilds all three reverse rules, verifies
+   coturn, and repairs CDP forwarding without mutating a surviving browser tab.
+   The WebXR client owns its bounded reconnect attempts. Fresh post-repair
+   stream metrics resume the existing session; a stable terminal event allows
+   one same-tab CONNECT click, and only a missing/unusable tab falls back to
+   full browser launch automation. ADB loss, missing reverse rules, TURN
+   failure or restart, and control/CDP/stream transport loss all enter this
+   preservation-first repair path. While preserving an active browser, the
+   launcher checks recovery prerequisites at most once per second instead of
+   waiting for the ordinary five-second observation cadence.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origins
-(``https://localhost:<PROXY_PORT>`` and ``https://127.0.0.1:<PROXY_PORT>``)
-before the session starts — the SDK and web client both cache settings
+cookies / HTTP cache for the teleop UI origin (``https://localhost:<proxy_port>``)
+once for the selected session — the SDK and web client both cache settings
 (e.g. ``general.iceTransportPolicy`` for ICE transport policy,
 ``cxr.isaac.teleopPath`` for the last-used project) in localStorage, and a
 stale value can silently win over a fresh URL param. The origin is owned
@@ -558,11 +646,10 @@ USB (the kernel short-circuits loopback regardless of source
 interface); the Wi-Fi interface just needs to *exist* with an IP so
 WebRTC's enumeration is non-empty.
 
-The ``--usb-local`` launcher pre-flights this via
-``adb shell ip -o -4 addr show`` and refuses to start if no non-loopback
-interface is present. A runtime monitor also watches for mid-session
-Wi-Fi drops and prints a yellow warning so the cause is obvious without
-having to puzzle out a frozen WebRTC connection.
+The lifecycle checks this via ``adb shell ip -o -4 addr show`` after the
+host is listening. A successful command with no non-loopback interface
+reports a network block; a failed ADB command reports cable/transport loss
+and never claims that Wi-Fi dropped. Wi-Fi restoration resumes recovery.
 
 Web client UI has no text (OOB / ``--host-client``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
