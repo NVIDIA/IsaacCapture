@@ -43,6 +43,10 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/MANIFEST.in" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/README.md"
+    # project.license-files in pyproject.toml.in names these; without them the
+    # wheel redistributes the project under a license it does not carry.
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/LICENSE.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSE.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/LICENSES" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-dev.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-ui.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"

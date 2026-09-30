@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "isaaccapture-sbom-tests"
+version = "0.0.0"  # Internal tests - not versioned
+description = "Tests for the wheel SBOM and license evidence collector"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+# The collector itself, from the source tree: its pins live in its own
+# pyproject, so there is one place to bump them.
+dev = ["isaaccapture-sbom[dev]"]
+
+[tool.uv.sources]
+isaaccapture-sbom = { path = "../../../scripts/sbom", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+norecursedirs = [".git", ".venv", "build", "dist", "*.egg", "__pycache__"]

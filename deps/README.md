@@ -112,7 +112,7 @@ machine and are located via `find_package`.
 - **Version**: 31ba1a50e5397e00a304dbadc76531740e89ee48 (v3.29.0)
 - **Purpose**: reference license texts. The SBOM collector names a dependency's
   license by matching the text that dependency ships against these; nothing from
-  this checkout is redistributed.
+  this checkout is redistributed. See `docs/source/references/sbom.rst`.
 - **Build**: data only, no build step.
 - **License**: CC0-1.0
 

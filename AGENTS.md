@@ -236,6 +236,29 @@ pre-commit install --hook-type commit-msg
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
 
+## The wheel SBOM
+
+Published wheels carry a contents SBOM and license evidence derived from the
+build itself. There is **no checked-in dependency registry** and adding one would
+be a second source of truth — declare a dependency the way you already would and
+it appears in the next wheel's inventory.
+
+Two things fail the Release build rather than shipping a gap, and neither is
+fixed by excluding a file or writing down an assumption:
+
+- **a wheel member the build cannot explain** — teach the collector that route;
+- **a redistributed component with no license text** — obtain the terms.
+
+The collector is a project of its own: `uv run --project scripts/sbom
+isaaccapture-sbom ...`. Its dependency pins live in `scripts/sbom/pyproject.toml`
+and nowhere else — never restate them as `--with` flags in a workflow or a doc.
+
+**Read [`docs/source/references/sbom.rst`](docs/source/references/sbom.rst)
+first** if you are changing anything under `scripts/sbom/` or
+`tests/python/sbom/`, changing how a dependency reaches a wheel, or touching the
+wheel-packaging steps in `build-ubuntu.yml`. It covers discovery, license
+matching and the maintenance rules; nothing here repeats them.
+
 ## Mandatory learning loop (AGENTS.md and comments)
 
 **Hard requirement:** When **any** of the following happens, you **must** complete steps 1–3 **before** you end the session or move on as if the work were complete:

@@ -1,7 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.24...3.25)
+# 3.27 for cmake_file_api(): the SBOM collector reads this build's link and
+# compile graph from the file API reply, and that command is what lets the
+# query live here rather than in whatever invoked cmake. No range: raising the
+# minimum already opts into every policy through 3.27, and nothing here needs
+# the ones after it.
+cmake_minimum_required(VERSION 3.27)
+
+# Ask for the codemodel this configure run. Generator-independent, and produced
+# by the same run that writes it -- see docs: references/sbom.
+cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
 
 # Workaround for older CMake policy compatibility in dependencies
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version")

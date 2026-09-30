@@ -1,0 +1,505 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Find the license texts a component ships, and name what they are.
+
+Nothing here declares a license. Texts are discovered in the component's own
+files and matched against the SPDX reference corpus; a text that matches nothing
+is still packaged and reported as unidentified, never guessed at.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from functools import lru_cache
+from dataclasses import dataclass
+
+from license_expression import (
+    ExpressionError,
+    combine_expressions,
+    get_spdx_licensing,
+)
+from pathlib import Path
+
+
+# Root-level names that carry a grant, and the ones that carry notices instead.
+# Both are packaged; only the first kind is matched against the corpus.
+# The word has to stand alone: BSD-LICENSE and LICENSE.md are grants, while
+# licenses.md and accessingLicenses.md are indexes that merely mention them.
+_GRANT_NAMES = re.compile(
+    r"(^|[-_.])(LICEN[CS]E|COPYING|UNLICENSE|EULA)([-_.]|$)", re.IGNORECASE
+)
+_NOTICE_NAMES = re.compile(r"^(NOTICE|COPYRIGHT|AUTHORS|PATENTS)", re.IGNORECASE)
+_README_NAMES = re.compile(r"^README", re.IGNORECASE)
+# Skip machine-readable siblings; the text beside them is the evidence.
+_SKIP_SUFFIXES = {".py", ".cmake", ".in", ".json", ".yaml", ".yml", ".spdx"}
+
+_WORD = re.compile(r"[^a-z0-9]+")
+_NGRAM = 6
+# A canonical text has to be almost entirely present before it is named.
+_CONTAINMENT_THRESHOLD = 0.90
+# ...and has to account for a real share of the file it was found in. Large
+# agreements (the CUDA EULA, for one) reproduce whole OSS licenses in an
+# appendix; those reach full containment at about 3% coverage, while a genuine
+# match -- even a Debian copyright file wrapped in packaging boilerplate -- sits
+# at 30% or above.
+_COVERAGE_THRESHOLD = 0.20
+# Two licenses are one family when either text is nearly inside the other.
+_FAMILY_THRESHOLD = 0.90
+# REUSE-IgnoreStart
+_SPDX_TAG = re.compile(r"SPDX-License-Identifier:\s*(?P<expression>[^\n\r*/#]+)")
+# REUSE-IgnoreEnd
+# Heading, then everything up to the next heading or a blank-line run.
+# The heading has to BE about licensing, not merely start with the word --
+# "# License List Data" is a project title, not a grant.
+_README_LICENSE_SECTION = re.compile(
+    r"^#{1,6}\s*(licen[cs]e|licen[cs]es|licensing|licen[cs]e information|copyright|legal)"
+    r"\s*$(?P<body>.*?)(?=^#{1,6}\s|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class LicenseEvidence:
+    """A license text that was read out of the component, not assumed."""
+
+    component: str
+    origin: str  # "component-file" | "archive-member" | "readme-section" | "build-host"
+    path: str
+    sha256: str
+    size: int
+    text: str
+    # "grant" is the component's own license, "notice" an attribution file, and
+    # "pool" a REUSE LICENSES/ entry that applies to individual files only.
+    kind: str
+    identified: str | None = None
+    matches: tuple[tuple[str, float, float], ...] = ()
+    spdx_tag: str | None = None
+
+    def as_json(self) -> dict:
+        return {
+            "component": self.component,
+            "origin": self.origin,
+            "path": self.path,
+            "sha256": self.sha256,
+            "size": self.size,
+            "kind": self.kind,
+            "identified": self.identified,
+            "matches": [
+                {
+                    "license": license_id,
+                    "containment": round(containment, 4),
+                    "coverage": round(coverage, 4),
+                }
+                for license_id, containment, coverage in self.matches
+            ],
+            "spdx_tag": self.spdx_tag,
+        }
+
+
+_DIGITS = re.compile(r"\d+")
+
+
+def _normalize(text: str) -> list[str]:
+    """Reduce a license to comparable boilerplate.
+
+    Years and clause numbers are the part that differs between two copies of one
+    license, so digits come out. Copyright lines stay: BSD clause 3 and MIT's
+    notice-retention clause both contain the word, and upstream wrapping differs
+    from SPDX's, so dropping those lines loses real text asymmetrically.
+    """
+    return [
+        word for word in _WORD.sub(" ", _DIGITS.sub(" ", text.lower())).split() if word
+    ]
+
+
+def _ngrams(words: list[str]) -> set[str]:
+    if len(words) < _NGRAM:
+        return {" ".join(words)} if words else set()
+    return {
+        " ".join(words[index : index + _NGRAM])
+        for index in range(len(words) - _NGRAM + 1)
+    }
+
+
+@dataclass(frozen=True)
+class Reference:
+    """One SPDX licence, normalized for comparison."""
+
+    name: str
+    grams: frozenset[str]
+
+    @property
+    def size(self) -> int:
+        return len(self.grams)
+
+
+class CorpusError(Exception):
+    """The SPDX reference texts this build fetched are missing or unreadable."""
+
+
+_CORPUS: tuple[str, dict[str, Reference]] | None = None
+_CORPUS_META: dict[str, str] = {}
+# Parsing and n-gramming the whole SPDX list costs about half a second. Keyed by
+# directory and only ever read within one process, so a re-load is free.
+_PARSED: dict[str, tuple[str, dict[str, Reference]]] = {}
+
+
+def corpus_provenance() -> dict[str, str]:
+    """Which reference texts an identification was made against."""
+    return dict(_CORPUS_META)
+
+
+def load_corpus(json_dir: Path) -> str:
+    """Load SPDX reference texts from the checkout deps/third_party fetched.
+
+    `json_dir` is the `json/` directory of spdx/license-list-data. Deprecated
+    identifiers are skipped: naming a component with one would be reporting a
+    license SPDX has withdrawn.
+    """
+    global _CORPUS
+    details = json_dir / "details"
+    index_file = json_dir / "licenses.json"
+    if not details.is_dir() or not index_file.is_file():
+        raise CorpusError(
+            f"SPDX license list data not found at {json_dir}. It is fetched by the "
+            "build (deps/third_party); configure and build, or pass --license-data."
+        )
+
+    cached = _PARSED.get(str(details.resolve()))
+    if cached is not None:
+        version, entries = cached
+    else:
+        entries = {}
+        for path in sorted(details.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise CorpusError(f"{path} could not be read: {error}") from error
+            if payload.get("isDeprecatedLicenseId"):
+                continue
+            grams = _ngrams(_normalize(payload.get("licenseText", "")))
+            if grams:
+                entries[payload["licenseId"]] = Reference(
+                    name=payload.get("name", payload["licenseId"]),
+                    grams=frozenset(grams),
+                )
+
+        if not entries:
+            raise CorpusError(f"no usable license texts under {details}")
+
+        version = json.loads(index_file.read_text(encoding="utf-8")).get(
+            "licenseListVersion", "unknown"
+        )
+        _PARSED[str(details.resolve())] = (version, entries)
+
+    _CORPUS = (version, entries)
+    _CORPUS_META.clear()
+    _CORPUS_META.update(
+        {
+            "license_list_version": version,
+            "source": str(json_dir),
+            "commit": _checkout_commit(json_dir.parent),
+            "licenses": str(len(entries)),
+        }
+    )
+    return version
+
+
+def _checkout_commit(source_dir: Path) -> str:
+    """The commit deps/third_party pinned, read back from the checkout itself."""
+    from .discovery import git
+
+    return git(source_dir, "rev-parse", "HEAD") or "NOASSERTION"
+
+
+def corpus() -> tuple[str, dict[str, Reference]]:
+    """SPDX reference texts as (list version, {id: (name, n-grams)})."""
+    if _CORPUS is None:
+        raise CorpusError(
+            "SPDX license list data has not been loaded; it is fetched by the build "
+            "into _deps/license-list-data-src (see deps/third_party)"
+        )
+    return _CORPUS
+
+
+def identify(text: str) -> list[tuple[str, float, float]]:
+    """Name the licenses a text contains, as (id, containment, coverage).
+
+    Containment says how much of a canonical license is present; coverage says
+    how much of this file that accounts for. Both must clear their threshold, so
+    a license quoted in an appendix is not mistaken for the file's own terms. A
+    file really can carry two licenses -- dual-licensed sources do -- so this
+    returns every match that survives the family resolution below.
+
+    Every reference is compared. The thresholds do bound how long a reference
+    can be relative to the file, so matches could be skipped on length -- but
+    that ties correctness to the accept conditions never growing, and it fails
+    by quietly not identifying a license. Keep the comparison exhaustive.
+    """
+    candidate = _ngrams(_normalize(text))
+    if not candidate:
+        return []
+
+    entries = corpus()[1]
+    scored: dict[str, tuple[float, float, float]] = {}
+    for license_id, reference in entries.items():
+        overlap = len(reference.grams & candidate)
+        if not overlap:
+            continue
+        containment = overlap / reference.size
+        coverage = overlap / len(candidate)
+        if containment >= _CONTAINMENT_THRESHOLD and coverage >= _COVERAGE_THRESHOLD:
+            scored[license_id] = (
+                containment,
+                coverage,
+                overlap / len(reference.grams | candidate),
+            )
+
+    dominated = _dominated(scored, entries)
+    return sorted(
+        (license_id, containment, coverage)
+        for license_id, (containment, coverage, _) in scored.items()
+        if license_id not in dominated
+    )
+
+
+def _dominated(
+    scored: dict[str, tuple[float, float, float]],
+    entries: dict[str, Reference],
+) -> set[str]:
+    """Within a family of near-identical licenses, keep only the best fit.
+
+    Whole families differ by one clause: BSD-2 inside BSD-3, Apache-2.0 inside
+    ECL-2.0, CC-BY-4.0 inside CC-BY-NC-4.0. Every one of those clears the
+    containment threshold against a file that is really the other, so the
+    discriminator has to be which reference explains the whole file *and nothing
+    more* -- the highest Jaccard similarity. Preferring the longer text instead
+    would report Apache-2.0 code as ECL-2.0, and CC-BY-4.0 as its
+    non-commercial variant.
+    """
+    dropped: set[str] = set()
+    for left in scored:
+        for right in scored:
+            if left == right or right in dropped:
+                continue
+            shared = len(entries[left].grams & entries[right].grams)
+            related = shared / min(entries[left].size, entries[right].size)
+            if related >= _FAMILY_THRESHOLD and scored[right][2] > scored[left][2]:
+                dropped.add(left)
+                break
+    return dropped
+
+
+def _read(path: Path) -> str | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data.strip() or b"\0" in data[:4096]:
+        return None
+    return data.decode("utf-8", "replace")
+
+
+def _evidence(
+    component: str, origin: str, display: str, text: str, kind: str
+) -> LicenseEvidence:
+    matchable = kind == "grant"
+    tag = _SPDX_TAG.search(text[:4096]) if matchable else None
+    matches = tuple(identify(text)) if matchable else ()
+    identified = " AND ".join(license_id for license_id, _, _ in matches) or None
+    return LicenseEvidence(
+        component=component,
+        origin=origin,
+        path=display,
+        sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        size=len(text.encode("utf-8")),
+        text=text,
+        kind=kind,
+        identified=identified,
+        matches=matches,
+        spdx_tag=tag.group("expression").strip() if tag else None,
+    )
+
+
+def _classify(name: str) -> str | None:
+    if Path(name).suffix.lower() in _SKIP_SUFFIXES:
+        return None
+    if _GRANT_NAMES.search(name):
+        return "grant"
+    if _NOTICE_NAMES.search(name):
+        return "notice"
+    return None
+
+
+def discover_in_tree(
+    component: str, root: Path, display_prefix: str
+) -> list[LicenseEvidence]:
+    """Every license and notice file a source tree carries, at its root or in LICENSES/."""
+    found: list[LicenseEvidence] = []
+    candidates: list[tuple[Path, str]] = []
+
+    for entry in sorted(root.iterdir()) if root.is_dir() else []:
+        if entry.is_file() and (kind := _classify(entry.name)):
+            candidates.append((entry, kind))
+        elif entry.is_dir() and entry.name.upper() in {"LICENSES", "LICENSE"}:
+            candidates.extend(
+                (item, "pool") for item in sorted(entry.rglob("*")) if item.is_file()
+            )
+
+    for path, kind in candidates:
+        text = _read(path)
+        if text is None:
+            continue
+        display = f"{display_prefix}/{path.relative_to(root).as_posix()}"
+        found.append(_evidence(component, "component-file", display, text, kind))
+
+    if not any(item.kind == "grant" for item in found):
+        found.extend(_readme_fallback(component, root, display_prefix))
+    return found
+
+
+def _readme_fallback(
+    component: str, root: Path, display_prefix: str
+) -> list[LicenseEvidence]:
+    """Some upstreams state the grant in a README section and ship no license file."""
+    for entry in sorted(root.iterdir()) if root.is_dir() else []:
+        if not entry.is_file() or not _README_NAMES.match(entry.name):
+            continue
+        text = _read(entry)
+        if text is None:
+            continue
+        section = _README_LICENSE_SECTION.search(text)
+        if section is None or not section.group("body").strip():
+            continue
+        display = f"{display_prefix}/{entry.name}"
+        return [_evidence(component, "readme-section", display, text, "grant")]
+    return []
+
+
+_ID_SAFE = re.compile(r"[^A-Za-z0-9.-]+")
+
+
+def spdx_safe(value: str) -> str:
+    """Reduce a string to what an SPDX identifier may contain."""
+    return _ID_SAFE.sub("-", value).strip("-")
+
+
+def license_ref(component_key: str) -> str:
+    """Identifier for a grant that is real but matches no SPDX reference text."""
+    return f"LicenseRef-{spdx_safe(component_key)}"
+
+
+def expression(
+    evidence: list[LicenseEvidence], component_key: str | None = None
+) -> tuple[str, str]:
+    """Concluded and declared expressions for one component.
+
+    Concluded names what was matched in a text that ships with the artifact. A
+    grant that matches nothing is not dropped and not guessed at: it becomes a
+    LicenseRef whose text travels in the document, which says "these are the
+    terms we shipped" without claiming to know which license they are.
+    """
+    grants = [item for item in evidence if item.kind == "grant"]
+    identified = sorted(
+        {license_id for item in grants for license_id, _, _ in item.matches}
+    )
+    if not identified and grants and component_key:
+        identified = [license_ref(component_key)]
+    concluded = _combine(identified) if identified else "NOASSERTION"
+
+    tags = sorted({item.spdx_tag for item in grants if item.spdx_tag})
+    declared = _combine(tags) if tags else concluded
+    return concluded, declared
+
+
+def _combine(expressions: list[str]) -> str:
+    """Join with AND through the SPDX grammar rather than by string join."""
+    try:
+        combined = combine_expressions(
+            sorted(expressions), relation="AND", licensing=_spdx_licensing()
+        )
+    except (ExpressionError, ValueError, TypeError):
+        return "NOASSERTION"
+    # `is None`, not truthiness: a parsed expression raises on __bool__.
+    return "NOASSERTION" if combined is None else str(combined)
+
+
+def normalized_expression(expression: str) -> str:
+    """Put an expression through the SPDX grammar before it reaches a document.
+
+    Upstream tags are written by hand and arrive with lowercase operators and
+    odd spacing; emitting those unchanged would put an unparseable expression in
+    an SBOM. Anything the grammar rejects is reported as NOASSERTION rather than
+    passed through.
+    """
+    try:
+        return str(_spdx_licensing().parse(expression, validate=False))
+    except (ExpressionError, ValueError, TypeError):
+        return "NOASSERTION"
+
+
+def read_spdx_tag(text: str) -> str | None:
+    """The REUSE tag a file states about itself, if any."""
+    match = _SPDX_TAG.search(text)
+    return match.group("expression").strip() if match else None
+
+
+def combine(expressions: list[str]) -> str:
+    """Public form of the AND-combiner, for callers assembling an expression."""
+    return _combine(expressions)
+
+
+def pool_evidence(
+    repo_root: Path, component_key: str, expressions: set[str]
+) -> list[LicenseEvidence]:
+    """Texts from the repository's REUSE pool for the ids a file declares.
+
+    A vendored file states an identifier and nothing else; LICENSES/ is where
+    this repository already keeps the matching text, which is what the pool is
+    for.
+    """
+    found: list[LicenseEvidence] = []
+    seen: set[str] = set()
+    for expression in sorted(expressions):
+        for token in _spdx_licensing().license_keys(
+            _spdx_licensing().parse(expression, validate=False)
+        ):
+            candidate = repo_root / "LICENSES" / f"{token}.txt"
+            if token in seen or not candidate.is_file():
+                continue
+            seen.add(token)
+            found.append(
+                _evidence(
+                    component_key,
+                    "reuse-pool",
+                    f"LICENSES/{token}.txt",
+                    candidate.read_text(encoding="utf-8", errors="replace"),
+                    "grant",
+                )
+            )
+    return found
+
+
+def license_refs(*expressions: str) -> list[str]:
+    """The LicenseRef- identifiers an expression uses, per the SPDX grammar."""
+    found: set[str] = set()
+    for expression in expressions:
+        try:
+            parsed = _spdx_licensing().parse(expression, validate=False)
+        except (ExpressionError, ValueError, TypeError):
+            continue
+        found.update(
+            key
+            for key in _spdx_licensing().license_keys(parsed)
+            if key.startswith("LicenseRef-")
+        )
+    return sorted(found)
+
+
+@lru_cache(maxsize=1)
+def _spdx_licensing():
+    """Building this parses ScanCode's licence database; do it once."""
+    return get_spdx_licensing()

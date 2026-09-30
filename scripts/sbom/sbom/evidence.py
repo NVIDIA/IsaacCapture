@@ -1,0 +1,297 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Assemble every discovery index for one configured build tree."""
+
+from __future__ import annotations
+
+import platform
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from packageurl import PackageURL
+
+from . import TOOL_NAME, TOOL_VERSION, licensing
+from .discovery import (
+    ARCHIVE_SUFFIXES,
+    ArchiveIndex,
+    Ownership,
+    git,
+    BuildGraph,
+    Component,
+    FileIndex,
+    discover_archives,
+    discover_vendored,
+    project_authors,
+    discover_source_trees,
+)
+
+# Cache entries that pin what a wheel contains. The rest of the cache is paths on
+# the builder.
+_CACHE_KEYS = re.compile(
+    r"^(CMAKE_BUILD_TYPE|CMAKE_CXX_COMPILER|CMAKE_C_COMPILER|CMAKE_SYSTEM_PROCESSOR"
+    r"|CMAKE_CXX_COMPILER_VERSION|ISAAC_TELEOP_PYTHON_VERSION|BUILD_[A-Z0-9_]+"
+    r"|ENABLE_[A-Z0-9_]+|VCPKG_[A-Z0-9_]+)$"
+)
+
+
+class EvidenceError(Exception):
+    """The build tree does not carry the evidence a published wheel needs."""
+
+
+@dataclass
+class Discovery:
+    """Everything one build tree can tell us, indexed for attribution."""
+
+    repo_root: Path
+    build_dir: Path
+    config: str
+    cache: dict[str, str]
+    components: dict[str, Component]
+    graph: BuildGraph
+    archives: ArchiveIndex
+    source_files: FileIndex
+    repo_files: FileIndex
+    build_files: FileIndex
+    ownership: Ownership
+
+    @property
+    def staged_root(self) -> Path | None:
+        staged = self.build_dir / "python_package" / self.config
+        return staged if staged.is_dir() else None
+
+
+def _cmake_cache(build_dir: Path) -> dict[str, str]:
+    cache = build_dir / "CMakeCache.txt"
+    if not cache.is_file():
+        raise EvidenceError(
+            f"{cache} not found; point --build-dir at a configured build tree"
+        )
+    entries: dict[str, str] = {}
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(("#", "//")) or "=" not in line or ":" not in line:
+            continue
+        name = line.split(":", 1)[0]
+        if _CACHE_KEYS.match(name):
+            entries[name] = line.split("=", 1)[1]
+    return entries
+
+
+def _archive_components(archives: ArchiveIndex) -> dict[str, Component]:
+    """A tarball in the repo is a component: its members ship as they are."""
+    components: dict[str, Component] = {}
+    for display, record in archives.archives.items():
+        name = Path(display).name
+        for suffix in ARCHIVE_SUFFIXES:
+            name = name.removesuffix(suffix)
+
+        evidence = [
+            licensing._evidence(  # noqa: SLF001 - same package
+                display,
+                "archive-member",
+                f"{display}!{member.path}",
+                data.decode("utf-8", "replace"),
+                licensing._classify(Path(member.path).name) or "grant",  # noqa: SLF001
+            )
+            for member, data in record.get("license_members", [])
+        ]
+        concluded, declared = licensing.expression(evidence, name)
+
+        components[display] = Component(
+            key=display,
+            name=name,
+            kind="archive",
+            supplier="NOASSERTION",
+            homepage="NOASSERTION",
+            purl=PackageURL(type="generic", name=name).to_string(),
+            version=_archive_version(archives, display) or "NOASSERTION",
+            download_location="NOASSERTION",
+            source_info=(
+                f"Unpacked from {display} (sha256:{record['sha256']}, "
+                f"{record['member_count']} members) held in this repository."
+            ),
+            license_concluded=concluded,
+            license_declared=declared,
+            evidence=tuple(evidence),
+        )
+    return components
+
+
+def _archive_version(archives: ArchiveIndex, display: str) -> str | None:
+    """SDK tarballs state their version in a root VERSION member, or in the name."""
+    stated = archives.archives.get(display, {}).get("version_text")
+    if stated:
+        return stated
+    match = re.search(
+        r"(\d+\.\d+[\w.+-]*?)(?=-|\.tar|\.tgz|\.zip|$)", Path(display).name
+    )
+    return match.group(1) if match else None
+
+
+def discover(repo_root: Path, build_dir: Path) -> Discovery:
+    """Index a configured build tree. Nothing here is declared anywhere."""
+    cache = _cmake_cache(build_dir)
+    deps_dir = build_dir / "_deps"
+    if not deps_dir.is_dir():
+        raise EvidenceError(
+            f"{deps_dir} not found; configure the build before collecting evidence"
+        )
+
+    config = cache.get("CMAKE_BUILD_TYPE") or "Release"
+    graph = BuildGraph(build_dir, config)
+    components = discover_source_trees(deps_dir)
+    archives = discover_archives(
+        repo_root, skip=(build_dir, repo_root / "build-wheel", repo_root / "dist")
+    )
+    components.update(_archive_components(archives))
+
+    source_files = FileIndex()
+    for root in sorted(deps_dir.glob("*-src")):
+        if root.is_dir():
+            source_files.add_tree(root, root.name)
+
+    repo_files = FileIndex()
+    # Skip the build tree by path, not by name: --build-dir is free-form, and a
+    # differently-named one inside the repo would otherwise be walked twice.
+    repo_files.add_tree(
+        repo_root,
+        ".",
+        skip=(build_dir, repo_root / "build-wheel", repo_root / "dist"),
+    )
+
+    build_files = FileIndex()
+    build_files.add_tree(
+        build_dir, "build", skip=(deps_dir, build_dir / "python_package")
+    )
+
+    # Third-party code checked in here rather than fetched: the candidates are
+    # what the build actually compiles or includes, so nothing outside the build
+    # is inspected.
+    ownership = Ownership()
+    for root in sorted(deps_dir.glob("*-src")):
+        if root.is_dir():
+            ownership.register_root(root, root.name.removesuffix("-src"))
+
+    candidates: set[Path] = set()
+    for node in graph._nodes.values():  # noqa: SLF001 - same package
+        candidates.update(
+            source
+            for source in node.sources
+            if str(source).startswith(str(repo_root))
+            and "/_deps/" not in source.as_posix()
+        )
+        for include in node.includes:
+            text = include.as_posix()
+            if not text.startswith(str(repo_root)) or "/_deps/" in text:
+                continue
+            if include.is_dir() and not text.startswith(str(build_dir)):
+                candidates.update(item for item in include.rglob("*") if item.is_file())
+
+    vendored, owned_paths = discover_vendored(
+        repo_root, candidates, project_authors(repo_root)
+    )
+    components.update(vendored)
+    for key, paths in owned_paths.items():
+        for path in paths:
+            ownership.register_file(path, key)
+
+    return Discovery(
+        repo_root=repo_root,
+        build_dir=build_dir,
+        config=config,
+        cache=cache,
+        components=components,
+        graph=graph,
+        archives=archives,
+        source_files=source_files,
+        repo_files=repo_files,
+        build_files=build_files,
+        ownership=ownership,
+    )
+
+
+def document(discovery: Discovery, wheel_name: str, inventory) -> dict:
+    """The build-evidence sidecar: resolved facts, not the raw indexes."""
+    repo_root = discovery.repo_root
+    arch = {
+        "x86_64": "amd64",
+        "AMD64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(
+        discovery.cache.get("CMAKE_SYSTEM_PROCESSOR", platform.machine()),
+        platform.machine(),
+    )
+
+    artifacts = []
+    for artifact in discovery.graph.artifacts.values():
+        contributions = discovery.graph.contributions(artifact, discovery.ownership)
+        if not contributions:
+            continue
+        try:
+            output = artifact.output.relative_to(discovery.build_dir).as_posix()
+        except ValueError:
+            output = artifact.output.as_posix()
+        artifacts.append(
+            {
+                "target": artifact.target,
+                "output": output,
+                "first_party": discovery.graph.first_party(
+                    artifact, repo_root, discovery.ownership
+                ),
+                "contributions": {
+                    key: sorted(how) for key, how in sorted(contributions.items())
+                },
+            }
+        )
+
+    return {
+        "schema": "isaaccapture-build-evidence/2",
+        "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
+        "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "wheel": wheel_name,
+        "project": {
+            "commit": git(repo_root, "rev-parse", "HEAD"),
+            "describe": git(repo_root, "describe", "--tags", "--always", "--dirty"),
+            "version_file": (repo_root / "VERSION").read_text(encoding="utf-8").strip()
+            if (repo_root / "VERSION").is_file()
+            else None,
+        },
+        "build": {
+            "build_dir": str(discovery.build_dir),
+            "config": discovery.config,
+            "arch": arch,
+            "platform": platform.platform(),
+            "cmake_cache": discovery.cache,
+        },
+        "license_data": licensing.corpus_provenance(),
+        "license_list_version": licensing.corpus()[0],
+        "components": {
+            key: {
+                "name": component.name,
+                "kind": component.kind,
+                "supplier": component.supplier,
+                "homepage": component.homepage,
+                "purl": component.purl,
+                "version": component.version,
+                "download_location": component.download_location,
+                "source_info": component.source_info,
+                "license_concluded": component.license_concluded,
+                "license_declared": component.license_declared,
+                "evidence": [item.as_json() for item in component.evidence],
+                "in_this_wheel": key in inventory.components_present,
+            }
+            for key, component in sorted(discovery.components.items())
+        },
+        "archives": {
+            display: {
+                key: value for key, value in record.items() if key != "license_members"
+            }
+            for display, record in sorted(discovery.archives.archives.items())
+        },
+        "link_artifacts": sorted(artifacts, key=lambda item: item["output"]),
+        "attributions": [item.as_json() for item in inventory.attributions.values()],
+        "excluded_components": inventory.absent_components,
+    }
