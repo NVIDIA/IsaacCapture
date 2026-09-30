@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>OGLO Tactile Glove Plugin &#8212; Isaac Teleop Documentation</title>
+    <title>Sharpa Avatar Glove &#8212; Isaac Teleop Documentation</title>
   
   
   
@@ -52,15 +52,15 @@
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
     <script src="../_static/copybutton.js?v=2c21a7a3"></script>
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
-    <script>DOCUMENTATION_OPTIONS.pagename = 'device/oglo';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/sharpa_avatar';</script>
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
 
     <link rel="icon" href="../_static/favicon.ico"/>
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Wuji Glove" href="wuji_glove.html" />
-    <link rel="prev" title="OAK Camera Plugin" href="oak.html" />
+    <link rel="next" title="Haptikos Exoskeletons" href="haptikos.html" />
+    <link rel="prev" title="Wuji Glove" href="wuji_glove.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -361,9 +361,9 @@
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
 <li class="toctree-l1"><a class="reference internal" href="manus.html">MANUS Gloves</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">OGLO Tactile Glove Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oglo.html">OGLO Tactile Glove Plugin</a></li>
 <li class="toctree-l1"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="sharpa_avatar.html">Sharpa Avatar Glove</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Sharpa Avatar Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
@@ -414,7 +414,7 @@
         <i class="fa-solid fa-home"></i>
       </a>
     </li>
-    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">OGLO Tactile Glove Plugin</span></li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Sharpa Avatar Glove</span></li>
   </ul>
 </nav>
 </div>
@@ -431,149 +431,257 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="oglo-tactile-glove-plugin">
-<h1>OGLO Tactile Glove Plugin<a class="headerlink" href="#oglo-tactile-glove-plugin" title="Link to this heading">#</a></h1>
-<p>C++ plugin that streams <strong>OGLO</strong> tactile gloves over BLE into the standard
-DeviceIO recording path. Each glove (one BLE device per hand) provides <strong>80
-tactile taxels</strong> (5 fingers × 4×4) plus a <strong>6-axis IMU</strong> at 100 Hz. Source and
-plugin README: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/oglo_tactile/README.md" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/README.md</a>.</p>
-<p>This plugin follows the <a class="reference internal" href="add_device.html"><span class="doc">Add a New Device</span></a> pattern (FlatBuffer schema → plugin
-<code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code> → tracker → MCAP) and is modeled on the OAK camera plugin.</p>
-<figure class="align-center" id="id1">
-<a class="reference internal image-reference" href="../_images/oglo-demo.gif"><img alt="../_images/oglo-demo.gif" src="../_images/oglo-demo.gif" style="width: 100%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Both OGLO gloves driving a live per-finger contact heatmap while manipulating
-an object — 80 taxels + a 6-axis IMU per hand, streamed over BLE at 100 Hz and
-time-synced with the operator’s hand/head tracking.</span><a class="headerlink" href="#id1" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
+  <section id="sharpa-avatar-glove">
+<h1>Sharpa Avatar Glove<a class="headerlink" href="#sharpa-avatar-glove" title="Link to this heading">#</a></h1>
+<p>A Linux-only plugin for integrating Sharpa Avatar data gloves into the
+Isaac Capture framework. The gloves stream IMU and encoder data through the
+official Avatar SDK over USB. The plugin maps that stream into Isaac Capture’s
+usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
+<code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> tensors for the RAW and ROBOT 22-DoF joint sets, and
+inbound per-finger vibration on a haptic collection.</p>
+<p>Any downstream consumer that already reads OpenXR hands (<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code>) or
+schema joint-state collections can use Avatar gloves through the same DeviceIO
+interfaces. The plugin talks to the gloves directly, so do not run
+<code class="docutils literal notranslate"><span class="pre">avatar-backend</span></code> or Avatar Desktop at the same time.</p>
+<p>Plugin sources and the operator README live under
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/sharpa_avatar" rel="noopener noreferrer" target="_blank">src/plugins/sharpa_avatar</a>. A TeleopSession visualization example
+is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/sharpa_avatar" rel="noopener noreferrer" target="_blank">examples/sharpa_avatar</a>.</p>
 <nav class="contents local" id="on-this-page">
 <p class="topic-title">On this page</p>
 <ul class="simple">
-<li><p><a class="reference internal" href="#components" id="id2">Components</a></p></li>
-<li><p><a class="reference internal" href="#build" id="id3">Build</a></p></li>
-<li><p><a class="reference internal" href="#usage" id="id4">Usage</a></p></li>
-<li><p><a class="reference internal" href="#recorded-data" id="id5">Recorded data</a></p></li>
-<li><p><a class="reference internal" href="#imu-frame" id="id6">IMU frame</a></p></li>
-<li><p><a class="reference internal" href="#tests" id="id7">Tests</a></p></li>
+<li><p><a class="reference internal" href="#data-flow" id="id1">Data flow</a></p></li>
+<li><p><a class="reference internal" href="#prerequisites" id="id2">Prerequisites</a></p></li>
+<li><p><a class="reference internal" href="#installation" id="id3">Installation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#usb-access-one-time-on-the-host" id="id4">USB access (one-time, on the host)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#running-the-plugin" id="id5">Running the plugin</a></p></li>
+<li><p><a class="reference internal" href="#datasets" id="id6">Datasets</a></p>
+<ul>
+<li><p><a class="reference internal" href="#human-openxr-hands" id="id7">HUMAN (OpenXR hands)</a></p></li>
+<li><p><a class="reference internal" href="#raw-and-robot-joint-state-tensors" id="id8">RAW and ROBOT (joint-state tensors)</a></p></li>
+<li><p><a class="reference internal" href="#haptic" id="id9">Haptic</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#wrist-pose" id="id10">Wrist pose</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id11">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id12">License</a></p></li>
 </ul>
 </nav>
-<section id="components">
-<h2><a class="toc-backref" href="#id2" role="doc-backlink">Components</a><a class="headerlink" href="#components" title="Link to this heading">#</a></h2>
+<section id="data-flow">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Data flow</a><a class="headerlink" href="#data-flow" title="Link to this heading">#</a></h2>
+<p>The glove SDK exposes three datasets plus haptics. HUMAN landmarks are placed
+at a fused wrist pose and injected as OpenXR hands; RAW and ROBOT stay as
+named joint-state collections:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Sharpa Avatar gloves (USB)
+        │
+        ▼
+avatar_hand_plugin  (Avatar SDK, production package)
+        │
+        ├── HUMAN  ──► OpenXR /hand/left, /hand/right   (26 joints)
+        ├── RAW    ──► avatar_raw_left / avatar_raw_right
+        ├── ROBOT  ──► avatar_robot_left / avatar_robot_right
+        └── haptic ◄── avatar_glove_haptic  (five finger vibration motors)
+</pre></div>
+</div>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p><a class="reference internal" href="../references/retargeting/sharpa.html"><span class="doc">Retargeter: Manus to Sharpa</span></a> maps OpenXR hand tracking onto a
+Sharpa robot hand. Avatar HUMAN output is the same OpenXR layer that
+retargeter consumes.</p>
+</div>
+</section>
+<section id="prerequisites">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>Schema</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/oglo_tactile.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/oglo_tactile.fbs</a>
-(<code class="docutils literal notranslate"><span class="pre">OgloGloveSample</span></code> / <code class="docutils literal notranslate"><span class="pre">OgloGloveSampleRecord</span></code>).</p></li>
-<li><p><strong>Plugin</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oglo_tactile" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile</a> (BLE read → parse → OpenXR push).</p></li>
-<li><p><strong>Tracker</strong> — <code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code>, with live backend
-<code class="docutils literal notranslate"><span class="pre">LiveOgloTactileTrackerImpl</span></code>. Both are generated at configure time from the
-<code class="docutils literal notranslate"><span class="pre">oglo_tactile</span></code> entry in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>.</p></li>
+<li><p><strong>Linux x86_64</strong> (tested on Ubuntu 22.04).</p></li>
+<li><p><strong>Pinned production Avatar SDK</strong> (<code class="docutils literal notranslate"><span class="pre">avatar-sdk</span></code> 1.7.3-17) from Sharpa’s
+signed APT repository. <code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> retrieves it; do not substitute
+<code class="docutils literal notranslate"><span class="pre">avatar-sdk-dev</span></code> or <code class="docutils literal notranslate"><span class="pre">avatar-sdk-beta</span></code>.</p></li>
+<li><p><strong>Sharpa Avatar gloves</strong> powered and connected over USB. Transport settings
+are selected in <code class="docutils literal notranslate"><span class="pre">&lt;sdk-root&gt;/share/sdk_config.json</span></code> (default root
+<code class="docutils literal notranslate"><span class="pre">/opt/avatar-sdk</span></code>).</p></li>
+<li><p><strong>CloudXR runtime</strong> on the plugin host, unless a <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> example
+launches it for you.</p></li>
+<li><p>A built Isaac Capture checkout. CMake 3.24 or newer is required.</p></li>
 </ul>
+<p>The SDK stays external: headers, libraries, and runtime assets are not copied
+into this repository or the plugin install prefix.</p>
 </section>
-<section id="build">
-<h2><a class="toc-backref" href="#id3" role="doc-backlink">Build</a><a class="headerlink" href="#build" title="Link to this heading">#</a></h2>
-<p>Linux only (BlueZ). The plugin is off by default.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>libdbus-1-dev<span class="w">          </span><span class="c1"># BlueZ daemon + libdbus for the BLE backend</span>
-cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGIN_OGLO<span class="o">=</span>ON
-cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>oglo_tactile_plugin<span class="w"> </span>--parallel
+<section id="installation">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
+<p>Install the pinned production SDK first if it is not already present:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">nlohmann/json</span></code> (MIT) is fetched automatically.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p><strong>BLE backend.</strong> The plugin talks to BlueZ directly over <a class="reference external" href="https://www.freedesktop.org/wiki/Software/dbus/" rel="noopener noreferrer" target="_blank">libdbus</a> (AFL-2.1, permissive), so
-the build carries <strong>no copyleft dependency</strong> and works out of the box. The
-transport is isolated behind the <code class="docutils literal notranslate"><span class="pre">OgloBleClient</span></code> interface
-(<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/oglo_tactile/ble/oglo_ble_client.hpp" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/ble/oglo_ble_client.hpp</a>), so an
-alternative backend can be dropped in via <code class="docutils literal notranslate"><span class="pre">make_ble_client()</span></code> without
-touching the parser, schema, or tracker.</p>
-</div>
-</section>
-<section id="usage">
-<h2><a class="toc-backref" href="#id4" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">#</a></h2>
-<p>The plugin streams one glove (<code class="docutils literal notranslate"><span class="pre">--side</span></code>) and pushes it via OpenXR for a host
-<code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code> to record:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Push for a host OgloTactileTracker into a shared session MCAP</span>
-./build/src/plugins/oglo_tactile/oglo_tactile_plugin<span class="w"> </span>--side<span class="w"> </span>right<span class="w"> </span>--collection-prefix<span class="o">=</span>oglo
+<p>Then use the canonical top-level CMake workflow from the Isaac Capture root.
+<code class="docutils literal notranslate"><span class="pre">-DAVATAR_SDK_ROOT</span></code> selects a non-default SDK tree; that tree must already
+be complete:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DBUILD_PLUGIN_SHARPA_AVATAR<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DAVATAR_SDK_ROOT<span class="o">=</span>/opt/avatar-sdk
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel
+cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
-<p>The packet parser reads the device <strong>Config characteristic</strong> first and branches
-on the notify <code class="docutils literal notranslate"><span class="pre">flags</span></code> byte (<code class="docutils literal notranslate"><span class="pre">0x04</span></code> packed12 v5 — primary; <code class="docutils literal notranslate"><span class="pre">0x02</span></code>/<code class="docutils literal notranslate"><span class="pre">0x01</span></code>
-legacy schema-4 fallback), so payload sizes are never hardcoded.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code> without a usable SDK under the selected
+root skips this plugin and the rest of Isaac Capture still configures. See
+<a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
+<section id="usb-access-one-time-on-the-host">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">USB access (one-time, on the host)</a><a class="headerlink" href="#usb-access-one-time-on-the-host" title="Link to this heading">#</a></h3>
+<p>udev rules must run <strong>on the host</strong>, not inside a container:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_udev_rules.sh
+<span class="c1"># then unplug and reconnect the glove</span>
+</pre></div>
+</div>
 </section>
-<section id="recorded-data">
-<h2><a class="toc-backref" href="#id5" role="doc-backlink">Recorded data</a><a class="headerlink" href="#recorded-data" title="Link to this heading">#</a></h2>
-<p>The host <code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code> records per hand into channels
-<code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo</span></code> and <code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo_tracked</span></code>, carrying
-<code class="docutils literal notranslate"><span class="pre">core.OgloGloveSampleRecord</span></code>: <code class="docutils literal notranslate"><span class="pre">seq</span></code>, <code class="docutils literal notranslate"><span class="pre">device_time_us</span></code>, <code class="docutils literal notranslate"><span class="pre">taxels[80]</span></code> (raw
-12-bit, <code class="docutils literal notranslate"><span class="pre">finger,row,col</span></code>), and a 6-axis IMU, each with a <code class="docutils literal notranslate"><span class="pre">DeviceDataTimestamp</span></code>
-whose <code class="docutils literal notranslate"><span class="pre">sample_time_local_common_clock</span></code> is on the shared host monotonic clock —
-so OGLO aligns in time with hand/head streams.</p>
-<p><strong>Naming.</strong> The glove’s identity threads through several layers, but all of them
-derive from the single <code class="docutils literal notranslate"><span class="pre">--collection-prefix</span></code> you pick (<code class="docutils literal notranslate"><span class="pre">oglo</span></code> below), with the
-hand side appended. For the <strong>left</strong> hand:</p>
+</section>
+<section id="running-the-plugin">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Running the plugin</a><a class="headerlink" href="#running-the-plugin" title="Link to this heading">#</a></h2>
+<p>The plugin publishes through the CloudXR / OpenXR runtime. Start the runtime
+and source its environment in the shell that launches the plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/plugins/sharpa_avatar/avatar_hand_plugin
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> and
+<a class="reference internal" href="../references/cloudxr.html#load-cloudxr-environment-variables"><span class="std std-ref">Load CloudXR environment variables</span></a> for the full service setup.</p>
+<p><code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> can launch the same binary through <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>. The
+visualization example does that for you (CloudXR and the plugin start unless
+you opt out):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/sharpa_avatar
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.sharpa_avatar
+</pre></div>
+</div>
+<p>Gloves reconnect from <code class="docutils literal notranslate"><span class="pre">update()</span></code> if they drop offline. Only one process
+may hold the Avatar SDK at a time.</p>
+</section>
+<section id="datasets">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Datasets</a><a class="headerlink" href="#datasets" title="Link to this heading">#</a></h2>
+<p>By default every path is on. Restrict them with <code class="docutils literal notranslate"><span class="pre">--datasets=</span></code>
+(comma-separated: <code class="docutils literal notranslate"><span class="pre">human</span></code>, <code class="docutils literal notranslate"><span class="pre">raw</span></code>, <code class="docutils literal notranslate"><span class="pre">robot</span></code>, <code class="docutils literal notranslate"><span class="pre">haptic</span></code>):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/sharpa_avatar/avatar_hand_plugin<span class="w"> </span>--datasets<span class="o">=</span>human,raw,robot,haptic
+./install/plugins/sharpa_avatar/avatar_hand_plugin<span class="w"> </span>--datasets<span class="o">=</span>human
+</pre></div>
+</div>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
-<col style="width: 32.0%" />
-<col style="width: 44.0%" />
-<col style="width: 24.0%" />
+<col style="width: 38.0%" />
+<col style="width: 62.0%" />
 </colgroup>
 <thead>
-<tr class="row-odd"><th class="head"><p>Layer</p></th>
-<th class="head"><p>Where it is set</p></th>
-<th class="head"><p>Value (left hand)</p></th>
+<tr class="row-odd"><th class="head"><p>Device or collection</p></th>
+<th class="head"><p>Contents</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>CLI flag</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">oglo_tactile_plugin</span> <span class="pre">--collection-prefix</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">oglo</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">/hand/left</span></code>, <code class="docutils literal notranslate"><span class="pre">/hand/right</span></code></p></td>
+<td><p>OpenXR 26-joint poses from Avatar HUMAN landmarks</p></td>
 </tr>
-<tr class="row-odd"><td><p>OpenXR collection id</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">OgloTactileTracker(&quot;&lt;prefix&gt;/left&quot;)</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">oglo/left</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_raw_left</span></code>, <code class="docutils literal notranslate"><span class="pre">avatar_raw_right</span></code></p></td>
+<td><p>RAW 22-DoF encoder joint state</p></td>
 </tr>
-<tr class="row-even"><td><p>MCAP recording base name</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">McapRecordingConfig</span></code> tracker name</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">oglo_left</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_robot_left</span></code>, <code class="docutils literal notranslate"><span class="pre">avatar_robot_right</span></code></p></td>
+<td><p>ROBOT 22-DoF retargeted joint state</p></td>
 </tr>
-<tr class="row-odd"><td><p>MCAP channels</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">OgloRecordingTraits</span></code> (<code class="docutils literal notranslate"><span class="pre">oglo</span></code>, <code class="docutils literal notranslate"><span class="pre">oglo_tracked</span></code>)</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">oglo_left/oglo</span></code>, <code class="docutils literal notranslate"><span class="pre">oglo_left/oglo_tracked</span></code></p></td>
-</tr>
-<tr class="row-even"><td><p>Plugin device path</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/oglo_tactile/plugin.yaml" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/plugin.yaml</a></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">/glove/oglo_left</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_glove_haptic</span></code></p></td>
+<td><p>Inbound per-finger vibration commands</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>The right hand mirrors this (<code class="docutils literal notranslate"><span class="pre">right</span></code> / <code class="docutils literal notranslate"><span class="pre">oglo_right</span></code>), so <code class="docutils literal notranslate"><span class="pre">mcap</span> <span class="pre">info</span></code> on a
-recording shows <code class="docutils literal notranslate"><span class="pre">oglo_left/oglo</span></code> (+ <code class="docutils literal notranslate"><span class="pre">_tracked</span></code>) and <code class="docutils literal notranslate"><span class="pre">oglo_right/oglo</span></code>
-(+ <code class="docutils literal notranslate"><span class="pre">_tracked</span></code>).</p>
-<p>A complete data-collection demo (MetaQuest hand/head + both gloves + a live
-in-headset tactile heatmap) lives at
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/oglo_tactile" rel="noopener noreferrer" target="_blank">examples/oglo_tactile</a>; see its <code class="docutils literal notranslate"><span class="pre">README.md</span></code>.</p>
+<section id="human-openxr-hands">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">HUMAN (OpenXR hands)</a><a class="headerlink" href="#human-openxr-hands" title="Link to this heading">#</a></h3>
+<p>HUMAN landmarks are mapped onto the 26 OpenXR hand slots (unsupported slots
+stay invalid) and pushed with <code class="docutils literal notranslate"><span class="pre">HandInjector</span></code>. Hosts read them through
+<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> like any other hand-tracking plugin.</p>
 </section>
-<section id="imu-frame">
-<h2><a class="toc-backref" href="#id6" role="doc-backlink">IMU frame</a><a class="headerlink" href="#imu-frame" title="Link to this heading">#</a></h2>
-<p>Each sample includes a 6-axis IMU reading — a 3-axis accelerometer and 3-axis
-gyroscope — as raw <code class="docutils literal notranslate"><span class="pre">int16</span></code> sensor counts. Scale: accel ±8 g
-(<code class="docutils literal notranslate"><span class="pre">≈0.000244</span> <span class="pre">g/LSB</span></code>), gyro ±2000 dps (<code class="docutils literal notranslate"><span class="pre">≈0.061</span> <span class="pre">dps/LSB</span></code>). The IMU is
-wrist-mounted, so its axes form a single <strong>wrist-fixed frame</strong> — they track the
-wrist, not individual fingers, and are the sensor’s own raw axes (not aligned to
-an anatomical hand frame). For absolute orientation, apply the IMU-to-hand
-extrinsic supplied with the hardware, or calibrate against gravity for just “up”.</p>
+<section id="raw-and-robot-joint-state-tensors">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">RAW and ROBOT (joint-state tensors)</a><a class="headerlink" href="#raw-and-robot-joint-state-tensors" title="Link to this heading">#</a></h3>
+<p>Each side pushes a <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> (tensor id <code class="docutils literal notranslate"><span class="pre">joint_state</span></code>) with the
+22 named DoF from the pinned SDK. Consume them with <code class="docutils literal notranslate"><span class="pre">JointStateSource</span></code>
+and the collection ids above.</p>
 </section>
-<section id="tests">
-<h2><a class="toc-backref" href="#id7" role="doc-backlink">Tests</a><a class="headerlink" href="#tests" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">test_oglo_packet_parser</span></code> validates the wire decode against the firmware’s own
-12-bit packing reference, plus the schema-4 fallback and malformed-packet
-rejection:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>-R<span class="w"> </span>oglo_packet_parser<span class="w"> </span>--output-on-failure
-</pre></div>
+<section id="haptic">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Haptic</a><a class="headerlink" href="#haptic" title="Link to this heading">#</a></h3>
+<p>The plugin reads <code class="docutils literal notranslate"><span class="pre">HapticCommand</span></code> on <code class="docutils literal notranslate"><span class="pre">avatar_glove_haptic</span></code> and drives
+five finger vibration motors. The visualization example uses the same
+per-finger pinch path as the generic glove haptic sample.</p>
+</section>
+</section>
+<section id="wrist-pose">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Wrist pose</a><a class="headerlink" href="#wrist-pose" title="Link to this heading">#</a></h2>
+<p>Avatar glove data is wrist-relative, so the plugin anchors HUMAN landmarks
+with a pose from <code class="docutils literal notranslate"><span class="pre">WristPoseSource</span></code> before publishing OpenXR hands. It prefers
+optical hand tracking and falls back to the controller aim pose when needed.
+If no wrist pose is available yet, the plugin still publishes a local skeleton
+with VALID-only flags; TRACKED is set once the selected wrist source is actively
+tracked.</p>
+<p>The example places that local skeleton into a stable left/right display
+frame. Pass <code class="docutils literal notranslate"><span class="pre">--world-frame</span></code> to leave the OpenXR poses unmodified.</p>
+</section>
+<section id="troubleshooting">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Avatar SDK installation fails</p></td>
+<td><p>Confirm access to Sharpa’s production APT endpoint and re-run
+<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>CMake skipped the plugin</p></td>
+<td><p>The SDK is missing under the selected root. Run
+<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> and reconfigure with
+<code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>CMake rejected the Avatar SDK</p></td>
+<td><p>Install the pinned production package, or point <code class="docutils literal notranslate"><span class="pre">AVATAR_SDK_ROOT</span></code>
+at a complete SDK tree. A <code class="docutils literal notranslate"><span class="pre">-dev</span></code> / <code class="docutils literal notranslate"><span class="pre">-beta</span></code> package at
+<code class="docutils literal notranslate"><span class="pre">/opt/avatar-sdk</span></code> is not the pin.</p></td>
+</tr>
+<tr class="row-odd"><td><p>USB glove is not detected</p></td>
+<td><p>Run <code class="docutils literal notranslate"><span class="pre">install_udev_rules.sh</span></code> on the host, then unplug and reconnect
+the glove.</p></td>
+</tr>
+<tr class="row-even"><td><p>Plugin binary is not found</p></td>
+<td><p>Build and install through the top-level CMake workflow. The example looks under
+<code class="docutils literal notranslate"><span class="pre">install/plugins/sharpa_avatar/</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>HUMAN / RAW / ROBOT stay offline</p></td>
+<td><p>Power the gloves, and stop Avatar Desktop, <code class="docutils literal notranslate"><span class="pre">avatar-backend</span></code>, or
+any other process using the Avatar SDK.</p></td>
+</tr>
+<tr class="row-even"><td><p>Viser shows an empty grid</p></td>
+<td><p>HUMAN must be enabled (default). RAW-only is joint angles, not a
+3D skeleton. Confirm the example is not launched with
+<code class="docutils literal notranslate"><span class="pre">--datasets</span></code> that omit <code class="docutils literal notranslate"><span class="pre">human</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>No vibration</p></td>
+<td><p>Keep <code class="docutils literal notranslate"><span class="pre">haptic</span></code> in <code class="docutils literal notranslate"><span class="pre">--datasets</span></code> and close a fingertip toward the
+thumb (example pinch path).</p></td>
+</tr>
+<tr class="row-even"><td><p>CloudXR runtime errors</p></td>
+<td><p>Check <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">status</span></code>, and source
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/run/cloudxr.env</span></code> in the same terminal as the plugin.</p></td>
+</tr>
+</tbody>
+</table>
 </div>
+</section>
+<section id="license">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<p>Plugin sources are Apache-2.0. The Avatar SDK is proprietary to Sharpa and
+is subject to its own license; this project does not redistribute it.</p>
 </section>
 </section>
 
@@ -588,20 +696,20 @@ rejection:</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="oak.html"
+       href="wuji_glove.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">OAK Camera Plugin</p>
+        <p class="prev-next-title">Wuji Glove</p>
       </div>
     </a>
     <a class="right-next"
-       href="wuji_glove.html"
+       href="haptikos.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Wuji Glove</p>
+        <p class="prev-next-title">Haptikos Exoskeletons</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -626,12 +734,22 @@ rejection:</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#components">Components</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build">Build</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#usage">Usage</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#recorded-data">Recorded data</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#imu-frame">IMU frame</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tests">Tests</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow">Data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation">Installation</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#usb-access-one-time-on-the-host">USB access (one-time, on the host)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-plugin">Running the plugin</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#datasets">Datasets</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#human-openxr-hands">HUMAN (OpenXR hands)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#raw-and-robot-joint-state-tensors">RAW and ROBOT (joint-state tensors)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#haptic">Haptic</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-pose">Wrist pose</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#license">License</a></li>
 </ul>
   </nav></div>
 

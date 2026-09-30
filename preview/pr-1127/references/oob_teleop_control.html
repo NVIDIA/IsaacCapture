@@ -363,6 +363,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
@@ -995,17 +996,11 @@ The value is also included in the generated headset URL.</p></td>
 (default <code class="docutils literal notranslate"><span class="pre">3000</span></code>). The host derives its bounded recovery grace from
 this value and the maximum-attempt count.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
-<td><p>HTTPS static web client port for <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> (default <code class="docutils literal notranslate"><span class="pre">8080</span></code>).
-Binds to <code class="docutils literal notranslate"><span class="pre">127.0.0.1:&lt;port&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-maps the port to
-the headset.  <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> uses the WSS proxy port (<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>)
-instead; <code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code> has no effect on it.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -1031,13 +1026,13 @@ headset attached.</p></li>
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
 the published client (see <a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
-<li><p>Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-the WSS proxy uses (Python <code class="docutils literal notranslate"><span class="pre">http.server</span></code> in a daemon thread).</p></li>
+<li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">https://localhost:48322/client/</span></code> on the WSS
+proxy’s existing TLS listener.</p></li>
 <li><p>After the selected headset is ready, checks its non-loopback network,
-starts/verifies coturn, and creates <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> rules for 8080
-(static UI), 48322 (WSS), 49100 (backend), and 3478 (TURN).</p></li>
+starts/verifies coturn, and creates <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> rules for 48322
+(WSS and static UI), 49100 (backend), and 3478 (TURN).</p></li>
 <li><p>Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
-replugging the same serial first rebuilds all four reverse rules, verifies
+replugging the same serial first rebuilds all three reverse rules, verifies
 coturn, and repairs CDP forwarding without mutating a surviving browser tab.
 The WebXR client owns its bounded reconnect attempts. Fresh post-repair
 stream metrics resume the existing session; a stable terminal event allows
@@ -1049,7 +1044,7 @@ launcher checks recovery prerequisites at most once per second instead of
 waiting for the ordinary five-second observation cadence.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
+cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://localhost:&lt;proxy_port&gt;</span></code>)
 once for the selected session — the SDK and web client both cache settings
 (e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
@@ -1304,7 +1299,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 29, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>
