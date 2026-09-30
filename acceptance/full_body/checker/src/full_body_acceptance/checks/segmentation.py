@@ -20,13 +20,14 @@ import math
 from ..frames import Frame
 from ..labels import StepTimeline
 from ..profile import FULL_BODY, SkeletonProfile
+from acceptance_common.checks import segmentation as _shared
 from acceptance_common.checks.base import (
     Attribution,
-    Check,
     Outcome,
     Severity,
     Status,
 )
+from acceptance_common.checks.segmentation import LabelCheck
 from acceptance_common.vectors import relative, signed_angle_about
 
 SAGITTAL = (1.0, 0.0, 0.0)
@@ -50,18 +51,15 @@ STEP_SIGNATURE: dict[str, tuple[str, tuple[float, float, float]]] = {
 MIN_SWEEP_DEG = 15.0
 
 
-class _LabelCheck(Check):
+class _LabelCheck(LabelCheck):
     gate = "G4"
-    needs_timeline = True
-    required = False
 
     def __init__(
         self,
         timeline: StepTimeline | None = None,
         profile: SkeletonProfile = FULL_BODY,
     ) -> None:
-        super().__init__()
-        self.timeline = timeline
+        super().__init__(timeline)
         self.profile = profile
 
     def _angle(self, frame: Frame, joint: str, axis) -> float | None:
@@ -79,142 +77,12 @@ class _LabelCheck(Check):
         return math.degrees(radians) if math.isfinite(radians) else None
 
 
-class LabelWindowsWellformed(_LabelCheck):
-    name = "segmentation.label_windows_wellformed"
+class LabelWindowsWellformed(_shared.LabelWindowsWellformed):
     gate = "G4"
-    severity = Severity.HARD
-    attribution = Attribution.DEVICE
-    summary = "The label windows are ordered, non-overlapping, and named once each"
-
-    # Windows are not required to tile, and the time between them is reported rather
-    # than judged. The performer opens each window once already in the pose, so the
-    # move between poses belongs to no window -- demanding a partition would fail
-    # every honestly captured take and blame the device for it.
-
-    def _update(self, frame: Frame) -> None:
-        return
-
-    def _result(self) -> Outcome:
-        if self.timeline is None:
-            return Outcome(Status.INSUFFICIENT_DATA, "no motion labels to check")
-        defects = self.timeline.defects()
-        between_s = self.timeline.unlabelled_between_ns / 1e9
-        measurements = {
-            "steps": len(self.timeline.steps),
-            "unlabelled_between_s": between_s,
-            "defects": [f"{d.kind}: {d.detail}" for d in defects],
-        }
-        if not defects:
-            return Outcome(
-                Status.PASS,
-                f"{len(self.timeline.steps)} windows in order and non-overlapping, "
-                f"with {between_s:.1f} s between them unlabelled",
-                measurements,
-            )
-        kinds = sorted({d.kind for d in defects})
-        return Outcome(
-            Status.FAIL,
-            f"the label windows are not well formed ({', '.join(kinds)}); every "
-            f"measurement downstream would describe the wrong frames",
-            measurements,
-        )
 
 
-class LabelAlignment(_LabelCheck):
-    name = "segmentation.label_alignment"
+class LabelAlignment(_shared.LabelAlignment):
     gate = "G4"
-    severity = Severity.HARD
-    attribution = Attribution.DEVICE
-    summary = "Every labelled window is backed by the frames it describes"
-
-    # Containment only. A real capture starts before the performer does and stops after
-    # they finish, so unlabelled frames at either end are normal and say nothing about
-    # the labels. A sidecar shifted but still inside the recording passes here and is
-    # caught by the two motion checks below, which is where the evidence for it is.
-    #
-    # A window may stick out past the recorded span by this much of its own length.
-    MAX_UNCOVERED_FRACTION = 0.02
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.first_ns: int | None = None
-        self.last_ns: int | None = None
-        self.per_window: dict[int, int] = {}
-        self.unlabelled = 0
-        self.labelled = 0
-
-    def _update(self, frame: Frame) -> None:
-        if frame.sample_time_ns is None:
-            return
-        if self.first_ns is None:
-            self.first_ns = frame.sample_time_ns
-        self.last_ns = frame.sample_time_ns
-        if self.timeline is None:
-            return
-        step = self.timeline.step_at(frame.sample_time_ns)
-        if step is None:
-            self.unlabelled += 1
-            return
-        self.labelled += 1
-        self.per_window[step.index] = self.per_window.get(step.index, 0) + 1
-
-    def _covered(self, step) -> float:
-        """Fraction of a window's own span that the recording actually spans."""
-        length = step.end_ns - step.start_ns
-        if length <= 0:
-            return 0.0
-        overlap = min(step.end_ns, self.last_ns) - max(step.start_ns, self.first_ns)
-        return max(0.0, min(1.0, overlap / length))
-
-    def _result(self) -> Outcome:
-        if self.timeline is None:
-            return Outcome(Status.INSUFFICIENT_DATA, "no motion labels to align")
-        span = self.timeline.span_ns
-        if span is None or self.first_ns is None or self.last_ns is None:
-            return Outcome(
-                Status.INSUFFICIENT_DATA,
-                "no timestamped frames to align labels against",
-            )
-
-        lead_in_s = (span[0] - self.first_ns) / 1e9
-        tail_s = (self.last_ns - span[1]) / 1e9
-        starved, clipped = [], []
-        for step in self.timeline.steps:
-            if not self.per_window.get(step.index):
-                starved.append(step.label)
-            elif self._covered(step) < 1.0 - self.MAX_UNCOVERED_FRACTION:
-                clipped.append(f"{step.label} ({self._covered(step):.0%} covered)")
-
-        measurements = {
-            "lead_in_s": lead_in_s,
-            "tail_s": tail_s,
-            "unlabelled_fraction": self.unlabelled
-            / max(1, self.labelled + self.unlabelled),
-            "unlabelled_frames": self.unlabelled,
-            "windows_without_frames": starved,
-            "windows_partly_outside": clipped,
-        }
-
-        if starved:
-            return Outcome(
-                Status.FAIL,
-                f"no frames fall inside {', '.join(starved)}, so the labels do not "
-                f"belong to this recording",
-                measurements,
-            )
-        if clipped:
-            return Outcome(
-                Status.FAIL,
-                f"the recording ran out part way through {', '.join(clipped)}, so "
-                f"those windows would be measured from a fragment",
-                measurements,
-            )
-        return Outcome(
-            Status.PASS,
-            f"all {len(self.timeline.steps)} windows are backed by frames, with "
-            f"{lead_in_s:.1f} s of lead-in and {tail_s:.1f} s of tail unlabelled",
-            measurements,
-        )
 
 
 class _MotionPresenceCheck(_LabelCheck):
