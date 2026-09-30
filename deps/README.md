@@ -95,6 +95,18 @@ machine and are located via `find_package`.
 - **Build**: Header-only library
 - **License**: BSD-style
 
+### OpenXR extension headers (vendored)
+- **Location**: `third_party/openxr_extensions/`
+- **Contents**: `openxr_extension_helpers.h` (The Khronos Group Inc., Apache-2.0)
+  and `XR_MNDX_xdev_space.h` (Collabora, Ltd., BSL-1.0)
+- **Purpose**: OpenXR extension declarations this project compiles against and
+  therefore redistributes in the wheel. Checked in rather than fetched, so they
+  sit here instead of beside NVIDIA's own extension headers in
+  `cloudxr/openxr_extensions/`.
+- **Build**: header-only `Teleop::openxr_extensions_upstream`, carried by
+  `Teleop::openxr_extensions` so consumers link one target.
+- **License**: Apache-2.0 and BSL-1.0 (see `LICENSES/`)
+
 ### SPDX license list data
 - **Source**: https://github.com/spdx/license-list-data.git
 - **Version**: 31ba1a50e5397e00a304dbadc76531740e89ee48 (v3.29.0)

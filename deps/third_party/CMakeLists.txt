@@ -5,6 +5,9 @@ cmake_minimum_required(VERSION 3.20)
 
 include(FetchContent)
 
+# Vendored third-party sources, checked in rather than fetched.
+add_subdirectory(openxr_extensions)
+
 # ==============================================================================
 # CMake sanitizers
 # ==============================================================================
