@@ -1,0 +1,240 @@
+{
+ "schema": {
+  "mcap_schema_name": "core.HandPoseRecord",
+  "schema_encoding": "flatbuffer",
+  "message_encoding": "flatbuffer",
+  "topics": [
+   "hands/left_hand",
+   "hands/right_hand"
+  ],
+  "mcap_profile": "teleop",
+  "log_time": "available_time_local_common_clock"
+ },
+ "conventions": {
+  "stage": "+Y up, the performer faces -Z",
+  "joint_frame": "OpenXR: -Z along the bone toward the tip, +Y dorsal, X = Y x Z",
+  "position_units": "metres",
+  "quaternion_order": "x, y, z, w",
+  "nominal_rate_hz": 60.0
+ },
+ "categories": {
+  "golden": "clean and correct; the checker must pass",
+  "benign": "unusual but correct; the checker must also pass",
+  "defect": "one injected fault; the checker must fail the named check"
+ },
+ "verdicts": {
+  "pass": "checker must accept",
+  "fail": "a fault attributable to the device or integration",
+  "retake": "a performance miss; the device is not implicated"
+ },
+ "motion_script": [
+  {
+   "index": 0,
+   "label": "open_hand_open",
+   "hold_s": 4.0
+  },
+  {
+   "index": 1,
+   "label": "fist",
+   "hold_s": 4.0
+  },
+  {
+   "index": 2,
+   "label": "right_grasps_left_fist",
+   "hold_s": 4.0
+  },
+  {
+   "index": 3,
+   "label": "left_grasps_right_fist",
+   "hold_s": 4.0
+  },
+  {
+   "index": 4,
+   "label": "pinch_index",
+   "hold_s": 3.0
+  },
+  {
+   "index": 5,
+   "label": "pinch_middle",
+   "hold_s": 3.0
+  },
+  {
+   "index": 6,
+   "label": "pinch_ring",
+   "hold_s": 3.0
+  },
+  {
+   "index": 7,
+   "label": "pinch_little",
+   "hold_s": 3.0
+  },
+  {
+   "index": 8,
+   "label": "wrist_rotate",
+   "hold_s": 6.0
+  },
+  {
+   "index": 9,
+   "label": "open_hand_close",
+   "hold_s": 4.0
+  }
+ ],
+ "fixtures": [
+  {
+   "filename": "fixtures/golden_full_script.mcap",
+   "labels": "fixtures/golden_full_script.labels.json",
+   "category": "golden",
+   "description": "The full two-hand script at 60 Hz, all 26 joints valid, optical-hand style.",
+   "expected_verdict": "pass",
+   "records": 7260,
+   "size_bytes": 7610508
+  },
+  {
+   "filename": "fixtures/golden_glove_21.mcap",
+   "labels": "fixtures/golden_glove_21.labels.json",
+   "category": "golden",
+   "description": "The full script with PALM and the four finger METACARPALs invalid throughout, as a glove that only drives the 21 judged joints publishes it.",
+   "expected_verdict": "pass",
+   "records": 7260,
+   "size_bytes": 7610508
+  },
+  {
+   "filename": "fixtures/benign_optical_25.mcap",
+   "labels": "fixtures/benign_optical_25.labels.json",
+   "category": "benign",
+   "description": "PALM invalid throughout, the 25-joint layout a WebXR hand arrives in.",
+   "expected_verdict": "pass",
+   "records": 7260,
+   "size_bytes": 7610508
+  },
+  {
+   "filename": "fixtures/benign_palm_on_little_tip.mcap",
+   "labels": "fixtures/benign_palm_on_little_tip.labels.json",
+   "category": "benign",
+   "description": "PALM is valid but sits on LITTLE_TIP. An advisory note, never a failure: PALM is not judged.",
+   "expected_verdict": "pass",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_advisory": "optional_joints.geometry_consistent"
+  },
+  {
+   "filename": "fixtures/benign_late_arrival.mcap",
+   "labels": "fixtures/benign_late_arrival.labels.json",
+   "category": "benign",
+   "description": "The performer reaches each pose 1.0 s after its window opens, inside the unsettled lead of every window.",
+   "expected_verdict": "pass",
+   "records": 7260,
+   "size_bytes": 7610508
+  },
+  {
+   "filename": "fixtures/defect_finger_swap_index_middle.mcap",
+   "labels": "fixtures/defect_finger_swap_index_middle.labels.json",
+   "category": "defect",
+   "description": "INDEX and MIDDLE PROXIMAL..TIP joints exchanged on both hands.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "skeleton.joint_index_assignment"
+  },
+  {
+   "filename": "fixtures/defect_flex_reversed.mcap",
+   "labels": "fixtures/defect_flex_reversed.labels.json",
+   "category": "defect",
+   "description": "Every finger flexion angle negated: fingers curl toward the back of the hand.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "shape.flex_direction"
+  },
+  {
+   "filename": "fixtures/defect_right_channel_mirrored.mcap",
+   "labels": "fixtures/defect_right_channel_mirrored.labels.json",
+   "category": "defect",
+   "description": "The right channel carries a left hand's geometry at the right wrist.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "coordinate_frame.handedness"
+  },
+  {
+   "filename": "fixtures/defect_wrist_frozen.mcap",
+   "labels": "fixtures/defect_wrist_frozen.labels.json",
+   "category": "defect",
+   "description": "From 8 s on, both hands are placed by a wrist pose refreshed only every 2 s while the fingers keep moving.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "placement.wrist_not_frozen"
+  },
+  {
+   "filename": "fixtures/defect_hand_at_origin.mcap",
+   "labels": "fixtures/defect_hand_at_origin.labels.json",
+   "category": "defect",
+   "description": "No wrist source: both hands placed by the identity, wrist at the STAGE origin.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "placement.not_at_origin"
+  },
+  {
+   "filename": "fixtures/defect_centimetres.mcap",
+   "labels": "fixtures/defect_centimetres.labels.json",
+   "category": "defect",
+   "description": "Every position written in centimetres.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "units.position_scale_metres"
+  },
+  {
+   "filename": "fixtures/defect_quaternion_wxyz.mcap",
+   "labels": "fixtures/defect_quaternion_wxyz.labels.json",
+   "category": "defect",
+   "description": "Every orientation written w,x,y,z into the x,y,z,w fields.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "quaternion.component_order"
+  },
+  {
+   "filename": "fixtures/defect_source_switch.mcap",
+   "labels": "fixtures/defect_source_switch.labels.json",
+   "category": "defect",
+   "description": "21 joints valid (glove) until 30 s, then all 26 (headset optical fallback).",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "consistency.valid_set_stable"
+  },
+  {
+   "filename": "fixtures/defect_required_joint_invalid.mcap",
+   "labels": "fixtures/defect_required_joint_invalid.labels.json",
+   "category": "defect",
+   "description": "INDEX_DISTAL invalid for 0.5 s out of every 1.5 s.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "coverage.required_joints_valid"
+  },
+  {
+   "filename": "fixtures/defect_wrist_orientation_unrolled.mcap",
+   "labels": "fixtures/defect_wrist_orientation_unrolled.labels.json",
+   "category": "defect",
+   "description": "During wrist_rotate the wrist quaternion stays palm-down while the joint positions turn palm-up and back.",
+   "expected_verdict": "fail",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "consistency.position_orientation_same_frame"
+  },
+  {
+   "filename": "fixtures/retake_shallow_fist.mcap",
+   "labels": "fixtures/retake_shallow_fist.labels.json",
+   "category": "defect",
+   "description": "The fist is only half closed: a performance miss, not a device fault.",
+   "expected_verdict": "retake",
+   "records": 7260,
+   "size_bytes": 7610508,
+   "expected_failing_check": "posture.fist_closure"
+  }
+ ]
+}
