@@ -357,8 +357,8 @@ proxies signaling only; encrypted WebRTC video/control travels directly between
 each client and the SFU. The server advertises the selected Edge IP for media,
 so using a different interface's address can break media even if signaling works.
 
-**4. Configure the Ubuntu firewall (UFW).** Run these on **Edge Compute**, in a host
-terminal. First check whether UFW is active:
+**4. Configure the firewall on Edge Compute.** In a host terminal, first check
+whether Ubuntu's UFW is active:
 
 ```bash
 sudo ufw status verbose
@@ -385,10 +385,17 @@ to step 5. Do not enable it just for this test; enabling a firewall requires
 accounting for existing SSH and CloudXR access too. If another firewall manager
 or corporate policy controls the computer, use that system's equivalent rules.
 
-On **Robot Site**, no new inbound server ports are needed with the usual UFW
-policy of allowing outgoing traffic and established replies. Check
-`sudo ufw status verbose` there too. If its outgoing policy is `deny`, permit
-outbound access explicitly on **Robot Site**:
+**5. Configure the firewall on Robot Site.** In a host terminal on **Robot Site**,
+check UFW's status and outgoing policy:
+
+```bash
+sudo ufw status verbose
+```
+
+If UFW is inactive, or its outgoing policy is `allow`, continue to step 6.
+No new inbound server ports are needed with the usual UFW policy of allowing
+outgoing traffic and established replies. If its outgoing policy is `deny`,
+permit outbound access explicitly:
 
 ```bash
 EDGE_IP=10.29.91.247
@@ -399,10 +406,10 @@ sudo ufw allow out proto tcp to "$EDGE_IP" port 7881
 
 These commands configure the computer's firewall only. Network isolation or
 upstream restrictions require the network administrator's help. The generated
-containers use host networking, so these are host input rules, not Docker
+containers use host networking, so the Edge rules are host input rules, not Docker
 port-forwarding rules. See [Ubuntu's UFW documentation](https://ubuntu.com/server/docs/firewalls/).
 
-**5. Check reachability from Robot Site**, before starting robot control:
+**6. Check reachability from Robot Site**, before starting robot control:
 
 ```bash
 curl --connect-timeout 5 \
@@ -414,7 +421,7 @@ A response confirms TCP/TLS reachability, not media connectivity. A timeout
 suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
 wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
 
-**6. Use the generated configurations in the existing process layout.** Start
+**7. Use the generated configurations in the existing process layout.** Start
 Pico, SONIC and MuJoCo exactly as above; only the bridge/camera commands change.
 On Edge Compute, in separate terminals:
 
