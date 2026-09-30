@@ -85,6 +85,7 @@ Table of Contents
    references/cloudxr
    references/oob_teleop_control
    references/egocentric_hand_reconstruction
+   references/migration
    references/license
 
 Indices and tables

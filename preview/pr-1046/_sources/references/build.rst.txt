@@ -57,21 +57,25 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheel with ``uv`` or ``pip``:
+After building, install the wheels with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   uv pip install isaacteleop --find-links=./install/wheels/ --reinstall
+   uv pip install isaaccapture --find-links=./install/wheels/ --reinstall
 
    # or
-   pip install install/wheels/isaacteleop-*.whl
+   pip install install/wheels/isaaccapture-*.whl
+
+The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
+in 1.9, so
+``import isaacteleop`` resolves without a second install; see :doc:`migration`.
 
 Installing from source with pip (scikit-build-core)
 ---------------------------------------------------
 
 In addition to the classic CMake flow above (which stages the package
 and produces a wheel under ``install/wheels/``), the repository ships a root
-:code-file:`pyproject.toml` that exposes ``isaacteleop`` through the
+:code-file:`pyproject.toml` that exposes ``isaaccapture`` through the
 `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ build backend,
 driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
 
@@ -120,7 +124,6 @@ Output locations
 After a successful build and install, relative to your build directory:
 
 - **C++ libraries:** ``src/core/`` (and under each module)
-- **Python wheel:** ``wheels/isaacteleop-*.whl``
 - **Examples (binaries):** under ``examples/`` (e.g. ``examples/oxr/cpp/``)
 - **Installed files:** ``install/`` (or your ``CMAKE_INSTALL_PREFIX``)
   - Libraries: ``install/lib/``

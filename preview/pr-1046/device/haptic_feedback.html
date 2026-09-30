@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -454,8 +455,8 @@ graph outputs and writes them <em>out</em> to a device after the graph runs.</p>
 <li><p><strong>Device-side schemas</strong> (<code class="docutils literal notranslate"><span class="pre">TensorGroupType</span></code>) describe what a device consumes.
 <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code> carries <code class="docutils literal notranslate"><span class="pre">[amplitude,</span> <span class="pre">frequency_hz,</span> <span class="pre">duration_s]</span></code>;
 <code class="docutils literal notranslate"><span class="pre">EndEffectorForce</span></code> carries a 3-DoF force for future grounded devices. They
-live in <code class="docutils literal notranslate"><span class="pre">isaacteleop.retargeting_engine.tensor_types</span></code>.</p></li>
-<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaacteleop.retargeters.tactile_retargeters</span></code> map
+live in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeting_engine.tensor_types</span></code>.</p></li>
+<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeters.tactile_retargeters</span></code> map
 sim-side tactile data (a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code> / <code class="docutils literal notranslate"><span class="pre">TactileHeatmap</span></code>) to a
 device-side schema — e.g. <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code>.</p></li>
 <li><p><strong>HapticSink</strong> (<code class="docutils literal notranslate"><span class="pre">IDeviceIOSink</span></code>) is the vendor-neutral output node. It stores
@@ -497,7 +498,7 @@ a single controller tracker and there is no OpenXR action-set contention.</p>
 itself if nothing is serving (see <a class="reference internal" href="../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> to manage
 that service yourself). Install the example, then run it:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/haptic_feedback
-python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.haptic_feedback.controller_haptic_example
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.haptic_feedback.controller_haptic_example
 </pre></div>
 </div>
 <p>No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
@@ -662,7 +663,7 @@ foundation.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

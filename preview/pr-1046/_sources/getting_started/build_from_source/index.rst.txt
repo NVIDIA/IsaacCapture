@@ -44,7 +44,7 @@ Prerequisites
    backend — pass ``-DGLFW_BUILD_WAYLAND=OFF`` to build Televiz against X11 only instead.
    Neither gates the auto-default: if one is missing, the configure fails naming it rather
    than quietly dropping the module. Most users do not need any of this:
-   ``pip install isaacteleop`` already ships the compiled ``isaacteleop.viz`` module. See
+   ``pip install isaaccapture`` already ships the compiled ``isaaccapture.viz`` module. See
    `Other Build options`_ for the full option table.
 
 .. _one-time-setup:
@@ -117,7 +117,7 @@ tarballs such as:
 
 - ``CloudXR-<version-for-runtime-sdk>-Linux-<arch>-sdk.tar.gz`` (CloudXR Runtime SDK)
 - ``CloudXR-exp-<version-for-runtime-sdk>-Linux-<arch>-sdk.tar.gz`` (experimental
-  runtime). Packaged by default as ``isaacteleop.cloudxr_exp``; needed for Jetson Orin
+  runtime). Packaged by default as ``isaaccapture.cloudxr_exp``; needed for Jetson Orin
   support (for example :doc:`/getting_started/televiz`) until the default runtime covers
   those platforms.
 - ``nvidia-cloudxr-<version-for-web-sdk>.tgz`` (CloudXR Web SDK)
@@ -131,7 +131,7 @@ like this:
    CXR_RUNTIME_SDK_VERSION=<version-for-runtime-sdk>
    CXR_WEB_SDK_VERSION=<version-for-web-sdk>
 
-The experimental runtime is packaged into the wheel as ``isaacteleop.cloudxr_exp`` by default
+The experimental runtime is packaged into the wheel as ``isaaccapture.cloudxr_exp`` by default
 (``ENABLE_CLOUDXR_EXP_BUNDLE=ON``). Pass ``-DENABLE_CLOUDXR_EXP_BUNDLE=OFF`` to skip it.
 Select it at runtime with ``ISAAC_TELEOP_CLOUDXR_EXP``.
 See :ref:`dedicated-cloudxr-runtime`.
@@ -236,7 +236,7 @@ The CMake options (defined in root :code-file:`CMakeLists.txt` and :code-file:`c
      - ``ON`` on Linux
    * - **Televiz visualization**
      - ``BUILD_VIZ``
-     - Auto: ``ON`` when Vulkan and the CUDA Toolkit are detected, else ``OFF``. Force with ``-DBUILD_VIZ=ON`` / ``-DBUILD_VIZ=OFF``. (Most users don't need this — ``pip install isaacteleop`` already ships the compiled ``isaacteleop.viz`` module.)
+     - Auto: ``ON`` when Vulkan and the CUDA Toolkit are detected, else ``OFF``. Force with ``-DBUILD_VIZ=ON`` / ``-DBUILD_VIZ=OFF``. (Most users don't need this — ``pip install isaaccapture`` already ships the compiled ``isaaccapture.viz`` module.)
 
 .. list-table:: Plugin Specific Options
    :widths: 26 34 40
@@ -328,8 +328,8 @@ When ``BUILD_TESTING`` is ``ON``, CTest is enabled at the top level. Run all tes
 
 The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build-ubuntu.yml>`).
 
-4. Install the ``isaacteleop`` pip package
-------------------------------------------
+4. Install the ``isaaccapture`` pip package
+-------------------------------------------
 
 The wheels are built in the ``./install/wheels/`` directory. Install the package from the wheels.
 Using ``pip``, you need to pass the ``--no-index`` option to automatically find the right wheel
@@ -339,12 +339,17 @@ based on the Python version.  Note that ``pip`` and ``uv pip`` has slightly diff
 
    # Pass --no-index to use only wheels in ./install/wheels/;
    # Pass --force-reinstall to replace an existing install.
-   pip install "isaacteleop[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --force-reinstall
+   pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --force-reinstall
 
 .. code-block:: bash
 
    # Pass --reinstall to replace an existing install.
-   uv pip install "isaacteleop[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall
+   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall
+
+The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
+in 1.9, so
+``import isaacteleop`` resolves without installing anything else. See
+:doc:`/references/migration`.
 
 Alternative: install directly from source with pip
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -402,10 +407,16 @@ What this path does and how it differs from the classic flow:
   ``.devN`` labels) stays with the classic flow via
   :code-file:`cmake/IsaacTeleopVersion.cmake`.
 
+.. admonition:: ``import isaacteleop`` under this path
+
+   Both ``pip install .`` and ``pip install -e .`` serve the alias: the shim's
+   source (:code-file:`src/compat/isaacteleop.py`) is mapped beside ``isaaccapture``'s
+   and ships in the same wheel (:doc:`/references/migration`).
+
 .. admonition:: Editable installs and iterating on pure-Python subpackages
 
    An editable install (``pip install -e .``) never recompiles on import. Pure-Python
-   subpackages resolve straight to ``src/python/isaacteleop/``, so edits **take effect
+   subpackages resolve straight to ``src/python/isaaccapture/``, so edits **take effect
    live** — a fresh interpreter is enough.
 
    Compiled extensions are the exception: ``.so``/``.pyd`` still come from the CMake
@@ -422,7 +433,7 @@ See :doc:`/references/build` for the full build-system reference.
 
    .. code-block:: bash
 
-      pip install "isaacteleop[retargeters-lite]"
+      pip install "isaaccapture[retargeters-lite]"
 
 .. toctree::
    :hidden:

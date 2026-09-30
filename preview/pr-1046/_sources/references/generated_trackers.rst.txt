@@ -66,7 +66,7 @@ the live and replay factories (includes, forward declarations, try-create thunks
 factory declarations and definitions), the MCAP recording traits in
 :code-file:`src/core/mcap/cpp/inc/mcap/recording_traits.hpp`, the pybind blocks in
 :code-file:`src/core/deviceio_trackers/python/tracker_bindings.cpp`, and a
-``_generated_tracker_exports.py`` that :code-file:`src/python/isaacteleop/deviceio_trackers/__init__.py`
+``_generated_tracker_exports.py`` that :code-file:`src/python/isaaccapture/deviceio_trackers/__init__.py`
 star-imports. Because that last one is spliced into ``__all__``, a new manifest entry needs no
 Python edit at all.
 
