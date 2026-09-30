@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=35d49528" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../../_static/documentation_options.js?v=96a32199"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -378,12 +378,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/license.html">License</a></li>
 </ul>
 </div>
@@ -468,14 +469,17 @@ Isaac Teleop checkout):</p>
 LeRobot extras cover the SO-101 motor bus (<code class="docutils literal notranslate"><span class="pre">feetech</span></code>), the IK solver for the XR path
 (<code class="docutils literal notranslate"><span class="pre">kinematics</span></code>), and dataset recording (<code class="docutils literal notranslate"><span class="pre">dataset</span></code>). For Isaac Teleop, <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> brings the
 CloudXR runtime bindings and <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> is the default retargeter path on both
-x86_64 and aarch64; the full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra is optional. The <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pin follows
-the release series this page documents — see <a class="reference internal" href="../quick_start.html#install-isaacteleop-pip-package"><span class="std std-ref">2. Install the isaacteleop pip package</span></a> for the
+x86_64 and aarch64; the full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra is optional. The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pin follows
+the release series this page documents — see <a class="reference internal" href="../quick_start.html#install-isaaccapture-pip-package"><span class="std std-ref">2. Install the isaaccapture pip package</span></a> for the
 other install options:</p>
 <pre class="literal-block">uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv pip install -e &quot;.[feetech,kinematics,dataset]&quot; &quot;huggingface_hub&gt;=1.5&quot;
-uv pip install &quot;isaacteleop[cloudxr,retargeters-lite]~=1.5.0&quot; &quot;scipy&gt;=1.14&quot; \
+uv pip install &quot;isaaccapture[cloudxr,retargeters-lite]~=1.6.0&quot; &quot;scipy&gt;=1.14&quot; \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
+<p>The upstream <code class="docutils literal notranslate"><span class="pre">isaac_teleop_to_so101</span></code> scripts still import <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code>.
+Installing <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> includes that compatibility alias automatically
+– see <a class="reference internal" href="../../references/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 </li>
 <li><p>Log in to the Hugging Face Hub — recorded datasets are pushed to the Hub by default (pass
 <code class="docutils literal notranslate"><span class="pre">--dataset.push_to_hub=false</span></code> to keep them local):</p>
@@ -485,7 +489,7 @@ uv pip install &quot;isaacteleop[cloudxr,retargeters-lite]~=1.5.0&quot; &quot;sc
 </li>
 <li><p>Accept the CloudXR EULA once and start the runtime. The EULA prompts on stdin, which would hang
 a headless run, so do both ahead of time; the service outlives each script you run below:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 </li>
@@ -577,7 +581,7 @@ SO-101 Leader</label><div class="sd-tab-content docutils">
 Isaac Teleop’s <code class="docutils literal notranslate"><span class="pre">so101_leader</span></code> plugin, which the script launches for you.</p>
 <ol class="arabic">
 <li><p><strong>Build the so101_leader plugin.</strong> It is part of Isaac Teleop’s C++ source, not the
-<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package, so build it from an Isaac Teleop checkout:</p>
+<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package, so build it from an Isaac Teleop checkout:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
@@ -803,7 +807,7 @@ finishes (unless <code class="docutils literal notranslate"><span class="pre">--
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on August 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

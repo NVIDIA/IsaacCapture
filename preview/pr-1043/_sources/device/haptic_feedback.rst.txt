@@ -23,8 +23,8 @@ graph outputs and writes them *out* to a device after the graph runs.
 - **Device-side schemas** (``TensorGroupType``) describe what a device consumes.
   ``ControllerHapticPulse`` carries ``[amplitude, frequency_hz, duration_s]``;
   ``EndEffectorForce`` carries a 3-DoF force for future grounded devices. They
-  live in ``isaacteleop.retargeting_engine.tensor_types``.
-- **Retargeters** in ``isaacteleop.retargeters.tactile_retargeters`` map
+  live in ``isaaccapture.retargeting_engine.tensor_types``.
+- **Retargeters** in ``isaaccapture.retargeters.tactile_retargeters`` map
   sim-side tactile data (a ``TactileVector`` / ``TactileHeatmap``) to a
   device-side schema — e.g. ``TactileVectorToControllerPulse``.
 - **HapticSink** (``IDeviceIOSink``) is the vendor-neutral output node. It stores
@@ -50,7 +50,7 @@ graph outputs and writes them *out* to a device after the graph runs.
 Example
 -------
 
-``examples/haptic_feedback/python/controller_haptic_example.py`` is the minimal
+``examples/haptic_feedback`` provides the minimal
 end-to-end wiring: pull a controller's trigger and that **same** controller
 rumbles. ``TriggerToTactile`` turns the trigger value into a ``TactileVector``,
 ``TactileVectorToControllerPulse`` turns that into a ``ControllerHapticPulse``,
@@ -67,12 +67,12 @@ Running
 
 The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see :ref:`dedicated-cloudxr-runtime` to manage
-that service yourself). Run it from the ``examples/haptic_feedback/python``
-directory:
+that service yourself). Install the example, then run it:
 
 .. code-block:: bash
 
-   uv run controller_haptic_example.py
+   uv pip install -e ./examples/haptic_feedback
+   python -m isaaccapture_examples.haptic_feedback.controller_haptic_example
 
 No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
 exit. Runtimes that do not expose ``xrApplyHapticFeedback`` silently no-op rather
@@ -94,6 +94,6 @@ foundation.
 See also
 --------
 
-- Example + tests: ``examples/haptic_feedback/python/`` and
+- Example + tests: ``examples/haptic_feedback`` and
   ``tests/python/core/retargeting_engine/test_haptic_devices.py`` /
   ``test_haptic_sink.py``.

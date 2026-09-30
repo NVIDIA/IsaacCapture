@@ -13,7 +13,7 @@ The Isaac Teleop WebXR client is built with React, Three.js, and WebXR. It strea
 from a CloudXR Runtime server to the browser.  For more details about CloudXR.js SDK and its advanced features, see the
 `CloudXR.js documentation`_.
 
-The source is located at :code-file:`deps/cloudxr/webxr_client/ <deps/cloudxr/webxr_client/>`.
+The source is located at :code-dir:`deps/cloudxr/webxr_client/`.
 
 .. contents:: Steps
    :local:

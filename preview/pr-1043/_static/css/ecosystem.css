@@ -185,7 +185,8 @@
 .device-grid {
     display: grid;
     /* device | input modes | Details button */
-    grid-template-columns: 220px 1fr 160px;
+    --device-name-col: 220px;
+    grid-template-columns: var(--device-name-col) 1fr 160px;
     border-top: 2px solid var(--pst-color-text-base);
 }
 
@@ -331,7 +332,10 @@ html[data-theme="dark"] .device-toggle {
 .device-panel {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* Requirements opens on the same line as the modes column above it, so an open row
+       reads down one edge. The first track is that column plus the cell padding it gains,
+       less the panel padding and the gap it loses: 220px + 1rem - 1.5rem - 2rem. */
+    grid-template-columns: calc(var(--device-name-col) - 2.5rem) 1fr 1fr;
     /* Row gap only ever applies under a company mark: without one the panel is a
        single row of columns. */
     column-gap: 2rem;
@@ -363,7 +367,7 @@ html[data-theme="dark"] .device-toggle {
     }
 }
 
-/* ---- company mark ---- */
+/* ---- company mark and version tag ---- */
 
 /* Spans the panel's columns so they keep their own alignment underneath. No rule under
    it: with the mark alone, a divider reads as a header whose text failed to load. */
@@ -378,6 +382,58 @@ html[data-theme="dark"] .device-toggle {
     height: 1.25rem;
     width: auto;
     max-width: 9rem;
+}
+
+/* Below the columns, spanning them, and right-aligned: a note on the listing rather
+   than a fourth column of it. */
+.device-panel p.device-panel-foot {
+    display: flex;
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+/* Right-aligned by its own margin, so it does not depend on how its parent distributes
+   free space. Its own gap, tighter than the panel's, keeps the word with the branch. */
+.device-since {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 0.375rem;
+    margin-left: auto;
+}
+
+/* The panel's column headings, so the word reads as a label rather than as content. */
+.device-since-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pst-color-text-muted);
+}
+
+/* Monospace because the label is a ref -- a release tag, or the branch name -- which is
+   the string the reader is about to check out. */
+.device-panel a.device-since-branch {
+    padding: 0.0625rem 0.5rem;
+    border: 1px solid var(--pst-color-border);
+    border-radius: 999px;
+    font-family: var(--pst-font-family-monospace);
+    font-size: 0.6875rem;
+    color: var(--pst-color-text-muted);
+    white-space: nowrap;
+    text-decoration: none;
+}
+
+.device-panel a.device-since-branch:hover,
+.device-panel a.device-since-branch:focus-visible {
+    border-color: currentcolor;
+    color: var(--pst-color-link-hover);
+}
+
+/* No release branch has it yet, which is the one case a reader has to act on. */
+.device-panel a.device-since-branch.is-main {
+    border-color: var(--pst-color-primary);
+    color: var(--pst-color-primary);
 }
 
 .device-panel h4.device-panel-heading {

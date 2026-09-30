@@ -13,43 +13,6 @@ commands to the terminal.
    :depth: 1
    :backlinks: none
 
-.. _try-on-brev:
-
-Try It on Brev — Zero Setup
----------------------------
-
-Experience **Isaac Teleop** remote teleoperation with no local install. Brev provisions the
-server side — CloudXR runtime, retargeting pipeline, and an
-`Isaac Lab <https://developer.nvidia.com/isaac/lab>`__ simulation — on a cloud GPU.
-Just grab the instance IP and connect from your headset.
-
-.. note::
-
-   **Server (Brev):** CloudXR + Isaac Teleop retargeting + Isaac Lab sim on a cloud GPU.
-
-   **Client (you):** open the `Isaac Teleop Web Client`_
-   in your headset or browser, enter the Brev instance IP, accept the certificate, and click
-   **Connect** — see step :ref:`connect-xr-headset`.
-
-   Isaac Teleop is not limited to simulation; it drives real robots and ROS 2 pipelines too.
-
-.. grid:: 2
-   :gutter: 2
-
-   .. grid-item-card:: Launch on Brev — Isaac Lab 2.3
-      :link: https://brev.nvidia.com/launchable/deploy?launchableID=env-3B3ETyweD8hOcZfNzaE12cnGNBq
-      :link-type: url
-
-      Stable
-
-   .. grid-item-card:: Launch on Brev — Isaac Lab 3.0 beta 1
-      :link: https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3B2jdZR8Ct0vQCzwseLuOZXoMyk
-      :link-type: url
-
-      Latest · recommended upgrade path
-
-----
-
 .. _check-out-code-base:
 
 1. Check out code base (for examples)
@@ -65,24 +28,31 @@ Clone the repository and enter the project directory:
 As a quick start guide, we don't need to build the code base from source. However, we still need
 to clone the repository for a couple quick samples to run.
 
-.. _install-isaacteleop-pip-package:
+.. _install-isaaccapture-pip-package:
 
-2. Install the ``isaacteleop`` pip package
+2. Install the ``isaaccapture`` pip package
 -------------------------------------------
+
+.. note::
+
+   Upgrading from 1.5 or earlier? The import package and the distribution were both
+   renamed from ``isaacteleop`` in 1.6. Installing ``isaaccapture`` automatically
+   replaces the legacy package and keeps old imports working temporarily.
+   See :doc:`/references/migration`.
 
 In a new terminal, activate your preferred virtual or conda environment, then install the latest
 stable release from PyPI:
 
 .. code-block:: bash
 
-   pip install 'isaacteleop[cloudxr,retargeters]~=1.0'
+   pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
 and an opt-in to pre-release versions — shown here with `uv <https://docs.astral.sh/uv/>`__:
 
 .. code-block:: bash
 
-   uv pip install 'isaacteleop[cloudxr,retargeters]~=1.0' \
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' \
          --extra-index-url https://pypi.nvidia.com --prerelease=allow
 
 The two commands above track the newest 1.x release. To follow this version of the documentation
@@ -90,7 +60,7 @@ The two commands above track the newest 1.x release. To follow this version of t
 
 .. parsed-literal::
 
-   uv pip install 'isaacteleop[cloudxr,retargeters]\ |pip_version_pin|\ ' \\
+   uv pip install 'isaaccapture[cloudxr,retargeters]\ |pip_version_pin|\ ' \\
          --extra-index-url https://pypi.nvidia.com --prerelease=allow
 
 Instead of installing the package from PyPI, you can build from source and install the local wheel.
@@ -127,7 +97,7 @@ env file and start the service with it:
 .. code-block:: bash
 
    echo 'NV_DEVICE_PROFILE=auto-native' > custom.env
-   python -m isaacteleop.cloudxr.service start --cloudxr-env-config ./custom.env
+   python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
 
 The same ``--cloudxr-env-config`` flag is available on the teleop examples under
 ``examples/teleop/python/``, which register CloudXR's launcher arguments through
@@ -224,7 +194,7 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    :open:
 
    No physical headset required for a quick test: open
-   `nvidia.github.io/IsaacTeleop/client`_
+   `nvidia.github.io/IsaacCapture/client`_
    in a **desktop browser** — IWER (Immersive Web Emulator Runtime) loads automatically and
    emulates a Meta Quest 3 headset.
 
@@ -251,11 +221,11 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
    .. note::
 
-      If GitHub Pages is unreachable (corporate network, air-gapped machine), you can serve the web
-      client locally from the CloudXR proxy and open ``https://<your-ip>:48322/client/`` instead of
-      the GitHub Pages URL. Port 48322 is already whitelisted in step
-      :ref:`whitelist-firewall-ports`. See :doc:`/references/oob_teleop_control` for how to serve the
-      client from the proxy.
+      When a teleop example starts the CloudXR service, it hosts the matching web client at
+      ``https://<your-ip>:48322/client/`` by default and prints that URL. The GitHub Pages URL above
+      remains available; pass ``--no-host-client`` to disable local hosting. Port 48322 is already
+      whitelisted in step :ref:`whitelist-firewall-ports`. See :doc:`/references/cloudxr` for service
+      hosting and existing-service behavior.
 
    .. tab-set::
       .. tab-item:: CloudXR web client
@@ -308,7 +278,7 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
       are offline once those files are cached.
 
       For a **true air-gapped machine**, copy the full ``build/`` output (or the
-      matching directory from `nvidia.github.io/IsaacTeleop/client`_) into
+      matching directory from `nvidia.github.io/IsaacCapture/client`_) into
       ``~/.cloudxr/static-client/`` on the air-gapped host before the first run.
 
    The source code for the web client is in the :code-dir:`deps/cloudxr/webxr_client/` directory.

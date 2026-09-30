@@ -15,8 +15,8 @@ follow the link straight to its landing page, integration guide, or acquisition 
   product, and labs collecting data.
 
 .. Explicit targets on the counted sections below: the count pill is part of the heading text,
-   so without them the slug carries the count and #supported-devices becomes
-   #supported-devices-9, changing every time a row is added or removed.
+   so without them the slug carries the count — #supported-devices picks up whatever that
+   count currently is, and changes every time a row is added or removed.
 
 .. _supported-devices:
 

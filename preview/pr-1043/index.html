@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="_static/css/ecosystem.css?v=35d49528" />
+    <link rel="stylesheet" type="text/css" href="_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="_static/documentation_options.js?v=04dcff72"></script>
+    <script src="_static/documentation_options.js?v=96a32199"></script>
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -64,7 +64,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -370,12 +370,13 @@
 <li class="toctree-l1"><a class="reference internal" href="references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/license.html">License</a></li>
 </ul>
 </div>
@@ -444,9 +445,8 @@ installation and first-run steps.</p>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="getting_started/quick_start.html">Quick Start</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#try-it-on-brev-zero-setup">Try It on Brev — Zero Setup</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#check-out-code-base-for-examples">1. Check out code base (for examples)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#install-the-isaacteleop-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#install-the-isaaccapture-pip-package">2. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#configure-cloudxr-optional">3. Configure CloudXR (optional)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#whitelist-ports-for-firewall">4. Whitelist ports for Firewall</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/quick_start.html#connect-an-xr-headset">5. Connect an XR headset</a></li>
@@ -461,7 +461,7 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#clone-the-repository">1. Clone the repository</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#cmake-configure-and-build">2. CMake: Configure and build</a></li>
 <li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#running-tests">3. Running tests</a></li>
-<li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#install-the-isaacteleop-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="getting_started/build_from_source/index.html#install-the-isaaccapture-pip-package">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="getting_started/teleop_session.html">Teleop Session</a><ul>
@@ -636,6 +636,15 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="references/retargeting/index.html#add-a-new-retargeter">Add a New Retargeter</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="references/device_provider_monitoring.html">Device provider monitoring</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#reading-status">Reading status</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#identity-and-inventory">Identity and inventory</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#provider-states">Provider states</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#device-states">Device states</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#plugin-status-transport">Plugin status transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/device_provider_monitoring.html#openxr-ownership">OpenXR ownership</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="references/camera_streaming.html">Camera Streaming</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#requirements">Requirements</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#setup">Setup</a></li>
@@ -672,14 +681,6 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#troubleshooting">Troubleshooting</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="references/rig.html">Rig Launcher</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="references/rig.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="references/rig.html#run-a-rig">Run a rig</a></li>
-<li class="toctree-l2"><a class="reference internal" href="references/rig.html#the-install-prefix">The install prefix</a></li>
-<li class="toctree-l2"><a class="reference internal" href="references/rig.html#the-rig-yaml">The rig YAML</a></li>
-<li class="toctree-l2"><a class="reference internal" href="references/rig.html#troubleshooting">Troubleshooting</a></li>
-</ul>
-</li>
 <li class="toctree-l1"><a class="reference internal" href="references/oob_teleop_control.html">Out-of-Band Teleop Control</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="references/oob_teleop_control.html#quick-start">Quick start</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/oob_teleop_control.html#adb-automation">ADB automation</a></li>
@@ -698,6 +699,16 @@ installation and first-run steps.</p>
 <li class="toctree-l2"><a class="reference internal" href="references/egocentric_hand_reconstruction.html#setup">Setup</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/egocentric_hand_reconstruction.html#hand-reconstruction">Hand Reconstruction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/egocentric_hand_reconstruction.html#limitations">Limitations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#in-short">In short</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#upgrading-an-existing-install">Upgrading an existing install</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#imports">Imports</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#what-importing-the-old-name-does">What importing the old name does</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#installing">Installing</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#logging">Logging</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/migration.html#the-asset-cache">The asset cache</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="references/license.html">License</a><ul>
@@ -843,7 +854,7 @@ installation and first-run steps.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on August 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

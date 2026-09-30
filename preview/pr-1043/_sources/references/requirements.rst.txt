@@ -67,7 +67,7 @@ The recommended workstation configuration for Sim-based Teleop is:
       - 580.95.05 or newer
 
 If you are only using XR headsets for teleoperation, you can host the workstation in the cloud.
-See `Isaac Lab Cloud Deployment <https://isaac-sim.github.io/IsaacLab/develop/source/deployment/index.html>`_
+See `Isaac Lab Cloud Deployment <https://isaac-sim.github.io/IsaacLab/develop/source/features/docker_cloud.html#cloud-workstations>`_
 for more details.
 
 Human-centric Data Collection
@@ -108,5 +108,5 @@ to device peripherals. The minimum requirements for the laptop/workstation are:
 .. [#isaacsim-req] Please refer to `Isaac Sim System Requirements <https://docs.isaacsim.omniverse.nvidia.com/latest/installation/requirements.html>`_
    for more details.
 
-.. [#isaaclab-req] Please refer to `Isaac Lab System Requirements <https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html#general-requirements>`_
+.. [#isaaclab-req] Please refer to `Isaac Lab System Requirements <https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html#system-requirements>`_
    for more details.

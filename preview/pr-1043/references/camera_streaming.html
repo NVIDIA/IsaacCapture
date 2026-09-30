@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=35d49528" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -60,12 +60,12 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="MCAP Recording &amp; Replay" href="mcap_record_replay.html" />
-    <link rel="prev" title="Retargeter: Wuji Glove to Wuji Hand" href="retargeting/wuji.html" />
+    <link rel="prev" title="Device provider monitoring" href="device_provider_monitoring.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -371,12 +371,13 @@
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -431,7 +432,7 @@
                   
   <section id="camera-streaming">
 <h1>Camera Streaming<a class="headerlink" href="#camera-streaming" title="Link to this heading">#</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">camera_viz</span></code> is the reference camera-streaming sample built on <a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Televiz</span></a> (<code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code>). It captures frames from one or more cameras
+<p><code class="docutils literal notranslate"><span class="pre">camera_viz</span></code> is the reference camera-streaming sample built on <a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Televiz</span></a> (<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code>). It captures frames from one or more cameras
 and streams them to an XR headset — one plane per camera, aspect-fit — either directly or from a
 robot to a workstation over the network (split mode). It can also stream <a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">recorded camera
 data</span></a> — a video file replayed in place of a live camera — and render
@@ -450,37 +451,45 @@ For the exact command surface and flags, see the
 <nav class="contents local" id="on-this-page">
 <p class="topic-title">On this page</p>
 <ul class="simple">
-<li><p><a class="reference internal" href="#requirements" id="id2">Requirements</a></p></li>
-<li><p><a class="reference internal" href="#setup" id="id3">Setup</a></p></li>
-<li><p><a class="reference internal" href="#first-run-a-recording-no-camera-required" id="id4">First run — a recording, no camera required</a></p>
+<li><p><a class="reference internal" href="#requirements" id="id3">Requirements</a></p></li>
+<li><p><a class="reference internal" href="#setup" id="id4">Setup</a></p></li>
+<li><p><a class="reference internal" href="#first-run-a-recording-no-camera-required" id="id5">First run — a recording, no camera required</a></p>
 <ul>
-<li><p><a class="reference internal" href="#replaying-your-own-recording" id="id5">Replaying your own recording</a></p></li>
+<li><p><a class="reference internal" href="#replaying-your-own-recording" id="id6">Replaying your own recording</a></p></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#supported-sources" id="id6">Supported sources</a></p></li>
-<li><p><a class="reference internal" href="#running-with-a-real-camera" id="id7">Running with a real camera</a></p></li>
-<li><p><a class="reference internal" href="#display-modes" id="id8">Display modes</a></p></li>
-<li><p><a class="reference internal" href="#display-surfaces" id="id9">Display surfaces</a></p></li>
-<li><p><a class="reference internal" href="#cloudxr-runtime-flags" id="id10">CloudXR runtime flags</a></p></li>
-<li><p><a class="reference internal" href="#split-mode-robot-workstation-over-rtp" id="id11">Split mode — robot → workstation over RTP</a></p>
+<li><p><a class="reference internal" href="#supported-sources" id="id7">Supported sources</a></p></li>
+<li><p><a class="reference internal" href="#running-with-a-real-camera" id="id8">Running with a real camera</a></p></li>
+<li><p><a class="reference internal" href="#display-modes" id="id9">Display modes</a></p>
 <ul>
-<li><p><a class="reference internal" href="#loopback" id="id12">Loopback</a></p></li>
+<li><p><a class="reference internal" href="#controller-bindings" id="id10">Controller bindings</a></p></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#configuration" id="id13">Configuration</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id14">Troubleshooting</a></p></li>
-<li><p><a class="reference internal" href="#how-it-works" id="id15">How it works</a></p></li>
-<li><p><a class="reference internal" href="#sharing-the-xr-session-with-teleopsession" id="id16">Sharing the XR session with TeleopSession</a></p></li>
+<li><p><a class="reference internal" href="#display-surfaces" id="id11">Display surfaces</a></p></li>
+<li><p><a class="reference internal" href="#cloudxr-runtime-flags" id="id12">CloudXR runtime flags</a></p></li>
+<li><p><a class="reference internal" href="#split-mode-robot-workstation-over-rtp" id="id13">Split mode — robot → workstation over RTP</a></p>
+<ul>
+<li><p><a class="reference internal" href="#loopback" id="id14">Loopback</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#configuration" id="id15">Configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id16">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#how-it-works" id="id17">How it works</a></p></li>
+<li><p><a class="reference internal" href="#sharing-the-xr-session-with-teleopsession" id="id18">Sharing the XR session with TeleopSession</a></p></li>
 </ul>
 </nav>
 <section id="requirements">
-<h2><a class="toc-backref" href="#id2" role="doc-backlink">Requirements</a><a class="headerlink" href="#requirements" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Requirements</a><a class="headerlink" href="#requirements" title="Link to this heading">#</a></h2>
 <ul class="simple">
 <li><p>A workstation meeting the <a class="reference internal" href="requirements.html"><span class="doc">system requirements</span></a> (Ubuntu, NVIDIA
 GPU, CUDA driver) — every source hands frames to the renderer GPU-resident via CuPy.</p></li>
-<li><p>For Jetson platforms, use
-<a class="reference external" href="https://developer.nvidia.com/embedded/jetpack-sdk-621" rel="noopener noreferrer" target="_blank">JetPack 6.2.1</a> on Orin or
-<a class="reference external" href="https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.1" rel="noopener noreferrer" target="_blank">JetPack 7.1</a> on Thor.</p></li>
+<li><p>For Jetson platforms:</p>
+<ul>
+<li><p><strong>Orin:</strong> <a class="reference external" href="https://developer.nvidia.com/embedded/jetpack-sdk-62" rel="noopener noreferrer" target="_blank">JetPack 6.2.x</a> or
+<a class="reference external" href="https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.2" rel="noopener noreferrer" target="_blank">7.2.x</a></p></li>
+<li><p><strong>Thor:</strong> <a class="reference external" href="https://developer.nvidia.com/embedded/jetpack" rel="noopener noreferrer" target="_blank">JetPack 7.x</a></p></li>
+</ul>
+</li>
 <li><p>For the default XR mode, a headset to connect as the CloudXR client — follow the
 <a class="reference internal" href="../getting_started/quick_start.html"><span class="doc">quick start</span></a> step <a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">5. Connect an XR headset</span></a>. The viewer
 launches the CloudXR runtime itself; nothing to start separately. No headset handy?
@@ -488,15 +497,15 @@ launches the CloudXR runtime itself; nothing to start separately. No headset han
 </ul>
 </section>
 <section id="setup">
-<h2><a class="toc-backref" href="#id3" role="doc-backlink">Setup</a><a class="headerlink" href="#setup" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Setup</a><a class="headerlink" href="#setup" title="Link to this heading">#</a></h2>
 <p>Clone the repository if you haven’t already (quick start step <a class="reference internal" href="../getting_started/quick_start.html#check-out-code-base"><span class="std std-ref">1. Check out code base (for examples)</span></a>), then
 run the sample’s one-time setup:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup
 <span class="nb">source</span><span class="w"> </span>examples/camera_viz/.venv/bin/activate
 </pre></div>
 </div>
-<p>There is no need to install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package yourself. <code class="docutils literal notranslate"><span class="pre">setup</span></code> builds the
-sample’s own environment: <code class="docutils literal notranslate"><span class="pre">isaacteleop[cloudxr]</span></code> — the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra is not optional here,
+<p>There is no need to install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package yourself. <code class="docutils literal notranslate"><span class="pre">setup</span></code> builds the
+sample’s own environment: <code class="docutils literal notranslate"><span class="pre">isaaccapture[cloudxr]</span></code> — the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra is not optional here,
 since XR is the default display mode and the viewer launches the runtime itself — plus every
 other Python dependency, into <code class="docutils literal notranslate"><span class="pre">.venv/</span></code> via <code class="docutils literal notranslate"><span class="pre">uv</span></code>. It resolves a version new enough for the
 sample on its own, falling back to a release candidate and then, after asking, to a source build
@@ -542,11 +551,11 @@ machine (default <code class="docutils literal notranslate"><span class="pre">/u
 <td><p>Install into an existing virtual environment instead of creating <code class="docutils literal notranslate"><span class="pre">.venv/</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--wheel</span> <span class="pre">PATH</span></code></p></td>
-<td><p>Install a locally built <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> wheel instead of resolving one from the index — for
+<td><p>Install a locally built <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel instead of resolving one from the index — for
 developing Isaac Teleop itself.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code></p></td>
-<td><p>Skip the package index and build <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> from the surrounding checkout without
+<td><p>Skip the package index and build <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> from the surrounding checkout without
 prompting — a full C++ / CUDA / Vulkan build (see
 <a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a>).</p></td>
 </tr>
@@ -555,7 +564,7 @@ prompting — a full C++ / CUDA / Vulkan build (see
 </div>
 </section>
 <section id="first-run-a-recording-no-camera-required">
-<span id="recorded-camera-streaming"></span><h2><a class="toc-backref" href="#id4" role="doc-backlink">First run — a recording, no camera required</a><a class="headerlink" href="#first-run-a-recording-no-camera-required" title="Link to this heading">#</a></h2>
+<span id="recorded-camera-streaming"></span><h2><a class="toc-backref" href="#id5" role="doc-backlink">First run — a recording, no camera required</a><a class="headerlink" href="#first-run-a-recording-no-camera-required" title="Link to this heading">#</a></h2>
 <p>The recorded-camera source (<code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>) replays a video file through exactly the same
 source → layer → Televiz path a live camera uses. It is the supported way to stream recorded
 camera data, it needs no extra setup, and it is the quickest end-to-end check. A test clip ships
@@ -578,7 +587,7 @@ coming up:</p>
 <p>and the clip looping on a plane in the headset once it connects — or in a desktop window
 (<code class="docutils literal notranslate"><span class="pre">mode=window,</span> <span class="pre">xr=False</span></code>) with the <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> override, which starts no runtime.</p>
 <section id="replaying-your-own-recording">
-<h3><a class="toc-backref" href="#id5" role="doc-backlink">Replaying your own recording</a><a class="headerlink" href="#replaying-your-own-recording" title="Link to this heading">#</a></h3>
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Replaying your own recording</a><a class="headerlink" href="#replaying-your-own-recording" title="Link to this heading">#</a></h3>
 <p>Point <code class="docutils literal notranslate"><span class="pre">path</span></code> at any file OpenCV’s FFmpeg backend reads — mp4 / mkv / webm carrying H.264,
 HEVC, AV1, and so on. The file is probed once at startup for its size and frame rate (a missing
 or absurd rate falls back to 30 fps); a missing or unreadable file is a configuration error and
@@ -609,7 +618,7 @@ encode → UDP → decode path with no camera attached.</p>
 </section>
 </section>
 <section id="supported-sources">
-<h2><a class="toc-backref" href="#id6" role="doc-backlink">Supported sources</a><a class="headerlink" href="#supported-sources" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Supported sources</a><a class="headerlink" href="#supported-sources" title="Link to this heading">#</a></h2>
 <p>The source kind is selected by the <code class="docutils literal notranslate"><span class="pre">type</span></code> field of each entry in the YAML <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
@@ -645,7 +654,7 @@ by default; <code class="docutils literal notranslate"><span class="pre">stereo:
 </div>
 </section>
 <section id="running-with-a-real-camera">
-<h2><a class="toc-backref" href="#id7" role="doc-backlink">Running with a real camera</a><a class="headerlink" href="#running-with-a-real-camera" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Running with a real camera</a><a class="headerlink" href="#running-with-a-real-camera" title="Link to this heading">#</a></h2>
 <p>Attach the camera to the machine that runs the viewer, keep <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">local</span></code> in the config, and
 run with the matching config:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml<span class="w">     </span><span class="c1"># or oakd.yaml / zed.yaml</span>
@@ -656,7 +665,7 @@ run with the matching config:</p>
 plane each.</p>
 </section>
 <section id="display-modes">
-<h2><a class="toc-backref" href="#id8" role="doc-backlink">Display modes</a><a class="headerlink" href="#display-modes" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Display modes</a><a class="headerlink" href="#display-modes" title="Link to this heading">#</a></h2>
 <p>XR is the default: each camera renders as its own plane in the headset via the active OpenXR
 runtime, and stereo sources (<code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code>) render true side-by-side stereo. Pass
 <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> (or set <code class="docutils literal notranslate"><span class="pre">display.mode:</span> <span class="pre">window</span></code> in the YAML) to render to a desktop window
@@ -695,9 +704,70 @@ wide cylinder feeds (a “virtual gimbal”).</p></td>
 </div>
 <p>Lazy-mode knobs live under <code class="docutils literal notranslate"><span class="pre">placements.&lt;name&gt;</span></code>: <code class="docutils literal notranslate"><span class="pre">look_away_angle_deg</span></code>,
 <code class="docutils literal notranslate"><span class="pre">reposition_distance</span></code>, <code class="docutils literal notranslate"><span class="pre">reposition_delay_s</span></code>, <code class="docutils literal notranslate"><span class="pre">transition_duration_s</span></code>.</p>
+<section id="controller-bindings">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Controller bindings</a><a class="headerlink" href="#controller-bindings" title="Link to this heading">#</a></h3>
+<p>In XR the controllers retune the view live, without editing the YAML and restarting. The right
+hand changes how the feed looks; the left, what surface it is mapped onto:</p>
+<figure class="align-default" id="id2">
+<a class="reference internal image-reference" href="../_images/camera-viz-controls.png"><img alt="camera_viz XR controller bindings: left controller adjusts surface and shape; right controller adjusts depth and placement." src="../_images/camera-viz-controls.png" style="width: 100%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Bindings at a glance. The table below is the same thing in words.</span><a class="headerlink" href="#id2" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 22.0%" />
+<col style="width: 78.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Input</p></th>
+<th class="head"><p>Effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Right stick ←/→</p></td>
+<td><p>Stereo plane gap — how far apart the two eyes’ planes sit
+(<code class="docutils literal notranslate"><span class="pre">placements.&lt;cam&gt;.stereo_plane_distance_cm</span></code>). Widening it pushes the scene back
+instead of packing it into the space in front of the planes. Stereo cameras only; on
+<code class="docutils literal notranslate"><span class="pre">equirect</span></code>, which has no gap to set, the same stick pans the panorama.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Right stick click</p></td>
+<td><p>Recenter on your view: an <code class="docutils literal notranslate"><span class="pre">equirect</span></code> yaws so the middle of the panorama lands dead
+ahead, and a placed surface re-snaps its anchor.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">A</span></code></p></td>
+<td><p>Cycle the lock mode: <code class="docutils literal notranslate"><span class="pre">world</span></code> → <code class="docutils literal notranslate"><span class="pre">head</span></code> → <code class="docutils literal notranslate"><span class="pre">gimbal</span></code> → <code class="docutils literal notranslate"><span class="pre">lazy</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B</span></code></p></td>
+<td><p>Toggle mono / stereo. Stereo cameras only.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">X</span></code></p></td>
+<td><p>Cycle the shape: <code class="docutils literal notranslate"><span class="pre">quad</span></code> → <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> → <code class="docutils literal notranslate"><span class="pre">equirect</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Y</span></code></p></td>
+<td><p>Reset everything to the YAML values.</p></td>
+</tr>
+<tr class="row-even"><td><p>Left stick</p></td>
+<td><p>Retunes the active shape: <code class="docutils literal notranslate"><span class="pre">quad</span></code> size / vertical position, <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> arc width /
+vertical position, <code class="docutils literal notranslate"><span class="pre">equirect</span></code> horizontal / vertical span.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Changes apply to every camera at once and appear both on the terminal status panel and on a
+head-locked panel in the headset that auto-hides shortly after. Neither toggle reallocates:
+<code class="docutils literal notranslate"><span class="pre">B</span></code> sends the left frame to both eyes, and <code class="docutils literal notranslate"><span class="pre">X</span></code> flips visibility between shapes built at
+startup, so the extra shapes cost VRAM (reported at startup) rather than a stall on the press.</p>
+<p>The stereo gap is bounded below <strong>divergent parallax</strong> — a gap wider than your IPD would need
+the eyes to splay outward — and the headset’s measured IPD sets that ceiling, not the config.
+The HUD suggests a gap derived from the plane distance and that IPD.</p>
+<p>Bindings, rates and limits live under <code class="docutils literal notranslate"><span class="pre">display.controls</span></code>; see the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a> for the full set.</p>
+</section>
 </section>
 <section id="display-surfaces">
-<h2><a class="toc-backref" href="#id9" role="doc-backlink">Display surfaces</a><a class="headerlink" href="#display-surfaces" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Display surfaces</a><a class="headerlink" href="#display-surfaces" title="Link to this heading">#</a></h2>
 <p>By default each camera renders on a flat plane, which suits normal-FOV feeds. Wide-FOV and
 panoramic sources look better on a curved surface: set <code class="docutils literal notranslate"><span class="pre">shape</span></code> per camera under
 <code class="docutils literal notranslate"><span class="pre">display.placements.&lt;name&gt;</span></code>:</p>
@@ -723,7 +793,10 @@ visor).</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">equirect</span></code></p></td>
 <td><p>Full 360°×180° sphere around the operator, for equirectangular panorama / VR-video
-sources. Lock modes don’t apply.</p></td>
+sources. The middle of the texture points along <code class="docutils literal notranslate"><span class="pre">equirect_yaw_deg</span></code> (0 = the
+direction the headset last recentered on, positive to the left), which is how a camera
+mounted facing another way gets aimed. Lock modes don’t apply — the sphere is centred
+on the operator and follows them everywhere.</p></td>
 </tr>
 </tbody>
 </table>
@@ -736,20 +809,53 @@ CloudXR stream them efficiently (see
 <a class="reference internal" href="../getting_started/televiz.html#openxr-composition-layers"><span class="std std-ref">OpenXR composition layers</span></a>). For flat planes only,
 <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> opts a camera back into Televiz’s built-in compositor. On Jetson Orin
 (CloudXR experimental runtime), set <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> so the plane is not left black; see
-Troubleshooting below.</p>
+Troubleshooting below. On the Televiz 2D API the same switch is
+<code class="docutils literal notranslate"><span class="pre">openxr_composition</span> <span class="pre">=</span> <span class="pre">False</span></code> (see <a class="reference internal" href="../getting_started/televiz.html#orin-openxr-composition"><span class="std std-ref">Jetson Orin, XR</span></a>).</p>
 </section>
 <section id="cloudxr-runtime-flags">
-<h2><a class="toc-backref" href="#id10" role="doc-backlink">CloudXR runtime flags</a><a class="headerlink" href="#cloudxr-runtime-flags" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">CloudXR runtime flags</a><a class="headerlink" href="#cloudxr-runtime-flags" title="Link to this heading">#</a></h2>
 <p>In XR mode the viewer attaches to the running CloudXR runtime, or starts one if none is
 serving. Useful flags:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code> — accept the CloudXR EULA non-interactively (first run only).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">--cloudxr-device-profile</span> <span class="pre">PROFILE</span></code> — <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE</span></code> (default <code class="docutils literal notranslate"><span class="pre">Quest3</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> — disable serving CloudXR.js at
+<code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:48322/client/</span></code>. Only applies when this run starts the
+service; stop and restart the service to change hosting.</p></li>
 </ul>
+<p>When the viewer starts a CloudXR service with hosting enabled (the default;
+<code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> disables it), it prints the local <code class="docutils literal notranslate"><span class="pre">/client/</span></code> URL. To
+inspect or stop an already-running service, activate the example venv (or any
+environment with <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>) and run:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">isaaccapture</span><span class="o">.</span><span class="n">cloudxr</span><span class="o">.</span><span class="n">service</span> <span class="n">status</span>
+<span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">isaaccapture</span><span class="o">.</span><span class="n">cloudxr</span><span class="o">.</span><span class="n">service</span> <span class="n">stop</span>
+</pre></div>
+</div>
 <p>Run <code class="docutils literal notranslate"><span class="pre">camera_viz.sh</span> <span class="pre">run</span> <span class="pre">CONFIG</span> <span class="pre">--help</span></code> for the rest (install dir, env-config file, WSS proxy toggle).</p>
+<p>Runtime settings themselves are declared in the config rather than exported. The viewer ships
+defaults (pose wait off, runtime foveation on), and <code class="docutils literal notranslate"><span class="pre">display.cloudxr</span></code> overrides them per
+deployment — list only what you want to change:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">cloudxr</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">NV_DEVICE_PROFILE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apple-vision-pro</span>
+<span class="w">    </span><span class="nt">NV_ENABLE_POSE_WAIT</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">   </span><span class="c1"># null drops a viewer default</span>
+</pre></div>
+</div>
+<p>The viewer writes these to a generated <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> file, which outranks the process
+environment — so a value left in your shell (for example after sourcing
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/run/cloudxr.env</span></code>, as <code class="docutils literal notranslate"><span class="pre">--no-launch-cloudxr-runtime</span></code> suggests) cannot silently
+override the config, and neither can it override <code class="docutils literal notranslate"><span class="pre">--cloudxr-device-profile</span></code>. Booleans are
+written in the lowercase spelling the runtime’s parser recognises; the launcher-computed keys
+(<code class="docutils literal notranslate"><span class="pre">XR_RUNTIME_JSON</span></code>, <code class="docutils literal notranslate"><span class="pre">NV_CXR_RUNTIME_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">NV_CXR_OUTPUT_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">XRT_NO_STDIN</span></code>) are
+rejected by name. Passing <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> yourself takes precedence over the generated
+file.</p>
+<p>An unknown variable name warns with a suggestion before the runtime launches, and is passed
+through regardless — the runtime has more settings than the viewer lists. To confirm what the
+runtime resolved, read the settings dump at the top of the newest
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code>.</p>
 </section>
 <section id="split-mode-robot-workstation-over-rtp">
-<span id="split-mode"></span><h2><a class="toc-backref" href="#id11" role="doc-backlink">Split mode — robot → workstation over RTP</a><a class="headerlink" href="#split-mode-robot-workstation-over-rtp" title="Link to this heading">#</a></h2>
+<span id="split-mode"></span><h2><a class="toc-backref" href="#id13" role="doc-backlink">Split mode — robot → workstation over RTP</a><a class="headerlink" href="#split-mode-robot-workstation-over-rtp" title="Link to this heading">#</a></h2>
 <p>Split mode runs the capture side on the robot (the <code class="docutils literal notranslate"><span class="pre">camera_streamer</span></code> module) and ships RTP H.264 to
 the viewer on the workstation (<code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code>).</p>
 <div class="admonition warning">
@@ -781,7 +887,7 @@ without editing the YAML on disk), and enables it. Operate the running unit with
 <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">service-{status,logs,restart}</span></code>. The sender retries forever across unplug, SDK
 errors, and network blips.</p>
 <section id="loopback">
-<h3><a class="toc-backref" href="#id12" role="doc-backlink">Loopback</a><a class="headerlink" href="#loopback" title="Link to this heading">#</a></h3>
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Loopback</a><a class="headerlink" href="#loopback" title="Link to this heading">#</a></h3>
 <p>Loopback is a testing / debugging aid, not a deployment mode: <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span>
 <span class="pre">configs/v4l2.yaml</span></code> runs the sender and viewer together on <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> — the quickest way to
 smoke-test the RTP path on one machine. It also works camera-free with a mono <code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>
@@ -789,7 +895,7 @@ entry (set <code class="docutils literal notranslate"><span class="pre">width</s
 </section>
 </section>
 <section id="configuration">
-<h2><a class="toc-backref" href="#id13" role="doc-backlink">Configuration</a><a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Configuration</a><a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
 <p>A single YAML drives both capture and visualization. Each entry in the <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list becomes
 its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local | rtp</span>
@@ -815,15 +921,19 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
 <span class="nt">display</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xr | window</span><span class="w">           </span><span class="c1"># default: xr</span>
 <span class="w">  </span><span class="nt">window</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">width</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">height</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">xr</span><span class="p">:</span><span class="w">     </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">near_z</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">far_z</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="nt">xr</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">near_z</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.05</span><span class="w">              </span><span class="c1"># default</span>
+<span class="w">    </span><span class="nt">far_z</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.0</span><span class="w">              </span><span class="c1"># default</span>
+<span class="w">    </span><span class="nt">system_wait_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-1</span><span class="w">   </span><span class="c1"># default; wait forever (0 fails fast)</span>
 <span class="w">  </span><span class="nt">clear_color</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">r</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">g</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">b</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">a</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">cam</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">lock_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lazy</span><span class="w">         </span><span class="c1"># world | head | lazy | gimbal</span>
 <span class="w">      </span><span class="nt">distance</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
 <span class="w">      </span><span class="c1"># size: [w_m, h_m]</span>
-<span class="w">      </span><span class="c1"># stereo_baseline_mm: 0</span>
+<span class="w">      </span><span class="c1"># stereo_plane_distance_cm: 0   # gap between the eyes' planes</span>
 <span class="w">      </span><span class="c1"># shape: quad           # quad | cylinder | equirect (cylinder/equirect are XR-only)</span>
+<span class="w">      </span><span class="c1"># equirect_yaw_deg: 0.0  # equirect: heading the middle of the feed points at</span>
 <span class="w">      </span><span class="c1"># compositor: openxr    # openxr (default) | televiz — quads only</span>
 <span class="w">      </span><span class="c1"># cylinder_radius_m: 2.0</span>
 <span class="w">      </span><span class="c1"># cylinder_angle_deg: 90</span>
@@ -833,11 +943,17 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
 YAML per source kind.</p>
 </section>
 <section id="troubleshooting">
-<h2><a class="toc-backref" href="#id14" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
 <ul>
 <li><p><strong>The XR session fails to create</strong> — check <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code> and
-<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> for the startup failure. Pass <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to render to a
-desktop window instead (no runtime involved).</p></li>
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/runtime_worker_stderr.log</span></code> (<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> with
+<code class="docutils literal notranslate"><span class="pre">ISAACCAPTURE_LOGGING=off</span></code>) for the startup failure.
+<code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code>
+(-35) means the runtime is up but no headset has clicked CONNECT yet; XR mode waits
+according to <code class="docutils literal notranslate"><span class="pre">display.xr.system_wait_seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
+indefinitely; <code class="docutils literal notranslate"><span class="pre">0</span></code> fails fast; positive values wait that many seconds;
+override with <code class="docutils literal notranslate"><span class="pre">--xr-wait</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to
+render to a desktop window instead (no runtime involved).</p></li>
 <li><p><strong>No window appears over SSH</strong> — <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> needs a local display; run on the machine
 you’re sitting at, or use a video-capable remote desktop.</p></li>
 <li><p><strong>“video source: no such file”</strong> — relative <code class="docutils literal notranslate"><span class="pre">path:</span></code> values resolve against the YAML’s
@@ -866,14 +982,14 @@ per-source breadcrumbs on both ends.</p></li>
 </ul>
 </section>
 <section id="how-it-works">
-<h2><a class="toc-backref" href="#id15" role="doc-backlink">How it works</a><a class="headerlink" href="#how-it-works" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id17" role="doc-backlink">How it works</a><a class="headerlink" href="#how-it-works" title="Link to this heading">#</a></h2>
 <p>The sample is organized so that capture, transport, and visualization are cleanly separated, with
 Televiz as the compositor at the end of the chain:</p>
 <div class="code-100col highlight-text notranslate"><div class="highlight"><pre><span></span>camera_viz/
 ├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
 ├── configs/             — one YAML per source kind
 ├── test_data/           — sample replay clip (Git LFS)
-├── python/isaacteleop_examples/camera_viz/
+├── python/isaaccapture_examples/camera_viz/
 │   ├── camera_viz.py    — receiver / viewer (drives a Televiz VizSession)
 │   ├── camera_streamer.py — robot-side RTP sender (per-camera supervisor)
 │   ├── pipeline/        — source ABC + threaded runner
@@ -885,23 +1001,23 @@ Televiz as the compositor at the end of the chain:</p>
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaacteleop_examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
-hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaacteleop_examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
+<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
+hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
 source produces GPU frames where possible — e.g. the ZED source uses <code class="docutils literal notranslate"><span class="pre">retrieve_image(MEM.GPU)</span></code> so
 BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.</p></li>
-<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
+<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and adds one <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> per enabled camera, then submits each frame to its layer
 and calls <code class="docutils literal notranslate"><span class="pre">render()</span></code> once per frame. Stereo cameras submit both eyes.</p></li>
-<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaacteleop_examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
+<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
 an RTP H.264 sender on the robot and a receiver on the workstation, with a native NVENC/NVDEC codec
-module (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaacteleop_examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
-<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaacteleop_examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
+module (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
+<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
 strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
 sets each frame.</p></li>
 </ul>
 </section>
 <section id="sharing-the-xr-session-with-teleopsession">
-<h2><a class="toc-backref" href="#id16" role="doc-backlink">Sharing the XR session with TeleopSession</a><a class="headerlink" href="#sharing-the-xr-session-with-teleopsession" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Sharing the XR session with TeleopSession</a><a class="headerlink" href="#sharing-the-xr-session-with-teleopsession" title="Link to this heading">#</a></h2>
 <p>Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> owns the session and hands its handles to <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> / <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code>,
 which then skip creating their own. The viewer builds the session with the trackers’ required
@@ -933,12 +1049,12 @@ extensions and forwards the handles through <code class="docutils literal notran
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="retargeting/wuji.html"
+       href="device_provider_monitoring.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Retargeter: Wuji Glove to Wuji Hand</p>
+        <p class="prev-next-title">Device provider monitoring</p>
       </div>
     </a>
     <a class="right-next"
@@ -979,7 +1095,10 @@ extensions and forwards the handles through <code class="docutils literal notran
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-sources">Supported sources</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-with-a-real-camera">Running with a real camera</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-modes">Display modes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-modes">Display modes</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#controller-bindings">Controller bindings</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-surfaces">Display surfaces</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloudxr-runtime-flags">CloudXR runtime flags</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#split-mode-robot-workstation-over-rtp">Split mode — robot → workstation over RTP</a><ul class="nav section-nav flex-column">
@@ -1072,7 +1191,7 @@ extensions and forwards the handles through <code class="docutils literal notran
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on August 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

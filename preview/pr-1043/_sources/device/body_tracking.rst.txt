@@ -203,10 +203,18 @@ joint ``is_valid`` flags to determine which joints have valid poses.
 For a minimal C++ reader see ``examples/schemaio/full_body_printer.cpp``, which
 creates the tracker, queries the required OpenXR extensions, and prints the
 joint data each frame through ``DeviceIOSession``. The Python equivalent is
-``examples/oxr/python/test_full_body_tracker.py``. Running
-``python -m isaacteleop.rig rigs/full_body.yaml`` runs this printer and the C++
-MCAP recorder together in one tmux window, against the CloudXR runtime it makes
-sure is serving first (see :ref:`rig-launcher`).
+``examples/oxr/python/test_full_body_tracker.py``. Neither embeds
+``CloudXRLauncher``, so start the runtime first and source its environment in
+the shell that launches them:
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start   # runs in the background
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/schemaio/full_body_printer
+
+See :ref:`dedicated-cloudxr-runtime` and
+:ref:`load-cloudxr-environment-variables` for the full service setup.
 
 Troubleshooting
 ~~~~~~~~~~~~~~~
@@ -242,10 +250,10 @@ Recording is also available directly from C++: pass a ``McapRecordingConfig``
 to ``DeviceIOSession::run()`` with the tracker mapped to the ``full_body``
 channel base name. ``examples/mcap_record_replay/cpp/record_full_body.cpp``
 demonstrates this — a file recorded there replays unchanged with
-``replay_full_body.py``. The ``rigs/full_body.yaml`` rig includes a recorder
-pane running this example; each :kbd:`Enter` rerun in that pane writes a fresh
-timestamped take into ``examples/mcap_record_replay/recordings/``, where
-``replay_full_body.py`` looks by default.
+``replay_full_body.py``. Give it an output directory
+(``record_full_body 5 recordings/``) and each run writes a fresh timestamped
+take into it; ``replay_full_body.py`` run from the same directory picks the
+newest one from ``./recordings/`` by default.
 
 .. figure:: ../_static/full-body-replay.gif
    :alt: Full body skeleton replayed from an MCAP recording in viser

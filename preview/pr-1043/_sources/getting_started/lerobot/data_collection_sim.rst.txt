@@ -48,7 +48,7 @@ client in a desktop browser, which emulates a headset. The **SO-101 Leader** pat
 at all — omit ``--xr`` and the sim runs standalone in the Kit viewport.
 
 **Step 3 — (SO-101 Leader only) Build the** ``so101_leader`` **plugin.** The leader arm is served by
-an Isaac Teleop C++ plugin that is **not** part of the ``isaacteleop`` pip package or of Isaac Lab —
+an Isaac Teleop C++ plugin that is **not** part of the ``isaaccapture`` pip package or of Isaac Lab —
 you must build this repository from source to get it. See
 :ref:`Build and install the plugin <sim-so101-leader-build>` in the **SO-101 Leader** tab below.
 
@@ -108,7 +108,7 @@ Collect Teleop Data
 
       .. important::
 
-         ``so101_leader_plugin`` ships **only as source** — it is not in the ``isaacteleop`` pip
+         ``so101_leader_plugin`` ships **only as source** — it is not in the ``isaaccapture`` pip
          package, not in Isaac Lab, and not in any release archive. It is produced by building
          this repository (`NVIDIA/IsaacTeleop <https://github.com/NVIDIA/IsaacTeleop>`_) from
          source. If ``./install/plugins/so101_leader/so101_leader_plugin`` does not exist, this

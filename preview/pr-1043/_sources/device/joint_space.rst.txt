@@ -191,8 +191,8 @@ OpenXR runtime, so a recorded session drives the retargeting graph headlessly:
 
 .. code-block:: python
 
-   from isaacteleop.deviceio import McapRecordingConfig, McapReplayConfig
-   from isaacteleop.teleop_session_manager import SessionMode, TeleopSession, TeleopSessionConfig
+   from isaaccapture.deviceio import McapRecordingConfig, McapReplayConfig
+   from isaaccapture.teleop_session_manager import SessionMode, TeleopSession, TeleopSessionConfig
 
    # Record (live): TeleopSessionConfig(..., mcap_config=McapRecordingConfig("leader.mcap"))
    # Replay (headless): TeleopSessionConfig(..., mode=SessionMode.REPLAY,

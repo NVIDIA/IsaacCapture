@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=35d49528" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -371,12 +371,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -431,7 +432,7 @@
                   
   <section id="televiz">
 <h1>Televiz<a class="headerlink" href="#televiz" title="Link to this heading">#</a></h1>
-<p>Televiz (<code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code>) is the visualization module for Isaac Teleop. It composites what the
+<p>Televiz (<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code>) is the visualization module for Isaac Teleop. It composites what the
 operator sees — camera and sensor feeds, plus 3D rendered content such as gsplat or nvblox — and
 presents it in stereo to an XR headset over <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR</span></a>. Desktop-window and
 offscreen output are also available, mainly for development and debugging.</p>
@@ -477,18 +478,20 @@ Python API, which mirrors the C++ names one-to-one — see <a class="reference i
 </nav>
 <section id="installation">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
-<p>Televiz ships inside the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> wheel — install it from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>isaacteleop
+<p>Televiz ships inside the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel — install it from PyPI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
 <p>The published wheels (Linux x86_64 / aarch64, CPython 3.11–3.13) bundle the compiled
-<code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> module, so <strong>no source build is required</strong>. Verify with:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module, so <strong>no source build is required</strong>. Verify with:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 </pre></div>
 </div>
 <p>You only need to <a class="reference internal" href="build_from_source/index.html"><span class="doc">build from source</span></a> when
-developing Isaac Teleop itself — that build enables Televiz automatically when Vulkan, the CUDA
-Toolkit, and <code class="docutils literal notranslate"><span class="pre">glslangValidator</span></code> are present.</p>
+developing Isaac Teleop itself — that build enables Televiz automatically when Vulkan and the
+CUDA Toolkit are detected. <code class="docutils literal notranslate"><span class="pre">glslangValidator</span></code> is additionally required to compile the shaders:
+if it is missing, configuration fails rather than quietly dropping the module — install it, or
+pass <code class="docutils literal notranslate"><span class="pre">-DBUILD_VIZ=OFF</span></code>.</p>
 </section>
 <section id="overview">
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
@@ -513,7 +516,7 @@ RGBD layer for external renderers (gsplat, nvblox, neural reconstruction) that p
 <p>A session holds <strong>either</strong> one <code class="docutils literal notranslate"><span class="pre">ProjectionLayer</span></code> <strong>or</strong> any number of texture layers
 (<code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> / <code class="docutils literal notranslate"><span class="pre">CylinderLayer</span></code> / <code class="docutils literal notranslate"><span class="pre">EquirectLayer</span></code>), never both — see <a class="reference internal" href="#layers">Layers</a>.</p>
 <p>All symbols are imported from the top-level module:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 </pre></div>
 </div>
 </section>
@@ -550,7 +553,7 @@ running OpenXR runtime (e.g. CloudXR).</p></td>
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Quick start</a><a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
 <p>A minimal offscreen render-and-readback (no GPU display, no headset):</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">cupy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">cp</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
 
 <span class="n">viz_cfg</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSessionConfig</span><span class="p">()</span>
 <span class="n">viz_cfg</span><span class="o">.</span><span class="n">mode</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">DisplayMode</span><span class="o">.</span><span class="n">kOffscreen</span>
@@ -577,6 +580,17 @@ running OpenXR runtime (e.g. CloudXR).</p></td>
 <p>For a window or headset, set <code class="docutils literal notranslate"><span class="pre">mode</span></code> to <code class="docutils literal notranslate"><span class="pre">DisplayMode.kWindow</span></code> or <code class="docutils literal notranslate"><span class="pre">DisplayMode.kXr</span></code> instead. The
 layer setup is identical; you just drive a frame loop (see <a class="reference internal" href="#frame-loop">Frame loop</a>) rather than the one-shot
 <code class="docutils literal notranslate"><span class="pre">readback_to_host()</span></code>, which is offscreen-only.</p>
+<div class="admonition note" id="orin-openxr-composition">
+<p class="admonition-title">Note</p>
+<p><strong>Jetson Orin, XR.</strong> The default <code class="docutils literal notranslate"><span class="pre">openxr_composition</span> <span class="pre">=</span> <span class="pre">True</span></code> path presents a solid
+color, or black, in place of the submitted image. Until this is addressed in a future
+release, set <code class="docutils literal notranslate"><span class="pre">openxr_composition</span> <span class="pre">=</span> <span class="pre">False</span></code> so Televiz composites the quad itself:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layer_cfg</span><span class="o">.</span><span class="n">openxr_composition</span> <span class="o">=</span> <span class="kc">False</span>
+</pre></div>
+</div>
+<p>Cylinder and equirect layers cannot opt out. In <a class="reference internal" href="../references/camera_streaming.html"><span class="doc">Camera Streaming</span></a> the
+same switch is YAML <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> (quads only).</p>
+</div>
 </section>
 <section id="session-configuration">
 <h2><a class="toc-backref" href="#id6" role="doc-backlink">Session configuration</a><a class="headerlink" href="#session-configuration" title="Link to this heading">#</a></h2>
@@ -595,11 +609,12 @@ layer setup is identical; you just drive a frame loop (see <a class="reference i
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p></td>
-<td><p>—</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">DisplayMode.kXr</span></code> / <code class="docutils literal notranslate"><span class="pre">kWindow</span></code> / <code class="docutils literal notranslate"><span class="pre">kOffscreen</span></code>. Required.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">DisplayMode.kOffscreen</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">DisplayMode.kXr</span></code> / <code class="docutils literal notranslate"><span class="pre">kWindow</span></code> / <code class="docutils literal notranslate"><span class="pre">kOffscreen</span></code>. Set it explicitly; the default is
+offscreen.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">window_width</span></code> / <code class="docutils literal notranslate"><span class="pre">window_height</span></code></p></td>
-<td><p>—</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1024</span></code></p></td>
 <td><p>Render size for window and offscreen modes. Ignored in XR (the runtime dictates per-eye
 resolution; query it with <code class="docutils literal notranslate"><span class="pre">get_recommended_resolution()</span></code>).</p></td>
 </tr>
@@ -614,19 +629,20 @@ components (e.g. <code class="docutils literal notranslate"><span class="pre">Te
 rendering extensions. See <a class="reference internal" href="#id1">Sharing the XR session</a>.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">xr_near_z</span></code> / <code class="docutils literal notranslate"><span class="pre">xr_far_z</span></code></p></td>
-<td><p>—</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.05</span></code> / <code class="docutils literal notranslate"><span class="pre">100.0</span></code></p></td>
 <td><p>Near / far planes for the XR projection.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">xr_system_wait_seconds</span></code></p></td>
-<td><p>—</p></td>
-<td><p>How long to wait for the OpenXR system (headset) to become available at create time.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>How long to wait for the OpenXR system (headset) to become available at create time.
+Zero fails fast when no headset is present.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clear_color</span></code></p></td>
-<td><p>—</p></td>
-<td><p>Background color as an <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">g,</span> <span class="pre">b,</span> <span class="pre">a)</span></code> sequence in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0)</span></code></p></td>
+<td><p>Background color as an <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">g,</span> <span class="pre">b,</span> <span class="pre">a)</span></code> sequence in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>. Transparent by default.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu_timing</span></code></p></td>
-<td><p>—</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">False</span></code></p></td>
 <td><p>Enable GPU timestamp queries, surfaced via <code class="docutils literal notranslate"><span class="pre">get_gpu_timing()</span></code>.</p></td>
 </tr>
 </tbody>
@@ -678,7 +694,8 @@ drawing; the runtime samples native layers itself. On the default XR path the fl
 <p><code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> is the one layer with a choice, which is why <code class="docutils literal notranslate"><span class="pre">openxr_composition</span></code> and
 <code class="docutils literal notranslate"><span class="pre">generate_mipmaps</span></code> appear on its config and on no other. Set <code class="docutils literal notranslate"><span class="pre">openxr_composition</span> <span class="pre">=</span> <span class="pre">False</span></code> to
 draw the quad with Televiz’s built-in compositor instead, where 3D-placed quads depth-test against
-each other in a shared render target — the way out of the no-depth constraint above. Cylinder and
+each other in a shared render target — the way out of the no-depth constraint above, and the
+setting to use on Jetson Orin in XR (see <a class="reference internal" href="#orin-openxr-composition"><span class="std std-ref">Jetson Orin, XR</span></a>). Cylinder and
 equirect layers have no such switch: they exist only as native runtime layers, and therefore only in
 XR. Window and offscreen modes always use the built-in compositor.</p>
 </section>
@@ -708,7 +725,8 @@ XR. Window and offscreen modes always use the built-in compositor.</p>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">format</span></code></p></td>
 <td><p>—</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">PixelFormat</span></code> of the source (typically <code class="docutils literal notranslate"><span class="pre">kRGBA8</span></code>).</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PixelFormat</span></code> of the source. <code class="docutils literal notranslate"><span class="pre">kRGBA8</span></code> is the only value texture layers accept;
+anything else raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">placement</span></code></p></td>
 <td><p>—</p></td>
@@ -801,7 +819,8 @@ applies on the built-in compositor path.</p></td>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">openxr_composition</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">True</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">True</span></code> = the OpenXR runtime composites the quad, <code class="docutils literal notranslate"><span class="pre">False</span></code> = Televiz’s built-in
-compositor. See <a class="reference internal" href="#composition-model">Composition model</a>.</p></td>
+compositor. On Jetson Orin in XR, set <code class="docutils literal notranslate"><span class="pre">False</span></code> (see <a class="reference internal" href="#orin-openxr-composition"><span class="std std-ref">Jetson Orin, XR</span></a>).
+See <a class="reference internal" href="#composition-model">Composition model</a>.</p></td>
 </tr>
 </tbody>
 </table>
@@ -1098,10 +1117,10 @@ session (Isaac Teleop’s own <code class="docutils literal notranslate"><span c
 timing.</p>
 <p>Declare the extensions your trackers need in <code class="docutils literal notranslate"><span class="pre">required_extensions</span></code> (Televiz adds its own rendering
 extensions automatically), then pass the handles through:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceIOSession</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.viz</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">televiz</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceIOSession</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
 
 <span class="n">viz_cfg</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSessionConfig</span><span class="p">()</span>
 <span class="n">viz_cfg</span><span class="o">.</span><span class="n">mode</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">DisplayMode</span><span class="o">.</span><span class="n">kXr</span>
@@ -1155,7 +1174,15 @@ wiring Televiz into a foreign Vulkan app. Most users won’t touch these.</p></l
 <h3><a class="toc-backref" href="#id21" role="doc-backlink">QuadLayer / CylinderLayer / EquirectLayer</a><a class="headerlink" href="#quadlayer-cylinderlayer-equirectlayer" title="Link to this heading">#</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">submit(left,</span> <span class="pre">right=None,</span> <span class="pre">stream=0)</span></code> — submit a frame (mono: <code class="docutils literal notranslate"><span class="pre">left</span></code> only; stereo: both).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">set_placement(placement)</span></code> / <code class="docutils literal notranslate"><span class="pre">placement()</span></code> — placement swap, thread-safe vs the frame loop.
+<li><p><code class="docutils literal notranslate"><span class="pre">set_placement(placement)</span></code> / <code class="docutils literal notranslate"><span class="pre">placement()</span></code> — placement swap, thread-safe vs the frame loop.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">set_stereo_baseline_mm(mm)</span></code> / <code class="docutils literal notranslate"><span class="pre">stereo_baseline_mm</span></code> — live per-eye offset, thread-safe vs
+the frame loop; applies on the next frame. Inert while the layer is mono, since <code class="docutils literal notranslate"><span class="pre">stereo</span></code> is
+fixed at construction. Raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> on a non-finite value.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">set_stereo_convergence_deg(deg)</span></code> / <code class="docutils literal notranslate"><span class="pre">stereo_convergence_deg</span></code> (<code class="docutils literal notranslate"><span class="pre">CylinderLayer</span></code> /
+<code class="docutils literal notranslate"><span class="pre">EquirectLayer</span></code>) — the same idea as a per-eye yaw instead of a translation. Prefer it on a
+curved surface: translating one gives full disparity dead ahead and less toward the edges, and
+none at all at infinite radius, while a rotation is uniform across the arc and works at any
+radius.
 <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> accepts <code class="docutils literal notranslate"><span class="pre">None</span></code> (fullscreen, window mode); the shaped layers validate and raise
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> on bad shape parameters.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">set_visible(visible)</span></code> / <code class="docutils literal notranslate"><span class="pre">is_visible()</span></code>.</p></li>
@@ -1179,7 +1206,7 @@ wiring Televiz into a foreign Vulkan app. Most users won’t touch these.</p></l
 </section>
 <section id="c-api">
 <h2><a class="toc-backref" href="#id23" role="doc-backlink">C++ API</a><a class="headerlink" href="#c-api" title="Link to this heading">#</a></h2>
-<p>Televiz is a C++ library; <code class="docutils literal notranslate"><span class="pre">isaacteleop.viz</span></code> is a thin pybind11 binding over it. The Python and C++
+<p>Televiz is a C++ library; <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> is a thin pybind11 binding over it. The Python and C++
 APIs share the same type and method names (<code class="docutils literal notranslate"><span class="pre">VizSession</span></code>, <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code>, <code class="docutils literal notranslate"><span class="pre">submit</span></code>,
 <code class="docutils literal notranslate"><span class="pre">set_placement</span></code>, <code class="docutils literal notranslate"><span class="pre">DisplayMode::kXr</span></code>, …), so everything on this page maps directly to C++. All
 symbols live in <code class="docutils literal notranslate"><span class="pre">namespace</span> <span class="pre">viz</span></code>, and headers use nested include paths:</p>
@@ -1398,7 +1425,7 @@ output locations.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on August 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

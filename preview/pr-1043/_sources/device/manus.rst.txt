@@ -8,7 +8,7 @@ A Linux-only plugin for integrating `MANUS <https://www.manus-meta.com/>`_ glove
 into the Isaac Teleop framework. It provides full hand-joint tracking via the
 Manus SDK and injects the resulting poses into the OpenXR hand-tracking layer so
 any downstream retargeter can consume them transparently. Optionally it also
-publishes Manus flex-sensor (RawDeviceData) tip poses as ``JointStateOutput``
+publishes Manus flex-sensor (RawDeviceData) tip poses as ``JointSe3PoseOutput``
 tensors and consumes inbound haptic commands for vibration gloves.
 
 .. contents:: On this page
@@ -30,7 +30,7 @@ Components
 Prerequisites
 -------------
 
-- **Linux** — x86_64 (tested on Ubuntu 22.04 / 24.04).
+- **Linux** — x86_64 or aarch64 (tested on Ubuntu 22.04 / 24.04).
 - **Manus SDK** for Linux — downloaded automatically by the install script.
 - **System dependencies** — the install script installs required packages automatically.
 
@@ -74,8 +74,8 @@ directory.
 The script will:
 
 1. Install the required system packages for MANUS Core Integrated.
-2. Download MANUS SDK v3.1.1.
-3. Extract and place the SDK in the correct location.
+2. Download MANUS SDK v3.2.1.
+3. Extract and place the SDK for the host architecture in the correct location.
 4. Build the plugin and the diagnostic tool.
 
 When run inside a container, ``install_manus.sh`` skips the udev step and
@@ -83,17 +83,23 @@ reminds you to run ``install_udev_rules.sh`` on the host. Pass ``--container``
 when the build environment does not expose standard container markers, such as
 during a Docker BuildKit build.
 
-Manual installation
-~~~~~~~~~~~~~~~~~~~
+Manual installation (fallback only)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-If you prefer to install manually:
+Steps 1 and 2 above are the supported path — most users should never need
+this section. Only follow it if ``install_manus.sh`` fails (for example, the
+SDK download is unreachable from your network) and you need to place the SDK
+by hand.
 
 1. Download the MANUS Core SDK from
-   `MANUS Downloads <https://docs.manus-meta.com/3.1.1/Resources/>`_.
-2. Extract and place the ``ManusSDK`` folder inside ``src/plugins/manus/``, or
-   point CMake at a different path by setting ``MANUS_SDK_ROOT``.
+   `MANUS Downloads <https://docs.manus-meta.com/3.2.1/Resources/>`_.
+2. From ``C++/SDKClient/ManusSDK`` in the archive, place ``include/`` and the
+   library for your architecture (``lib/amd64/libManusSDK-amd64.so`` or
+   ``lib/aarch64/libManusSDK-aarch64.so``, renamed to ``lib/libManusSDK.so``)
+   into a ``ManusSDK`` folder inside ``src/plugins/manus/``, or point CMake at a
+   different path by setting ``MANUS_SDK_ROOT``.
 3. Follow the
-   `MANUS Getting Started guide for Linux <https://docs.manus-meta.com/3.1.1/Plugins/SDK/Linux/>`_
+   `MANUS Getting Started guide for Linux <https://docs.manus-meta.com/3.2.1/Plugins/SDK/Linux/>`_
    to install the dependencies and configure device permissions.
 
 Expected directory layout after placing the SDK:
@@ -105,14 +111,16 @@ Expected directory layout after placing the SDK:
        main.cpp
      core/
        manus_hand_tracking_plugin.cpp
-     inc/
-       core/
-         manus_hand_tracking_plugin.hpp
+       inc/
+         manus/
+           manus_glove_collection.hpp
+           manus_hand_tracking_plugin.hpp
      tools/
        manus_hand_tracker_printer.cpp
      ManusSDK/        <-- placed here
        include/
        lib/
+         libManusSDK.so
 
 Then build from the root:
 
@@ -134,11 +142,11 @@ runtime, so the runtime must be running and its environment sourced in the
 shell that launches the plugin.
 
 Start the CloudXR runtime. It runs as a background service that outlives
-this shell, until you stop it with ``python -m isaacteleop.cloudxr.service stop``:
+this shell, until you stop it with ``python -m isaaccapture.cloudxr.service stop``:
 
 .. code-block:: bash
 
-   python -m isaacteleop.cloudxr.service start
+   python -m isaaccapture.cloudxr.service start
 
 In the shell you will use to run the plugin, source the environment file
 that the runtime writes on startup. This points the OpenXR loader at CloudXR:
@@ -197,14 +205,16 @@ Sensors (flex tips via SchemaPusher)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When gloves report at least five RawDeviceData flex sensors, the plugin pushes
-a ``JointStateOutput`` (tensor id ``joint_state``) on:
+a ``JointSe3PoseOutput`` (tensor id ``joint_se3_pose``) on:
 
 - ``manus_sensors_left``
 - ``manus_sensors_right``
 
-Layout: 35 joints named ``j0``..``j34``. For sensor ``i`` in thumb→pinky order,
-``j[7*i : 7*i+7]`` is ``[x, y, z, qx, qy, qz, qw]`` (meters, quaternion xyzw)
-in the Manus SDK frame after the plugin's VUH coordinate setup. Poses are raw
+Each frame is stamped ``type = JointType.HAND_RAW`` and carries the five
+fingertips keyed by ``JointName``
+(``HAND_RAW_THUMB_TIP`` .. ``HAND_RAW_LITTLE_TIP``), position in meters and
+orientation as an xyzw quaternion, in the Manus SDK frame after the plugin's
+VUH coordinate setup. A joint absent from a frame is not tracked. Poses are raw
 Manus flex transforms; hosts that mask against a re-framed skeleton must apply
 their own sensor-pose processing.
 
@@ -216,15 +226,20 @@ Host-side consumption example:
 
 .. code-block:: python
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
+   from isaaccapture.deviceio_trackers import JointSe3PoseTracker
+   from isaaccapture.schema import JointName, JointType
 
-   SENSOR_JOINTS = [f"j{i}" for i in range(35)]
-   left = JointStateSource(
-       name="manus_sensors_left",
-       collection_id="manus_sensors_left",
-       joint_names=SENSOR_JOINTS,
-   )
-   # Decode thumb tip: joints j0..j6 -> [x, y, z, qx, qy, qz, qw]
+   left = JointSe3PoseTracker("manus_sensors_left")
+   # ... register with a DeviceIOSession, then each tick:
+   data = left.get_data(session).data
+   assert data is None or data.type == JointType.HAND_RAW
+   thumb = data.lookup(JointName.HAND_RAW_THUMB_TIP) if data else None
+   if thumb is not None:
+       position, orientation = thumb.pose.position, thumb.pose.orientation
+
+See :code-file:`examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/record_joint_se3_pose.py` for a
+runnable recorder. Run ``python -m isaaccapture_examples.mcap_record_replay.replay_joint_se3_pose``
+to play one back without hardware.
 
 Haptic (inbound vibration)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -232,7 +247,7 @@ Haptic (inbound vibration)
 The plugin reads ``HapticCommand`` on collection ``manus_glove_haptic``
 (``XR_NVX1_tensor_data``) and drives five finger motors via the Manus SDK.
 See the haptic feedback example and
-``isaacteleop.haptic_devices.glove.haptic_glove_device``.
+``isaaccapture.haptic_devices.glove.haptic_glove_device``.
 
 Wrist Positioning — Controllers vs Optical Hand Tracking
 ---------------------------------------------------------
@@ -265,6 +280,16 @@ Troubleshooting
      - Resolution
    * - SDK download fails
      - Check your internet connection and re-run the install script.
+   * - ``uv not found. Please install uv: ...``
+     - Install uv and re-run: ``curl -LsSf https://astral.sh/uv/install.sh | sh``.
+       It installs to ``~/.local/bin``, so also add that to ``PATH`` for the
+       current shell (and ``~/.bashrc``, to make it stick):
+       ``export PATH="$HOME/.local/bin:$PATH"``.
+   * - ``Missing build tools: ... patchelf ...``
+     - CMake's dependency preflight lists every missing tool and the exact
+       install command in the same message, e.g.
+       ``sudo apt-get install -y patchelf``. Run the printed command and
+       re-run the install script.
    * - Manus SDK not found at build time
      - With manual installation, ensure ``ManusSDK`` is inside
        ``src/plugins/manus/`` or set ``MANUS_SDK_ROOT`` to your installation path.
@@ -274,7 +299,7 @@ Troubleshooting
    * - No data received
      - Ensure MANUS Core is running and the gloves are connected and calibrated.
    * - CloudXR runtime errors
-     - Check that a runtime is serving with ``python -m isaacteleop.cloudxr.service status``,
+     - Check that a runtime is serving with ``python -m isaaccapture.cloudxr.service status``,
        and that ``~/.cloudxr/run/cloudxr.env`` has been sourced in the same
        terminal as the plugin.
    * - Permission denied for USB devices

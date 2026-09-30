@@ -36,7 +36,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
     <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=35d49528" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=04dcff72"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.5.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -371,12 +371,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -595,8 +596,8 @@ struct<span class="w"> </span>Pose<span class="w"> </span>{
 <p>Tracks the HMD head pose via the OpenXR view space.</p>
 <ul class="simple">
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/head.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/head.fbs</a></p></li>
-<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/head_tracker.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">HeadTracker</span></code></p></li>
+<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/head_tracker.hpp&gt;</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">HeadTracker</span></code></p></li>
 <li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">head</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.HeadPoseRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
@@ -618,8 +619,8 @@ struct<span class="w"> </span>Pose<span class="w"> </span>{
 <code class="docutils literal notranslate"><span class="pre">XrHandJointEXT</span></code> ordering) using the <code class="docutils literal notranslate"><span class="pre">XR_EXT_hand_tracking</span></code> extension.</p>
 <ul class="simple">
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/hand.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/hand.fbs</a></p></li>
-<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/hand_tracker.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">HandTracker</span></code></p></li>
+<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/hand_tracker.hpp&gt;</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">HandTracker</span></code></p></li>
 <li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_hand</span></code>, <code class="docutils literal notranslate"><span class="pre">right_hand</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.HandPoseRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
@@ -632,7 +633,7 @@ struct<span class="w"> </span>Pose<span class="w"> </span>{
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/oxr/cpp/oxr_simple_api_demo.cpp" rel="noopener noreferrer" target="_blank">examples/oxr/cpp/oxr_simple_api_demo.cpp</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/oxr/python/modular_example.py" rel="noopener noreferrer" target="_blank">examples/oxr/python/modular_example.py</a></p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py</a></p></li>
 </ul>
 </li>
 </ul>
@@ -643,8 +644,8 @@ struct<span class="w"> </span>Pose<span class="w"> </span>{
 axis inputs. Uses standard OpenXR action bindings.</p>
 <ul class="simple">
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/controller.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/controller.fbs</a></p></li>
-<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/controller_tracker.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">ControllerTracker</span></code></p></li>
+<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/controller_tracker.hpp&gt;</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">ControllerTracker</span></code></p></li>
 <li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_controller</span></code>, <code class="docutils literal notranslate"><span class="pre">right_controller</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.ControllerSnapshotRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
@@ -655,7 +656,7 @@ axis inputs. Uses standard OpenXR action bindings.</p>
 </li>
 <li><p>Examples:</p>
 <ul>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/locomotion_retargeting_example.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/locomotion_retargeting_example.py</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/gripper_retargeting_example_simple.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/gripper_retargeting_example_simple.py</a></p></li>
 </ul>
@@ -673,7 +674,7 @@ reads the PICO <code class="docutils literal notranslate"><span class="pre">XR_B
 <ul class="simple">
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/full_body.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/full_body.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/full_body_tracker.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">FullBodyTracker</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">FullBodyTracker</span></code></p></li>
 <li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">full_body</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.FullBodyPoseRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
@@ -686,9 +687,9 @@ reads the PICO <code class="docutils literal notranslate"><span class="pre">XR_B
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/schemaio/full_body_printer.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/full_body_printer.cpp</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/cpp/record_full_body.cpp" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/cpp/record_full_body.cpp</a></p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/live_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/live_full_body.py</a></p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/record_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/record_full_body.py</a></p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/replay_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/replay_full_body.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/live_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/live_full_body.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/record_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/record_full_body.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/replay_full_body.py" rel="noopener noreferrer" target="_blank">examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/replay_full_body.py</a></p></li>
 </ul>
 </li>
 </ul>
@@ -709,7 +710,7 @@ utility internally.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/oak.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/oak.fbs</a></p></li>
 <li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">frame_metadata_oak</span></code>)</p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/frame_metadata_tracker_oak.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">FrameMetadataTrackerOak</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">FrameMetadataTrackerOak</span></code></p></li>
 <li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">oak</span></code>, <code class="docutils literal notranslate"><span class="pre">oak_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.FrameMetadataOakRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
@@ -732,9 +733,9 @@ collections. Uses the <a class="reference external" href="https://github.com/NVI
 utility internally.</p>
 <ul class="simple">
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p></li>
-<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/generic_3axis_pedal_tracker.hpp&gt;</span></code></p></li>
-<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">Generic3AxisPedalTracker</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.Generic3AxisPedalOutputRecord</span></code></p></li>
+<li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/generic_3axis_pedal_tracker.hpp&gt;</span></code></p></li>
+<li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">Generic3AxisPedalTracker</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code>, <code class="docutils literal notranslate"><span class="pre">pedals_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.Generic3AxisPedalOutputRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/tests/cpp/core/schema/test_pedals.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_pedals.cpp</a></p></li>
@@ -771,7 +772,7 @@ where <code class="docutils literal notranslate"><span class="pre">id</span></co
 <code class="docutils literal notranslate"><span class="pre">params</span></code> carries free-form string key/value options for it. Trackers left out
 of the config use their default vendor. Vendor selections on non-vendored
 trackers, and unknown vendor ids, are rejected at session construction.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
 
 <span class="n">body</span> <span class="o">=</span> <span class="n">deviceio</span><span class="o">.</span><span class="n">FullBodyTracker</span><span class="p">()</span>
 
@@ -808,7 +809,7 @@ construction; see <a class="reference internal" href="../getting_started/teleop_
 </ul>
 <p>For higher-level usage with the teleop session manager and retargeting, see:</p>
 <ul class="simple">
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaacteleop_examples/retargeting/sources_example.py</a></p></li>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py" rel="noopener noreferrer" target="_blank">examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/gripper_retargeting_example_simple.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/gripper_retargeting_example_simple.py</a></p></li>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/locomotion_retargeting_example.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/locomotion_retargeting_example.py</a></p></li>
 </ul>
@@ -963,7 +964,7 @@ construction; see <a class="reference internal" href="../getting_started/teleop_
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on August 28, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>
