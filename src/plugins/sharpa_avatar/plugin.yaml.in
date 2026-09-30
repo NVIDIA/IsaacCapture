@@ -3,11 +3,11 @@
 
 name: avatar_hand_plugin
 description: >
-  Sharpa Avatar HA4 glove plugin for Isaac Teleop.
+  Sharpa Avatar HA4 glove plugin for Isaac Capture.
   HUMAN FK → OpenXR hand_tracker on /hand/{left,right}.
   RAW/ROBOT → JointStateOutput tensors (collection ids avatar_raw_* / avatar_robot_*).
   Haptic → HapticCommandReaderTracker on collection id avatar_glove_haptic
-  (pair with HapticGloveDevice / PushTensorHapticDevice on the Teleop side).
+  (pair with HapticGloveDevice / PushTensorHapticDevice on the Isaac Capture side).
 command: "./avatar_hand_plugin"
 version: "1.1.0"
 devices:

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Sharpa Avatar Glove
 
-C++ plugin that connects Sharpa Avatar gloves to Isaac Teleop. It publishes
+C++ plugin that connects Sharpa Avatar gloves to Isaac Capture. It publishes
 OpenXR hand poses and glove joint state, and consumes inbound haptic commands.
 
 The plugin talks to the gloves directly, so do not run `avatar-backend` or
@@ -21,7 +21,7 @@ The visualization example is separate:
 ## Prerequisites
 
 - Linux x86_64 (Ubuntu 22.04)
-- A built Isaac Teleop checkout
+- A built Isaac Capture checkout
 - Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
 
 `install_avatar_sdk.sh` retrieves a pinned production `avatar-sdk` version from Sharpa's
@@ -39,7 +39,7 @@ Install the pinned SDK dependency first if it is not already present:
 ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 ```
 
-Then use the canonical top-level CMake workflow from the Isaac Teleop root.
+Then use the canonical top-level CMake workflow from the Isaac Capture root.
 With a custom SDK location, replace `/opt/avatar-sdk` below:
 
 ```bash
@@ -60,7 +60,7 @@ warns on a non-production build.
 CMake is Linux-only for this plugin. The SDK root comes from
 `-DAVATAR_SDK_ROOT`, then `$AVATAR_SDK_ROOT`, then `/opt/avatar-sdk`.
 `-DBUILD_PLUGIN_SHARPA_AVATAR=ON` without a usable SDK under the selected root
-skips the plugin and the rest of Isaac Teleop still configures.
+skips the plugin and the rest of Isaac Capture still configures.
 
 Install the device rules once on the host, then unplug and reconnect the glove
 or dongle:
@@ -105,7 +105,7 @@ wrist source is used when one is available.
 | CMake skipped the Sharpa Avatar plugin | The SDK is missing; run `install_avatar_sdk.sh` and reconfigure with `-DBUILD_PLUGIN_SHARPA_AVATAR=ON` |
 | CMake rejected the Avatar SDK | Install the pinned production package with `install_avatar_sdk.sh`, or point `AVATAR_SDK_ROOT` at a complete SDK tree |
 | USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
-| CMake 3.24 or newer is required | Install a newer CMake in the Isaac Teleop environment and rerun the configure/build/install commands above |
+| CMake 3.24 or newer is required | Install a newer CMake in the Isaac Capture environment and rerun the configure/build/install commands above |
 | Plugin binary is not found | Build and install the plugin through the top-level CMake workflow above |
 | Hand and joint streams stay offline | Power on the gloves and stop any other process using the Avatar SDK |
 | No vibration | Keep `haptic` in `--datasets` and close a fingertip toward the thumb |

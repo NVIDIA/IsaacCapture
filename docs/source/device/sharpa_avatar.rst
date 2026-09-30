@@ -5,15 +5,15 @@ Sharpa Avatar Glove
 ===================
 
 A Linux-only plugin for integrating Sharpa Avatar data gloves into the
-Isaac Teleop framework. The gloves stream IMU and encoder data through the
-official Avatar SDK over USB. The plugin maps that stream into Isaac Teleop's
+Isaac Capture framework. The gloves stream IMU and encoder data through the
+official Avatar SDK over USB. The plugin maps that stream into Isaac Capture's
 usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
 ``JointStateOutput`` tensors for the RAW and ROBOT 22-DoF joint sets, and
 inbound per-finger vibration on a haptic collection.
 
 Any downstream consumer that already reads OpenXR hands (``HandsSource``) or
-schema joint-state collections can use Avatar gloves through the same Isaac
-Teleop interfaces. The plugin talks to the gloves directly, so do not run
+schema joint-state collections can use Avatar gloves through the same DeviceIO
+interfaces. The plugin talks to the gloves directly, so do not run
 ``avatar-backend`` or Avatar Desktop at the same time.
 
 Plugin sources and the operator README live under
@@ -61,7 +61,7 @@ Prerequisites
   ``/opt/avatar-sdk``).
 - **CloudXR runtime** on the plugin host, unless a ``TeleopSession`` example
   launches it for you.
-- A built Isaac Teleop checkout. CMake 3.24 or newer is required.
+- A built Isaac Capture checkout. CMake 3.24 or newer is required.
 
 The SDK stays external: headers, libraries, and runtime assets are not copied
 into this repository or the plugin install prefix.
@@ -75,7 +75,7 @@ Install the pinned production SDK first if it is not already present:
 
    ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 
-Then use the canonical top-level CMake workflow from the Isaac Teleop root.
+Then use the canonical top-level CMake workflow from the Isaac Capture root.
 ``-DAVATAR_SDK_ROOT`` selects a non-default SDK tree; that tree must already
 be complete:
 
@@ -88,7 +88,7 @@ be complete:
    cmake --install build
 
 ``-DBUILD_PLUGIN_SHARPA_AVATAR=ON`` without a usable SDK under the selected
-root skips this plugin and the rest of Isaac Teleop still configures. See
+root skips this plugin and the rest of Isaac Capture still configures. See
 :doc:`/getting_started/build_from_source/index`.
 
 USB access (one-time, on the host)

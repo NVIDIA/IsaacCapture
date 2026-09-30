@@ -59,4 +59,4 @@ SPDX-License-Identifier: Apache-2.0
   lives at `examples/sharpa_avatar/` (`live_view.py`) and runs as
   `python -m isaaccapture_examples.sharpa_avatar`. Do not put Python samples
   under `src/plugins/sharpa_avatar/`, and do not add SDK-only diagnostic
-  printers that bypass Isaac Teleop.
+  printers that bypass Isaac Capture.
