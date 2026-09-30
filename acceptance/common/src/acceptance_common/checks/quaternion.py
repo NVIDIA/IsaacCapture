@@ -11,7 +11,6 @@ from .base import Check, Outcome, Severity, Status
 
 class UnitNormOnValidJoints(Check):
     name = "quaternion.unit_norm_on_valid_joints"
-    gate = "G1"
     severity = Severity.HARD
     summary = "Orientations on valid joints are unit quaternions"
 

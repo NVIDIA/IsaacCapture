@@ -32,7 +32,8 @@ uv pip install --python .venv/bin/python "$WHEEL" -r requirements.txt
 # The checker is read out of its src/ rather than installed, the same way its own venv
 # does it, so the two halves cannot drift to different copies of one module.
 SITE_PACKAGES=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-printf '%s\n' "$CHECKER/src" > "$SITE_PACKAGES/full_body_acceptance.pth"
+printf '%s\n' "$CHECKER/src" "$REPO/acceptance/common/src" \
+  > "$SITE_PACKAGES/full_body_acceptance.pth"
 
 # One interpreter, both halves: the panel records through TeleopSession and labels the
 # result through the checker's decoder. If this line fails the panel cannot run.

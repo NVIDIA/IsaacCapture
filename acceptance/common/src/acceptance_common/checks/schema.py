@@ -9,7 +9,6 @@ from .base import Check, Outcome, Severity, Status
 
 class JointsFieldPresent(Check):
     name = "schema.required_field_present.joints"
-    gate = "G1"
     severity = Severity.HARD
     summary = "A record carrying a pose also carries its joints"
 
@@ -37,15 +36,16 @@ class JointsFieldPresent(Check):
             "missing_joints": self.missing_joints,
             "first_frame": self.first_frame,
         }
-        # No tolerance here: full_body.fbs states every field of FullBodyPose is present
-        # whenever the table is, so one absence is a schema violation rather than a rate.
+        # No tolerance here: the pose .fbs files state every field of the pose table is
+        # present whenever the table is, so one absence is a schema violation rather than
+        # a rate.
         # This is distinct from a null payload, where the data table itself is absent.
         if self.missing_joints == 0:
             return Outcome(Status.PASS, "joints present on every pose", measurements)
         return Outcome(
             Status.FAIL,
             f"{self.missing_joints} of {self.with_payload} records carry a "
-            f"FullBodyPose whose joints field is absent, first at frame "
+            f"pose whose joints field is absent, first at frame "
             f"{self.first_frame}",
             measurements,
         )

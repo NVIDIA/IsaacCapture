@@ -9,11 +9,30 @@ the specification for this vocabulary, so nothing here invents a name.
 
 from __future__ import annotations
 
+from acceptance_common.checks.base import (
+    Attribution,
+    Check,
+    Outcome,
+    Severity,
+    Status,
+)
+
 from ..labels import StepTimeline
-from .base import Attribution, Check, Outcome, Severity, Status
 from .consistency import AllJointPosesTracked
-from .continuity import MaxJointVelocity
-from .coverage import PayloadPresenceRate, ValidityTrend
+from .envelope import (
+    AvailableNotBeforeSample,
+    DeviceClockDistinct,
+    Finite,
+    FrameGaps,
+    IntervalRegularity,
+    JointsFieldPresent,
+    MaxJointVelocity,
+    Monotonic,
+    PayloadPresenceRate,
+    UnitNormOnValidJoints,
+    ValidityTrend,
+    ZeroPoseOnValidJoint,
+)
 from .geometry import (
     AnthropometricPlausibility,
     BoneLengthConstancy,
@@ -37,9 +56,6 @@ from .posture import (
     TposeArmDroop,
     TposeLeftRightAsymmetry,
 )
-from .quaternion import UnitNormOnValidJoints
-from .rate import FrameGaps, IntervalRegularity
-from .schema import JointsFieldPresent
 from .segmentation import (
     FallbackWithoutLabels,
     LabelAlignment,
@@ -47,8 +63,6 @@ from .segmentation import (
     LabelWindowsWellformed,
     StepOrderMatchesLabels,
 )
-from .timestamps import AvailableNotBeforeSample, DeviceClockDistinct, Monotonic
-from .values import Finite, ZeroPoseOnValidJoint
 
 CHECKS: tuple[type[Check], ...] = (
     JointsFieldPresent,

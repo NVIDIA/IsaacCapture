@@ -1,17 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reads full-body records out of an MCAP file.
+"""Reads full-body records out of an MCAP file, in file order, by schema name.
 
-Two things here are load-bearing.
-
-``mcap.reader.make_reader()`` re-sorts messages by log time, which silently repairs a
-recording with non-monotonic timestamps. ``StreamReader`` walks raw records in file
-order, the way the C++ ``LinearMessageView`` does, so a reordered file stays reordered.
-
-Channels are located by declared schema name. The topic is ``<source name>/<sub-channel>``
-where the prefix is whatever ``name=`` the recording script passed, so it is not intrinsic
-to the format.
+See ``acceptance_common.mcap_reader`` for why both of those matter.
 """
 
 from __future__ import annotations
@@ -19,8 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator
 
-from mcap.records import Channel, Header, Message, Schema
-from mcap.stream_reader import StreamReader
+from acceptance_common import mcap_reader
 
 from ._schema import FullBodyPoseRecord, Point, Pose, Quaternion
 from .frames import NUM_JOINTS, SCHEMA_NAME, Frame, JointPose, SourceMetadata
@@ -80,7 +71,7 @@ class McapFrameSource:
     def __init__(self, path: str | Path, schema_name: str = SCHEMA_NAME) -> None:
         self._path = Path(path)
         self._schema_name = schema_name
-        self._metadata = self._scan()
+        self._metadata = mcap_reader.scan(self._path, schema_name)
 
     @property
     def path(self) -> Path:
@@ -90,62 +81,13 @@ class McapFrameSource:
     def metadata(self) -> SourceMetadata:
         return self._metadata
 
-    def _scan(self) -> SourceMetadata:
-        """Finds the channel without decoding any payload.
-
-        A channel that is registered but carries no messages is a real case: the Pico
-        tracker registers its channels at construction, then returns early from
-        ``update()`` in limp mode and never publishes. That must read as insufficient
-        data, not as a pass.
-        """
-        profile = None
-        schemas: dict[int, Schema] = {}
-        with self._path.open("rb") as handle:
-            for record in StreamReader(handle).records:
-                if isinstance(record, Header):
-                    profile = record.profile
-                elif isinstance(record, Schema):
-                    schemas[record.id] = record
-                elif isinstance(record, Channel):
-                    schema = schemas.get(record.schema_id)
-                    if schema is not None and schema.name == self._schema_name:
-                        return SourceMetadata(
-                            schema_name=schema.name,
-                            schema_encoding=schema.encoding,
-                            schema_data=schema.data,
-                            message_encoding=record.message_encoding,
-                            topic=record.topic,
-                            profile=profile,
-                            channel_found=True,
-                        )
-        return SourceMetadata(
-            schema_name=None,
-            schema_encoding=None,
-            schema_data=None,
-            message_encoding=None,
-            topic=None,
-            profile=profile,
-            channel_found=False,
-        )
-
     def __iter__(self) -> Iterator[Frame]:
         if not self._metadata.channel_found:
             return
-
-        schemas: dict[int, Schema] = {}
-        channel_ids: set[int] = set()
-        with self._path.open("rb") as handle:
-            for record in StreamReader(handle).records:
-                if isinstance(record, Schema):
-                    schemas[record.id] = record
-                elif isinstance(record, Channel):
-                    schema = schemas.get(record.schema_id)
-                    if schema is not None and schema.name == self._schema_name:
-                        channel_ids.add(record.id)
-                elif isinstance(record, Message) and record.channel_id in channel_ids:
-                    yield decode_record(
-                        record.data,
-                        record.sequence,
-                        record.log_time,
-                        record.publish_time,
-                    )
+        for _, record in mcap_reader.messages(self._path, self._schema_name):
+            yield decode_record(
+                record.data,
+                record.sequence,
+                record.log_time,
+                record.publish_time,
+            )

@@ -59,6 +59,8 @@ class Check(ABC):
     """
 
     name: ClassVar[str]
+    # The group a result is reported under. Set by each schema package, never here:
+    # the shared checks are grouped differently by each schema that runs them.
     gate: ClassVar[str]
     severity: ClassVar[Severity] = Severity.HARD
     attribution: ClassVar[Attribution] = Attribution.DEVICE
@@ -71,7 +73,7 @@ class Check(ABC):
     # into limbo; an unanswered required check must.
     required: ClassVar[bool] = True
 
-    # False for a check that reports a number and never judges it, which the graded G4
+    # False for a check that reports a number and never judges it, which the graded posture
     # measurements deliberately do: their thresholds are meant to come from real
     # subjects, not from the fixtures used to prove the measurement correct. Such a
     # check returns PASS because there is no other way to say "measured", so without

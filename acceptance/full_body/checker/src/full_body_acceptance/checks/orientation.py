@@ -20,8 +20,8 @@ import math
 
 from ..frames import Frame
 from ..profile import FULL_BODY, SkeletonProfile
-from ..vectors import Quaternion, Vector, as_wxyz, rotate_by_inverse
-from .base import Check, Outcome, Severity, Status
+from acceptance_common.checks.base import Check, Outcome, Severity, Status
+from acceptance_common.vectors import Quaternion, Vector, as_wxyz, rotate_by_inverse
 
 
 class _OffsetSpread:

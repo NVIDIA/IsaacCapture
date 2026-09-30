@@ -33,9 +33,9 @@ from isaacteleop.teleop_session_manager import (
     TeleopSessionConfig,
 )
 
+from acceptance_common.panel.sample import Sample, Vec3
+from acceptance_common.panel.skeleton import Skeleton
 from full_body_acceptance.frames import NUM_JOINTS, Frame
-from full_body_acceptance.panel.app import Skeleton
-from full_body_acceptance.panel.track import Sample, Vec3
 from full_body_acceptance.profile import FULL_BODY
 
 import cues

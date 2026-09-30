@@ -41,10 +41,11 @@ if [[ "$WITH_PANEL" == 1 ]]; then
   uv pip install --python .venv/bin/python -r requirements-panel.txt
 fi
 
-# The package is read out of src/ rather than installed, so `python -m
-# full_body_acceptance.cli` needs src/ on the path to work from any directory.
+# The packages are read out of src/ rather than installed, so `python -m
+# full_body_acceptance.cli` needs both src/ directories on the path to work from any
+# directory.
 SITE_PACKAGES=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-printf '%s\n' "$PWD/src" > "$SITE_PACKAGES/full_body_acceptance.pth"
+printf '%s\n' "$PWD/src" "$REPO/acceptance/common/src" > "$SITE_PACKAGES/full_body_acceptance.pth"
 
 # The .bfbs is not used for decoding -- the Python flatbuffers package has no reflection
 # module. It is the schema-match oracle: byte-identical to the repo golden means the flag

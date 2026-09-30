@@ -11,7 +11,6 @@ from .base import Check, Outcome, Severity, Status
 
 class Finite(Check):
     name = "values.finite"
-    gate = "G1"
     severity = Severity.HARD
     summary = "Positions and orientations on valid joints are finite"
 
@@ -59,7 +58,6 @@ class Finite(Check):
 
 class ZeroPoseOnValidJoint(Check):
     name = "values.zero_pose_on_valid_joint"
-    gate = "G1"
     severity = Severity.HARD
     summary = "A joint marked valid does not sit at exactly the origin"
 

@@ -36,7 +36,7 @@ belong to the checker and are documented there.
 
 The 24-joint table, the parent table, the forward kinematics and the quaternion
 arithmetic exist twice on purpose: once here in `skeleton.py`, once across
-`../checker/profile.py` and `../checker/vectors.py`. A fault in code shared by the
+`../checker/profile.py` and `../../common/src/acceptance_common/vectors.py`. A fault in code shared by the
 oracle and the thing it judges cancels itself out and neither side can see it.
 
 `../checker/tests/test_boundaries.py::test_the_oracle_shares_no_code_with_the_checker`

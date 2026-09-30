@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from ..frames import Frame
-from .base import Check, Outcome, Severity, Status
+from acceptance_common.checks.base import Check, Outcome, Severity, Status
 
 
 class AllJointPosesTracked(Check):

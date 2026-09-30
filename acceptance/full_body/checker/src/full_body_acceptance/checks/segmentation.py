@@ -20,8 +20,14 @@ import math
 from ..frames import Frame
 from ..labels import StepTimeline
 from ..profile import FULL_BODY, SkeletonProfile
-from ..vectors import relative, signed_angle_about
-from .base import Attribution, Check, Outcome, Severity, Status
+from acceptance_common.checks.base import (
+    Attribution,
+    Check,
+    Outcome,
+    Severity,
+    Status,
+)
+from acceptance_common.vectors import relative, signed_angle_about
 
 SAGITTAL = (1.0, 0.0, 0.0)
 FRONTAL = (0.0, 0.0, 1.0)

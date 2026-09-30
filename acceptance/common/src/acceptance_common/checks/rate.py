@@ -30,7 +30,6 @@ class _IntervalCheck(Check):
 
 class IntervalRegularity(_IntervalCheck):
     name = "rate.interval_regularity"
-    gate = "G1"
     severity = Severity.SOFT
     summary = "Frame intervals are regular around the nominal period"
     min_frames = 30
@@ -75,7 +74,6 @@ class IntervalRegularity(_IntervalCheck):
 
 class FrameGaps(_IntervalCheck):
     name = "rate.frame_gaps"
-    gate = "G1"
     severity = Severity.SOFT
     summary = "The stream has no dropped blocks of frames"
     min_frames = 10

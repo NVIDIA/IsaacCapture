@@ -5,15 +5,14 @@ from __future__ import annotations
 
 from collections import deque
 
-from ..frames import Frame, NUM_JOINTS
+from ..frames import Frame
 from .base import Check, Outcome, Severity, Status
 
 
 class PayloadPresenceRate(Check):
     name = "coverage.payload_presence_rate"
-    gate = "G1"
     severity = Severity.HARD
-    summary = "Most records actually carry a body pose"
+    summary = "Most records actually carry a pose"
 
     # A record with a timestamp and no `data` table is legal on its own -- pack_record
     # emits exactly that for an inactive device -- so this is a rate, not a per-record
@@ -40,14 +39,13 @@ class PayloadPresenceRate(Check):
         return Outcome(
             Status.FAIL,
             f"only {rate:.0%} of {self.frames_seen} records carry a `data` table, so "
-            f"the integration is producing almost no body data",
+            f"the integration is producing almost no pose data",
             measurements,
         )
 
 
 class ValidityTrend(Check):
     name = "coverage.validity_trend"
-    gate = "G1"
     severity = Severity.SOFT
     summary = "Per-joint validity coverage does not decay over the session"
 
@@ -66,7 +64,9 @@ class ValidityTrend(Check):
     def _update(self, frame: Frame) -> None:
         if frame.joints is None:
             return
-        coverage = sum(1 for joint in frame.joints if joint.is_valid) / NUM_JOINTS
+        coverage = sum(1 for joint in frame.joints if joint.is_valid) / len(
+            frame.joints
+        )
         if len(self.head) < self.WINDOW:
             self.head.append(coverage)
         self.tail.append(coverage)

@@ -163,7 +163,7 @@ apart is the whole point of the attribution field — do not collapse them.
 Thresholds live on the check class as named constants, so a number can be filled in later
 without touching a measurement.
 
-`Mark` in `report.py` is the single definition of how one result is shown — `pass`,
+`Mark` in `acceptance_common/report.py` is the single definition of how one result is shown — `pass`,
 `FAIL`, `meas`, `n/a`, `note` — and `CheckResult.mark` derives it from status, severity
 and `judged`. The text report, the panel and `to_dict` all read it, so it travels with
 every result we emit rather than being recomputed downstream. A sixth state, or a change
@@ -184,7 +184,8 @@ text cannot express: **which joint, and when.** Moving 38 lines onto a web page 
 buy nothing, so what it adds is spatial and temporal — a hand that drops out as the
 subject turns, a dropped block that is a spike rather than a slightly lower mean.
 
-- **viser stays in `panel/app.py`.** It is an optional extra
+- **viser stays in `panel/app.py`** (and, shared, `acceptance_common/panel/skeleton.py`,
+  which draws the skeleton for both panels). It is an optional extra
   (`requirements-panel.txt`, `./setup_env.sh --panel`), and the checker keeps running on
   `mcap` and `flatbuffers` alone. `tests/test_panel_boundary.py` asserts both halves:
   that no other module imports it, and that the checker and the panel's own arithmetic

@@ -272,7 +272,7 @@ class TestLabelTimeline:
 class TestSignedAngles:
     def test_the_axis_projection_keeps_the_sign(self):
         """``2*acos(w)`` would return a magnitude, losing which way a joint turned."""
-        from full_body_acceptance.vectors import signed_angle_about
+        from acceptance_common.vectors import signed_angle_about
         from tests import synth
 
         for degrees in (-80.0, -12.5, 0.0, 7.0, 95.0):
@@ -281,7 +281,7 @@ class TestSignedAngles:
             assert measured == pytest.approx(degrees, abs=1e-6)
 
     def test_a_child_rotation_is_read_relative_to_its_parent(self):
-        from full_body_acceptance.vectors import multiply, relative, signed_angle_about
+        from acceptance_common.vectors import multiply, relative, signed_angle_about
         from tests import synth
 
         parent = synth.unit_quaternion(math.radians(30.0), (0.0, 1.0, 0.0))

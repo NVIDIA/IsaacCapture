@@ -11,7 +11,6 @@ from .base import Check, Outcome, Severity, Status
 
 class MaxJointVelocity(Check):
     name = "continuity.max_joint_velocity"
-    gate = "G1"
     severity = Severity.HARD
     summary = "No joint moves faster than a human limb can"
     min_frames = 2
@@ -20,7 +19,7 @@ class MaxJointVelocity(Check):
     # hundreds. The gap is wide enough that this needs no calibration.
     MAX_SPEED_MPS = 20.0
 
-    # No body tracker samples above 250 Hz, so a shorter interval is a clock artefact and
+    # No pose tracker samples above 250 Hz, so a shorter interval is a clock artefact and
     # a speed divided by it describes the clock rather than the motion. Discarding those
     # pairs keeps rate.interval_regularity the sole owner of that fault: on the jitter
     # fixture the peak falls from 149 m/s to 6.6 m/s, against 170 m/s for a real teleport.

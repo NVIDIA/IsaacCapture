@@ -18,14 +18,15 @@ from full_body_acceptance.checks import (
     build,
     build_all,
 )
-from full_body_acceptance.checks.coverage import PayloadPresenceRate
-from full_body_acceptance.checks.quaternion import UnitNormOnValidJoints
-from full_body_acceptance.checks.timestamps import (
+from full_body_acceptance.checks.envelope import (
     AvailableNotBeforeSample,
     DeviceClockDistinct,
+    Finite,
     Monotonic,
+    PayloadPresenceRate,
+    UnitNormOnValidJoints,
+    ZeroPoseOnValidJoint,
 )
-from full_body_acceptance.checks.values import Finite, ZeroPoseOnValidJoint
 from full_body_acceptance.report import Verdict, aggregate, run
 
 
@@ -254,7 +255,7 @@ def test_performance_attribution_yields_retake_not_fail():
 
 
 def test_joints_field_absence_is_a_schema_violation_not_a_rate():
-    from full_body_acceptance.checks.schema import JointsFieldPresent
+    from full_body_acceptance.checks.envelope import JointsFieldPresent
 
     assert status_of(JointsFieldPresent, synth.frames(50)) is Status.PASS
 
@@ -267,7 +268,7 @@ def test_joints_field_absence_is_a_schema_violation_not_a_rate():
 
 def test_a_null_payload_is_not_a_missing_joints_field():
     """The data table being absent is coverage.payload_presence_rate's business."""
-    from full_body_acceptance.checks.schema import JointsFieldPresent
+    from full_body_acceptance.checks.envelope import JointsFieldPresent
 
     frame_list = [synth.frame(i, has_payload=i % 2 == 0) for i in range(50)]
     outcome = drive(JointsFieldPresent(), frame_list)
@@ -305,7 +306,7 @@ def test_a_transient_dropout_whose_flag_follows_is_consistent():
 
 
 def test_validity_trend_separates_decay_from_a_transient_dropout():
-    from full_body_acceptance.checks.coverage import ValidityTrend
+    from full_body_acceptance.checks.envelope import ValidityTrend
 
     decaying = [
         synth.frame(i, valid_joints=24 - round(17 * i / 499)) for i in range(500)
@@ -321,14 +322,14 @@ def test_validity_trend_separates_decay_from_a_transient_dropout():
 
 
 def test_validity_trend_will_not_conclude_from_a_short_recording():
-    from full_body_acceptance.checks.coverage import ValidityTrend
+    from full_body_acceptance.checks.envelope import ValidityTrend
 
     assert status_of(ValidityTrend, synth.frames(100)) is Status.INSUFFICIENT_DATA
 
 
 def test_permanently_invalid_joints_are_not_a_decaying_trend():
     """A vendor that never provides four joints has constant, not falling, coverage."""
-    from full_body_acceptance.checks.coverage import ValidityTrend
+    from full_body_acceptance.checks.envelope import ValidityTrend
 
     assert status_of(ValidityTrend, synth.frames(400, valid_joints=20)) is Status.PASS
 
@@ -339,7 +340,7 @@ def test_permanently_invalid_joints_are_not_a_decaying_trend():
 def test_interval_regularity_accepts_a_steady_stream_and_rejects_jitter():
     import random
 
-    from full_body_acceptance.checks.rate import IntervalRegularity
+    from full_body_acceptance.checks.envelope import IntervalRegularity
 
     assert status_of(IntervalRegularity, synth.frames(300)) is Status.PASS
 
@@ -355,7 +356,7 @@ def test_interval_regularity_accepts_a_steady_stream_and_rejects_jitter():
 
 def test_a_few_dropped_blocks_do_not_read_as_jitter():
     """Median absolute deviation is chosen precisely so these two stay separable."""
-    from full_body_acceptance.checks.rate import FrameGaps, IntervalRegularity
+    from full_body_acceptance.checks.envelope import FrameGaps, IntervalRegularity
 
     kept = [i for i in range(300) if not (100 <= i < 120 or 200 <= i < 225)]
     frame_list = [
@@ -373,7 +374,7 @@ def test_a_few_dropped_blocks_do_not_read_as_jitter():
 
 
 def test_human_speed_passes_and_a_teleport_fails():
-    from full_body_acceptance.checks.continuity import MaxJointVelocity
+    from full_body_acceptance.checks.envelope import MaxJointVelocity
 
     assert (
         status_of(MaxJointVelocity, synth.moving_frames(60, speed_mps=1.7))
@@ -392,7 +393,7 @@ def test_human_speed_passes_and_a_teleport_fails():
 
 def test_velocity_over_an_implausibly_short_interval_is_discarded():
     """A sub-4 ms interval describes a broken clock, which rate.interval_regularity owns."""
-    from full_body_acceptance.checks.continuity import MaxJointVelocity
+    from full_body_acceptance.checks.envelope import MaxJointVelocity
 
     frame_list = synth.moving_frames(20, speed_mps=1.0)
     squeezed = (

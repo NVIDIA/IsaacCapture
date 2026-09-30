@@ -12,53 +12,17 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from math import nan
 from pathlib import Path
 from typing import Iterator
+
+from acceptance_common.panel.sample import Sample, Vec3
 
 from ..frames import NUM_JOINTS, Frame, FrameSource, SourceMetadata
 from ..labels import StepTimeline
 from ..profile import FULL_BODY, SkeletonProfile
 
-Vec3 = tuple[float, float, float]
-
 SAMPLE_CLOCK = "sample_time_local_common_clock"
 LOG_CLOCK = "log_time"
-
-
-@dataclass(frozen=True, slots=True)
-class Sample:
-    """One frame reduced to what a viewer draws.
-
-    ``positions`` holds a joint at its last valid position for as long as it stays
-    invalid, and ``None`` for one that has never been valid. The recorded position of
-    an invalid joint is deliberately dropped here: invalid joints carry arbitrary
-    values — a quaternion component of −16363.96 was measured on real hardware — and
-    one of those in a point cloud moves the camera so far that nothing else is visible.
-    ``valid`` is what says whether a drawn joint is live or held.
-    """
-
-    sequence: int
-    t_s: float
-    positions: tuple[Vec3 | None, ...]
-    valid: tuple[bool, ...]
-    interval_ms: float | None
-    step: str | None
-
-    @property
-    def valid_count(self) -> int:
-        return sum(self.valid)
-
-    @property
-    def rate_hz(self) -> float:
-        """NaN for the first frame and for any interval that did not move forward.
-
-        A non-monotonic timestamp is evidence, not something to smooth over, and the
-        plot draws a NaN as a break in the line.
-        """
-        if self.interval_ms is None or self.interval_ms <= 0.0:
-            return nan
-        return 1000.0 / self.interval_ms
 
 
 @dataclass(frozen=True, slots=True)

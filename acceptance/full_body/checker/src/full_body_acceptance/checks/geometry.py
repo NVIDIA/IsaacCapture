@@ -15,8 +15,16 @@ from typing import NamedTuple
 
 from ..frames import Frame
 from ..profile import FULL_BODY, SkeletonProfile
-from ..vectors import cross, dot, is_finite, norm, normalised, rotate, sub
-from .base import Check, Outcome, Severity, Status
+from acceptance_common.checks.base import Check, Outcome, Severity, Status
+from acceptance_common.vectors import (
+    cross,
+    dot,
+    is_finite,
+    norm,
+    normalised,
+    rotate,
+    sub,
+)
 
 
 class _Welford:

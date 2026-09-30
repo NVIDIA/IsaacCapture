@@ -195,14 +195,17 @@ describes; point `FULLBODY_FIXTURES` at them if you built them somewhere else.
 
 ```text
 src/full_body_acceptance/
-  frames.py        Frame / JointPose / SourceMetadata, and the FrameSource protocol
-  mcap_source.py   reads an MCAP in file order, never in log-time order
-  labels.py        the motion-window sidecar
+  frames.py        Frame / JointPose for core.FullBodyPoseRecord
+  mcap_source.py   decodes the full-body channel
+  labels.py        this script's still windows on the shared sidecar reader
   profile.py       skeleton profile: topology, symmetry, priors, which checks apply
-  checks/          one module per check group; base.py holds the accumulator contract
-  report.py        verdict aggregation, dependency suppression, JSON and text renderers
+  checks/          one module per check group; envelope.py puts the shared ones in G1
+  report.py        run(): the checks over one source, plus full-body notes
   cli.py           python -m full_body_acceptance.cli
-  panel/           the viewer; app.py is the only module that imports viser
+  panel/           the viewer; app.py is the only module here that imports viser
+../../common/src/acceptance_common/
+                   shared with every schema: file-order MCAP reading, the accumulator
+                   contract, the envelope checks, verdicts and Mark, the sidecar reader
 tests/
   synth.py               builds MCAPs in memory
   known_deviations.py    where this checker knowingly disagrees with the fixture index

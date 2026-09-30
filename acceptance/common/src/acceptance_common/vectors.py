@@ -99,9 +99,9 @@ def relative(parent: Quaternion, child: Quaternion) -> Quaternion:
 def signed_angle_about(q: Quaternion, axis: Vector) -> float:
     """Radians of ``q`` about ``axis``, signed by the right-hand rule.
 
-    The G4 script builds every limb pose as a single rotation about one body axis, so
-    projecting onto that axis recovers the injected angle in its own units instead of
-    the magnitude that ``2*acos(w)`` would give.
+    A scripted pose built as a single rotation about one axis is recovered in its own
+    units by projecting onto that axis, instead of as the magnitude that ``2*acos(w)``
+    would give.
     """
     unit = normalised(axis)
     if unit is None:

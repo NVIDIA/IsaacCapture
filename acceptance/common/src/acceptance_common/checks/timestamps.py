@@ -9,7 +9,6 @@ from .base import Check, Outcome, Severity, Status
 
 class Monotonic(Check):
     name = "timestamps.monotonic"
-    gate = "G1"
     severity = Severity.HARD
     summary = "Sample timestamps never step backwards"
     min_frames = 2
@@ -60,7 +59,6 @@ class Monotonic(Check):
 
 class AvailableNotBeforeSample(Check):
     name = "timestamps.available_not_before_sample"
-    gate = "G1"
     severity = Severity.HARD
     summary = "A sample is never available before it was taken"
 
@@ -101,7 +99,6 @@ class AvailableNotBeforeSample(Check):
 
 class DeviceClockDistinct(Check):
     name = "timestamps.device_clock_distinct"
-    gate = "G1"
     severity = Severity.ADVISORY
     summary = "The raw device clock is not a copy of the local common clock"
 

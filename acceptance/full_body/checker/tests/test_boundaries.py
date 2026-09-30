@@ -131,11 +131,11 @@ def test_the_oracle_shares_no_code_with_the_checker():
 
     So the 24-joint table, the parent table, the FK and the quaternion arithmetic exist
     twice on purpose: once in ``oracle/skeleton.py``, once across ``checker/profile.py``
-    and ``checker/vectors.py``. Do not resolve the duplication.
+    and ``acceptance_common/vectors.py``. Do not resolve the duplication.
     """
     offenders = [
         path.relative_to(REPO_ROOT)
         for path in sorted(ORACLE.rglob("*.py"))
-        if "full_body_acceptance" in path.read_text()
+        if re.search(r"\b(full_body_acceptance|acceptance_common)\b", path.read_text())
     ]
     assert offenders == [], f"the oracle must not import the checker: {offenders}"
