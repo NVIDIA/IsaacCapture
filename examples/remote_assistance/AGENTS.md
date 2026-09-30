@@ -31,6 +31,8 @@ SPDX-License-Identifier: Apache-2.0
   and address scope; distinguish host rules from upstream network policy.
   Give each site's firewall configuration its own numbered setup step and keep
   subsequent step numbers and references consistent.
+  Define shared site IP variables in step 0 on both systems, explain terminal
+  scope, and reuse them throughout setup commands.
 - Network profiles must keep server signing/TLS private keys on Edge Compute,
   distribute only site-scoped client tokens, and verify the generated profile
   through the actual SDK (including certificate rejection and changing video).

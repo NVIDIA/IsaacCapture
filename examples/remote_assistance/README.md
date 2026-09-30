@@ -288,14 +288,32 @@ block UDP. If that happens, use an approved network/VPN or ask the network team
 for connectivity; NGINX cannot bypass client isolation. Internet NAT traversal
 and TURN deployment are not included in this profile.
 
+**0. Establish the Edge and Robot IP addresses.** On each computer, run
+`ip -brief -4 address` and identify its address on the network connecting the
+two sites (for example, the Wi-Fi interface). Once both addresses are known,
+set these variables on **both Edge Compute and Robot Site**, using the same
+values on each system:
+
+```bash
+# Replace these example addresses with your computers' current addresses.
+export EDGE_IP=10.29.91.247
+export ROBOT_IP=10.29.91.174
+```
+
+The following setup commands reuse these variables. They apply to the current
+terminal and its child processes; repeat this block in each new terminal where
+you run commands that use them. If an address changes, update the variables on
+both systems and the firewall rules; if the Edge address changes, regenerate
+the bundles as described in step 1. Changing a variable alone does not update
+existing configurations.
+
 **1. Generate the bundles once on Edge Compute.** Install the package as above
-and ensure `openssl` is available. Replace `EDGE_WIFI_IP` with the address from
-`ip -brief -4 address` on the interface shared with Robot Site:
+and ensure `openssl` is available:
 
 ```bash
 cd ~/IsaacTeleop
 examples/remote_assistance/.venv/bin/python -m remote_assistance.network_setup \
-  --edge-ip EDGE_WIFI_IP \
+  --edge-ip "$EDGE_IP" \
   --output "$HOME/remote-assistance-network" \
   --hours 24
 ```
@@ -318,11 +336,12 @@ This rotates credentials and the test CA. Token expiry affects new joins;
 it is not an immediate disconnect/revocation mechanism for existing sessions.
 
 **2. Transfer only `robot/` to Robot Site**, using an approved secure transfer
-method such as SSH/SCP. For example, after replacing `ROBOT_USER@ROBOT_HOST`:
+method such as SSH/SCP. Run this on Edge Compute, replacing `ROBOT_USER` with
+your login username on Robot Site:
 
 ```bash
 scp -r "$HOME/remote-assistance-network/robot" \
-  ROBOT_USER@ROBOT_HOST:~/remote-assistance-robot
+  "ROBOT_USER@${ROBOT_IP}:~/remote-assistance-robot"
 ```
 
 Do not run the generator independently on both machines: they need matching
@@ -367,9 +386,6 @@ sudo ufw status verbose
 If it reports `Status: active`, allow the Robot Site to reach the three ports:
 
 ```bash
-# Replace these with the current Wi-Fi addresses of your two computers.
-ROBOT_IP=10.29.91.174
-EDGE_IP=10.29.91.247
 sudo ufw allow proto tcp from "$ROBOT_IP" to "$EDGE_IP" port 8443
 sudo ufw allow proto udp from "$ROBOT_IP" to "$EDGE_IP" port 7882
 sudo ufw allow proto tcp from "$ROBOT_IP" to "$EDGE_IP" port 7881
@@ -398,7 +414,6 @@ outgoing traffic and established replies. If its outgoing policy is `deny`,
 permit outbound access explicitly:
 
 ```bash
-EDGE_IP=10.29.91.247
 sudo ufw allow out proto tcp to "$EDGE_IP" port 8443
 sudo ufw allow out proto udp to "$EDGE_IP" port 7882
 sudo ufw allow out proto tcp to "$EDGE_IP" port 7881
@@ -414,7 +429,7 @@ port-forwarding rules. See [Ubuntu's UFW documentation](https://ubuntu.com/serve
 ```bash
 curl --connect-timeout 5 \
   --cacert "$HOME/remote-assistance-robot/ca.crt" \
-  https://EDGE_WIFI_IP:8443/
+  "https://${EDGE_IP}:8443/"
 ```
 
 A response confirms TCP/TLS reachability, not media connectivity. A timeout
