@@ -357,7 +357,7 @@ proxies signaling only; encrypted WebRTC video/control travels directly between
 each client and the SFU. The server advertises the selected Edge IP for media,
 so using a different interface's address can break media even if signaling works.
 
-**Ubuntu firewall commands (UFW).** Run these on **Edge Compute**, in a host
+**4. Configure the Ubuntu firewall (UFW).** Run these on **Edge Compute**, in a host
 terminal. First check whether UFW is active:
 
 ```bash
@@ -381,7 +381,7 @@ needed. Update them if either computer's address changes. To remove a rule later
 use the same command with `ufw delete allow` instead of `ufw allow`.
 
 If UFW reports `Status: inactive`, it is not blocking these connections: proceed
-to step 4. Do not enable it just for this test; enabling a firewall requires
+to step 5. Do not enable it just for this test; enabling a firewall requires
 accounting for existing SSH and CloudXR access too. If another firewall manager
 or corporate policy controls the computer, use that system's equivalent rules.
 
@@ -402,7 +402,7 @@ upstream restrictions require the network administrator's help. The generated
 containers use host networking, so these are host input rules, not Docker
 port-forwarding rules. See [Ubuntu's UFW documentation](https://ubuntu.com/server/docs/firewalls/).
 
-**4. Check reachability from Robot Site**, before starting robot control:
+**5. Check reachability from Robot Site**, before starting robot control:
 
 ```bash
 curl --connect-timeout 5 \
@@ -414,7 +414,7 @@ A response confirms TCP/TLS reachability, not media connectivity. A timeout
 suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
 wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
 
-**5. Use the generated configurations in the existing process layout.** Start
+**6. Use the generated configurations in the existing process layout.** Start
 Pico, SONIC and MuJoCo exactly as above; only the bridge/camera commands change.
 On Edge Compute, in separate terminals:
 
