@@ -25,6 +25,8 @@ SPDX-License-Identifier: Apache-2.0
   bidirectional transport handshakes can become ready at different times.
 - Keep startup documentation organized by site, with Essential, Robot and Camera
   Televiz process groups; separate one-time provisioning from session commands.
+  In network setup, give Robot Site and Edge Compute separate startup steps,
+  with Robot Site first after the shared Edge server is available.
 - Mark host-to-container transitions explicitly in deployment instructions;
   an environment prompt prefix does not establish that Docker was entered.
 - Pair network port tables with site-specific firewall commands, status checks,

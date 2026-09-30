@@ -438,9 +438,39 @@ A response confirms TCP/TLS reachability, not media connectivity. A timeout
 suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
 wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
 
-**7. Use the generated configurations in the existing process layout.** Start
-Pico, SONIC and MuJoCo exactly as above; only the bridge/camera commands change.
-On Edge Compute, in separate terminals:
+**7. Start the processes on Robot Site first.** Keep the Edge network server
+from step 3 running. For Robot control, start MuJoCo (process 0, simulation only)
+and SONIC (process 1) using the [Robot Site instructions](#robot-site) above,
+then start the robot bridge below. For Camera Televiz, start the camera sender.
+You can use either group or both; run each process in its own terminal and leave
+it running while you move to Edge Compute in step 8.
+
+```bash
+# Process 2 — Robot — robot bridge
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
+  "$HOME/remote-assistance-robot/session.yaml" --role robot
+```
+
+```bash
+# Process 3 — Camera Televiz — camera sender
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera.yaml"
+```
+
+Adjust `device` in the Robot Site camera YAML for that machine's camera before
+starting the sender. Match width/height/fps in both camera YAML files to a
+supported capture mode. For a camera-free network test, add `--synthetic` to
+the sender and use the probe in step 8 instead of the viewer.
+
+**8. Start the processes on Edge Compute.** The network server (process 0) is
+already running from step 3. Start CloudXR / Pico Teleop Streamer (process 1)
+using the [Edge Compute instructions](#edge-compute) above. For Robot control,
+start the edge bridge below; for Camera Televiz, start the viewer. Run each
+process in its own terminal.
 
 ```bash
 # Process 2 — Robot — edge bridge
@@ -459,28 +489,8 @@ source "$HOME/remote-assistance-network/edge/credentials.env"
 ./camera_viz.sh run "$HOME/remote-assistance-network/edge/camera.yaml" --mode xr
 ```
 
-On Robot Site, in separate terminals:
-
-```bash
-# Process 2 — Robot — robot bridge
-cd ~/IsaacTeleop
-source "$HOME/remote-assistance-robot/credentials.env"
-examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
-  "$HOME/remote-assistance-robot/session.yaml" --role robot
-```
-
-```bash
-# Process 3 — Camera Televiz — camera sender
-cd ~/IsaacTeleop
-source "$HOME/remote-assistance-robot/credentials.env"
-examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
-  "$HOME/remote-assistance-robot/camera.yaml"
-```
-
-Adjust `device` in the Robot Site camera YAML for that machine's camera. Match
-width/height/fps in both camera YAML files to a supported capture mode. For a
-camera-free network test, add `--synthetic` to the sender and run this on Edge
-Compute instead of the viewer:
+For the camera-free network test, run this probe instead of the viewer. The
+probe does not require CloudXR / Pico Teleop Streamer:
 
 ```bash
 cd ~/IsaacTeleop
