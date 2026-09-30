@@ -99,7 +99,7 @@ Available Retargeters
 
    .. code-block:: python
 
-      from isaacteleop.retargeters import (
+      from isaaccapture.retargeters import (
           DexHandRetargeter,
           DexHandRetargeterConfig,
       )
@@ -155,7 +155,7 @@ Available Retargeters
 
    .. code-block:: python
 
-      from isaacteleop.retargeters import (
+      from isaaccapture.retargeters import (
           DexBiManualRetargeter,
           DexHandRetargeterConfig,
       )
@@ -199,7 +199,7 @@ Available Retargeters
 
    .. code-block:: python
 
-      from isaacteleop.retargeters import (
+      from isaaccapture.retargeters import (
           TriHandMotionControllerRetargeter,
           TriHandMotionControllerConfig,
       )
@@ -285,14 +285,14 @@ manipulator (from ``stack_ik_abs_env_cfg.py``):
 .. code-block:: python
    :class: code-100col
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource, HandsSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner, ValueInput
+   from isaaccapture.retargeters import (
        GripperRetargeter, GripperRetargeterConfig,
        Se3AbsRetargeter, Se3RetargeterConfig,
        TensorReorderer,
    )
-   from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
+   from isaaccapture.retargeting_engine.tensor_types import TransformMatrix
 
    def build_franka_stack_pipeline():
 

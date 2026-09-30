@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -437,7 +438,7 @@ examples more readable by focusing on <strong>what</strong> you want to do rathe
 <strong>how</strong> to set it up.</p>
 <section id="overview">
 <h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
-<p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/python/isaacteleop/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
+<p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/python/isaaccapture/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp" rel="noopener noreferrer" target="_blank">DeviceIOSession</a>
 and <a class="reference internal" href="../device/trackers.html"><span class="doc">device trackers</span></a> so that callers don’t need to
@@ -453,13 +454,13 @@ manage them directly:</p>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
 <p>Here’s a minimal example:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TeleopSession</span><span class="p">,</span>
     <span class="n">TeleopSessionConfig</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span>
 
 <span class="c1"># Create source and build pipeline (one GripperRetargeter per side)</span>
 <span class="n">controllers</span> <span class="o">=</span> <span class="n">ControllersSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"controllers"</span><span class="p">)</span>
@@ -535,7 +536,7 @@ supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session’s lifetime. Construct handles with
 <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> where each
 argument is a <code class="docutils literal notranslate"><span class="pre">uint64</span></code> handle value.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.oxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenXRSessionHandles</span>
 
 <span class="n">handles</span> <span class="o">=</span> <span class="n">OpenXRSessionHandles</span><span class="p">(</span>
     <span class="n">instance_handle</span><span class="p">,</span> <span class="n">session_handle</span><span class="p">,</span> <span class="n">space_handle</span><span class="p">,</span> <span class="n">proc_addr</span>
@@ -559,8 +560,8 @@ of the pipeline: <code class="docutils literal notranslate"><span class="pre">Te
 OpenXR extensions with no extra argument (important for the external-<code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>
 flow). See <a class="reference internal" href="../device/trackers.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
 available vendor ids.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
 
 <span class="c1"># Select the backend on the source; it flows through the pipeline into the session.</span>
 <span class="n">full_body</span> <span class="o">=</span> <span class="n">FullBodySource</span><span class="p">(</span>
@@ -617,7 +618,7 @@ opaque values should provide an equivalent <code class="docutils literal notrans
 with <code class="docutils literal notranslate"><span class="pre">mode=&quot;sync&quot;</span></code>. Pipelined mode returns a new snapshot of the cached
 output on each <code class="docutils literal notranslate"><span class="pre">step()</span></code> call. Sync mode returns the pipeline result directly,
 matching the historical ownership behavior.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">RetargetingExecutionConfig</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">RetargetingExecutionConfig</span>
 
 <span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
     <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
@@ -645,7 +646,7 @@ work is coalesced so newer submissions replace older delayed requests.</p>
 thread. IsaacTeleop runs the retarget work on one background worker in
 pipelined mode, but public session state such as <code class="docutils literal notranslate"><span class="pre">frame_count</span></code>,
 <code class="docutils literal notranslate"><span class="pre">last_context</span></code>, and <code class="docutils literal notranslate"><span class="pre">last_step_info</span></code> belongs to the application thread.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DeadlinePacingConfig</span><span class="p">,</span>
     <span class="n">RetargetingExecutionConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -810,11 +811,11 @@ device record.</p></li>
 <p>Example (explicit GraphTime + ExecutionEvents override):</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface.execution_events</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface.execution_events</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">ExecutionEvents</span><span class="p">,</span>
     <span class="n">ExecutionState</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface.retargeter_core_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphTime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface.retargeter_core_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphTime</span>
 
 <span class="n">now_ns</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic_ns</span><span class="p">()</span>
 <span class="n">result</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">(</span>
@@ -866,7 +867,7 @@ and/or <code class="docutils literal notranslate"><span class="pre">HeadSource</
 <section id="complete-examples">
 <h3>Complete Examples<a class="headerlink" href="#complete-examples" title="Link to this heading">#</a></h3>
 <ol class="arabic simple">
-<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/isaacteleop_examples/teleop/gripper_retargeting_example_simple.py</span></code>
+<li><p><strong>Simplified Gripper Example</strong>: <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py</span></code>
 – Shows the minimal configuration approach and demonstrates auto-creation
 of input sources.</p></li>
 </ol>
@@ -1142,7 +1143,7 @@ of input sources.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

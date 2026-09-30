@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -567,8 +568,8 @@ also <a class="reference internal" href="../references/mcap_record_replay.html">
 </ol>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">FrameMetadataTrackerOak</span><span class="p">,</span> <span class="n">McapRecordingConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">PluginConfig</span><span class="p">,</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">FrameMetadataTrackerOak</span><span class="p">,</span> <span class="n">McapRecordingConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">PluginConfig</span><span class="p">,</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
 
 <span class="n">PLUGIN_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"build/src/plugins"</span><span class="p">)</span>  <span class="c1"># or your installed plugin search path</span>
 <span class="n">COLLECTION_PREFIX</span> <span class="o">=</span> <span class="s2">"oak_camera"</span>
@@ -607,7 +608,7 @@ also <a class="reference internal" href="../references/mcap_record_replay.html">
         <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>  <span class="c1"># metadata is recorded each update</span>
 </pre></div>
 </div>
-<p>See also <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/oxr/python/isaacteleop_examples/oxr/test_oak_camera.py" rel="noopener noreferrer" target="_blank">examples/oxr/python/isaacteleop_examples/oxr/test_oak_camera.py</a> (<code class="docutils literal notranslate"><span class="pre">--mode</span>
+<p>See also <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py" rel="noopener noreferrer" target="_blank">examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py</a> (<code class="docutils literal notranslate"><span class="pre">--mode</span>
 <span class="pre">schema-pusher</span></code>) for a standalone PluginManager + DeviceIOSession example of
 the same SchemaPusher flow.</p>
 </section>
@@ -885,7 +886,7 @@ ffprobe<span class="w"> </span>-show_entries<span class="w"> </span><span class=
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

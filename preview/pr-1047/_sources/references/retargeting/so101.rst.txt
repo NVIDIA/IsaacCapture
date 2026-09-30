@@ -12,13 +12,13 @@ position exactly and orientation best-effort (a 5-DOF arm is over-determined by 
 teleoperation of the arm (used by the Isaac Lab ``Isaac-Stack-Cube-SO101-IK-Abs-v0``
 cube-stacking task):
 
-* :class:`~isaacteleop.retargeters.SO101ClutchRetargeter` -- absolute EE **pose** (position +
+* :class:`~isaaccapture.retargeters.SO101ClutchRetargeter` -- absolute EE **pose** (position +
   orientation) clutched as a *full pose*: both the home position and the home orientation are
   re-latched on every engage, so there is no teleport when the operator engages.
-* :class:`~isaacteleop.retargeters.SO101GripperRetargeter` -- proportional (analog) jaw
+* :class:`~isaaccapture.retargeters.SO101GripperRetargeter` -- proportional (analog) jaw
   closedness from the controller trigger.
 
-Together they flatten (via :class:`~isaacteleop.retargeters.TensorReorderer`) into an 8-D action
+Together they flatten (via :class:`~isaaccapture.retargeters.TensorReorderer`) into an 8-D action
 ``[pos_x, pos_y, pos_z, quat_x, quat_y, quat_z, quat_w, gripper]``.
 
 At a glance
@@ -82,7 +82,7 @@ conjuncts are different things and both are load-bearing: ``squeeze`` is *operat
 ``execution_state`` is *system readiness*. An owning application that is still homing the arm
 should hold ``STOPPED`` so a squeeze cannot latch a home the arm has not reached yet -- which also
 makes it safe to supply the real home late, via
-:meth:`~isaacteleop.retargeters.SO101ClutchRetargeter.set_home_base_T_ee`, when the retargeting
+:meth:`~isaaccapture.retargeters.SO101ClutchRetargeter.set_home_base_T_ee`, when the retargeting
 graph must be built before the arm is homed. Calling that method on every disengaged frame of a
 ``RUNNING`` session is equally sound, and is what an owner whose arm moves while disengaged wants;
 see its own documentation, where the constraint is the engaged state rather than the cadence.
@@ -95,7 +95,7 @@ gap, so without it the clutch would rebase against the previous engagement's ori
 the whole accumulated hand motion at once.
 
 Owning loops should read
-:attr:`~isaacteleop.retargeters.SO101ClutchRetargeter.is_engaged` rather than re-deriving
+:attr:`~isaaccapture.retargeters.SO101ClutchRetargeter.is_engaged` rather than re-deriving
 engagement from the squeeze: its rising edge *is* the latch frame, including the cases where the
 latch was deferred by an unusable frame the loop cannot observe.
 
@@ -110,7 +110,7 @@ construction.
 
 Home latching on each engage is deliberately **asymmetric**: the home *position* comes from the
 arm's measured pose when
-:data:`~isaacteleop.retargeters.SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT` is connected (so
+:data:`~isaaccapture.retargeters.SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT` is connected (so
 an arm that sagged while disengaged is not snapped back to a stale command), while the home
 *orientation* is always the last commanded rotation. The 5-DOF wrist tracks orientation only
 softly, so latching the measured orientation would inject that tracking offset into the command on
@@ -121,7 +121,7 @@ every re-clutch.
    whose arm has rotated away from the configured home engages at the measured position and the
    *stale* orientation -- see the attribute's own documentation for the measured figure. When the
    arm's achieved rotation is what must be engaged against,
-   :meth:`~isaacteleop.retargeters.SO101ClutchRetargeter.set_home_base_T_ee` is not the preferred
+   :meth:`~isaaccapture.retargeters.SO101ClutchRetargeter.set_home_base_T_ee` is not the preferred
    route, it is the only one: it reads both blocks.
 
 ``MEASURED_BASE_T_EE_INPUT`` is declared ``OptionalType`` and a consumer **may omit it entirely**
@@ -139,10 +139,10 @@ absent ``OptionalTensorGroup`` on frames with no pose.
 Latch permission
 ^^^^^^^^^^^^^^^^
 
-:data:`~isaacteleop.retargeters.SO101ClutchRetargeter.ENGAGE_PERMITTED_INPUT` is an optional
+:data:`~isaaccapture.retargeters.SO101ClutchRetargeter.ENGAGE_PERMITTED_INPUT` is an optional
 boolean the owner sets when a jump-free engage is possible *right now*. It is read **only** on a
 frame where a latch is owed, so it gates the **latch** and never the engagement: revoking it
-mid-engagement does nothing, and :attr:`~isaacteleop.retargeters.SO101ClutchRetargeter.is_engaged`
+mid-engagement does nothing, and :attr:`~isaaccapture.retargeters.SO101ClutchRetargeter.is_engaged`
 remains exactly ``_origin is not None``. Absent, unwired, or ``True`` all mean permitted, so an
 existing consumer is unaffected.
 
@@ -161,7 +161,7 @@ Reset
 
 On ``execution_events.reset`` the held pose is re-seeded from the **configured** home -- the
 transform most recently given to the constructor or to
-:meth:`~isaacteleop.retargeters.SO101ClutchRetargeter.set_home_base_T_ee` -- and the latch is
+:meth:`~isaaccapture.retargeters.SO101ClutchRetargeter.set_home_base_T_ee` -- and the latch is
 re-armed.
 
 The seed is a *static configured* transform, never live arm state, and that is the whole point.
@@ -173,7 +173,7 @@ those orderings.
 The owning task is expected to slew the arm to that same configured pose on reset -- Isaac Lab's
 robot ``init_state`` does exactly that -- which is what makes the re-seed jump-free. An owner
 whose reset does *not* move the arm should keep the configured home up to date with
-:meth:`~isaacteleop.retargeters.SO101ClutchRetargeter.set_home_base_T_ee`, or simply not fire
+:meth:`~isaaccapture.retargeters.SO101ClutchRetargeter.set_home_base_T_ee`, or simply not fire
 ``reset``.
 
 "Never live arm state" scopes to the **re-seed**, not the whole frame. A frame carrying ``reset``
@@ -212,7 +212,7 @@ Gripper
 (``0`` = open, ``1`` = closed) with a small released-end deadzone, so a half-pressed trigger
 leaves the jaw half-closed. Downstream, an order-locked ``JointPositionActionCfg`` applies the
 affine ``joint = offset + scale * c`` mapping ``c`` onto the open/close joint angles. This is
-deliberately independent of the shared :class:`~isaacteleop.retargeters.GripperRetargeter`'s
+deliberately independent of the shared :class:`~isaaccapture.retargeters.GripperRetargeter`'s
 binary ``+1 = open`` / ``-1 = closed`` sign.
 
 Use it from Python
@@ -222,14 +222,14 @@ Use it from Python
 
    import numpy as np
 
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeters import (
        SO101ClutchRetargeter,
        SO101GripperRetargeter,
        TensorReorderer,
    )
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner, ValueInput
-   from isaacteleop.retargeting_engine.tensor_types import TransformMatrix
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner, ValueInput
+   from isaaccapture.retargeting_engine.tensor_types import TransformMatrix
 
    def build_so101_stack_pipeline(base_T_gripper_home: np.ndarray):
        controllers = ControllersSource(name="controllers")

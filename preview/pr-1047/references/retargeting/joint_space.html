@@ -383,6 +383,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
 </ul>
 </div>
@@ -491,7 +492,7 @@ command. Config: <code class="docutils literal notranslate"><span class="pre">ur
 <code class="docutils literal notranslate"><span class="pre">gripper_close</span></code> to emit normalized closedness in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code> instead of the raw value).</p>
 <ul class="simple">
 <li><p>FK uses <code class="docutils literal notranslate"><span class="pre">pinocchio</span></code> (imported lazily; <code class="docutils literal notranslate"><span class="pre">joint</span></code> mode never needs it). Install via
-<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">'isaacteleop[retargeters]'</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">'isaaccapture[retargeters]'</span></code>.</p></li>
 <li><p>Assumes a fixed-base model of single-DOF joints (the common leader-arm / exoskeleton case).</p></li>
 <li><p>The schema’s device <code class="docutils literal notranslate"><span class="pre">ee_pose</span></code> field is <strong>not</strong> consumed yet – FK is always computed from the
 joint positions.</p></li>
@@ -510,9 +511,9 @@ graph’s type check at <code class="docutils literal notranslate"><span class="
 <h2>Use it from Python<a class="headerlink" href="#use-it-from-python" title="Link to this heading">#</a></h2>
 <p>A pipeline builder returns an <code class="docutils literal notranslate"><span class="pre">OutputCombiner</span></code> with a single <code class="docutils literal notranslate"><span class="pre">&quot;action&quot;</span></code> key (the layout your
 environment’s action space expects):</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">JointStateSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">JointStateSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">JointStateRetargeter</span><span class="p">,</span>
     <span class="n">JointStateRetargeterConfig</span><span class="p">,</span>
     <span class="n">TensorReorderer</span><span class="p">,</span>
@@ -547,8 +548,8 @@ and flatten <code class="docutils literal notranslate"><span class="pre">ee_pose
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
 
 <span class="gp"># </span>Consumes<span class="w"> </span>the<span class="w"> </span>so101_leader<span class="w"> </span>plugin<span class="w"> </span>over<span class="w"> </span>OpenXR<span class="w"> </span><span class="o">(</span><span class="nb">source</span><span class="w"> </span>cloudxr.env<span class="w"> </span>first<span class="o">)</span>:
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>joint<span class="w"> </span>--frames<span class="w"> </span><span class="m">8</span>
-<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>so101_new_calib.urdf
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>joint<span class="w"> </span>--frames<span class="w"> </span><span class="m">8</span>
+<span class="gp">$ </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.joint_space_device_example<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>so101_new_calib.urdf
 </pre></div>
 </div>
 </section>
@@ -705,7 +706,7 @@ SO-101 plugin, and MCAP record/replay.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

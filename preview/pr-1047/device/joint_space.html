@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -599,8 +600,8 @@ decode is model-independent. Factory RobStride device ids are <code class="docut
 <h2>Record and replay<a class="headerlink" href="#record-and-replay" title="Link to this heading">#</a></h2>
 <p>The live tracker records to MCAP, and <code class="docutils literal notranslate"><span class="pre">ReplayJointStateTrackerImpl</span></code> replays it back with no
 OpenXR runtime, so a recorded session drives the retargeting graph headlessly:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span><span class="p">,</span> <span class="n">McapReplayConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">SessionMode</span><span class="p">,</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="kn">import</span> <span class="n">McapRecordingConfig</span><span class="p">,</span> <span class="n">McapReplayConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">SessionMode</span><span class="p">,</span> <span class="n">TeleopSession</span><span class="p">,</span> <span class="n">TeleopSessionConfig</span>
 
 <span class="c1"># Record (live): TeleopSessionConfig(..., mcap_config=McapRecordingConfig("leader.mcap"))</span>
 <span class="c1"># Replay (headless): TeleopSessionConfig(..., mode=SessionMode.REPLAY,</span>
@@ -770,7 +771,7 @@ the end-to-end example, and validation.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

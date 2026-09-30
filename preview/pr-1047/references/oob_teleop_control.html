@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
@@ -447,7 +448,7 @@ web client page and the <code class="docutils literal notranslate"><span class="
 baseline works, add <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> to automate the full flow.</p>
 <p>Launch the CloudXR runtime with the <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> flag (add <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>
 on first run):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
 </pre></div>
 </div>
 <p>This will:</p>
@@ -462,7 +463,7 @@ via Chrome DevTools Protocol (CDP)</p></li>
 CI, or wireless-only environments — set <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_HUB_ONLY=1</span></code> and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
 and is <strong>not compatible with</strong> <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TELEOP_OOB_HUB_ONLY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TELEOP_OOB_HUB_ONLY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
 </pre></div>
 </div>
 <p>You should see output confirming the hub is running:</p>
@@ -485,7 +486,7 @@ page access and CloudXR streaming)</p></li>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
 parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;HOST_IP&gt;</span></code> with the streaming host’s LAN IP. The <code class="docutils literal notranslate"><span class="pre">port</span></code> must
 match the proxy port (default 48322).</p>
 <div class="admonition note">
@@ -562,7 +563,7 @@ temporarily during CDP automation to reach the browser’s DevTools socket.</p>
 <p>If any step fails, the hub still starts.  Fall back to
 <code class="docutils literal notranslate"><span class="pre">chrome://inspect/#devices</span></code> from the PC or tap CONNECT on the headset
 directly.  To re-open the page later without restarting the launcher, pass the
-bookmark URL above to <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr.webclient</span></code> (see
+bookmark URL above to <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.webclient</span></code> (see
 <a class="reference internal" href="cloudxr.html"><span class="doc">CloudXR Service</span></a>).</p>
 </section>
 <section id="architecture">
@@ -586,7 +587,7 @@ bookmark URL above to <code class="docutils literal notranslate"><span class="pr
 periodically (default every 500 ms), receives config pushes.</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Streaming host</strong></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop.cloudxr.service</span> <span class="pre">run</span> <span class="pre">--setup-oob</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">run</span> <span class="pre">--setup-oob</span></code></p></td>
 <td><p>Runs CloudXR runtime + WSS proxy + OOB hub on a single TLS port.
 Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 </tr>
@@ -819,7 +820,7 @@ Pass it as:</p>
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
 <p>The web client connects to the hub when the page URL contains
 <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code> plus <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacTeleop/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacTeleop/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
 <p>The client builds <code class="docutils literal notranslate"><span class="pre">wss://{serverIP}:{port}/oob/v1/ws</span></code> and:</p>
 <ol class="arabic simple">
 <li><p>Registers as role <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code></p></li>
@@ -857,7 +858,10 @@ reach returning clients. Only <code class="docutils literal notranslate"><span c
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code></p></td>
-<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>)</p></td>
+<td><p>WSS proxy port (default <code class="docutils literal notranslate"><span class="pre">48322</span></code>). Also the hosted <code class="docutils literal notranslate"><span class="pre">/client/</span></code>
+origin for both <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> and <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>: the page
+and signaling share this socket. In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode
+<code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> maps it to the headset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code></p></td>
 <td><p>Optional auth token for hub access</p></td>
@@ -909,17 +913,11 @@ set; the value must match a serial currently in <code class="docutils literal no
 <code class="docutils literal notranslate"><span class="pre">adb</span></code> subprocess inherits it, so no code path needs <code class="docutils literal notranslate"><span class="pre">-s</span>
 <span class="pre">&lt;serial&gt;</span></code>.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code></p></td>
-<td><p>HTTPS static web client port for <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> (default <code class="docutils literal notranslate"><span class="pre">8080</span></code>).
-Binds to <code class="docutils literal notranslate"><span class="pre">127.0.0.1:&lt;port&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-maps the port to
-the headset.  <code class="docutils literal notranslate"><span class="pre">--host-client</span></code> uses the WSS proxy port (<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>)
-instead; <code class="docutils literal notranslate"><span class="pre">USB_UI_PORT</span></code> has no effect on it.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -934,7 +932,7 @@ over the USB cable on the headset’s loopback via <code class="docutils literal
 <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> because the OOB hub is the only path that delivers TURN relay
 configuration to the client (without it the headset has no way to discover the
 coturn endpoint).  Always use both flags together:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob<span class="w"> </span>--usb-local
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob<span class="w"> </span>--usb-local
 </pre></div>
 </div>
 <p>On startup the launcher:</p>
@@ -947,15 +945,17 @@ traverse the network).</p></li>
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
 the published client (see <a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
-<li><p>Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-the WSS proxy uses (Python <code class="docutils literal notranslate"><span class="pre">http.server</span></code> in a daemon thread).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> for 8080 (static UI), 48322 (WSS), 49100 (backend),
+<li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">/client/</span></code> on the WSS proxy port
+(<code class="docutils literal notranslate"><span class="pre">PROXY_PORT</span></code>, default 48322) — the same HTTP/WSS multiplexer as
+<code class="docutils literal notranslate"><span class="pre">--host-client</span></code> (page and signaling share one origin).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> for 48322 (WSS + <code class="docutils literal notranslate"><span class="pre">/client/</span></code>), 49100 (backend),
 3478 (coturn TURN).</p></li>
 <li><p>Starts coturn locally on 127.0.0.1:3478 for WebRTC ICE relay.</p></li>
 <li><p>Launches the teleop URL on the headset and auto-clicks CONNECT via CDP.</p></li>
 </ol>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
+cookies / HTTP cache for the teleop UI origins
+(<code class="docutils literal notranslate"><span class="pre">https://localhost:&lt;PROXY_PORT&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;PROXY_PORT&gt;</span></code>)
 before the session starts — the SDK and web client both cache settings
 (e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
@@ -1210,7 +1210,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

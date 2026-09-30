@@ -40,7 +40,7 @@ Data Interface
 Visualization (Televiz)
 -----------------------
 
-Televiz (``isaacteleop.viz``) is a lightweight compositor module for visualizing what the operator
+Televiz (``isaaccapture.viz``) is a lightweight compositor module for visualizing what the operator
 sees — camera and sensor feeds, plus 3D rendered content — in an XR headset or a desktop window.
 
 - Composites multiple sources into one view: 2D camera/sensor planes (``QuadLayer``) and full-view stereo RGBD (``ProjectionLayer``) for 3D rendered content

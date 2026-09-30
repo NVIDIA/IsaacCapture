@@ -26,7 +26,7 @@ Video Capture
 ---------------------------
 
 To capture egocentric video with an OAK camera, see the
-`OAK camera plugin <https://nvidia.github.io/IsaacTeleop/main/device/oak.html>`_ documentation.
+`OAK camera plugin <https://nvidia.github.io/IsaacCapture/main/device/oak.html>`_ documentation.
 
 Setup
 -----

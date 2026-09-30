@@ -130,8 +130,8 @@ controllers, etc.):
 
    from pathlib import Path
 
-   from isaacteleop.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
-   from isaacteleop.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
+   from isaaccapture.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
+   from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
 
    PLUGIN_ROOT = Path("build/src/plugins")  # or your installed plugin search path
    COLLECTION_PREFIX = "oak_camera"
@@ -169,7 +169,7 @@ controllers, etc.):
        while True:
            session.step()  # metadata is recorded each update
 
-See also :code-file:`examples/oxr/python/isaacteleop_examples/oxr/test_oak_camera.py` (``--mode
+See also :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py` (``--mode
 schema-pusher``) for a standalone PluginManager + DeviceIOSession example of
 the same SchemaPusher flow.
 

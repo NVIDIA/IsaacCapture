@@ -21,7 +21,7 @@ OpenXR I/O:
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import DeviceState
+   from isaaccapture.teleop_session_manager import DeviceState
 
    with TeleopSession(config) as session:
        while True:
