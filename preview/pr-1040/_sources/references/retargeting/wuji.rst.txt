@@ -40,14 +40,14 @@ Install the Wuji retargeting extra:
 
 .. code-block:: console
 
-   $ pip install 'isaacteleop[wuji]'
+   $ pip install 'isaaccapture[wuji]'
 
 Use it from Python
 ------------------
 
 .. code-block:: python
 
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeters import (
        WujiHandRetargeter,
        WujiHandRetargeterConfig,
    )
@@ -72,15 +72,15 @@ real Wuji hand:
    $ uv pip install -e ./examples/retargeting
 
    # Device-free smoke test
-   $ python -m isaacteleop_examples.retargeting.wuji_hand_retargeter_demo \
+   $ python -m isaaccapture_examples.retargeting.wuji_hand_retargeter_demo \
        --mode synthetic --model wuji_hand_2 --hand right
 
    # Replay MediaPipe-format keypoints
-   $ python -m isaacteleop_examples.retargeting.wuji_hand_retargeter_demo \
+   $ python -m isaaccapture_examples.retargeting.wuji_hand_retargeter_demo \
        --mode replay --replay my_take.pkl --model wuji_hand_2 --hand right
 
    # Drive real hardware and let TeleopSession launch the Wuji glove plugin
-   $ python -m isaacteleop_examples.retargeting.wuji_hand_retargeter_demo \
+   $ python -m isaaccapture_examples.retargeting.wuji_hand_retargeter_demo \
        --mode drive --hand right --plugin-path build/src/plugins
 
 Drive mode needs a running CloudXR runtime, an OpenXR hand-tracking source, and

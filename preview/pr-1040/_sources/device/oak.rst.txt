@@ -130,8 +130,8 @@ controllers, etc.):
 
    from pathlib import Path
 
-   from isaacteleop.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
-   from isaacteleop.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
+   from isaaccapture.deviceio import FrameMetadataTrackerOak, McapRecordingConfig
+   from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession, TeleopSessionConfig
 
    PLUGIN_ROOT = Path("build/src/plugins")  # or your installed plugin search path
    COLLECTION_PREFIX = "oak_camera"

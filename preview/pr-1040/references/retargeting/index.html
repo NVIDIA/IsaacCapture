@@ -383,6 +383,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../license.html">License</a></li>
 </ul>
 </div>
@@ -533,7 +534,7 @@ tracking (26 joints) to robot-specific hand joint angles.</p>
 of the fingers, to ensure accurate optimization.</p>
 </div>
 <p class="sd-card-text"><strong>Configuration (DexHandRetargeter):</strong></p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DexHandRetargeter</span><span class="p">,</span>
     <span class="n">DexHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -584,7 +585,7 @@ target joint names, type (e.g. <code class="docutils literal notranslate"><span 
 <code class="docutils literal notranslate"><span class="pre">DexHandRetargeterConfig</span></code> for left and right hands, then instantiate with
 <code class="docutils literal notranslate"><span class="pre">left_config</span></code>, <code class="docutils literal notranslate"><span class="pre">right_config</span></code>, and <code class="docutils literal notranslate"><span class="pre">target_joint_names</span></code> (combined left + right joint
 names):</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DexBiManualRetargeter</span><span class="p">,</span>
     <span class="n">DexHandRetargeterConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -625,7 +626,7 @@ joint angles (7 DOF per hand). No external dependencies.</p>
 <p class="sd-card-text"><strong>Mapping:</strong> trigger → index finger, squeeze → middle finger, both → thumb. Good for quick
 prototyping and testing.</p>
 <p class="sd-card-text"><strong>Configuration:</strong></p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TriHandMotionControllerRetargeter</span><span class="p">,</span>
     <span class="n">TriHandMotionControllerConfig</span><span class="p">,</span>
 <span class="p">)</span>
@@ -737,14 +738,14 @@ tensor. The <code class="docutils literal notranslate"><span class="pre">output_
 <p>A pipeline builder is a callable that constructs the retargeting graph and returns an
 <code class="docutils literal notranslate"><span class="pre">OutputCombiner</span></code> with a single <code class="docutils literal notranslate"><span class="pre">&quot;action&quot;</span></code> key. Here is a complete example for a Franka
 manipulator (from <code class="docutils literal notranslate"><span class="pre">stack_ik_abs_env_cfg.py</span></code>):</p>
-<div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span><span class="p">,</span> <span class="n">HandsSource</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span><span class="p">,</span> <span class="n">ValueInput</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span><span class="p">,</span> <span class="n">HandsSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span><span class="p">,</span> <span class="n">ValueInput</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">GripperRetargeter</span><span class="p">,</span> <span class="n">GripperRetargeterConfig</span><span class="p">,</span>
     <span class="n">Se3AbsRetargeter</span><span class="p">,</span> <span class="n">Se3RetargeterConfig</span><span class="p">,</span>
     <span class="n">TensorReorderer</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">isaacteleop.retargeting_engine.tensor_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">TransformMatrix</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.tensor_types</span><span class="w"> </span><span class="kn">import</span> <span class="n">TransformMatrix</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">build_franka_stack_pipeline</span><span class="p">():</span>
 
@@ -962,7 +963,7 @@ retargeter tuning UI.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

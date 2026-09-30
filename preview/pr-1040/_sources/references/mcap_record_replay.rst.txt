@@ -17,8 +17,8 @@ trackers from the pipeline, so you only need to provide the output filename:
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import TeleopSession, TeleopSessionConfig
-   from isaacteleop.deviceio import McapRecordingConfig
+   from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
+   from isaaccapture.deviceio import McapRecordingConfig
 
    config = TeleopSessionConfig(
        app_name="MyApp",
@@ -46,7 +46,7 @@ useful for recording additional trackers that are not part of the pipeline:
 
 .. code-block:: python
 
-   from isaacteleop.deviceio import McapRecordingConfig
+   from isaaccapture.deviceio import McapRecordingConfig
 
    extra_tracker = deviceio.HandTracker()
 
@@ -68,12 +68,12 @@ file:
 
 .. code-block:: python
 
-   from isaacteleop.teleop_session_manager import (
+   from isaaccapture.teleop_session_manager import (
        TeleopSession,
        TeleopSessionConfig,
        SessionMode,
    )
-   from isaacteleop.deviceio import McapReplayConfig
+   from isaaccapture.deviceio import McapReplayConfig
 
    config = TeleopSessionConfig(
        app_name="MyApp",
@@ -130,7 +130,7 @@ Runnable Example
 ----------------
 
 A complete record / replay example lives at
-``examples/mcap_record_replay/python/isaacteleop_examples/mcap_record_replay/``:
+``examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay/``:
 
 - ``common.py`` — pipeline builders (``build_hand_pipeline()``,
   ``build_controller_pipeline()``, ``build_full_body_pipeline()``) plus the
@@ -161,7 +161,7 @@ controllers, and full body), see ``examples/deviceio_live_view/`` and its
 .. code-block:: bash
 
    uv pip install -e ./examples/deviceio_live_view
-   python -m isaacteleop_examples.deviceio_live_view --accept-eula
+   python -m isaaccapture_examples.deviceio_live_view --accept-eula
 
 A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
 
@@ -178,8 +178,8 @@ From the repo root:
 .. code-block:: bash
 
    uv pip install -e ./examples/mcap_record_replay
-   python -m isaacteleop_examples.mcap_record_replay.live_full_body --accept-eula
-   python -m isaacteleop_examples.mcap_record_replay.live_full_body --port 8090 --accept-eula
+   python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
+   python -m isaaccapture_examples.mcap_record_replay.live_full_body --port 8090 --accept-eula
 
 Open the printed URL (default ``http://localhost:8080``) in a browser.  The
 viewers bind every interface, since they run where the headset is and get
@@ -193,7 +193,7 @@ From the repo root:
 .. code-block:: bash
 
    uv pip install -e ./examples/mcap_record_replay
-   R="python -m isaacteleop_examples.mcap_record_replay.record_hand"
+   R="python -m isaaccapture_examples.mcap_record_replay.record_hand"
    $R              # 5 s → ./recordings/hands_<timestamp>.mcap
    $R 10           # record for 10 seconds
    $R 10 out.mcap  # custom output path
@@ -202,7 +202,7 @@ Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
 The example never downloads a published wheel — it runs against the
-``isaacteleop`` next to it, built from this checkout.  The first install
+``isaaccapture`` next to it, built from this checkout.  The first install
 compiles the extension modules and takes a few minutes; later ones reuse the
 cached build, and the install is editable, so edits under ``src/python/`` need
 no rebuild.  From ``install/examples/mcap_record_replay`` (after ``cmake
@@ -218,14 +218,13 @@ has no such requirement.
 Replaying
 ^^^^^^^^^
 
-Replay runs headless — no headset required:
+Replay repeats until Ctrl+C — no headset required:
 
 .. code-block:: bash
 
-   R="python -m isaacteleop_examples.mcap_record_replay.replay_hand"
+   R="python -m isaaccapture_examples.mcap_record_replay.replay_hand"
    $R                    # newest hands_*.mcap under ./recordings/
    $R path/to/file.mcap  # explicit file
-   $R --loop             # repeat until Ctrl+C
    $R --port 8090        # change viser port
 
 Open the printed URL (default ``http://localhost:8080``) in a browser to see the
@@ -233,7 +232,7 @@ left (green) and right (blue) hand skeletons update each frame.
 
 The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
 ``replay_full_body`` module pairs use the same CLI (positional MCAP path,
-``--host``, ``--port``, ``--loop``). ``live_full_body`` accepts ``--host``,
+``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
 ``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
 
 ``uv run`` (instead of an activated venv) needs an explicit ``--python 3.11``

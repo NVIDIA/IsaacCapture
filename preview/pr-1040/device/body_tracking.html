@@ -377,6 +377,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
@@ -670,7 +671,7 @@ joint data each frame through <code class="docutils literal notranslate"><span c
 <code class="docutils literal notranslate"><span class="pre">examples/oxr/python/test_full_body_tracker.py</span></code>. Neither embeds
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>, so start the runtime first and source its environment in
 the shell that launches them:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaacteleop.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
 <span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/full_body_printer
 </pre></div>
@@ -713,9 +714,9 @@ to <code class="docutils literal notranslate"><span class="pre">DeviceIOSession:
 channel base name. <code class="docutils literal notranslate"><span class="pre">examples/mcap_record_replay/cpp/record_full_body.cpp</span></code>
 demonstrates this — a file recorded there replays unchanged with
 <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code>. Give it an output directory
-(<code class="docutils literal notranslate"><span class="pre">record_full_body</span> <span class="pre">5</span> <span class="pre">examples/mcap_record_replay/recordings/</span></code>) and each run
-writes a fresh timestamped take into it, which is where
-<code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> looks by default.</p>
+(<code class="docutils literal notranslate"><span class="pre">record_full_body</span> <span class="pre">5</span> <span class="pre">recordings/</span></code>) and each run writes a fresh timestamped
+take into it; <code class="docutils literal notranslate"><span class="pre">replay_full_body.py</span></code> run from the same directory picks the
+newest one from <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> by default.</p>
 <figure class="align-default" id="id1">
 <img alt="Full body skeleton replayed from an MCAP recording in viser" class="no-image-zoom" src="../_images/full-body-replay.gif" />
 <figcaption>
@@ -885,7 +886,7 @@ tracker-based PICO solution, particularly for lower-body joints.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 18, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 30, 2026.
       <br/>
     
   </p>

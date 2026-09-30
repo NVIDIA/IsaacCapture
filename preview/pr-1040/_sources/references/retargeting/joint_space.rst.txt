@@ -47,7 +47,7 @@ command. Config: ``urdf_path``, ``ee_link``, ``gripper_joint`` (and optional ``g
 ``gripper_close`` to emit normalized closedness in ``[0, 1]`` instead of the raw value).
 
 * FK uses ``pinocchio`` (imported lazily; ``joint`` mode never needs it). Install via
-  ``pip install 'isaacteleop[retargeters]'``.
+  ``pip install 'isaaccapture[retargeters]'``.
 * Assumes a fixed-base model of single-DOF joints (the common leader-arm / exoskeleton case).
 * The schema's device ``ee_pose`` field is **not** consumed yet -- FK is always computed from the
   joint positions.
@@ -69,9 +69,9 @@ environment's action space expects):
 
 .. code-block:: python
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import JointStateSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner
+   from isaaccapture.retargeters import (
        JointStateRetargeter,
        JointStateRetargeterConfig,
        TensorReorderer,
