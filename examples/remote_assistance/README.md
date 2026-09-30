@@ -23,14 +23,14 @@ starting the Pico manager. For Camera Televiz, start the sender and viewer.
 
 | Site | Process | Group | Purpose |
 |---|---|---|---|
-| Edge Compute | 0 | Essential | LiveKit SFU |
-| Edge Compute | 1 | Essential | CloudXR / Pico teleop streamer |
-| Edge Compute | 2 | Robot | Edge control bridge |
-| Edge Compute | 3 | Camera Televiz | Camera receiver and display |
 | Robot Site | 0 | Robot | MuJoCo simulator (simulation only) |
 | Robot Site | 1 | Robot | SONIC policy deployment / ZMQ manager |
 | Robot Site | 2 | Robot | Robot control bridge |
 | Robot Site | 3 | Camera Televiz | Camera frame sender |
+| Edge Compute | 0 | Essential | LiveKit SFU |
+| Edge Compute | 1 | Robot | Edge control bridge |
+| Edge Compute | 2 | Camera Televiz | Camera receiver and display |
+| Edge Compute | 3 | Essential | CloudXR / Pico teleop streamer |
 
 ### One-time preparation
 
@@ -65,62 +65,6 @@ credentials for the single-computer test. For two computers, first follow
 [Network setup](#network-setup-for-two-computers) below to generate private site
 bundles, then use those bundles in the same processes. Run one SFU on Edge Compute;
 Robot Site connects to it. Keep ZMQ endpoints local to each site.
-
-### Edge Compute
-
-#### Process 0 — Essential — LiveKit SFU
-
-```bash
-cd ~/IsaacTeleop
-docker compose -f examples/remote_assistance/compose.yaml up -d
-```
-
-This starts the `isaac-remote-assistance-livekit-1` container in the background.
-Run it on **Edge Compute only**, once for both Robot and Camera Televiz. `up -d`
-leaves an unchanged running service in place; it does not need a dedicated
-terminal. Check its status with:
-
-```bash
-docker compose -f examples/remote_assistance/compose.yaml ps
-```
-
-#### Process 1 — Essential — CloudXR / Pico Teleop Streamer
-
-```bash
-cd ~/GR00T-WholeBodyControl
-source .venv_teleop/bin/activate
-python gear_sonic/scripts/pico_manager_thread_server.py \
-  --manager --input-source isaac-teleop \
-  --port 5558 --zmq_feedback_port 5559
-```
-
-Connect the headset's CloudXR.js web client to this Edge Compute host as in the
-existing workflow. This process supplies the shared XR workflow even when only
-Camera Televiz is being used. The Robot bridges are optional for camera viewing.
-A headless camera probe or `--mode window` viewer does not require this XR process.
-
-#### Process 2 — Robot — Edge Control Bridge
-
-```bash
-cd ~/IsaacTeleop
-examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
-  examples/remote_assistance/session.yaml --role edge
-```
-
-Forwards the local Pico manager's ZMQ output to LiveKit and returns robot feedback
-to the manager. This bridge carries control data; it is not the camera sender.
-
-#### Process 3 — Camera Televiz — Receiver and Display
-
-```bash
-cd ~/IsaacTeleop/examples/camera_viz
-source .venv/bin/activate
-source ~/.cloudxr/run/cloudxr.env
-./camera_viz.sh run configs/livekit-webcam.yaml --mode xr
-```
-
-Receives the Robot Site video through LiveKit and displays it through
-Televiz/CloudXR. Use `--mode window` for a local monitor instead of XR.
 
 ### Robot Site
 
@@ -195,6 +139,62 @@ Camera capture and robot control remain separate processes in the same room.
 Capture size and rate come from `livekit-webcam.yaml` (currently 1920×1080 at
 60 fps, MJPG). For 1440p30, set width/height/fps to 2560/1440/30. Keep sender and
 viewer configurations consistent and restart both after changing the mode.
+
+### Edge Compute
+
+#### Process 0 — Essential — LiveKit SFU
+
+```bash
+cd ~/IsaacTeleop
+docker compose -f examples/remote_assistance/compose.yaml up -d
+```
+
+This starts the `isaac-remote-assistance-livekit-1` container in the background.
+Run it on **Edge Compute only**, once for both Robot and Camera Televiz. `up -d`
+leaves an unchanged running service in place; it does not need a dedicated
+terminal. Check its status with:
+
+```bash
+docker compose -f examples/remote_assistance/compose.yaml ps
+```
+
+#### Process 1 — Robot — Edge Control Bridge
+
+```bash
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
+  examples/remote_assistance/session.yaml --role edge
+```
+
+Forwards the local Pico manager's ZMQ output to LiveKit and returns robot feedback
+to the manager. This bridge carries control data; it is not the camera sender.
+
+#### Process 2 — Camera Televiz — Receiver and Display
+
+```bash
+cd ~/IsaacTeleop/examples/camera_viz
+source .venv/bin/activate
+source ~/.cloudxr/run/cloudxr.env
+./camera_viz.sh run configs/livekit-webcam.yaml --mode xr
+```
+
+Receives the Robot Site video through LiveKit and displays it through
+Televiz/CloudXR. Use `--mode window` for a local monitor instead of XR.
+
+#### Process 3 — Essential — CloudXR / Pico Teleop Streamer
+
+```bash
+cd ~/GR00T-WholeBodyControl
+source .venv_teleop/bin/activate
+python gear_sonic/scripts/pico_manager_thread_server.py \
+  --manager --input-source isaac-teleop \
+  --port 5558 --zmq_feedback_port 5559
+```
+
+Connect the headset's CloudXR.js web client to this Edge Compute host as in the
+existing workflow. This process supplies the shared XR workflow even when only
+Camera Televiz is being used. The Robot bridges are optional for camera viewing.
+A headless camera probe or `--mode window` viewer does not require this XR process.
 
 ## Delivery and Lifecycle
 
@@ -467,13 +467,13 @@ supported capture mode. For a camera-free network test, add `--synthetic` to
 the sender and use the probe in step 8 instead of the viewer.
 
 **8. Start the processes on Edge Compute.** The network server (process 0) is
-already running from step 3. Start CloudXR / Pico Teleop Streamer (process 1)
-using the [Edge Compute instructions](#edge-compute) above. For Robot control,
-start the edge bridge below; for Camera Televiz, start the viewer. Run each
-process in its own terminal.
+already running from step 3. For Robot control, start the edge bridge (process 1)
+below; for Camera Televiz, start the viewer (process 2). Then start CloudXR / Pico
+Teleop Streamer (process 3) using the [Edge Compute instructions](#edge-compute)
+above. Run each process in its own terminal.
 
 ```bash
-# Process 2 — Robot — edge bridge
+# Process 1 — Robot — edge bridge
 cd ~/IsaacTeleop
 source "$HOME/remote-assistance-network/edge/credentials.env"
 examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
@@ -481,7 +481,7 @@ examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
 ```
 
 ```bash
-# Process 3 — Camera Televiz — viewer
+# Process 2 — Camera Televiz — viewer
 cd ~/IsaacTeleop/examples/camera_viz
 source .venv/bin/activate
 source ~/.cloudxr/run/cloudxr.env
