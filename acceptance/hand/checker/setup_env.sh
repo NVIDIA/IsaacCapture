@@ -9,10 +9,13 @@ cd "$(dirname "$0")"
 REPO="${REPO:-$(cd ../../.. && pwd)}"
 FBS="$REPO/src/core/schema/fbs"
 
-if [[ $# -gt 0 ]]; then
-  echo "usage: $0" >&2
-  exit 2
-fi
+WITH_PANEL=0
+for arg in "$@"; do
+  case "$arg" in
+    --panel) WITH_PANEL=1 ;;
+    *) echo "usage: $0 [--panel]" >&2; exit 2 ;;
+  esac
+done
 
 # flatc v24.3.25 -- the tag deps/third_party/CMakeLists.txt pins. A distro package or
 # `brew install flatbuffers` ships 25.x, whose .bfbs does not match the repo golden.
@@ -34,6 +37,9 @@ if [[ ! -x .venv/bin/python ]]; then
   uv venv --python 3.12 .venv
 fi
 uv pip install --python .venv/bin/python -r requirements.txt -r requirements-dev.txt
+if [[ "$WITH_PANEL" == 1 ]]; then
+  uv pip install --python .venv/bin/python -r requirements-panel.txt
+fi
 
 SITE_PACKAGES=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 printf '%s\n' "$PWD/src" "$REPO/acceptance/common/src" > "$SITE_PACKAGES/hand_acceptance.pth"

@@ -13,6 +13,17 @@ SPDX-License-Identifier: Apache-2.0
 
 Exit status: 0 `pass`, 1 `fail`, 2 `retake`, 3 `insufficient_data`.
 
+## View a take
+
+```bash
+./setup_env.sh --panel     # once; installs viser
+.venv/bin/python -m hand_acceptance.panel TAKE.mcap [--labels SIDECAR] [--host 0.0.0.0] [--port 8080]
+```
+
+Prints the report, then serves both hands on one playhead: joints green while valid and
+red where last seen once invalid, the labelled window under the playhead, frame rate and
+valid-joint count per hand, and the results in the four groups below, worst first.
+
 ## Verdict
 
 - `fail` — a hard check attributed to the device failed.
