@@ -597,3 +597,534 @@ async def test_watch_coturn_restarts_once_then_gives_up(capsys) -> None:
     assert mock_start.call_count == 1
     assert proc_box[0] is new_proc
     assert "died again" in capsys.readouterr().err
+
+
+# ============================================================================
+# CDP: _discover_devtools_socket / _close_stale_teleop_tabs
+#
+# _discover_devtools_socket mocks only `_run_adb` (no real device). _close_stale_teleop_tabs
+# drives the real function against a genuine local HTTP server standing in for Chromium's CDP
+# `/json` endpoint - only the two `adb forward` calls either side of it are mocked, since there's
+# no real device - so the tab-matching/close-request logic itself is exercised for real rather
+# than asserted via mocked call arguments.
+# ============================================================================
+
+import http.server  # noqa: E402
+import json  # noqa: E402
+import threading  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from typing import ClassVar  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    _CDP_LOCAL_PORT,
+    _close_stale_teleop_tabs,
+    _discover_devtools_socket,
+)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_prefers_weblayer_over_generic(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @chrome_devtools_remote\n"
+        "1: 00000003 00000000 00010000 0001 01 12346 @weblayer_devtools_remote_777\n"
+    )
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_777"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_falls_back_to_first_candidate(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @some.custom_devtools_remote\n"
+    )
+    assert _discover_devtools_socket() == "some.custom_devtools_remote"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_no_candidates_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @unrelated_socket\n"
+    )
+    assert _discover_devtools_socket() is None
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_adb_unreachable_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = None
+    assert _discover_devtools_socket() is None
+
+
+class _FakeCdpHandler(http.server.BaseHTTPRequestHandler):
+    """Stands in for Chromium's CDP HTTP endpoint: GET /json (tab list) and GET /json/close/<id>."""
+
+    tabs: ClassVar[list[dict]] = []
+    closed_ids: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        if self.path == "/json":
+            body = json.dumps(self.tabs).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/json/close/"):
+            self.closed_ids.append(self.path.removeprefix("/json/close/"))
+            self.send_response(200)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(
+        self, *args
+    ) -> None:  # silence BaseHTTPRequestHandler's request logging
+        pass
+
+
+@contextmanager
+def _fake_cdp_server(tabs: list[dict]):
+    """Serves *tabs* on `_CDP_LOCAL_PORT` for the duration of the block; yields the handler class
+    so the test can inspect `.closed_ids` after."""
+    _FakeCdpHandler.tabs = tabs
+    _FakeCdpHandler.closed_ids = []
+    # Must bind the real _CDP_LOCAL_PORT, not an OS-assigned one: _close_stale_teleop_tabs()
+    # hardcodes that constant internally rather than taking a port parameter.
+    server = http.server.HTTPServer(("localhost", _CDP_LOCAL_PORT), _FakeCdpHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield _FakeCdpHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_closes_only_oob_tabs(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [
+        {"id": "stale-1", "url": "https://headset.local/?oobEnable=1"},
+        {"id": "unrelated", "url": "https://headset.local/some-other-page"},
+        {"id": "stale-2", "url": "https://headset.local/?oobEnable=1&codec=av1"},
+    ]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+
+    assert closed == 2
+    assert sorted(handler.closed_ids) == ["stale-1", "stale-2"]
+    mock_forward.assert_called_once_with("chrome_devtools_remote", _CDP_LOCAL_PORT)
+    mock_remove.assert_called_once_with(_CDP_LOCAL_PORT)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_matches_closes_nothing(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [{"id": "unrelated", "url": "https://headset.local/some-other-page"}]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+
+    assert closed == 0
+    assert handler.closed_ids == []
+    mock_remove.assert_called_once_with(_CDP_LOCAL_PORT)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_devtools_socket_returns_zero(
+    mock_discover: MagicMock,
+) -> None:
+    mock_discover.return_value = None
+    assert _close_stale_teleop_tabs() == 0
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_forward_failure_returns_zero_without_remove(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    """`adb forward` failing means no rule was ever set up - `_adb_forward_remove` (a `--remove`
+    of that rule) is therefore not called, unlike the success-then-cleanup path above."""
+    mock_discover.return_value = "chrome_devtools_remote"
+    mock_forward.side_effect = OobAdbError("adb forward failed")
+    assert _close_stale_teleop_tabs() == 0
+    mock_remove.assert_not_called()
+
+
+# ============================================================================
+# CDP: _cdp_session_click_connect
+#
+# Drives the real function against a genuine local CDP WebSocket server (unlike
+# _close_stale_teleop_tabs's HTTP /json above, this function speaks CDP entirely over one
+# WebSocket) - _CdpScript below is a scripted responder standing in for a real Chromium
+# DevTools target, so the cert-interstitial bypass and readiness-poll state machine run for
+# real rather than being asserted via mocked call arguments. Unlike _CDP_LOCAL_PORT above, the
+# WebSocket URL is a plain function argument, so each test gets its own OS-assigned port.
+# ============================================================================
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+from websockets.asyncio.server import serve as ws_serve  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import _cdp_session_click_connect  # noqa: E402
+
+
+class _CdpScript:
+    """Scripted responder for the CDP calls `_cdp_session_click_connect` makes.
+
+    *readiness_states* is consumed one entry per readiness-poll call (repeating the last entry
+    once exhausted). *interstitial_url* starting with `chrome-error:` forces the DOM
+    click-through fallback instead of the primary `Page.navigate` bypass - the same branch
+    condition the real function itself checks.
+    """
+
+    def __init__(
+        self,
+        *,
+        interstitial: bool = False,
+        interstitial_url: str = "https://headset.local/",
+        readiness_states: list[dict] | None = None,
+    ) -> None:
+        self.interstitial = interstitial
+        self.interstitial_url = interstitial_url
+        self.readiness_states = readiness_states or [
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20}
+        ]
+        self._readiness_index = 0
+        self.calls: list[tuple[str, dict]] = []
+
+    def respond(self, method: str, params: dict) -> dict:
+        self.calls.append((method, params))
+        expr = params.get("expression", "")
+
+        if method in (
+            "Security.setIgnoreCertificateErrors",
+            "Page.bringToFront",
+            "Page.navigate",
+            "Input.dispatchMouseEvent",
+        ):
+            return {}
+        if expr == "!!document.getElementById('details-button')":
+            return {"result": {"value": self.interstitial}}
+        if expr == "window.location.href":
+            return {"result": {"value": self.interstitial_url}}
+        if expr in (
+            "document.getElementById('details-button')?.click()",
+            "document.getElementById('proceed-link')?.click()",
+            "document.getElementById('startButton')?.click()",
+        ):
+            return {}
+        if "getBoundingClientRect" in expr:
+            i = min(self._readiness_index, len(self.readiness_states) - 1)
+            self._readiness_index += 1
+            return {"result": {"value": self.readiness_states[i]}}
+        if "errorMessageBox" in expr:
+            # Reports the session as already active (btnText != 'CONNECT') so the post-click
+            # outcome-monitor loop returns on its first iteration instead of polling for real.
+            return {"result": {"value": {"btnText": "DISCONNECT", "errorText": None}}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+@asynccontextmanager
+async def _fake_cdp_ws(script: _CdpScript):
+    """Serves *script*'s responses on an OS-assigned port; yields the `ws://` URL to connect to."""
+
+    async def handler(websocket):
+        async for raw in websocket:
+            msg = json.loads(raw)
+            result = script.respond(msg["method"], msg.get("params", {}))
+            await websocket.send(json.dumps({"id": msg["id"], "result": result}))
+
+    async with ws_serve(handler, "localhost", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        yield f"ws://localhost:{port}"
+
+
+async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_clicks() -> (
+    None
+):
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "initializing",
+                "text": "CONNECT (checking capabilities)",
+                "disabled": True,
+            },
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20},
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    assert "Input.dispatchMouseEvent" in methods
+    assert "Page.navigate" not in methods
+
+
+async def test_cdp_session_click_connect_failed_capability_check_raises() -> None:
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "failed",
+                "text": "CONNECT (capability check failed)",
+                "disabled": True,
+            }
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        with pytest.raises(OobAdbError, match="startButton marked failed"):
+            await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
+
+
+async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> None:
+    script = _CdpScript(interstitial=True, interstitial_url="https://headset.local/")
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" in methods
+    assert fallback_clicks == []
+
+
+async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> None:
+    script = _CdpScript(
+        interstitial=True, interstitial_url="chrome-error://chromewebdata/"
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" not in methods
+    assert fallback_clicks == ["document.getElementById('proceed-link')?.click()"]
+
+
+# ============================================================================
+# _find_and_click_teleop_tab: the shared tab-find + click-CONNECT helper
+# extracted from run_oob_connect() so _monitor_teleop_error_banner's repair
+# path can reuse it against an already-alive adb forward. Combines the two
+# fake servers above: _fake_cdp_server (HTTP /json tab list, bound to the
+# real _CDP_LOCAL_PORT) and _fake_cdp_ws (WebSocket CDP, OS-assigned port,
+# referenced by the fake tab's webSocketDebuggerUrl).
+# ============================================================================
+
+import time  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import _find_and_click_teleop_tab  # noqa: E402
+
+
+async def test_find_and_click_teleop_tab_finds_already_navigated_tab() -> None:
+    """A tab whose URL already matches at snapshot time (Case C - no visible diff between
+    polls) is still found and clicked, without ever needing to re-fire am start."""
+    script = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(script) as ws_url:
+        tabs = [
+            {
+                "id": "teleop-1",
+                "url": "https://headset.local/?oobEnable=1",
+                "webSocketDebuggerUrl": ws_url,
+            }
+        ]
+        with (
+            _fake_cdp_server(tabs),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark"
+            ) as mock_bookmark,
+        ):
+            found_url = await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 5,
+                timeout=5,
+            )
+    assert found_url == ws_url
+    assert "Input.dispatchMouseEvent" in [m for m, _ in script.calls]
+    mock_bookmark.assert_not_called()  # tab was already there - no re-fire needed
+
+
+async def test_find_and_click_teleop_tab_no_tab_found_raises() -> None:
+    """No matching tab within the deadline raises OobAdbError rather than hanging."""
+    with (
+        _fake_cdp_server([]),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+            return_value=(0, ""),
+        ),
+    ):
+        with pytest.raises(OobAdbError, match="tab for the teleop page not found"):
+            await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 1.5,
+                timeout=1.5,
+            )
+
+
+# ============================================================================
+# _monitor_teleop_error_banner: error-banner tracking + auto-repair relaunch.
+# _find_and_click_teleop_tab is mocked directly here (already covered on its
+# own above) so these tests exercise the monitor's own decision logic - when
+# to relaunch, and the two give-up guards - without re-driving a full nested
+# CDP simulation for both the monitor's polling loop and the relaunch's own
+# tab discovery in the same test.
+# ============================================================================
+
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    _MAX_CONSECUTIVE_RELAUNCH_FAILURES,
+    _MAX_RELAUNCHES_PER_WINDOW,
+    _monitor_teleop_error_banner,
+)
+
+
+class _MonitorScript:
+    """Scripted responder for _monitor_teleop_error_banner's own CDP calls: certificate-error
+    suppression (ignored) and the errorMessageBox poll, which returns one entry of *banners*
+    per call (repeating the last entry once exhausted)."""
+
+    def __init__(self, banners: list[str]) -> None:
+        self.banners = banners
+        self._index = 0
+
+    def respond(self, method: str, params: dict) -> dict:
+        if method == "Security.setIgnoreCertificateErrors":
+            return {}
+        expr = params.get("expression", "")
+        if "errorMessageBox" in expr and "classList.contains('show')" in expr:
+            i = min(self._index, len(self.banners) - 1)
+            self._index += 1
+            return {"result": {"value": self.banners[i]}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+async def test_monitor_relaunches_once_on_terminal_error_then_keeps_watching(
+    capsys,
+) -> None:
+    """A single error banner triggers exactly one relaunch; once reconnected to the new
+    tab, an unchanging banner there does not trigger a second one."""
+    script = _MonitorScript(banners=["", "Stream did not attach within 500ms"])
+    new_ws_script = _MonitorScript(banners=[""])
+    async with (
+        _fake_cdp_ws(script) as ws_url,
+        _fake_cdp_ws(new_ws_script) as new_ws_url,
+    ):
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                return_value=new_ws_url,
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            # Long enough for: 1st tab's error banner (poll #2, ~2s) -> relaunch -> 2nd
+            # tab's steady empty banner (a couple more polls), plus scheduling margin.
+            await asyncio.sleep(4.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == 1
+    out = capsys.readouterr().err
+    assert "Stream did not attach within 500ms" in out
+    assert "relaunch succeeded" not in out  # that line goes to the logger, not stderr
+
+
+async def test_monitor_gives_up_after_max_consecutive_relaunch_failures(capsys) -> None:
+    """Auto-repair disables itself after _MAX_CONSECUTIVE_RELAUNCH_FAILURES failed relaunch
+    attempts, rather than retrying forever."""
+    script = _MonitorScript(banners=["Stream did not attach within 500ms"])
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                side_effect=OobAdbError("no matching tab"),
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            # Every reconnect immediately re-sees the same (never-changing) banner text,
+            # so failures accumulate quickly; margin above the bare minimum poll count.
+            await asyncio.sleep(2.0 * (_MAX_CONSECUTIVE_RELAUNCH_FAILURES + 1))
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == _MAX_CONSECUTIVE_RELAUNCH_FAILURES
+    out = capsys.readouterr().err
+    assert "manual intervention needed" in out
+
+
+async def test_monitor_gives_up_after_relaunch_flapping(capsys) -> None:
+    """Auto-repair also disables itself when relaunches keep *succeeding* but the session
+    re-fails shortly after each one - a problem consecutive-failure counting alone can't
+    catch, since every individual attempt "succeeded"."""
+    # Every reconnect (fresh or post-relaunch) sees the same banner immediately, so each
+    # relaunch "succeeds" (the mock always returns) but is immediately followed by another
+    # detected failure - the flapping pattern _MAX_RELAUNCHES_PER_WINDOW guards against.
+    script = _MonitorScript(banners=["Stream did not attach within 500ms"])
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+                return_value=(0, ""),
+            ),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab",
+                return_value=ws_url,
+            ) as mock_relaunch,
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url, _CDP_LOCAL_PORT, resolved_port=48322
+                )
+            )
+            await asyncio.sleep(2.0 * (_MAX_RELAUNCHES_PER_WINDOW + 1))
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert mock_relaunch.call_count == _MAX_RELAUNCHES_PER_WINDOW
+    out = capsys.readouterr().err
+    assert "manual intervention needed" in out
