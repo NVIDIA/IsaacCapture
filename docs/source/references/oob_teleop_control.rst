@@ -567,11 +567,6 @@ Environment variables
      - Non-negative delay between browser-local attempts in milliseconds
        (default ``3000``). The host derives its bounded recovery grace from
        this value and the maximum-attempt count.
-   * - ``USB_UI_PORT``
-     - HTTPS static web client port for ``--usb-local`` (default ``8080``).
-       Binds to ``127.0.0.1:<port>`` and ``adb reverse``-maps the port to
-       the headset.  ``--host-client`` uses the WSS proxy port (``PROXY_PORT``)
-       instead; ``USB_UI_PORT`` has no effect on it.
    * - ``USB_BACKEND_PORT``
      - CloudXR backend port the headset reaches via ``adb reverse`` in
        ``--usb-local`` mode (default ``49100``).
@@ -600,13 +595,13 @@ On startup the launcher:
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
    the published client (see :doc:`../getting_started/build_from_source/webxr`).
-3. Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
-   the WSS proxy uses (Python ``http.server`` in a daemon thread).
+3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
+   proxy's existing TLS listener.
 4. After the selected headset is ready, checks its non-loopback network,
-   starts/verifies coturn, and creates ``adb reverse`` rules for 8080
-   (static UI), 48322 (WSS), 49100 (backend), and 3478 (TURN).
+   starts/verifies coturn, and creates ``adb reverse`` rules for 48322
+   (WSS and static UI), 49100 (backend), and 3478 (TURN).
 5. Launches the teleop URL and clicks CONNECT via CDP. After cable loss,
-   replugging the same serial first rebuilds all four reverse rules, verifies
+   replugging the same serial first rebuilds all three reverse rules, verifies
    coturn, and repairs CDP forwarding without mutating a surviving browser tab.
    The WebXR client owns its bounded reconnect attempts. Fresh post-repair
    stream metrics resume the existing session; a stable terminal event allows
@@ -618,7 +613,7 @@ On startup the launcher:
    waiting for the ordinary five-second observation cadence.
 
 In ``--usb-local`` mode the launcher also wipes localStorage / IndexedDB /
-cookies / HTTP cache for the teleop UI origin (``https://127.0.0.1:<usb_ui_port>``)
+cookies / HTTP cache for the teleop UI origin (``https://localhost:<proxy_port>``)
 once for the selected session — the SDK and web client both cache settings
 (e.g. ``general.iceTransportPolicy`` for ICE transport policy,
 ``cxr.isaac.teleopPath`` for the last-used project) in localStorage, and a

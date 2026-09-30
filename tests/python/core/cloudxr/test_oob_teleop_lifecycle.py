@@ -106,6 +106,7 @@ async def test_replug_repair_observes_after_deadline_until_topology_changes():
     hub = FakeHub()
     now = [0.0]
     rebuild_times = []
+    snapshots = 0
 
     async def sleep(seconds):
         now[0] += seconds
@@ -132,6 +133,22 @@ async def test_replug_repair_observes_after_deadline_until_topology_changes():
 
     def reverse_listing(*_args, **_kwargs):
         return "topology-changed" if now[0] >= 4.0 else "stable-topology"
+
+    async def get_snapshot():
+        nonlocal snapshots
+        snapshots += 1
+        return {
+            "headsets": [
+                {
+                    "clientId": "surviving-page",
+                    "streaming": bool(snapshots % 2),
+                    "streamPhase": "retrying" if snapshots % 2 else "terminal",
+                    "terminalEventId": f"event-{snapshots}",
+                }
+            ]
+        }
+
+    hub.get_snapshot = get_snapshot
 
     ready = AdbDevices((("original", "device"),))
     with (
@@ -163,6 +180,61 @@ async def test_replug_repair_observes_after_deadline_until_topology_changes():
     assert all(status["state"] == "VERIFYING_EXISTING_BROWSER" for status in expired)
 
 
+@pytest.mark.parametrize("replacement", [[], [{"clientId": "replacement"}]])
+async def test_client_removal_or_replacement_restarts_expired_episode(replacement):
+    hub = FakeHub()
+    now = [0.0]
+    rebuild_times = []
+    clients = [[{"clientId": "surviving-page"}], replacement]
+
+    async def get_snapshot():
+        return {"headsets": clients[0]}
+
+    hub.get_snapshot = get_snapshot
+
+    async def sleep(seconds):
+        now[0] += seconds
+        if now[0] >= 2.0 and len(clients) > 1:
+            clients.pop(0)
+        if now[0] >= 4.0:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=2, interval_sec=1),
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+
+    async def fail_rebuild():
+        rebuild_times.append(now[0])
+        raise adb.OobAdbError("stable repair failure")
+
+    ready = AdbDevices((("original", "device"),))
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=ready),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(adb, "assert_headset_awake"),
+        patch.object(adb, "_run_adb", return_value="stable-topology"),
+        patch.object(lifecycle, "_rebuild_usb", new=fail_rebuild),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert rebuild_times == [0.0, 1.0, 2.0, 3.0]
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("extra_count", [1, 2])
 @pytest.mark.parametrize("selected_state", [None, "offline", "unauthorized"])
@@ -175,7 +247,6 @@ async def test_unrelated_devices_wait_and_original_recovers(
     else:
         monkeypatch.delenv("ANDROID_SERIAL", raising=False)
     hub = FakeHub()
-    fatals = []
     extras = tuple((f"extra-{i}", "device") for i in range(extra_count))
     absent = (
         extras if selected_state is None else (("original", selected_state), *extras)
@@ -222,7 +293,6 @@ async def test_unrelated_devices_wait_and_original_recovers(
         host_client=False,
         config=RecoveryConfig(),
         sleep=sleep,
-        on_fatal=fatals.append,
     )
     with (
         patch.object(adb, "enumerate_adb_devices", side_effect=enumerate_devices),
@@ -240,7 +310,6 @@ async def test_unrelated_devices_wait_and_original_recovers(
     ):
         with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
-    assert not fatals
     assert not any(status["health"] == "fatal" for status in hub.statuses)
     assert lifecycle.selected == "original"
     assert any(
@@ -533,7 +602,7 @@ async def test_late_coturn_fault_opens_new_episode():
     ready = AdbDevices((("original", "device"),))
     lifecycle._last_observation = (ready.devices, ready.diagnostic)
     lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
-    output = "\n".join(f"original tcp:{p} tcp:{p}" for p in (8080, 48322, 49100, 3478))
+    output = "\n".join(f"original tcp:{p} tcp:{p}" for p in (48322, 49100, 3478))
 
     async def restarted():
         return True
@@ -713,7 +782,7 @@ async def test_returning_transport_skips_second_ready_debounce():
     assert rebuilds == [True]
 
 
-async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failure():
+async def test_usb_rebuild_verifies_all_three_rules_and_rolls_back_partial_failure():
     hub = FakeHub()
     lifecycle = OobLifecycle(
         hub=hub,
@@ -726,7 +795,7 @@ async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failur
     )
     lifecycle.selected = "original"
     calls = []
-    ports = (8080, 48322, 49100, 3478)
+    ports = (48322, 49100, 3478)
     listing = "\n".join(f"original tcp:{port} tcp:{port}" for port in ports)
 
     def run(args, **kwargs):
@@ -771,7 +840,7 @@ async def test_usb_rebuild_verifies_all_four_rules_and_rolls_back_partial_failur
     ):
         with pytest.raises(Exception, match="49100"):
             await lifecycle._rebuild_usb()
-    assert len([args for args in calls if "--remove" in args]) == 10
+    assert len([args for args in calls if "--remove" in args]) == 8
 
 
 async def test_cable_loss_and_same_serial_replug_rebuilds_rules_without_relaunch():
@@ -858,14 +927,11 @@ async def test_cable_loss_and_same_serial_replug_rebuilds_rules_without_relaunch
         for args in calls
         if len(args) > 3 and args[1] == "reverse" and args[2].startswith("tcp:")
     ]
-    assert installs == [f"tcp:{p}" for p in (8080, 48322, 49100, 3478)] * 2
+    assert installs == [f"tcp:{p}" for p in (48322, 49100, 3478)] * 2
     assert connects == ["original"]
-    assert calls[-5:] == [
+    assert calls[-4:] == [
         ["adb", "forward", "--remove", "tcp:9223"],
-        *[
-            ["adb", "reverse", "--remove", f"tcp:{p}"]
-            for p in (8080, 48322, 49100, 3478)
-        ],
+        *[["adb", "reverse", "--remove", f"tcp:{p}"] for p in (48322, 49100, 3478)],
     ]
     assert not any(status["health"] == "fatal" for status in hub.statuses)
 
@@ -1220,7 +1286,7 @@ async def test_quick_cable_flap_repairs_transport_without_browser_automation():
     lifecycle.browser_ready = True
     lifecycle.browser_client = "surviving-page"
     lifecycle.last_stream_at = now
-    required = (8080, 48322, 49100, 3478)
+    required = (48322, 49100, 3478)
     complete = "\n".join(f"original tcp:{port} tcp:{port}" for port in required)
     probes = [AdbReverseProbe(True, required), AdbReverseProbe(True, ())]
     # AdbReverseProbe stores missing ports, so the first probe represents the
@@ -1473,7 +1539,13 @@ async def test_host_listener_failure_rolls_back_without_starting_turn():
     coturn.assert_not_called()
     full_bootstrap.assert_not_called()
     existing_tab.assert_not_called()
-    assert len([args for args in calls if "--remove" in args]) == 10
+    assert [args for args in calls if "--remove" in args] == 2 * [
+        ["adb", "forward", "--remove", "tcp:9223"],
+        *[
+            ["adb", "reverse", "--remove", f"tcp:{port}"]
+            for port in (48322, 49100, 3478)
+        ],
+    ]
 
 
 async def test_cancellation_mid_rebuild_rolls_back_owned_rules():
@@ -1506,12 +1578,9 @@ async def test_cancellation_mid_rebuild_rolls_back_owned_rules():
     ):
         with pytest.raises(asyncio.CancelledError):
             await lifecycle._rebuild_usb()
-    assert calls[-5:] == [
+    assert calls[-4:] == [
         ["adb", "forward", "--remove", "tcp:9223"],
-        *[
-            ["adb", "reverse", "--remove", f"tcp:{p}"]
-            for p in (8080, 48322, 49100, 3478)
-        ],
+        *[["adb", "reverse", "--remove", f"tcp:{p}"] for p in (48322, 49100, 3478)],
     ]
 
 
@@ -1688,7 +1757,7 @@ async def test_replug_repairs_transport_and_resumes_existing_page_without_automa
         for args in calls
         if len(args) >= 4 and args[1] == "reverse" and args[2].startswith("tcp:")
     ]
-    assert reversed_ports == ["tcp:8080", "tcp:48322", "tcp:49100", "tcp:3478"]
+    assert reversed_ports == ["tcp:48322", "tcp:49100", "tcp:3478"]
     full_bootstrap.assert_not_called()
     same_tab.assert_not_called()
     assert monitor_attaches
@@ -1793,7 +1862,7 @@ async def test_fresh_stream_without_cdp_never_mutates_live_browser():
     assert bootstraps == []
 
 
-async def test_fresh_stream_passively_reattaches_cdp_after_episode_expires():
+async def test_fresh_stream_passively_recovers_after_episode_expires():
     hub = FakeHub()
     wall_now = time.time()
     clock = [3.0]
@@ -1833,12 +1902,11 @@ async def test_fresh_stream_passively_reattaches_cdp_after_episode_expires():
     lifecycle._repair_started_at = wall_now
     lifecycle._client_grace_deadline = 0.0
     lifecycle._fresh_stream_without_cdp = True
-    attach_results = iter((False, True))
     attach_times = []
 
     async def attach_monitor():
         attach_times.append(clock[0])
-        return next(attach_results)
+        return True
 
     async def sleep(seconds):
         if lifecycle.snapshot.get("health") == "active":
@@ -1867,14 +1935,7 @@ async def test_fresh_stream_passively_reattaches_cdp_after_episode_expires():
         with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
 
-    assert attach_times == [3.0, 4.0]
-    degraded_streaming = [
-        status for status in hub.statuses if status["health"] == "degraded"
-    ]
-    assert degraded_streaming
-    assert all(status["streaming"] is True for status in degraded_streaming)
-    assert all(status["clientMetricsFresh"] is True for status in degraded_streaming)
-    assert all(status["turnEndToEndHealthy"] is True for status in degraded_streaming)
+    assert attach_times == []
     assert lifecycle.snapshot["health"] == "active"
     assert lifecycle.snapshot["state"] == "ACTIVE"
     assert lifecycle.generation == 4
@@ -2314,3 +2375,42 @@ async def test_stale_pre_repair_metrics_do_not_mark_existing_page_active():
         await lifecycle._recover_existing_browser()
     assert lifecycle.snapshot["health"] == "browser_ready"
     assert lifecycle.snapshot["clientMetricsFresh"] is False
+
+
+async def test_post_deadline_stale_evidence_remains_passive_and_degraded():
+    hub = FakeHub()
+    now = time.time()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0,
+        result={
+            "clientId": "surviving-page",
+            "streaming": True,
+            "lastMetricsAt": (now - 10) * 1000,
+            "streamPhase": "streaming",
+            "terminalEventId": "terminal-1",
+        },
+    )
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_client = "surviving-page"
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = now
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor") as attach,
+        patch.object(lifecycle, "_same_tab_connect") as same_tab,
+        patch.object(lifecycle, "_automate") as automate,
+    ):
+        await lifecycle._observe_passive_recovery()
+    assert lifecycle.snapshot["health"] == "degraded"
+    assert lifecycle.snapshot["clientMetricsFresh"] is False
+    assert lifecycle._transport_lost is True
+    attach.assert_not_called()
+    same_tab.assert_not_called()
+    automate.assert_not_called()

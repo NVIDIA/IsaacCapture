@@ -5,9 +5,6 @@
 
 from __future__ import annotations
 
-import http.server
-import threading
-import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 import cloudxr_py_test_ns.oob_teleop_env as oob_teleop_env_under_test
@@ -498,24 +495,6 @@ def test_oob_static_dir_rejects_cached_bundle_without_health_protocol(
     assert (
         require_web_client_static_dir(require_health_probe=True) == tmp_path.resolve()
     )
-
-
-def test_usb_static_server_does_not_cache_updated_bundle(tmp_path) -> None:
-    (tmp_path / "bundle.js").write_bytes(b'"healthProbe" "healthReport"')
-    handler = oob_teleop_env_under_test._usb_local_static_handler_class(tmp_path)
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{server.server_port}/bundle.js", timeout=2
-        ) as response:
-            assert response.read() == b'"healthProbe" "healthReport"'
-            assert response.headers["Cache-Control"] == "no-store"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
 
 
 def test_require_web_client_static_dir_not_a_directory(

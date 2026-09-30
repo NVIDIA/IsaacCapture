@@ -176,6 +176,7 @@ class CloudXRService:
         self._stopping = False
         self._stop_lock = threading.RLock()
         self._oob_lock = threading.Lock()
+        self._oob_publish_lock = asyncio.Lock()
         self._oob_snapshot: dict | None = None
         self._oob_updates: deque[dict] = deque(maxlen=128)
         self._oob_session_id = uuid.uuid4().hex
@@ -329,9 +330,9 @@ class CloudXRService:
         Safe to call multiple times or when nothing is running.
 
         Raises:
-            RuntimeError: If the runtime process could not be terminated.
-                The process handle is retained so callers can retry or
-                inspect the still-running process.
+            RuntimeError: If the WSS proxy or runtime could not be stopped.
+                Their handles are retained so callers can retry or inspect
+                the still-running component.
         """
         # Restore handlers only after teardown; _stopping blocks re-entrant stop().
         with self._stop_lock:
@@ -371,28 +372,44 @@ class CloudXRService:
                 self._restore_signal_handlers()
                 self._stopping = False
 
-    def _publish_oob_status(self, snapshot: dict) -> None:
-        """Atomically hand off a redacted lifecycle snapshot across threads."""
+    def _persist_oob_status(self, payload: dict) -> None:
+        """Atomically persist one status payload from a worker thread."""
+        temporary = self._oob_status_path.with_suffix(".json.tmp")
+        try:
+            self._oob_status_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            os.replace(temporary, self._oob_status_path)
+        except OSError as exc:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            logger.warning(
+                "Cannot publish OOB status %s: %s", self._oob_status_path, exc
+            )
+
+    async def _publish_oob_status(self, snapshot: dict) -> None:
+        """Publish a snapshot in order without blocking the WSS event loop."""
         payload = {
             **snapshot,
             "writerPid": os.getpid(),
             "runtimePid": self._runtime_proc.pid if self._runtime_proc else None,
             "sessionId": self._oob_session_id,
         }
-        with self._oob_lock:
-            self._oob_snapshot = payload
-            self._oob_updates.append(payload)
+        async with self._oob_publish_lock:
+            with self._oob_lock:
+                self._oob_snapshot = payload
+                self._oob_updates.append(payload)
+            persistence = asyncio.create_task(
+                asyncio.to_thread(self._persist_oob_status, payload)
+            )
             try:
-                self._oob_status_path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = self._oob_status_path.with_suffix(".json.tmp")
-                temporary.write_text(
-                    json.dumps(payload, sort_keys=True), encoding="utf-8"
-                )
-                os.replace(temporary, self._oob_status_path)
-            except OSError as exc:
-                logger.warning(
-                    "Cannot publish OOB status %s: %s", self._oob_status_path, exc
-                )
+                await asyncio.shield(persistence)
+            except asyncio.CancelledError:
+                # A worker thread cannot be cancelled. Drain it before WSS shutdown
+                # so it cannot recreate a stale status file after cleanup.
+                await persistence
+                raise
 
     def oob_status(self) -> dict | None:
         """Return the latest lifecycle snapshot without touching the WSS event loop."""
@@ -746,7 +763,12 @@ class CloudXRService:
         if self._wss_thread is not None:
             self._wss_thread.join(timeout=15 if self._setup_oob else 5)
             if self._wss_thread.is_alive():
-                logger.warning("WSS proxy thread did not exit cleanly")
+                # Status persistence may still be draining. Keep ownership and
+                # skip status-file cleanup until a later stop can join it.
+                raise RuntimeError(
+                    "CloudXR WSS proxy did not stop within the shutdown timeout; "
+                    "status persistence may still be draining; retry stop()"
+                )
 
         self._wss_thread = None
         self._wss_loop = None

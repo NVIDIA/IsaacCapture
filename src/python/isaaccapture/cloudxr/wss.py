@@ -570,7 +570,7 @@ async def run(
     host_client: bool = False,
     on_listening: Callable[[], None] | None = None,
     recovery_config=None,
-    on_oob_status: Callable[[dict], None] | None = None,
+    on_oob_status: Callable[[dict], object] | None = None,
     on_oob_fatal: Callable[[Exception], None] | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
@@ -672,30 +672,13 @@ async def run(
             close_timeout=10,
         ):
             from .oob_teleop_env import (
-                require_web_client_static_dir,
-                start_usb_local_https_server,
-                stop_usb_local_https_server,
                 usb_turn_port,
-                usb_ui_port,
             )
             from .oob_teleop_lifecycle import OobLifecycle
 
-            https_thread = None
-            https_server = None
             lifecycle_task = None
             lifecycle = None
             try:
-                if usb_local:
-                    https_thread, https_server = start_usb_local_https_server(
-                        require_web_client_static_dir(
-                            require_health_probe=setup_oob
-                            and not os.getenv("TELEOP_OOB_HUB_ONLY")
-                        ),
-                        cert_file=cert_paths.cert_file,
-                        key_file=cert_paths.key_file,
-                        port=usb_ui_port(),
-                        host="127.0.0.1",
-                    )
                 log.info("WSS proxy listening on port %d", resolved_port)
                 if on_listening is not None:
                     on_listening()
@@ -710,7 +693,6 @@ async def run(
                         turn_port=usb_turn_port() if usb_local else None,
                         config=recovery_config or resolve_oob_recovery_config(),
                         on_status=on_oob_status,
-                        on_fatal=on_oob_fatal,
                     )
                     lifecycle_task = asyncio.create_task(
                         lifecycle.run(), name="cloudxr-oob-lifecycle"
@@ -720,7 +702,19 @@ async def run(
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if lifecycle_task in done:
-                        await lifecycle_task
+                        try:
+                            await lifecycle_task
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            if on_oob_fatal is not None:
+                                try:
+                                    on_oob_fatal(exc)
+                                except Exception:
+                                    log.exception(
+                                        "OOB fatal callback failed while reporting lifecycle failure"
+                                    )
+                            raise
                 else:
                     await stop_future
             finally:
@@ -730,8 +724,6 @@ async def run(
                         await lifecycle_task
                     except (asyncio.CancelledError, Exception):
                         pass
-                if usb_local:
-                    stop_usb_local_https_server(https_thread, https_server)
 
             log.info("Shutting down ...")
     except OSError as e:

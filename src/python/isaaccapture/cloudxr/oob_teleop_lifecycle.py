@@ -11,7 +11,8 @@ import os
 import re
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from dataclasses import dataclass
 
 from . import oob_teleop_adb as adb
@@ -20,7 +21,6 @@ from .oob_teleop_env import (
     USB_TURN_USER,
     redact_control_token,
     usb_backend_port,
-    usb_ui_port,
 )
 
 log = logging.getLogger(__name__)
@@ -86,8 +86,7 @@ class OobLifecycle:
         host_client: bool,
         config: RecoveryConfig,
         turn_port: int | None = None,
-        on_status: Callable[[dict], None] | None = None,
-        on_fatal: Callable[[Exception], None] | None = None,
+        on_status: Callable[[dict], Awaitable[None] | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], object] = asyncio.sleep,
         metrics_stale_sec: float = 5.0,
@@ -101,7 +100,6 @@ class OobLifecycle:
         self.config = config
         self.turn_port = turn_port
         self.on_status = on_status
-        self.on_fatal = on_fatal
         self.clock = clock
         self.sleep = sleep
         self.metrics_stale_sec = metrics_stale_sec
@@ -212,7 +210,9 @@ class OobLifecycle:
         self.snapshot = snapshot
         await self.hub.set_lifecycle_snapshot(snapshot)
         if self.on_status:
-            self.on_status(dict(snapshot))
+            publication = self.on_status(dict(snapshot))
+            if isawaitable(publication):
+                await publication
         if reason != self._last_reason:
             log.info("OOB %s: %s", state, reason)
             self._last_reason = reason
@@ -327,7 +327,6 @@ class OobLifecycle:
             commands.extend(
                 ["adb", "reverse", "--remove", f"tcp:{port}"]
                 for port in (
-                    usb_ui_port(),
                     self.resolved_port,
                     usb_backend_port(),
                     self.turn_port,
@@ -370,7 +369,7 @@ class OobLifecycle:
 
     async def _rebuild_usb(self) -> None:
         assert self.turn_port is not None
-        ports = [usb_ui_port(), self.resolved_port, usb_backend_port(), self.turn_port]
+        ports = [self.resolved_port, usb_backend_port(), self.turn_port]
         await self._publish(
             "degraded",
             "REBUILDING_USB",
@@ -388,7 +387,7 @@ class OobLifecycle:
                 await self._run_adb_command(
                     ["adb", "reverse", "--remove", f"tcp:{port}"], timeout=2
                 )
-            for port in ports[:3]:
+            for port in ports[:2]:
                 if not await asyncio.to_thread(self.host_listener_probe, port):
                     raise adb.OobAdbError(f"Host listener on tcp:{port} is unavailable")
             await self._ensure_coturn()
@@ -677,6 +676,80 @@ class OobLifecycle:
             terminalEventId=terminal_event,
         )
 
+    async def _observe_passive_recovery(self) -> None:
+        """Observe a repaired surviving page after the destructive budget expires."""
+        assert self._repair_started_at is not None
+        probe_kwargs = {}
+        if self.browser_client is not None:
+            probe_kwargs["client_id"] = self.browser_client
+        report = await self.hub.probe_browser(
+            self.generation,
+            0,
+            timeout=min(self.config.interval_sec, 2.0),
+            **probe_kwargs,
+        )
+        if report is None:
+            await self._publish(
+                "degraded",
+                "VERIFYING_EXISTING_BROWSER",
+                "Recovery episode expired; observing the existing browser",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=True,
+                turnPrerequisitesReady=True,
+            )
+            return
+
+        self.browser_client = report["clientId"]
+        self.browser_ready = True
+        self.last_browser_at = time.time()
+        phase = report.get("streamPhase") or (
+            "streaming" if report.get("streaming") else "idle"
+        )
+        metrics_at = report.get("lastMetricsAt")
+        fresh_post_repair = bool(
+            metrics_at
+            and metrics_at > self._repair_started_at * 1000
+            and time.time() * 1000 - metrics_at < self.metrics_stale_sec * 1000
+        )
+        if report.get("streaming") and fresh_post_repair:
+            self.last_stream_at = time.time()
+            self._transport_lost = False
+            self._restore_existing_browser = False
+            self._fresh_stream_without_cdp = False
+            self._transport_disruption_signature = None
+            await self._publish(
+                "active",
+                "ACTIVE",
+                "Existing browser resumed after the recovery deadline",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=True,
+                turnPrerequisitesReady=True,
+                browserRegistered=True,
+                healthProbeAcknowledged=True,
+                streaming=True,
+                clientMetricsFresh=True,
+                turnEndToEndHealthy=True,
+                streamPhase=phase,
+            )
+            return
+        await self._publish(
+            "degraded",
+            "VERIFYING_EXISTING_BROWSER",
+            "Recovery episode expired; observing the existing browser",
+            adbReady=True,
+            networkPresent=True,
+            reverseRulesVerified=True,
+            turnPrerequisitesReady=True,
+            browserRegistered=True,
+            healthProbeAcknowledged=True,
+            streaming=bool(report.get("streaming")),
+            clientMetricsFresh=fresh_post_repair,
+            streamPhase=phase,
+            terminalEventId=report.get("terminalEventId"),
+        )
+
     async def _verify_browser(self) -> None:
         """Wait for OOB proof after CONNECT without repeating the click on timeout."""
         if self.monitor is not None and self.monitor.done():
@@ -842,7 +915,7 @@ class OobLifecycle:
             ) from exc
         verification = await asyncio.to_thread(
             adb.probe_adb_reverse_rules,
-            [usb_ui_port(), self.resolved_port, usb_backend_port(), self.turn_port],
+            [self.resolved_port, usb_backend_port(), self.turn_port],
         )
         if not verification.adb_available:
             raise _TransportDisrupted(
@@ -996,13 +1069,7 @@ class OobLifecycle:
                     state = await self.hub.get_snapshot()
                     clients = tuple(
                         sorted(
-                            (
-                                str(headset["clientId"]),
-                                bool(headset.get("streaming")),
-                                str(headset.get("streamPhase") or ""),
-                                str(headset.get("terminalEventId") or ""),
-                            )
-                            for headset in state["headsets"]
+                            str(headset["clientId"]) for headset in state["headsets"]
                         )
                     )
                     rules = None
@@ -1036,15 +1103,17 @@ class OobLifecycle:
                 if (
                     preserving_browser
                     and self.clock() >= self.episode_start + self.config.timeout_sec
-                    and not self._fresh_stream_without_cdp
                 ):
-                    await self._publish(
-                        "degraded",
-                        "VERIFYING_EXISTING_BROWSER",
-                        "Recovery episode expired; observing for a change",
-                        adbReady=True,
-                        networkPresent=True,
-                    )
+                    if self._repair_started_at is not None:
+                        await self._observe_passive_recovery()
+                    else:
+                        await self._publish(
+                            "degraded",
+                            "VERIFYING_EXISTING_BROWSER",
+                            "Recovery episode expired; observing for a change",
+                            adbReady=True,
+                            networkPresent=True,
+                        )
                     await self.sleep(self._transport_retry_interval())
                     continue
                 if preserving_browser:

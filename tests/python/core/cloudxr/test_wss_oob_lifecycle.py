@@ -62,14 +62,6 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
             return_value=tmp_path,
         ),
         patch(
-            "isaaccapture.cloudxr.oob_teleop_env.start_usb_local_https_server",
-            side_effect=lambda *a, **kw: (events.append("https started"), object()),
-        ),
-        patch(
-            "isaaccapture.cloudxr.oob_teleop_env.stop_usb_local_https_server",
-            side_effect=lambda *a: events.append("https stopped"),
-        ),
-        patch(
             "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
             return_value=lifecycle,
         ) as factory,
@@ -89,12 +81,11 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
             if "lifecycle started" in events:
                 break
         assert not task.done()
-        assert events[:3] == ["wss listening", "https started", "callback"]
+        assert events[:2] == ["wss listening", "callback"]
         factory.assert_called_once()
         stop.set_result(None)
         await task
-    assert events.index("lifecycle stopped") < events.index("https stopped")
-    assert events.index("https stopped") < events.index("wss closed")
+    assert events.index("lifecycle stopped") < events.index("wss closed")
     assert "lifecycle test transition" in (tmp_path / "wss.log").read_text()
     assert "hub test registration" in (tmp_path / "wss.log").read_text()
 
@@ -125,3 +116,90 @@ async def test_hub_only_creates_no_lifecycle(monkeypatch):
         stop.set_result(None)
         await task
     factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_wss_reports_unexpected_lifecycle_failure_before_cleanup(tmp_path):
+    events = []
+    failures = []
+    stop = asyncio.get_running_loop().create_future()
+    error = RuntimeError("lifecycle crashed")
+
+    @asynccontextmanager
+    async def serving(*args, **kwargs):
+        events.append("wss listening")
+        try:
+            yield
+        finally:
+            events.append("wss closed")
+
+    async def lifecycle_run():
+        events.append("lifecycle started")
+        raise error
+
+    lifecycle = MagicMock()
+    lifecycle.run = lifecycle_run
+    with (
+        patch.object(wss, "ws_serve", side_effect=serving),
+        patch.object(wss, "ensure_certificate"),
+        patch.object(
+            wss,
+            "default_cert_paths",
+            return_value=SimpleNamespace(cert_file="c", key_file="k"),
+        ),
+        patch.object(wss, "build_ssl_context", return_value=object()),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
+            return_value=lifecycle,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="lifecycle crashed") as raised:
+            await wss.run(
+                tmp_path / "wss.log",
+                stop,
+                setup_oob=True,
+                recovery_config=RecoveryConfig(),
+                on_oob_fatal=failures.append,
+            )
+    assert raised.value is error
+    assert failures == [error]
+    assert events == ["wss listening", "lifecycle started", "wss closed"]
+
+
+@pytest.mark.asyncio
+async def test_wss_preserves_lifecycle_error_when_fatal_callback_fails(tmp_path):
+    stop = asyncio.get_running_loop().create_future()
+    error = RuntimeError("original lifecycle failure")
+
+    @asynccontextmanager
+    async def serving(*args, **kwargs):
+        yield
+
+    async def lifecycle_run():
+        raise error
+
+    lifecycle = MagicMock()
+    lifecycle.run = lifecycle_run
+    with (
+        patch.object(wss, "ws_serve", side_effect=serving),
+        patch.object(wss, "ensure_certificate"),
+        patch.object(
+            wss,
+            "default_cert_paths",
+            return_value=SimpleNamespace(cert_file="c", key_file="k"),
+        ),
+        patch.object(wss, "build_ssl_context", return_value=object()),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
+            return_value=lifecycle,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="original lifecycle failure") as raised:
+            await wss.run(
+                tmp_path / "wss.log",
+                stop,
+                setup_oob=True,
+                recovery_config=RecoveryConfig(),
+                on_oob_fatal=MagicMock(side_effect=RuntimeError("callback failed")),
+            )
+    assert raised.value is error
