@@ -288,16 +288,19 @@ block UDP. If that happens, use an approved network/VPN or ask the network team
 for connectivity; NGINX cannot bypass client isolation. Internet NAT traversal
 and TURN deployment are not included in this profile.
 
-**0. Establish the Edge and Robot IP addresses.** On each computer, run
+**0. Set the site IP addresses and Robot Site username.** On each computer, run
 `ip -brief -4 address` and identify its address on the network connecting the
 two sites (for example, the Wi-Fi interface). Once both addresses are known,
 set these variables on **both Edge Compute and Robot Site**, using the same
-values on each system:
+values on each system. Replace `[linux_username_on_robot_site]` with your Linux
+login username on Robot Site (without the brackets). You can find that username
+by running `whoami` in a host terminal on Robot Site:
 
 ```bash
 # Replace these example addresses with your computers' current addresses.
 export EDGE_IP=10.29.91.247
 export ROBOT_IP=10.29.91.174
+export ROBOT_USER="[linux_username_on_robot_site]"
 ```
 
 The following setup commands reuse these variables. They apply to the current
@@ -336,12 +339,11 @@ This rotates credentials and the test CA. Token expiry affects new joins;
 it is not an immediate disconnect/revocation mechanism for existing sessions.
 
 **2. Transfer only `robot/` to Robot Site**, using an approved secure transfer
-method such as SSH/SCP. Run this on Edge Compute, replacing `ROBOT_USER` with
-your login username on Robot Site:
+method such as SSH/SCP. Run this on Edge Compute using the variables from step 0:
 
 ```bash
 scp -r "$HOME/remote-assistance-network/robot" \
-  "ROBOT_USER@${ROBOT_IP}:~/remote-assistance-robot"
+  "${ROBOT_USER}@${ROBOT_IP}:~/remote-assistance-robot"
 ```
 
 Do not run the generator independently on both machines: they need matching
