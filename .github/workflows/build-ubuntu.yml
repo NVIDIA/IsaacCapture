@@ -46,6 +46,13 @@ jobs:
       with:
         fetch-depth: 0 # Full history for accurate git describe
 
+    # Artifacts are stamped with this, so it has to be a property of the commit
+    # and not of when a job happened to run. Without it a `py3-none-any` wheel,
+    # which every matrix entry builds, comes out different from each entry --
+    # same filename, different bytes.
+    - name: Pin the build clock to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
     # One build directory per job; later steps (ctest, coverage, test packaging,
     # install) all refer to it through BUILD_DIR.
     - name: Resolve build directory
