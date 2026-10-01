@@ -324,9 +324,10 @@ class BuildGraph:
     """The link and compile graph, read from CMake's own file API.
 
     The top-level ``CMakeLists.txt`` asks for the codemodel with
-    ``cmake_file_api()``, so any configure of this project leaves one behind,
-    under every generator. Scraping ``link.txt`` instead would only work for the
-    Makefile generators -- Ninja writes no such file.
+    ``cmake_file_api()`` where that command exists, so a configure by CMake 3.27
+    or newer leaves one behind, under every generator. Scraping ``link.txt``
+    instead would only work for the Makefile generators -- Ninja writes no such
+    file.
     """
 
     def __init__(self, build_dir: Path, config: str | None = None) -> None:

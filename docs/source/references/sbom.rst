@@ -150,9 +150,9 @@ CMake's file API codemodel
    binary, which targets it depends on, and — through include paths — which header-only
    dependencies it was compiled against. Followed transitively, so a library linked into a
    library linked into the wheel is still reported. The top-level ``CMakeLists.txt`` asks
-   for it with ``cmake_file_api()``, which is why the project requires CMake 3.27; reading
-   the generator's own output instead would only work under Makefiles, since Ninja writes
-   no ``link.txt``.
+   for it with ``cmake_file_api()``, which CMake 3.27 added — so a wheel with an SBOM
+   needs at least that, though the project builds without it. Reading the generator's own
+   output instead would only work under Makefiles, since Ninja writes no ``link.txt``.
 
 Archives in the repository
    Every member of every tarball is hashed. A wheel member that matches one is recorded as

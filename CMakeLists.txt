@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# 3.27 for cmake_file_api(): the SBOM collector reads this build's link and
-# compile graph from the file API reply, and that command is what lets the
-# query live here rather than in whatever invoked cmake. No range: raising the
-# minimum already opts into every policy through 3.27, and nothing here needs
-# the ones after it.
-cmake_minimum_required(VERSION 3.27)
+cmake_minimum_required(VERSION 3.24...3.25)
 
-# Ask for the codemodel this configure run. Generator-independent, and produced
-# by the same run that writes it -- see docs: references/sbom.
-cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
+# The SBOM collector reads this build's link and compile graph from the file API
+# reply, and `cmake_file_api()` is what lets the query live here rather than in
+# whatever invoked cmake. It arrived in 3.27, and is feature-tested rather than
+# required: raising the project minimum opts into every policy up to it, and
+# CMP0148 -- which removes the FindPythonInterp module pybind11's legacy path
+# still calls through vcpkg's find_package wrapper -- is one of them. Where the
+# command is absent no codemodel is written, and the collector says so itself.
+if(COMMAND cmake_file_api)
+  cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
+endif()
 
 # Workaround for older CMake policy compatibility in dependencies
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version")
