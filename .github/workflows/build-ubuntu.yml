@@ -309,7 +309,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
       with:
-        fetch-depth: 1
+        # Full history: the version is the number of commits since VERSION
+        # last changed, and on a tag build CMake compares that against the
+        # tag. A shallow clone counts 0, so every release tag mismatches.
+        fetch-depth: 0
         persist-credentials: false
 
     - name: Install uv
