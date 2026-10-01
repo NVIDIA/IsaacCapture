@@ -11,6 +11,7 @@ import re
 from packageurl import PackageURL
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing, report, stamped_now
 from .discovery import Component
@@ -130,14 +131,7 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
                 "_for": component.name,
                 "extractedText": body,
                 "comment": (
-                    (
-                        "Matched no text in the SPDX reference corpus"
-                        if not any(item.matches for item in grants)
-                        # Matched, but under an id the grammar shipped with this
-                        # document cannot validate, so it cannot be named here.
-                        else "Matched an identifier newer than the SPDX grammar "
-                        "this document ships with"
-                    )
+                    licensing.why_unnamed(grants)
                     + f"; reproduced here verbatim from {shipped}."
                 ),
             }
@@ -176,6 +170,14 @@ def _is_extra_gated(requirement: Requirement) -> bool:
     )
 
 
+def _by_version(specifier):
+    """Specifier clauses in version order, or as given if one will not parse."""
+    try:
+        return sorted(specifier, key=lambda item: Version(item.version))
+    except InvalidVersion:
+        return list(specifier)
+
+
 def _dependency_refs(
     name: str, requirement: Requirement, version: str | None = None
 ) -> list[dict]:
@@ -194,9 +196,11 @@ def _dependency_refs(
             ).to_string(),
         }
     ]
-    constraints = sorted(
-        f"{item.operator}{item.version}" for item in requirement.specifier
-    )
+    # VERS orders constraints by version, not by the text of the operator: the
+    # string sort put `<1.9` before `>=1.6` and a strict parser rejects that.
+    constraints = [
+        f"{item.operator}{item.version}" for item in _by_version(requirement.specifier)
+    ]
     if constraints:
         refs.append(
             {
@@ -237,25 +241,26 @@ def _source_info(project: dict, evidence_doc: dict, build: dict, wheel) -> str:
 
 
 def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
-    """The declared licence, AND the terms of everything redistributed under its own.
+    """The declared licence, AND the terms of everything it redistributes.
 
-    A component whose terms the build could not name travels as a LicenseRef,
-    and those are exactly the ones a reader must not miss -- a proprietary SDK
-    EULA among them. Components under a licence the declaration already covers
-    add nothing and are left out.
+    Every component, not only the ones the build could not name: Apache-2.0 does
+    not cover MIT, Zlib, BSD-3-Clause, Qhull or BSL-1.0, so leaving those out
+    said the wheel carries no code under them. Only a component concluding the
+    declared licence itself adds nothing.
     """
-    others = sorted(
-        {
-            component.license_concluded
-            for component in inventory.components_present.values()
-            if "LicenseRef-" in component.license_concluded
-        }
-    )
-    if not others:
-        return declared
-    if declared == NOASSERTION:
-        return licensing.combine(others)
-    return licensing.combine([declared, *others])
+    # By identifier, not by expression: combining whole expressions nests the
+    # compound ones in parentheses and repeats an id two components share.
+    identifiers: set[str] = set()
+    for component in inventory.components_present.values():
+        if component.license_concluded == NOASSERTION:
+            continue
+        try:
+            identifiers.update(licensing.identifiers_in(component.license_concluded))
+        except licensing.ExpressionReadError:
+            identifiers.add(component.license_concluded)
+    if declared != NOASSERTION:
+        identifiers.add(declared)
+    return licensing.combine(sorted(identifiers)) if identifiers else declared
 
 
 def build_document(

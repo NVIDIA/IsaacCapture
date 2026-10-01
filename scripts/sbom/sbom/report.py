@@ -176,12 +176,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                     "component": key,
                     "reason": (
                         "the shipped grant is carried verbatim rather than named: "
-                        + (
-                            "it matches no text in the SPDX reference corpus"
-                            if not any(item.identified for item in grants)
-                            else "what it matches cannot be expressed in the SPDX "
-                            "grammar shipped with this document"
-                        )
+                        + licensing.why_unnamed(grants).lower()
                     ),
                     "evidence": [item.path for item in grants],
                 }

@@ -46,6 +46,12 @@ _CONTAINMENT_THRESHOLD = 0.90
 # genuine match sits well above it -- a Debian copyright file naming several
 # licenses around the one matched is the low end, at a quarter.
 _COVERAGE_THRESHOLD = 0.20
+# ...and the matches together have to account for most of the file before the
+# set of them is called an identification. A Debian copyright file aggregates
+# many stanzas, and generic BSD boilerplate clears containment against variants
+# the file never mentions; two such matches covering half the text name the file
+# no better than its own words do.
+_EXPLAINED_THRESHOLD = 0.75
 # Two licenses are one family when either text is nearly inside the other.
 _FAMILY_THRESHOLD = 0.90
 # REUSE-IgnoreStart
@@ -478,6 +484,35 @@ def expressible(license_id: str) -> bool:
         return False
 
 
+def explains_the_text(matches) -> bool:
+    """Whether the matched licences account for most of what the file says.
+
+    Not a test of whether an identification is right -- a dual-licence file
+    matches correctly and scores low -- only of whether it explains the file,
+    which is what the document has to say when it cannot name one.
+    """
+    return sum(coverage for _, _, coverage in matches) >= _EXPLAINED_THRESHOLD
+
+
+def why_unnamed(grants: list[LicenseEvidence]) -> str:
+    """Why terms travel verbatim rather than under an SPDX identifier."""
+    if not any(item.matches for item in grants):
+        return "Matched no text in the SPDX reference corpus"
+    partial = [item for item in grants if not explains_the_text(item.matches)]
+    if partial:
+        share = max(
+            sum(coverage for _, _, coverage in item.matches) for item in partial
+        )
+        return (
+            "What matched in the SPDX reference corpus accounts for only "
+            f"{share:.0%} of this text, so the matches name part of it and not "
+            "the whole"
+        )
+    # Matched, but under an id the grammar shipped with this document cannot
+    # validate, so it cannot be named here.
+    return "Matched an identifier newer than the SPDX grammar this document ships with"
+
+
 def expression(
     evidence: list[LicenseEvidence], component_key: str | None = None
 ) -> tuple[str, str]:
@@ -586,12 +621,16 @@ def fold_notices(notices) -> list[str]:
 
 
 # A notice is `Copyright` plus a marker that prose does not carry: a (c), a ©,
-# or a year. It need not start the line -- qhull writes `Qhull, Copyright (c)
-# 1993-2020` -- so a short lead-in is allowed before it.
+# or a year. It need not start the line and the lead-in is not bounded: a NOTICE
+# writes `Box collision code (engine_collision_box.c) is Copyright 2016 ...`.
 _PLAIN_COPYRIGHT = re.compile(
-    r"^[^\n\r]{0,40}?(?P<notice>Copyright\b\s*(?:\(c\)|©|\d{4})[^\n\r]*)$",
+    r"^.*?(?P<notice>Copyright\b\s*(?:\(c\)|©|\d{4})[^\n\r]*)$",
     re.MULTILINE | re.IGNORECASE,
 )
+# A clause broken by the end of a line, left dangling by taking the line alone.
+_DANGLING = re.compile(r"(?:[,;]?\s+(?:and|or|is|was|are|were|by|under|the|a))+$", re.I)
+# Years, year ranges and the markers around them: what is left is the holder.
+_YEARS_AND_MARKS = re.compile(r"\(c\)|©|\d{4}(?:\s*-\s*\d{2,4})?|[,;]", re.I)
 # Lines of a licence body that mention copyright without stating one.
 _NOT_A_NOTICE = re.compile(
     r"\bshall be\b|\bowner or entity\b|\bbe liable\b|\bmeans?\b|"
@@ -653,24 +692,41 @@ def read_notices(text: str) -> list[str]:
         if not match:
             continue
         notice = " ".join(match.group("notice").split()).rstrip("*/ ")
-        # A holder can run on across lines -- libccd names a department, a
-        # faculty and a university -- and a trailing comma is the author saying
-        # so. Anything else ends the notice.
+        # The holder can sit on the lines below: after a trailing comma (libccd
+        # names a department, a faculty and a university), or after nothing at
+        # all (Debian copyright files and qhull put the years on one line and the
+        # holder on the next). Keep reading until a holder appears.
         step = index
-        while notice.endswith(",") and step + 1 < len(lines):
-            step += 1
-            notice = f"{notice} {' '.join(lines[step].split())}".strip().rstrip("*/ ")
+        while step + 1 < len(lines) and step - index < 3:
+            if not (notice.endswith(",") or not _names_a_holder(notice)):
+                break
+            ahead = step + 1
+            # One blank line may sit between the years and the holder; qhull
+            # writes `Qhull, Copyright (c) 1993-2020`, a blank, then the holder.
+            if not lines[ahead].strip() and not _names_a_holder(notice):
+                ahead += 1
+            if ahead >= len(lines):
+                break
+            following = " ".join(lines[ahead].split())
+            # A new notice, or a field of its own, is not this one's holder.
+            if not following or _PLAIN_COPYRIGHT.match(following) or ":" in following:
+                break
+            step = ahead
+            notice = f"{notice} {following}".strip().rstrip("*/ ")
+        notice = _DANGLING.sub("", notice).rstrip("*/,; ")
         if _PLACEHOLDER.search(notice) or _NOT_A_NOTICE.search(notice):
             continue
-        # Something has to follow the word: a holder, or at least the years the
-        # file states. qhull writes `Qhull, Copyright (c) 1993-2020` and puts the
-        # holder on the lines below, so a year alone is still what it states.
-        rest = notice[len("Copyright") :]
-        if not re.search(r"[A-Za-z]{2}", rest) and not re.search(r"\d{4}", rest):
+        if not _names_a_holder(notice) and not re.search(r"\d{4}", notice):
             continue
         if notice not in found:
             found.append(notice)
     return found
+
+
+def _names_a_holder(notice: str) -> bool:
+    """Whether anything is left once the years and their punctuation come out."""
+    rest = _YEARS_AND_MARKS.sub(" ", notice[len("Copyright") :])
+    return bool(re.search(r"[A-Za-z]{2}", rest))
 
 
 def read_notice(text: str) -> str | None:
