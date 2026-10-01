@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import zipfile
@@ -293,3 +294,81 @@ def test_components_sharing_a_licence_text_share_one_entry(workspace, license_da
     }
     defined = {item["licenseId"] for item in spdx["hasExtractedLicensingInfos"]}
     assert used <= defined, f"undefined after sharing: {sorted(used - defined)}"
+
+
+def test_a_requirement_this_run_also_built_points_at_its_own_document(
+    workspace, license_data, tmp_path
+):
+    """A transition wheel requires the wheel beside it; that is not an unknown.
+
+    Left as an ordinary requirement it reads as something an installer resolves,
+    with the version, supplier and licence unasserted -- for a distribution this
+    same build produced and described in full.
+    """
+    from sbom import cli
+
+    synth.write_wheel(workspace.wheel, synth.wheel_payload(workspace))
+    companion = workspace.wheel.parent / "isaacteleop-0.4.0-py3-none-any.whl"
+    synth.write_wheel(
+        companion,
+        {
+            "isaacteleop-0.4.0.dist-info/METADATA": "\n".join(
+                [
+                    "Metadata-Version: 2.4",
+                    "Name: isaacteleop",
+                    "Version: 0.4.0",
+                    "License-Expression: Apache-2.0",
+                    "Requires-Dist: isaaccapture>=0.4.0",
+                    "",
+                ]
+            ).encode(),
+            "isaacteleop-0.4.0.dist-info/WHEEL": (
+                b"Wheel-Version: 1.0\nGenerator: setuptools\nRoot-Is-Purelib: true\n"
+            ),
+        },
+    )
+
+    out = workspace.root / "sbom"
+    # Through the CLI: it is what orders the wheels, and a document may only
+    # cite one that already exists.
+    assert (
+        cli.main(
+            [
+                "--repo-root",
+                str(workspace.root),
+                "build",
+                "--build-dir",
+                str(workspace.build),
+                "--license-data",
+                str(license_data),
+                "--out-dir",
+                str(out),
+                "--wheel",
+                str(companion),
+                "--wheel",
+                str(workspace.wheel),
+            ]
+        )
+        == 0
+    )
+
+    spdx = json.loads((out / "isaacteleop-0.4.0-py3-none-any.spdx.json").read_text())
+    assert not [
+        package
+        for package in spdx["packages"]
+        if package["SPDXID"].startswith("SPDXRef-Package-pypi-isaaccapture")
+    ], "the sibling is not restated as an install-time unknown"
+
+    ref = spdx["externalDocumentRefs"][0]
+    sibling = (out / f"{WHEEL_NAME.removesuffix('.whl')}.spdx.json").read_bytes()
+    assert ref["spdxDocument"] == json.loads(sibling)["documentNamespace"]
+    assert ref["checksum"] == {
+        "algorithm": "SHA1",
+        "checksumValue": hashlib.sha1(sibling).hexdigest(),  # noqa: S324
+    }
+    assert any(
+        item["relatedSpdxElement"]
+        == f"{ref['externalDocumentId']}:SPDXRef-Package-wheel"
+        for item in spdx["relationships"]
+    )
+    assert validate_module.check(companion) == []

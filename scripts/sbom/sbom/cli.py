@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.utils import canonicalize_name
+
 from . import TOOL_NAME, TOOL_VERSION
 from . import build as build_module
 from . import discovery
@@ -68,17 +70,22 @@ def _cmd_build(args: argparse.Namespace) -> int:
     discovery = evidence_module.discover(repo_root, build_dir)
 
     manifests: list[dict] = []
-    for wheel in sorted(Path(item) for item in args.wheel):
-        manifests.append(
-            build_module.build(
-                repo_root,
-                build_dir,
-                wheel,
-                out_dir,
-                license_data,
-                discovery=discovery,
-            )
+    siblings: dict[str, dict] = {}
+    for wheel in build_module.in_dependency_order(
+        sorted(Path(item) for item in args.wheel)
+    ):
+        manifest = build_module.build(
+            repo_root,
+            build_dir,
+            wheel,
+            out_dir,
+            license_data,
+            discovery=discovery,
+            siblings=siblings,
         )
+        manifests.append(manifest)
+        described = manifest["wheels"][0]["describes"]
+        siblings[canonicalize_name(described["name"])] = described
         print(f"packaged evidence into {wheel.name}")
 
     # Through the same merge as a release: inheriting the first wheel's manifest

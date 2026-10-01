@@ -21,6 +21,9 @@ from . import licensing
 from . import inventory as inventory_module
 from . import report as report_module
 from . import wheelfile
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
 from .discovery import project_supplier, sha256_file
 from .inventory import Attribution
 from .wheelfile import Entry
@@ -53,6 +56,68 @@ def default_license_data(build_dir: Path) -> Path:
     return build_dir / "_deps" / "license-list-data-src" / "json"
 
 
+def in_dependency_order(wheels: list[Path]) -> list[Path]:
+    """Wheels of one run, each after any sibling it requires.
+
+    A document that references another cites its digest, so the referenced one
+    has to exist first. Order is derived from the requirements rather than from
+    the filenames, which only happen to sort the right way.
+    """
+    metadata = {}
+    for wheel in wheels:
+        info = wheelfile.scan(wheel)
+        raw, _ = wheelfile.read_metadata(wheel, info.dist_info)
+        parsed = wheelfile.parse_metadata(raw)
+        metadata[wheel] = (
+            canonicalize_name(parsed["name"]),
+            {
+                canonicalize_name(Requirement(item).name)
+                for item in parsed.get("requires_dist") or []
+            },
+        )
+
+    ordered: list[Path] = []
+    placed: set[str] = set()
+    remaining = list(wheels)
+    while remaining:
+        ready = [
+            wheel
+            for wheel in remaining
+            if not (
+                {name for name, _ in metadata.values()}
+                & metadata[wheel][1] - placed - {metadata[wheel][0]}
+            )
+        ]
+        # A cycle between two wheels of one run cannot be ordered; keep the
+        # caller's order rather than refusing to describe either.
+        batch = ready or remaining
+        for wheel in batch:
+            ordered.append(wheel)
+            placed.add(metadata[wheel][0])
+        remaining = [item for item in remaining if item not in batch]
+    return ordered
+
+
+def _describes(spdx: dict, metadata_raw: bytes, sbom_filename: str) -> dict:
+    """What another wheel's document needs to cite this one, SPDX 2.3 style."""
+    metadata = wheelfile.parse_metadata(metadata_raw)
+    body = json.dumps(spdx, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    wheel_package = next(
+        item
+        for item in spdx["packages"]
+        if item["SPDXID"] == document_module.WHEEL_PACKAGE_ID
+    )
+    return {
+        "name": metadata["name"],
+        "version": metadata.get("version") or "NOASSERTION",
+        "namespace": spdx["documentNamespace"],
+        "sha1": hashlib.sha1(body).hexdigest(),  # noqa: S324
+        "filename": sbom_filename,
+        "license_declared": wheel_package["licenseDeclared"],
+        "supplier": wheel_package["supplier"],
+    }
+
+
 def build(
     repo_root: Path,
     build_dir: Path,
@@ -61,6 +126,7 @@ def build(
     license_data: Path | None = None,
     system_resolver=None,
     discovery: evidence_module.Discovery | None = None,
+    siblings: dict[str, dict] | None = None,
 ) -> dict:
     """Package evidence into `wheel_path` in place and write the sidecars.
 
@@ -183,6 +249,7 @@ def build(
         projected_wheel,
         inventory,
         excluded,
+        siblings,
     )
     spdx_bytes = json.dumps(spdx, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     additions[sbom_name] = spdx_bytes
@@ -233,6 +300,8 @@ def build(
                 "sha256": sha256_file(wheel_path),
                 "size": wheel_path.stat().st_size,
                 "sbom_in_wheel": sbom_name,
+                # What a sibling wheel's document cites to reference this one.
+                "describes": _describes(spdx, metadata_raw, sidecars["spdx"].name),
                 "components_without_license_evidence": payload[
                     "components_without_license_evidence"
                 ],

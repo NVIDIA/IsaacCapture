@@ -10,6 +10,7 @@ import re
 
 from packageurl import PackageURL
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing, report, stamped_now
 from .discovery import Component
@@ -22,6 +23,10 @@ _LINK_HOWS = {"compiled-source", "header-include", "prebuilt-library"}
 # Bytes this component also holds, which is not evidence the wheel carries its
 # file. It states a candidate, so it earns no CONTAINS and no COPY_OF.
 _AMBIGUOUS_HOWS = {"shared-content"}
+
+
+# The package every document describes: the wheel it is about.
+WHEEL_PACKAGE_ID = "SPDXRef-Package-wheel"
 
 
 def _spdx_id(prefix: str, value: str) -> str:
@@ -211,7 +216,9 @@ def _is_extra_gated(requirement: Requirement) -> bool:
     )
 
 
-def _dependency_refs(name: str, requirement: Requirement) -> list[dict]:
+def _dependency_refs(
+    name: str, requirement: Requirement, version: str | None = None
+) -> list[dict]:
     """purl for the package, and the constraint as a range rather than prose.
 
     purl carries one exact version, which a requirement does not have. VERS (the
@@ -222,7 +229,9 @@ def _dependency_refs(name: str, requirement: Requirement) -> list[dict]:
         {
             "referenceCategory": "PACKAGE-MANAGER",
             "referenceType": "purl",
-            "referenceLocator": PackageURL(type="pypi", name=name).to_string(),
+            "referenceLocator": PackageURL(
+                type="pypi", name=name, version=version
+            ).to_string(),
         }
     ]
     constraints = sorted(
@@ -245,10 +254,17 @@ def build_document(
     wheel: WheelInfo,
     inventory: Inventory,
     excluded_files: list[str],
+    siblings: dict[str, dict] | None = None,
 ) -> dict:
-    """Assemble the document. Callers validate it; this only renders."""
+    """Assemble the document. Callers validate it; this only renders.
+
+    `siblings` are the other distributions of this same run, by canonical name.
+    A requirement naming one is not an install-time unknown: the build made it,
+    and its own document describes it.
+    """
     files: list[dict] = []
     file_ids: dict[str, str] = {}
+    external_documents: list[dict] = []
     sha1_digests: list[str] = []
 
     # What the files themselves state, for the package-level roll-up below.
@@ -307,7 +323,7 @@ def build_document(
         files.append(record)
 
     code = verification_code(sha1_digests)
-    wheel_id = "SPDXRef-Package-wheel"
+    wheel_id = WHEEL_PACKAGE_ID
     build = evidence_doc.get("build", {})
 
     wheel_package = {
@@ -442,36 +458,67 @@ def build_document(
             f"{name}-{hashlib.sha256(str(sorted(map(str, group))).encode()).hexdigest()[:8]}",
         )
         extras = sorted({extra for item in group for extra in item.extras})
-        packages.append(
-            _unanalyzed_package(
-                package_id,
-                name,
-                "Consumer requirement declared in wheel metadata: "
-                # " | ", not "; ": a requirement string contains its own
-                # semicolon before the marker.
-                + " | ".join(sorted(str(item) for item in group))
-                + ". Resolved at install time; this document states no license "
-                "for it."
-                + (f" Requested with: {', '.join(extras)}." if extras else ""),
-                _dependency_refs(name, group[0]),
+        declared = (
+            "Consumer requirement declared in wheel metadata: "
+            # " | ", not "; ": a requirement string contains its own semicolon
+            # before the marker.
+            + " | ".join(sorted(str(item) for item in group))
+            + "."
+            + (f" Requested with: {', '.join(extras)}." if extras else "")
+        )
+        sibling = (siblings or {}).get(canonicalize_name(name))
+        if sibling is None:
+            element = package_id
+            packages.append(
+                _unanalyzed_package(
+                    package_id,
+                    name,
+                    f"{declared} Resolved at install time; this document states "
+                    "no license for it.",
+                    _dependency_refs(name, group[0]),
+                )
             )
+        else:
+            # Built by this same run, so it is not an install-time unknown: the
+            # dependency points straight at the package in that wheel's own
+            # document. A local stub beside it would state the version, supplier
+            # and licence a second time, from the same source.
+            element = f"DocumentRef-{licensing.spdx_safe(sibling['filename'])}"
+            external_documents.append(
+                {
+                    "externalDocumentId": element,
+                    "spdxDocument": sibling["namespace"],
+                    "checksum": {
+                        "algorithm": "SHA1",
+                        "checksumValue": sibling["sha1"],
+                    },
+                }
+            )
+            element = f"{element}:{WHEEL_PACKAGE_ID}"
+
+        comment = declared + (
+            f" Built by this same build as {sibling['name']} {sibling['version']}."
+            if sibling
+            else ""
         )
         # Optional only if every line that asks for it is gated on an extra. One
         # unconditional line makes the dependency unconditional.
         if all(_is_extra_gated(item) for item in group):
             relationships.append(
                 {
-                    "spdxElementId": package_id,
+                    "spdxElementId": element,
                     "relatedSpdxElement": wheel_id,
                     "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+                    "comment": comment,
                 }
             )
         else:
             relationships.append(
                 {
                     "spdxElementId": wheel_id,
-                    "relatedSpdxElement": package_id,
+                    "relatedSpdxElement": element,
                     "relationshipType": "DEPENDS_ON",
+                    "comment": comment,
                 }
             )
 
@@ -517,4 +564,5 @@ def build_document(
         "files": files,
         "relationships": relationships,
         "hasExtractedLicensingInfos": extracted,
+        **({"externalDocumentRefs": external_documents} if external_documents else {}),
     }

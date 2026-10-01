@@ -135,13 +135,35 @@ def verify_wheel(
     if duplicates:
         failures.append(f"duplicate SPDXIDs: {duplicates}")
     known = set(identifiers)
+    # An element in another document is written `DocumentRef-x:SPDXRef-y`, and
+    # the prefix has to be one this document declares -- otherwise it names a
+    # document no reader can fetch or check.
+    declared_documents = {
+        item["externalDocumentId"] for item in spdx.get("externalDocumentRefs", [])
+    }
     for relationship in spdx["relationships"]:
         for side in ("spdxElementId", "relatedSpdxElement"):
-            if relationship[side] not in known:
+            element = relationship[side]
+            prefix, _, _ = element.partition(":")
+            if prefix.startswith("DocumentRef-"):
+                if prefix not in declared_documents:
+                    failures.append(
+                        f"relationship {relationship['relationshipType']} references "
+                        f"{element!r}, and no externalDocumentRef declares {prefix!r}"
+                    )
+                continue
+            if element not in known:
                 failures.append(
                     f"relationship {relationship['relationshipType']} references unknown "
-                    f"element {relationship[side]!r}"
+                    f"element {element!r}"
                 )
+    for item in spdx.get("externalDocumentRefs", []):
+        checksum = item.get("checksum") or {}
+        if checksum.get("algorithm") != "SHA1" or not checksum.get("checksumValue"):
+            failures.append(
+                f"{item.get('externalDocumentId')!r} names a document with no SHA1 "
+                "to check it by"
+            )
 
     wheel_package = next(
         (
