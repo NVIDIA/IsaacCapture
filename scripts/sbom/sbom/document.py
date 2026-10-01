@@ -315,6 +315,11 @@ def build_document(
             record["licenseConcluded"] = attribution.spdx_tag
             record["licenseInfoInFiles"] = [attribution.spdx_tag]
             stated_in_files.add(attribution.spdx_tag)
+        else:
+            # A binary states nothing about itself, and most of this wheel is
+            # binaries. Listing only what was found says every file's licence
+            # was determined; NOASSERTION is what the rest of them found.
+            stated_in_files.add(NOASSERTION)
         if (
             attribution
             and attribution.copyright_text
