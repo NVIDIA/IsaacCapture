@@ -1,0 +1,849 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Sharpa Avatar Glove &#8212; Isaac Teleop Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/sharpa_avatar';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Haptikos Exoskeletons" href="haptikos.html" />
+    <link rel="prev" title="Wuji Glove" href="wuji_glove.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.6.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="joint_space.html">Generic Joint-Space Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="body_tracking.html">Body Tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
+<li class="toctree-l1"><a class="reference internal" href="manus.html">MANUS Gloves</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oglo.html">OGLO Tactile Glove Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Sharpa Avatar Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Sharpa Avatar Glove</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="sharpa-avatar-glove">
+<h1>Sharpa Avatar Glove<a class="headerlink" href="#sharpa-avatar-glove" title="Link to this heading">#</a></h1>
+<p>A Linux-only plugin for integrating Sharpa Avatar data gloves into the
+Isaac Capture framework. The gloves stream IMU and encoder data through the
+official Avatar SDK over USB. The plugin maps that stream into Isaac Capture’s
+usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
+<code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> tensors for the RAW and ROBOT 22-DoF joint sets, and
+inbound per-finger vibration on a haptic collection.</p>
+<p>Any downstream consumer that already reads OpenXR hands (<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code>) or
+schema joint-state collections can use Avatar gloves through the same DeviceIO
+interfaces. The plugin talks to the gloves directly, so do not run
+<code class="docutils literal notranslate"><span class="pre">avatar-backend</span></code> or Avatar Desktop at the same time.</p>
+<p>Plugin sources and the operator README live under
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/sharpa_avatar" rel="noopener noreferrer" target="_blank">src/plugins/sharpa_avatar</a>. A TeleopSession visualization example
+is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/sharpa_avatar" rel="noopener noreferrer" target="_blank">examples/sharpa_avatar</a>.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#data-flow" id="id1">Data flow</a></p></li>
+<li><p><a class="reference internal" href="#prerequisites" id="id2">Prerequisites</a></p></li>
+<li><p><a class="reference internal" href="#installation" id="id3">Installation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#usb-access-one-time-on-the-host" id="id4">USB access (one-time, on the host)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#running-the-plugin" id="id5">Running the plugin</a></p></li>
+<li><p><a class="reference internal" href="#datasets" id="id6">Datasets</a></p>
+<ul>
+<li><p><a class="reference internal" href="#human-openxr-hands" id="id7">HUMAN (OpenXR hands)</a></p></li>
+<li><p><a class="reference internal" href="#raw-and-robot-joint-state-tensors" id="id8">RAW and ROBOT (joint-state tensors)</a></p></li>
+<li><p><a class="reference internal" href="#haptic" id="id9">Haptic</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#wrist-pose" id="id10">Wrist pose</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id11">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id12">License</a></p></li>
+</ul>
+</nav>
+<section id="data-flow">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Data flow</a><a class="headerlink" href="#data-flow" title="Link to this heading">#</a></h2>
+<p>The glove SDK exposes three datasets plus haptics. HUMAN landmarks are placed
+at a fused wrist pose and injected as OpenXR hands; RAW and ROBOT stay as
+named joint-state collections:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Sharpa Avatar gloves (USB)
+        │
+        ▼
+avatar_hand_plugin  (Avatar SDK, production package)
+        │
+        ├── HUMAN  ──► OpenXR /hand/left, /hand/right   (26 joints)
+        ├── RAW    ──► avatar_raw_left / avatar_raw_right
+        ├── ROBOT  ──► avatar_robot_left / avatar_robot_right
+        └── haptic ◄── avatar_glove_haptic  (five finger vibration motors)
+</pre></div>
+</div>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p><a class="reference internal" href="../references/retargeting/sharpa.html"><span class="doc">Retargeter: Manus to Sharpa</span></a> maps OpenXR hand tracking onto a
+Sharpa robot hand. Avatar HUMAN output is the same OpenXR layer that
+retargeter consumes.</p>
+</div>
+</section>
+<section id="prerequisites">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Linux x86_64</strong> (tested on Ubuntu 22.04).</p></li>
+<li><p><strong>Pinned production Avatar SDK</strong> (<code class="docutils literal notranslate"><span class="pre">avatar-sdk</span></code> 1.7.3-17) from Sharpa’s
+signed APT repository. <code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> retrieves it; do not substitute
+<code class="docutils literal notranslate"><span class="pre">avatar-sdk-dev</span></code> or <code class="docutils literal notranslate"><span class="pre">avatar-sdk-beta</span></code>.</p></li>
+<li><p><strong>Sharpa Avatar gloves</strong> powered and connected over USB. Transport settings
+are selected in <code class="docutils literal notranslate"><span class="pre">&lt;sdk-root&gt;/share/sdk_config.json</span></code> (default root
+<code class="docutils literal notranslate"><span class="pre">/opt/avatar-sdk</span></code>).</p></li>
+<li><p><strong>CloudXR runtime</strong> on the plugin host, unless a <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> example
+launches it for you.</p></li>
+<li><p>A built Isaac Capture checkout. CMake 3.24 or newer is required.</p></li>
+</ul>
+<p>The SDK stays external: headers, libraries, and runtime assets are not copied
+into this repository or the plugin install prefix.</p>
+</section>
+<section id="installation">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
+<p>Install the pinned production SDK first if it is not already present:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_avatar_sdk.sh
+</pre></div>
+</div>
+<p>Then use the canonical top-level CMake workflow from the Isaac Capture root.
+<code class="docutils literal notranslate"><span class="pre">-DAVATAR_SDK_ROOT</span></code> selects a non-default SDK tree; that tree must already
+be complete:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DBUILD_PLUGIN_SHARPA_AVATAR<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">   </span>-DAVATAR_SDK_ROOT<span class="o">=</span>/opt/avatar-sdk
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel
+cmake<span class="w"> </span>--install<span class="w"> </span>build
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code> without a usable SDK under the selected
+root skips this plugin and the rest of Isaac Capture still configures. See
+<a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
+<section id="usb-access-one-time-on-the-host">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">USB access (one-time, on the host)</a><a class="headerlink" href="#usb-access-one-time-on-the-host" title="Link to this heading">#</a></h3>
+<p>udev rules must run <strong>on the host</strong>, not inside a container:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/sharpa_avatar/install_udev_rules.sh
+<span class="c1"># then unplug and reconnect the glove</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="running-the-plugin">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Running the plugin</a><a class="headerlink" href="#running-the-plugin" title="Link to this heading">#</a></h2>
+<p>The plugin publishes through the CloudXR / OpenXR runtime. Start the runtime
+and source its environment in the shell that launches the plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w">   </span><span class="c1"># runs in the background</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/plugins/sharpa_avatar/avatar_hand_plugin
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> and
+<a class="reference internal" href="../references/cloudxr.html#load-cloudxr-environment-variables"><span class="std std-ref">Load CloudXR environment variables</span></a> for the full service setup.</p>
+<p><code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> can launch the same binary through <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>. The
+visualization example does that for you (CloudXR and the plugin start unless
+you opt out):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/sharpa_avatar
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.sharpa_avatar
+</pre></div>
+</div>
+<p>Gloves reconnect from <code class="docutils literal notranslate"><span class="pre">update()</span></code> if they drop offline. Only one process
+may hold the Avatar SDK at a time.</p>
+</section>
+<section id="datasets">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Datasets</a><a class="headerlink" href="#datasets" title="Link to this heading">#</a></h2>
+<p>By default every path is on. Restrict them with <code class="docutils literal notranslate"><span class="pre">--datasets=</span></code>
+(comma-separated: <code class="docutils literal notranslate"><span class="pre">human</span></code>, <code class="docutils literal notranslate"><span class="pre">raw</span></code>, <code class="docutils literal notranslate"><span class="pre">robot</span></code>, <code class="docutils literal notranslate"><span class="pre">haptic</span></code>):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/sharpa_avatar/avatar_hand_plugin<span class="w"> </span>--datasets<span class="o">=</span>human,raw,robot,haptic
+./install/plugins/sharpa_avatar/avatar_hand_plugin<span class="w"> </span>--datasets<span class="o">=</span>human
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 38.0%" />
+<col style="width: 62.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Device or collection</p></th>
+<th class="head"><p>Contents</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">/hand/left</span></code>, <code class="docutils literal notranslate"><span class="pre">/hand/right</span></code></p></td>
+<td><p>OpenXR 26-joint poses from Avatar HUMAN landmarks</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_raw_left</span></code>, <code class="docutils literal notranslate"><span class="pre">avatar_raw_right</span></code></p></td>
+<td><p>RAW 22-DoF encoder joint state</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_robot_left</span></code>, <code class="docutils literal notranslate"><span class="pre">avatar_robot_right</span></code></p></td>
+<td><p>ROBOT 22-DoF retargeted joint state</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">avatar_glove_haptic</span></code></p></td>
+<td><p>Inbound per-finger vibration commands</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="human-openxr-hands">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">HUMAN (OpenXR hands)</a><a class="headerlink" href="#human-openxr-hands" title="Link to this heading">#</a></h3>
+<p>HUMAN landmarks are mapped onto the 26 OpenXR hand slots (unsupported slots
+stay invalid) and pushed with <code class="docutils literal notranslate"><span class="pre">HandInjector</span></code>. Hosts read them through
+<code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> like any other hand-tracking plugin.</p>
+</section>
+<section id="raw-and-robot-joint-state-tensors">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">RAW and ROBOT (joint-state tensors)</a><a class="headerlink" href="#raw-and-robot-joint-state-tensors" title="Link to this heading">#</a></h3>
+<p>Each side pushes a <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> (tensor id <code class="docutils literal notranslate"><span class="pre">joint_state</span></code>) with the
+22 named DoF from the pinned SDK. Consume them with <code class="docutils literal notranslate"><span class="pre">JointStateSource</span></code>
+and the collection ids above.</p>
+</section>
+<section id="haptic">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Haptic</a><a class="headerlink" href="#haptic" title="Link to this heading">#</a></h3>
+<p>The plugin reads <code class="docutils literal notranslate"><span class="pre">HapticCommand</span></code> on <code class="docutils literal notranslate"><span class="pre">avatar_glove_haptic</span></code> and drives
+five finger vibration motors. The visualization example uses the same
+per-finger pinch path as the generic glove haptic sample.</p>
+</section>
+</section>
+<section id="wrist-pose">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Wrist pose</a><a class="headerlink" href="#wrist-pose" title="Link to this heading">#</a></h2>
+<p>Avatar glove data is wrist-relative, so the plugin anchors HUMAN landmarks
+with a pose from <code class="docutils literal notranslate"><span class="pre">WristPoseSource</span></code> before publishing OpenXR hands. It prefers
+optical hand tracking and falls back to the controller aim pose when needed.
+If no wrist pose is available yet, the plugin still publishes a local skeleton
+with VALID-only flags; TRACKED is set once the selected wrist source is actively
+tracked.</p>
+<p>The example places that local skeleton into a stable left/right display
+frame. Pass <code class="docutils literal notranslate"><span class="pre">--world-frame</span></code> to leave the OpenXR poses unmodified.</p>
+</section>
+<section id="troubleshooting">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Avatar SDK installation fails</p></td>
+<td><p>Confirm access to Sharpa’s production APT endpoint and re-run
+<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>CMake skipped the plugin</p></td>
+<td><p>The SDK is missing under the selected root. Run
+<code class="docutils literal notranslate"><span class="pre">install_avatar_sdk.sh</span></code> and reconfigure with
+<code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_SHARPA_AVATAR=ON</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>CMake rejected the Avatar SDK</p></td>
+<td><p>Install the pinned production package, or point <code class="docutils literal notranslate"><span class="pre">AVATAR_SDK_ROOT</span></code>
+at a complete SDK tree. A <code class="docutils literal notranslate"><span class="pre">-dev</span></code> / <code class="docutils literal notranslate"><span class="pre">-beta</span></code> package at
+<code class="docutils literal notranslate"><span class="pre">/opt/avatar-sdk</span></code> is not the pin.</p></td>
+</tr>
+<tr class="row-odd"><td><p>USB glove is not detected</p></td>
+<td><p>Run <code class="docutils literal notranslate"><span class="pre">install_udev_rules.sh</span></code> on the host, then unplug and reconnect
+the glove.</p></td>
+</tr>
+<tr class="row-even"><td><p>Plugin binary is not found</p></td>
+<td><p>Build and install through the top-level CMake workflow. The example looks under
+<code class="docutils literal notranslate"><span class="pre">install/plugins/sharpa_avatar/</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>HUMAN / RAW / ROBOT stay offline</p></td>
+<td><p>Power the gloves, and stop Avatar Desktop, <code class="docutils literal notranslate"><span class="pre">avatar-backend</span></code>, or
+any other process using the Avatar SDK.</p></td>
+</tr>
+<tr class="row-even"><td><p>Viser shows an empty grid</p></td>
+<td><p>HUMAN must be enabled (default). RAW-only is joint angles, not a
+3D skeleton. Confirm the example is not launched with
+<code class="docutils literal notranslate"><span class="pre">--datasets</span></code> that omit <code class="docutils literal notranslate"><span class="pre">human</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>No vibration</p></td>
+<td><p>Keep <code class="docutils literal notranslate"><span class="pre">haptic</span></code> in <code class="docutils literal notranslate"><span class="pre">--datasets</span></code> and close a fingertip toward the
+thumb (example pinch path).</p></td>
+</tr>
+<tr class="row-even"><td><p>CloudXR runtime errors</p></td>
+<td><p>Check <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">status</span></code>, and source
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/run/cloudxr.env</span></code> in the same terminal as the plugin.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="license">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<p>Plugin sources are Apache-2.0. The Avatar SDK is proprietary to Sharpa and
+is subject to its own license; this project does not redistribute it.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="wuji_glove.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Wuji Glove</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="haptikos.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Haptikos Exoskeletons</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow">Data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation">Installation</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#usb-access-one-time-on-the-host">USB access (one-time, on the host)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-plugin">Running the plugin</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#datasets">Datasets</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#human-openxr-hands">HUMAN (OpenXR hands)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#raw-and-robot-joint-state-tensors">RAW and ROBOT (joint-state tensors)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#haptic">Haptic</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-pose">Wrist pose</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#license">License</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 01, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
