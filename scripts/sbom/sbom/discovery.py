@@ -865,6 +865,10 @@ def system_component(soname: str, origin: dict) -> Component:
         name=soname,
         kind="system-library",
         supplier=origin.get("supplier") or "NOASSERTION",
+        # The distro copyright file is where the holder is stated, and it was
+        # read, packaged and put on the file record -- then left off the package
+        # and out of the notices every other component appears in.
+        copyright_text=_notice_from(evidence),
         homepage="NOASSERTION",
         # A distro package the machine can name resolves; pkg:generic does not.
         purl=(
