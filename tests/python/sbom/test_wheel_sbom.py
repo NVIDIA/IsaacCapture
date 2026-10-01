@@ -145,11 +145,11 @@ def test_an_unidentified_grant_travels_verbatim_in_the_document(built):
     spdx = _embedded(built["wheel"])
     extracted = {item["licenseId"]: item for item in spdx["hasExtractedLicensingInfos"]}
 
-    assert "LicenseRef-demosdk-1.2.0-linux-amd64" in extracted
-    assert (
-        "DEMO CORP"
-        in extracted["LicenseRef-demosdk-1.2.0-linux-amd64"]["extractedText"]
-    )
+    # The id is minted from the component's key -- its path, here -- not from a
+    # basename two archives in different directories would share.
+    ref = next(item for item in extracted if "demosdk" in item)
+    assert "deps" in ref and "vendor" in ref, ref
+    assert "DEMO CORP" in extracted[ref]["extractedText"]
 
 
 def test_reuse_tags_on_shipped_files_are_reported_per_file(built):

@@ -92,10 +92,19 @@ def _extracted_licenses(
         refs = licensing.license_refs(
             component.license_concluded, component.license_declared
         )
-        grants = [item for item in component.evidence if item.kind == "grant"]
+        # Same predicate as the build gate, the verifier and the report: a REUSE
+        # pool is a real text. Written four ways, it was a rule in four places.
+        grants = [item for item in component.evidence if item.kind in ("grant", "pool")]
         if not refs or not grants:
             continue
         for ref in refs:
+            if ref in entries and entries[ref]["extractedText"] != "\n\n".join(
+                item.text for item in grants
+            ):
+                raise ValueError(
+                    f"{ref} was minted for two components with different terms; "
+                    "a LicenseRef identifies one text"
+                )
             entries[ref] = {
                 "licenseId": ref,
                 "name": f"License terms shipped with {component.name}",
@@ -115,6 +124,19 @@ def _extracted_licenses(
                 ),
             }
     return _share_identical_texts([entries[key] for key in sorted(entries)])
+
+
+def _rename_refs(expression: str, renamed: dict[str, str]) -> str:
+    """Substitute whole identifiers, never substrings.
+
+    `LicenseRef-alpha` is a prefix of `LicenseRef-alpha-extra`, so a plain
+    replace turns the longer id into one nothing defines and orphans its entry.
+    """
+    for old_id, new_id in renamed.items():
+        expression = re.sub(
+            rf"(?<![\w.-]){re.escape(old_id)}(?![\w.-])", new_id, expression
+        )
+    return expression
 
 
 def _share_identical_texts(entries: list[dict]) -> tuple[list[dict], dict[str, str]]:
@@ -433,8 +455,7 @@ def build_document(
         # leaving one behind would use a LicenseRef the document stops defining.
         for package in packages:
             for key in ("licenseConcluded", "licenseDeclared"):
-                for old_id, new_id in renamed.items():
-                    package[key] = package[key].replace(old_id, new_id)
+                package[key] = _rename_refs(package[key], renamed)
 
     return {
         "spdxVersion": SPDX_VERSION,

@@ -156,6 +156,15 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
             )
         dist_info = _dist_info(names)
         entries: list[Entry] = []
+        carrying = [
+            item.filename
+            for item in archive.infolist()
+            if item.is_dir() and item.file_size
+        ]
+        if carrying:
+            raise WheelError(
+                f"these members are named as directories but carry bytes: {carrying}"
+            )
         for info in archive.infolist():
             if info.is_dir():
                 continue

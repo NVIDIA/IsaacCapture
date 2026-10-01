@@ -128,7 +128,9 @@ def _archive_components(
             )
             for member, data in record.get("license_members", [])
         ]
-        concluded, declared = licensing.expression(evidence, name)
+        # `display`, not `name`: the name is the archive's basename, so two
+        # archives in different directories would share a LicenseRef.
+        concluded, declared = licensing.expression(evidence, display)
 
         source_url = _fetched_from(repo_root / display)
         held = (
@@ -366,6 +368,11 @@ def document(discovery: Discovery, wheel_name: str, inventory) -> dict:
         },
         "build": {
             "build_dir": str(discovery.build_dir),
+            # Named once: a member's origin reads "staged" rather than repeating
+            # this prefix and the member's own path for every file staged here.
+            "staged_root": (
+                str(discovery.staged_root) if discovery.staged_root else None
+            ),
             "config": discovery.config,
             "arch": arch,
             "platform": platform.platform(),

@@ -24,12 +24,24 @@ class ManifestError(Exception):
     """A manifest is not shaped the way this tool writes them."""
 
 
+def _sidecar(evidence_dir: Path, record: dict, kind: str) -> Path | None:
+    """A named sidecar, or None so the missing-file failure is reported as one."""
+    named = record.get("sidecars", {}).get(kind, {}).get("filename")
+    if not named:
+        return None
+    path = evidence_dir / named
+    return path if path.is_file() else None
+
+
 def _record_for(manifest: dict, filename: str) -> dict:
     """One wheel's record, or a clear error rather than a KeyError traceback."""
     try:
         records = manifest["wheels"]
     except (KeyError, TypeError) as error:
         raise ManifestError("manifest has no 'wheels' list") from error
+    seen = [item for item in records if item.get("filename") == filename]
+    if len(seen) > 1:
+        raise ManifestError(f"{filename} is advertised {len(seen)} times")
     for record in records:
         if record.get("filename") == filename:
             for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
@@ -221,13 +233,6 @@ def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
                     f"this document records for it (sha256:{match.group('digest')})"
                 )
 
-    for extracted in spdx.get("hasExtractedLicensingInfos", []):
-        body = extracted.get("extractedText", "").encode("utf-8")
-        if hashlib.sha256(body).hexdigest() not in packaged:
-            failures.append(
-                f"{extracted['licenseId']}: the text it carries is not packaged "
-                "in this wheel"
-            )
     return failures
 
 
@@ -265,6 +270,12 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
 
     failures: list[str] = []
     attributed = {item["path"] for item in evidence_doc.get("attributions", [])}
+    packaged = {
+        entry.sha256
+        for entry in wheel.entries
+        if entry.name.startswith(f"{wheel.dist_info}/licenses/")
+    }
+    recorded: set[str] = set()
 
     for entry in wheel.entries:
         if entry.name not in attributed:
@@ -275,16 +286,77 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
     for key, component in evidence_doc.get("components", {}).items():
         if not component.get("in_this_wheel"):
             continue
+        recorded.update(
+            item["sha256"]
+            for item in component.get("evidence", [])
+            if item["kind"] in ("grant", "pool")
+        )
         # The same test the build gate applies: a REUSE pool is a real text even
         # though it names no single expression, so publishing on one and then
         # failing verification for want of a grant would contradict the gate.
-        if not any(
-            item["kind"] in ("grant", "pool") for item in component.get("evidence", [])
-        ):
+        texts = [
+            item
+            for item in component.get("evidence", [])
+            if item["kind"] in ("grant", "pool")
+        ]
+        if not texts:
             failures.append(
                 f"{key} is redistributed but no license text was found for it"
             )
+            continue
+        # Found is not shipped. The build gate asks whether a text existed to
+        # read; this asks whether the wheel in hand still carries it. Without
+        # the second, every statement the document makes about a component --
+        # that it is here, under these terms, with this text -- could be deleted
+        # along with the text and nothing would notice.
+        if not any(item["sha256"] in packaged for item in texts):
+            failures.append(
+                f"{key} is redistributed but the license text recorded for it is "
+                "not packaged in this wheel"
+            )
+    failures.extend(_document_agrees_with_evidence(wheel, recorded))
     return failures
+
+
+def _document_agrees_with_evidence(
+    wheel: wheelfile.WheelInfo, recorded: set[str]
+) -> list[str]:
+    """The texts the document names must be the ones the build actually read.
+
+    `_check_license_texts` reads the expected digest out of the document it is
+    checking, so a rewrite consistent with itself is invisible to it. The build
+    evidence was produced before the wheel was published and states the digests
+    independently, so where it is supplied it is the thing to compare against.
+    """
+    import zipfile as _zipfile
+
+    with _zipfile.ZipFile(wheel.path) as archive:
+        name = wheelfile.sbom_member(wheel.dist_info, wheel.path.name)
+        if name not in archive.namelist():
+            return []
+        spdx = json.loads(archive.read(name))
+
+    failures = []
+    for package in spdx.get("packages", []):
+        for text in package.get("attributionTexts", []):
+            match = _EVIDENCE_DIGEST.search(text)
+            if match and match.group("digest") not in recorded:
+                failures.append(
+                    f"{package['name']}: the document names a licence text "
+                    f"(sha256:{match.group('digest')}) the build never read"
+                )
+    return failures
+
+
+def _refs_in(value) -> set[str]:
+    """LicenseRef identifiers in a field that may hold an expression or a list."""
+    if value is None:
+        return set()
+    items = value if isinstance(value, list) else [value]
+    found: set[str] = set()
+    for item in items:
+        found.update(licensing.license_refs(str(item)))
+    return found
 
 
 def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
@@ -294,18 +366,16 @@ def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     if notices not in names:
         failures.append(f"{notices} is not packaged")
 
+    # Every field that can name one, through one parser. Two of these were not
+    # looked at, and packages were tokenised by hand while files went through the
+    # grammar -- two readings of one notation, disagreeing at the edges.
     declared_refs = set()
     for item in spdx.get("files", []):
-        declared_refs.update(
-            licensing.license_refs(str(item.get("licenseConcluded", "")))
-        )
+        for field in ("licenseConcluded", "licenseInfoInFiles"):
+            declared_refs.update(_refs_in(item.get(field)))
     for package in spdx["packages"]:
-        for field in ("licenseConcluded", "licenseDeclared"):
-            for token in (
-                str(package.get(field, "")).replace("(", " ").replace(")", " ").split()
-            ):
-                if token.startswith("LicenseRef-"):
-                    declared_refs.add(token)
+        for field in ("licenseConcluded", "licenseDeclared", "licenseInfoFromFiles"):
+            declared_refs.update(_refs_in(package.get(field)))
     extracted = {
         item["licenseId"] for item in spdx.get("hasExtractedLicensingInfos", [])
     }
@@ -393,8 +463,7 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
             f"{record['filename']}: {item}"
             for item in check(
                 wheel,
-                build_evidence=evidence_dir
-                / record["sidecars"]["build_evidence"]["filename"],
+                build_evidence=_sidecar(evidence_dir, record, "build_evidence"),
                 manifest=manifest_path,
                 evidence_dir=evidence_dir,
             )

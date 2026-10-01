@@ -798,7 +798,10 @@ def system_component(soname: str, origin: dict) -> Component:
         evidence.append(
             licensing._evidence(key, "build-host", license_path, text, "grant")  # noqa: SLF001
         )
-    concluded, declared = licensing.expression(evidence, soname)
+    # `key`, not `soname`: the key is what identifies this component everywhere
+    # else, and two components reduced to the same label would mint one LicenseRef
+    # for two different texts.
+    concluded, declared = licensing.expression(evidence, key)
 
     package = origin.get("package")
     details = [

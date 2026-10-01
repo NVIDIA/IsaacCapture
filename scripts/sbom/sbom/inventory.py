@@ -174,7 +174,16 @@ class Resolver:
             # -- and saying the member is a copy of something it does not hash to
             # would describe a file the wheel does not contain.
             patched = candidate_digest != digest
-            source = f"staged at {probe.relative_to(self.build_dir).as_posix()}"
+            relative = probe.relative_to(self.build_dir).as_posix()
+            # The staged path is the staging root plus the member's own path
+            # unless the build renamed the file on the way in. Printing it
+            # whenever it is derivable repeats the member path once per member
+            # and says nothing; where it is not, it is the interesting part.
+            source = (
+                "staged"
+                if relative.endswith(f"/{wheel_path}")
+                else f"staged at {relative}"
+            )
 
         found = self._trace(
             wheel_path, candidate_digest, digest, source, soname, build_id
