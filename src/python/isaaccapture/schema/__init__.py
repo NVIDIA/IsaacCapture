@@ -38,6 +38,9 @@ from ._schema import (
     # Pedals-related types.
     Generic3AxisPedalOutput,
     Generic3AxisPedalOutputRecord,
+    # SpaceMouse types (raw 3Dconnexion axis/button state).
+    SpaceMouseOutput,
+    SpaceMouseOutputRecord,
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
@@ -135,6 +138,9 @@ __all__ = [
     # Pedals types.
     "Generic3AxisPedalOutput",
     "Generic3AxisPedalOutputRecord",
+    # SpaceMouse types (raw 3Dconnexion axis/button state).
+    "SpaceMouseOutput",
+    "SpaceMouseOutputRecord",
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",

@@ -37,8 +37,9 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
 
 **Still hand-written:** the `.fbs` schema and its `schema/python/*_bindings.h` pybind file (codegen
 starts at the tracker layer, not the schema layer); `head`, `hand`, `controller`, `full_body`,
-`message_channel`, and `HapticCommandReaderTracker` (multi-sample bucketing by
-`HapticCommand.endpoint` on one push-tensor collection).
+`message_channel`, `HapticCommandReaderTracker` (multi-sample bucketing by
+`HapticCommand.endpoint` on one push-tensor collection), and `spacemouse` (in-process: the live
+impl reads the 3Dconnexion HID device itself and needs no OpenXR extension or plugin).
 
 ## No OpenXR dependency
 

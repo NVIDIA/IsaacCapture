@@ -9,6 +9,7 @@
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
+#include <deviceio_trackers/spacemouse_tracker.hpp>
 #include <deviceio_trackers/tensor_push_tracker.hpp>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -76,6 +77,30 @@ PYBIND11_MODULE(_deviceio_trackers, m)
             [](const core::HeadTracker& self, const core::ITrackerSession& session)
             { return to_python(self.get_head(session)); },
             py::arg("session"), "Get the head tracked state (None if inactive)");
+
+    m.def(
+        "discover_spacemouse_device",
+        []() -> std::optional<std::string>
+        {
+            auto device = core::discover_spacemouse_device();
+            return device ? std::optional<std::string>(device->device_path) : std::nullopt;
+        },
+        "The /dev/hidrawN path of the first connected SpaceMouse of a validated model, or None.");
+
+    py::class_<core::SpaceMouseTracker, core::ITracker, std::shared_ptr<core::SpaceMouseTracker>>(
+        m, "SpaceMouseTracker",
+        "In-process 3Dconnexion SpaceMouse read from its HID device (/dev/hidrawN). Needs no plugin "
+        "process or OpenXR extension; reading /dev/hidraw* needs a udev rule granting the user access.")
+        .def(py::init<std::string, bool>(), py::arg("device_path") = "", py::arg("combined_report") = false,
+             "Read device_path (e.g. '/dev/hidraw3'); empty picks the first connected SpaceMouse. "
+             "combined_report is only used with an explicit path (3Dconnexion Universal Receiver).")
+        .def_property_readonly("device_path", &core::SpaceMouseTracker::device_path)
+        .def_property_readonly("combined_report", &core::SpaceMouseTracker::combined_report)
+        .def(
+            "get_spacemouse_data",
+            [](const core::SpaceMouseTracker& self, const core::ITrackerSession& session)
+            { return to_python(self.get_data(session)); },
+            py::arg("session"), "Get this frame's SpaceMouseOutput (None while no SpaceMouse is connected)");
 
     py::class_<core::ControllerTracker, core::ITracker, std::shared_ptr<core::ControllerTracker>>(m, "ControllerTracker")
         .def(py::init<>())

@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Raw state of a 3Dconnexion SpaceMouse-family HID device: the current translation and
+// rotation axis readings and the set of currently-held button indices. Carries no
+// semantic mapping -- which axis/button means what (a position delta, a rotation delta,
+// a toggle) is entirely up to the consuming retargeter.
+//
+// Validated devices:
+// - SpaceMouse Compact, SpaceMouse Wireless, SpaceNavigator for Notebooks,
+//   3Dconnexion Universal Receiver.
+//
+// All fields are always present whenever this table itself is present.
+table SpaceMouseOutput {
+    // Translation axis readings [x, y, z], normalized to [-1, 1]. Index i is the
+    // value of translation axis i, in the order reported by the device's HID report
+    // (see live_spacemouse_tracker_impl.cpp).
+    translation: [float] (id: 0);
+
+    // Rotation axis readings [x, y, z], normalized to [-1, 1], same convention as
+    // translation.
+    rotation: [float] (id: 1);
+
+    // Button indices currently held down (bit position in the device's button
+    // report byte), in no particular order.
+    pressed_buttons: [ushort] (id: 2);
+
+    // Whether the tracker has emitted at least one sample.
+    is_valid: bool (id: 3);
+}
+
+// MCAP recording wrapper for SpaceMouseOutput.
+table SpaceMouseOutputRecord {
+    data: SpaceMouseOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SpaceMouseOutputRecord;

@@ -6,6 +6,10 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(live_trackers_tests
     test_vendor_validation.cpp
 )
+# The SpaceMouse tests drive the Linux hidraw reader through a FIFO.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(live_trackers_tests PRIVATE test_spacemouse_tracker.cpp)
+endif()
 
 target_link_libraries(live_trackers_tests PRIVATE
     deviceio::live_trackers

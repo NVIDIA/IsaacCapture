@@ -19,6 +19,7 @@ from isaaccapture.deviceio_trackers import (
     MessageChannelTracker,
     FrameMetadataTrackerOak,
     Generic3AxisPedalTracker,
+    SpaceMouseTracker,
     OgloTactileTracker,
     TensorPushTracker,
     JointStateTracker,
@@ -49,6 +50,7 @@ from ..schema import (
     StreamType,
     FrameMetadataOak,
     Generic3AxisPedalOutput,
+    SpaceMouseOutput,
     OgloGloveSample,
 )
 
@@ -60,6 +62,7 @@ __all__ = [
     "StreamType",
     "FrameMetadataOak",
     "Generic3AxisPedalOutput",
+    "SpaceMouseOutput",
     "OgloGloveSample",
     "ITracker",
     "HandTracker",
@@ -69,6 +72,7 @@ __all__ = [
     "MessageChannelTracker",
     "FrameMetadataTrackerOak",
     "Generic3AxisPedalTracker",
+    "SpaceMouseTracker",
     "OgloTactileTracker",
     "TensorPushTracker",
     "JointStateTracker",

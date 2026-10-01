@@ -18,6 +18,7 @@ pybind11_add_module(schema_py
     schema_array_views.h
     schema_serialized.h
     se3_tracker_bindings.h
+    spacemouse_bindings.h
     schema_module.cpp
 )
 

@@ -27,6 +27,8 @@ class HandTracker;
 class IHandTrackerImpl;
 class HeadTracker;
 class IHeadTrackerImpl;
+class SpaceMouseTracker;
+class ISpaceMouseTrackerImpl;
 class HapticCommandReaderTracker;
 class IHapticCommandReaderTrackerImpl;
 class MessageChannelTracker;
@@ -68,6 +70,7 @@ public:
     std::unique_ptr<IMessageChannelTrackerImpl> create_message_channel_tracker_impl(const MessageChannelTracker* tracker);
     std::unique_ptr<IHapticCommandReaderTrackerImpl> create_haptic_command_reader_tracker_impl(
         const HapticCommandReaderTracker* tracker);
+    std::unique_ptr<ISpaceMouseTrackerImpl> create_spacemouse_tracker_impl(const SpaceMouseTracker* tracker);
     // create_<name>_tracker_impl for every manifest tracker.
 #include "generated_replay_factory_declarations.inc"
 
