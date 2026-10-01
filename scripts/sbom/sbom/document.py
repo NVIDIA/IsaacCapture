@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-import os
-from datetime import datetime, timezone
 
 from packageurl import PackageURL
 from packaging.requirements import Requirement
 
-from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing
+from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing, stamped_now
 from .discovery import Component
 from .inventory import Inventory
 from .wheelfile import WheelInfo
@@ -82,15 +80,6 @@ def _component_package(component: Component, roles: set[str]) -> dict:
     if component.homepage != NOASSERTION:
         package["homepage"] = component.homepage
     return package
-
-
-def _file_license_refs(inventory: Inventory) -> set[str]:
-    """LicenseRef- identifiers that arrive through a file's own REUSE tag."""
-    refs: set[str] = set()
-    for attribution in inventory.attributions.values():
-        if attribution.spdx_tag:
-            refs.update(licensing.license_refs(attribution.spdx_tag))
-    return refs
 
 
 def _extracted_licenses(components: list[Component]) -> list[dict]:
@@ -293,7 +282,7 @@ def build_document(
             if name not in file_ids:
                 continue
             attribution = inventory.attributions[name]
-            exact = attribution.origin in {"copied", "archive-copy"}
+            exact = attribution.exact
             relationships.append(
                 {
                     "spdxElementId": file_ids[name],
@@ -392,12 +381,7 @@ def build_document(
 
     # SOURCE_DATE_EPOCH makes the whole wheel reproducible, which is what lets a
     # rebuild be compared against a published one byte for byte.
-    epoch = os.environ.get("SOURCE_DATE_EPOCH")
-    stamp = (
-        datetime.fromtimestamp(int(epoch), timezone.utc)
-        if epoch and epoch.isdigit()
-        else datetime.now(timezone.utc)
-    )
+    stamp = stamped_now()
 
     return {
         "spdxVersion": SPDX_VERSION,

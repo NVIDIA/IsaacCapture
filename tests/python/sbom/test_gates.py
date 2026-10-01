@@ -397,3 +397,29 @@ def test_bytes_more_than_one_component_holds_name_no_single_source(
     assert "more than one component" in entry["comment"]
     # Both candidates named, neither claimed as the source.
     assert "alpha" in entry["comment"] and "beta" in entry["comment"]
+
+
+def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
+    """The list lives in the document being checked.
+
+    Treating it as files to skip lets whoever edits the document exempt anything
+    they add to the wheel from the only coverage check a consumer runs.
+    """
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        payload = {item: archive.read(item) for item in archive.namelist()}
+
+    payload["isaaccapture/_backdoor.py"] = b"import os\n"
+    document = f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"
+    spdx = json.loads(payload[document])
+    for package in spdx["packages"]:
+        if package["SPDXID"] == "SPDXRef-Package-wheel":
+            package["packageVerificationCode"][
+                "packageVerificationCodeExcludedFiles"
+            ].append("./isaaccapture/_backdoor.py")
+    payload[document] = json.dumps(spdx, indent=2, sort_keys=True).encode() + b"\n"
+    synth.write_wheel(built["wheel"], payload)
+
+    failures = validate_module.check(built["wheel"])
+
+    assert any("excluded-files list must be exactly" in item for item in failures)
+    assert any("not covered by the SBOM" in item for item in failures)

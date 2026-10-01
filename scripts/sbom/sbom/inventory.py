@@ -58,6 +58,11 @@ class Attribution:
     primary: str | None = None
     spdx_tag: str | None = None
     copyright_text: str | None = None
+    # Whether the member is those bytes, as opposed to something made from them.
+    # Kept apart from `origin`, which says where it came from: inferring one from
+    # the other made the same fact answerable two ways depending on which index
+    # happened to hold the bytes.
+    exact: bool = False
 
     def as_json(self) -> dict:
         return {
@@ -159,10 +164,42 @@ class Resolver:
         """Explain one member: by content, then by path, then by the machine."""
         candidate_digest = digest
         source = "wheel member"
+        patched = False
         if probe is not None and probe.is_file():
             candidate_digest = sha256_file(probe)
+            # The staged file is what the build put there; the member is what the
+            # wheel ships. Tracing from the staged bytes finds the origin, but
+            # the two can differ -- a repair tool rewrites members after staging
+            # -- and saying the member is a copy of something it does not hash to
+            # would describe a file the wheel does not contain.
+            patched = candidate_digest != digest
             source = f"staged at {probe.relative_to(self.build_dir).as_posix()}"
 
+        found = self._trace(
+            wheel_path, candidate_digest, digest, source, soname, build_id
+        )
+        if found is not None and patched:
+            found.origin = {
+                "copied": "derived",
+                "archive-copy": "archive-derived",
+            }.get(found.origin, found.origin)
+            found.exact = False
+            found.detail += (
+                "; the member differs from that staged file, so it was rewritten "
+                "after staging"
+            )
+        return found
+
+    def _trace(
+        self,
+        wheel_path: str,
+        candidate_digest: str,
+        digest: str,
+        source: str,
+        soname: str | None,
+        build_id: str | None,
+    ) -> Attribution | None:
+        """Find what explains these bytes, in order of how much it proves."""
         # Zero bytes are identical everywhere, so a content match proves nothing:
         # it would hand an empty marker file to whichever component happened to be
         # indexed first, and invent that component's license obligation with it.
@@ -195,6 +232,7 @@ class Resolver:
             return Attribution(
                 path=wheel_path,
                 origin="copied",
+                exact=True,
                 detail=f"{source}; byte-identical to {component_file}",
                 components={key: {"copied-file"}},
                 primary=key,
@@ -205,6 +243,7 @@ class Resolver:
             return Attribution(
                 path=wheel_path,
                 origin="archive-copy",
+                exact=True,
                 detail=f"{source}; byte-identical to {member.path} in {member.container}",
                 components={member.container: {"extracted-file"}},
                 primary=member.container,
@@ -212,7 +251,9 @@ class Resolver:
 
         repo_file = self.repo_files.by_hash.get(candidate_digest)
         if repo_file:
-            return self._from_repo_file(wheel_path, source, repo_file, f"{source}; ")
+            return self._from_repo_file(
+                wheel_path, source, repo_file, f"{source}; ", True
+            )
 
         build_file = self.build_files.by_hash.get(candidate_digest)
         if build_file:
@@ -261,7 +302,7 @@ class Resolver:
         return None
 
     def _from_repo_file(
-        self, wheel_path: str, source: str, repo_file: str, lead: str
+        self, wheel_path: str, source: str, repo_file: str, lead: str, same: bool
     ) -> Attribution:
         """A file this repository holds -- and, where it is not ours, whose.
 
@@ -274,8 +315,11 @@ class Resolver:
         return Attribution(
             path=wheel_path,
             origin="repo-source",
+            exact=same,
             detail=f"{lead}{repo_file}",
-            components={owner: {"copied-file"}} if owner else {},
+            components={owner: {"copied-file" if same else "derived-file"}}
+            if owner
+            else {},
             primary=owner,
         )
 
@@ -352,7 +396,13 @@ class Resolver:
         self, wheel_path: str, source: str, build_id: str
     ) -> Attribution | None:
         """The pristine bytes this member was patched from, named by build-id."""
-        member = self.archives.by_build_id.get(build_id)
+        # The same library can sit in two archives under two sets of terms, and
+        # these two SDKs share five build-ids. Every neighbouring index refuses
+        # to name one of several candidates; this one must too, or a patched
+        # member takes whichever archive happened to be walked first.
+        members = self.archives.all_by_build_id.get(build_id, [])
+        containers = {item.container for item in members}
+        member = members[0] if len(containers) == 1 else None
         if member:
             return Attribution(
                 path=wheel_path,
@@ -457,6 +507,7 @@ class Resolver:
             return Attribution(
                 path=wheel_path,
                 origin="copied" if same else "derived",
+                exact=same,
                 detail=(
                     f"{source}; "
                     + ("identical to " if same else "derived from ")
@@ -475,7 +526,7 @@ class Resolver:
         if repo_file:
             same = self.repo_files.digest_of_display(repo_file) == digest
             lead = f"{source}; {'identical to' if same else 'derived from'} "
-            return self._from_repo_file(wheel_path, source, repo_file, lead)
+            return self._from_repo_file(wheel_path, source, repo_file, lead, same)
 
         build_file = self.build_files.path_suffix_match(wheel_path)
         if build_file:
@@ -578,6 +629,7 @@ def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
             continue
         key = owners.pop()
         item.origin = "copied"
+        item.exact = True
         item.detail = (
             f"{item.detail.split(';')[0]}; these bytes are held by more than one "
             f"component, and the directory it is staged into is explained by {key}"

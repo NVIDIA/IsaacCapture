@@ -113,8 +113,17 @@ def verify_wheel(
             "packageVerificationCodeExcludedFiles", []
         )
     }
-    if sbom_name not in excluded:
-        failures.append("the embedded SBOM must be listed among the excluded files")
+    # Exactly these two, not "at least". The list lives in the document being
+    # checked, so treating it as a set of files to skip lets anyone who can edit
+    # the document exempt anything they add to the wheel from the coverage check
+    # below -- which is the whole of what this command promises a consumer.
+    permitted = {f"{wheel.dist_info}/RECORD", sbom_name}
+    if excluded != permitted:
+        failures.append(
+            "the excluded-files list must be exactly "
+            f"{sorted(permitted)}, not {sorted(excluded)}"
+        )
+        excluded = permitted
 
     documented = {item["fileName"].removeprefix("./"): item for item in spdx["files"]}
     actual = {item.name: item for item in wheel.entries}
@@ -178,6 +187,12 @@ def _check_record(wheel_path: Path, wheel: wheelfile.WheelInfo) -> list[str]:
 def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[str]:
     """Every wheel member must name where it came from, and every shipped
     component must have had a license text to read."""
+    stated = evidence_doc.get("wheel")
+    if stated and stated != wheel.path.name:
+        # Checking a wheel against another wheel's evidence compares two unrelated
+        # member sets; the mismatch it produces describes the wrong problem.
+        return [f"build evidence describes {stated}, not {wheel.path.name}"]
+
     failures: list[str] = []
     attributed = {item["path"] for item in evidence_doc.get("attributions", [])}
 
@@ -190,7 +205,12 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
     for key, component in evidence_doc.get("components", {}).items():
         if not component.get("in_this_wheel"):
             continue
-        if not any(item["kind"] == "grant" for item in component.get("evidence", [])):
+        # The same test the build gate applies: a REUSE pool is a real text even
+        # though it names no single expression, so publishing on one and then
+        # failing verification for want of a grant would contradict the gate.
+        if not any(
+            item["kind"] in ("grant", "pool") for item in component.get("evidence", [])
+        ):
             failures.append(
                 f"{key} is redistributed but no license text was found for it"
             )
