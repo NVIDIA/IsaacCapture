@@ -738,9 +738,14 @@ def _debian_copyright_fields(lines: list[str]) -> list[str]:
     """
     found: list[str] = []
     for index, line in enumerate(lines):
-        if line.rstrip() != "Copyright:":
+        if not line.startswith("Copyright:"):
             continue
-        for position, value in enumerate(lines[index + 1 :]):
+        # Debian writes the field either way, and the same-line form is the
+        # commoner by far. `Copyright: Jane Doe` matches no notice pattern --
+        # the colon breaks it -- so without this such a package credits nobody.
+        inline = line[len("Copyright:") :].strip()
+        values = ([f" {inline}"] if inline else []) + list(lines[index + 1 :])
+        for position, value in enumerate(values):
             if not value[:1].isspace() or not value.strip():
                 break
             holder = " ".join(value.split()).rstrip(".")

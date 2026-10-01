@@ -312,3 +312,62 @@ def test_a_template_is_not_a_notice():
         licensing.read_notice("MIT\n\nCopyright (c) 2016 Wenzel Jakob\n\nPermission")
         == "Copyright (c) 2016 Wenzel Jakob"
     )
+
+
+def test_a_debian_copyright_field_names_its_holder_either_way(license_data):
+    """Debian states a holder in a field, in two spellings, often with no year.
+
+    `Copyright: Jane Doe` matches no notice pattern -- the colon breaks it -- and
+    it is the commoner of the two forms, so a system library vendored from such a
+    package was credited to nobody. The field also holds prose and the literal
+    `None`, which are not holders.
+    """
+    licensing.load_corpus(license_data)
+
+    same_line = "Copyright: Poul-Henning Kamp <phk@login.dkuug.dk>\nLicense: Beerware\n"
+    indented = "Copyright:\n Colin Plumb\n Todd C. Miller\nLicense: public-domain\n"
+
+    assert licensing.read_notices(same_line) == [
+        "Poul-Henning Kamp <phk@login.dkuug.dk>"
+    ]
+    assert licensing.read_notices(indented) == ["Colin Plumb", "Todd C. Miller"]
+    assert licensing.read_notices("Copyright: None\nLicense: MIT\n") == []
+    assert (
+        licensing.read_notices(
+            "Copyright: This code is derived from software contributed by X\n"
+        )
+        == []
+    )
+
+
+def test_every_holder_in_a_text_is_read_not_just_the_first(license_data):
+    """Under MIT, BSD and Zlib the notice is the obligation, so all of it counts.
+
+    Holders run on past a comma, sit on the next line with nothing joining them,
+    and follow a lead-in of any length.
+    """
+    licensing.load_corpus(license_data)
+
+    assert licensing.read_notices(
+        "Copyright (c) 2002-2006 Marcus Geelnard\n\n"
+        "Copyright (c) 2006-2019 Camilla Lowy\n"
+    ) == [
+        "Copyright (c) 2002-2006 Marcus Geelnard",
+        "Copyright (c) 2006-2019 Camilla Lowy",
+    ]
+    # The holder on the line below, with no comma to join them.
+    assert licensing.read_notices(
+        "Copyright © 1980, 1982, 1986, 1989-1994\n"
+        "    The Regents of the University of California.\n"
+    ) == [
+        "Copyright © 1980, 1982, 1986, 1989-1994 The Regents of the University "
+        "of California."
+    ]
+    # A lead-in longer than a name, and a clause broken by the end of its line.
+    assert licensing.read_notices(
+        "Box collision code (engine_collision_box.c) is Copyright 2016 S Kolev.\n"
+    ) == ["Copyright 2016 S Kolev."]
+    assert licensing.read_notices(
+        "2010), this software is Copyright (c) 2007-2010 by B Lepilleur, and is\n"
+        "released under the terms of the MIT License.\n"
+    ) == ["Copyright (c) 2007-2010 by B Lepilleur"]

@@ -112,12 +112,13 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
         lines.append(f"- License: `{component.license_concluded}`")
         if component.copyright_text != "NOASSERTION":
             # A reference text names no holder, so for a component that ships no
-            # licence file of its own this is the only notice in the wheel. One
-            # per line, indented: a bare newline inside a list item is a lazy
-            # continuation and renders several notices as one paragraph.
-            notices = component.copyright_text.splitlines()
-            lines.append(f"- Copyright: {notices[0]}")
-            lines.extend(f"  {item}" for item in notices[1:])
+            # licence file of its own this is the only notice in the wheel.
+            # Joined with an explicit break: a newline inside a list item is a
+            # lazy continuation, and so is an indented one, so either way a
+            # renderer runs distinct legal notices into one paragraph.
+            lines.append(
+                "- Copyright: " + "<br>".join(component.copyright_text.splitlines())
+            )
         if component.license_declared != component.license_concluded:
             lines.append(f"- Declared: `{component.license_declared}`")
         if component.homepage != "NOASSERTION":
@@ -296,7 +297,7 @@ def report_markdown(payload: dict) -> str:
         "None declared."
     ]
 
-    lines += ["", "## Fetched for this build but not in this wheel", ""]
+    lines += ["", "## Present in this build but not in this wheel", ""]
     if payload["exclusions"]:
         lines += [
             f"- `{item['component']}` — {item['reason']}"

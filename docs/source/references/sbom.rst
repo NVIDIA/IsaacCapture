@@ -20,7 +20,7 @@ What a wheel carries
        │   ├── LICENSE.md                 # this project's own license
        │   ├── LICENSES/*.txt             # texts the SPDX headers on this project's sources name
        │   ├── THIRD-PARTY-NOTICES.md     # component -> license -> text, with roles
-       │   └── third-party/<component>/   # each redistributed component's own file, verbatim
+       │   └── third-party/<component>/   # its own file verbatim, or a reference text, labelled
        └── sboms/
            └── <wheel filename>.spdx.json # SPDX 2.3 contents inventory
 
@@ -128,7 +128,7 @@ packaged assets, for all six published variants (``x86_64`` and ``aarch64`` × C
 Deliberately **not** described by it:
 
 - Build-time-only inputs — test frameworks, code generators, CMake modules, toolchains.
-  They appear in the report under *Fetched for this build but not in this wheel*; a full
+  They appear in the report under *Present in this build but not in this wheel*; a full
   build inventory is separate work.
 - Source distributions and the ``pip install .`` path, which produce different contents.
 - Containers and the web client, which are distributed on their own.
@@ -292,8 +292,9 @@ inventory with its identity, its license and the route it took to get there.
 
 Two things do need attention:
 
-- **A component that ships no license text stops the build.** The fix is to obtain the
-  terms, not to record an assumption.
+- **A component that states its license nowhere stops the build.** The fix is to obtain the
+  terms, not to record an assumption. Stating one only in its source headers is not that
+  case: the reference text for that identifier ships, labelled as a substitution.
 - **A new member that the build cannot explain stops the build.** That means something
   reached the wheel by a route the collector cannot see; teach it that route rather than
   excluding the file.
