@@ -17,6 +17,7 @@ Four indexes do the work:
 
 from __future__ import annotations
 
+import functools
 import glob
 import hashlib
 import json
@@ -31,7 +32,7 @@ from pathlib import Path
 
 from packageurl import PackageURL
 
-from . import licensing
+from . import elf, licensing
 
 # Directories that never hold an input worth indexing.
 _SKIP_DIRS = {
@@ -556,6 +557,82 @@ _SEARCH_ROOTS = (
 )
 
 
+def _host_library_paths() -> list[Path]:
+    """Every shared library the loader can see, plus the CUDA trees it cannot."""
+    paths: set[Path] = set()
+    if shutil.which("ldconfig"):
+        try:
+            result = subprocess.run(
+                ["ldconfig", "-p"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            for line in result.stdout.splitlines():
+                _, _, target = line.partition("=>")
+                target = target.strip()
+                if target:
+                    paths.add(Path(target))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
+    roots += [Path(item) for item in sorted(glob.glob("/usr/local/cuda*/lib64"))]
+    for root in roots:
+        paths.update(item for item in root.glob("*.so*") if item.is_file())
+    return sorted(paths)
+
+
+@functools.lru_cache(maxsize=1)
+def _host_build_id_index() -> dict[str, str]:
+    """Host libraries by GNU build-id.
+
+    A repair tool rewrites SONAME on the way into the wheel, so the name is no
+    longer a way back to the machine's copy. The build-id is, and it is the same
+    note the linker wrote. Built once; reading it from every library the loader
+    knows costs about a second.
+    """
+    index: dict[str, str] = {}
+    for path in _host_library_paths():
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if not elf.is_elf(data[:4]):
+            continue
+        try:
+            build_id = elf.read_dynamic(data).build_id
+        except Exception:  # noqa: BLE001 - a malformed host library is not ours to fix
+            continue
+        if not build_id:
+            continue
+        # A regular file beats a symlink to it: dpkg-query knows the real path.
+        current = index.get(build_id)
+        if current is None or (
+            path.is_symlink() is False and Path(current).is_symlink()
+        ):
+            index[build_id] = str(path)
+    return index
+
+
+def resolve_system_library_by_build_id(build_id: str) -> dict:
+    """Trace a vendored library back by build-id, whatever it was renamed to."""
+    origin: dict = {
+        "soname": None,
+        "build_id": build_id,
+        "resolved_path": None,
+        "package": None,
+        "copyright": None,
+    }
+    found = _host_build_id_index().get(build_id)
+    if found is None:
+        return origin
+    library = Path(found).resolve()
+    origin["soname"] = library.name
+    origin["resolved_path"] = str(library)
+    return _identify_host_package(library, origin)
+
+
 def resolve_system_library(soname: str) -> dict:
     """Trace an auditwheel-vendored library back to the package that supplied it."""
     origin: dict = {
@@ -572,7 +649,11 @@ def resolve_system_library(soname: str) -> dict:
         return origin
     library = library.resolve()
     origin["resolved_path"] = str(library)
+    return _identify_host_package(library, origin)
 
+
+def _identify_host_package(library: Path, origin: dict) -> dict:
+    """Name the distro package that owns a resolved host library."""
     if shutil.which("dpkg-query") is None:
         return origin
     try:
@@ -674,6 +755,9 @@ class ArchiveIndex:
     def __init__(self) -> None:
         self.by_hash: dict[str, Member] = {}
         self.by_name: dict[str, list[Member]] = {}
+        # Survives the RPATH/SONAME rewrite a repair tool applies on the way in,
+        # so a patched wheel member still points at the archive it came from.
+        self.by_build_id: dict[str, Member] = {}
         self.archives: dict[str, dict] = {}
 
     def add_archive(self, path: Path, display: str) -> None:
@@ -691,6 +775,13 @@ class ArchiveIndex:
         for member, data in members:
             self.by_hash.setdefault(member.sha256, member)
             self.by_name.setdefault(Path(member.path).name, []).append(member)
+            if elf.is_elf(data[:4]):
+                try:
+                    build_id = elf.read_dynamic(data).build_id
+                except Exception:  # noqa: BLE001 - a malformed member is not ours to fix
+                    build_id = None
+                if build_id:
+                    self.by_build_id.setdefault(build_id, member)
             self._maybe_license(display, member, data)
 
     def _maybe_license(self, display: str, member: Member, data: bytes) -> None:

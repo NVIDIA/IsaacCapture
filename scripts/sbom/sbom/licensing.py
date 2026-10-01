@@ -392,6 +392,22 @@ def license_ref(component_key: str) -> str:
     return f"LicenseRef-{spdx_safe(component_key)}"
 
 
+def expressible(license_id: str) -> bool:
+    """Whether the SPDX grammar we ship can validate this identifier.
+
+    The corpus the build fetches moves ahead of what `license-expression`
+    knows -- SPDX 3.29.0 added BSD-2-Clause-pos-unchanged, which no released
+    version of the grammar recognises. Matching against the newer corpus is
+    right; naming an ID a consumer's validator will reject is not.
+    """
+    if license_id.startswith("LicenseRef-"):
+        return True
+    try:
+        return not _spdx_licensing().validate(license_id).errors
+    except (ExpressionError, ValueError, TypeError):
+        return False
+
+
 def expression(
     evidence: list[LicenseEvidence], component_key: str | None = None
 ) -> tuple[str, str]:
@@ -401,11 +417,17 @@ def expression(
     grant that matches nothing is not dropped and not guessed at: it becomes a
     LicenseRef whose text travels in the document, which says "these are the
     terms we shipped" without claiming to know which license they are.
+
+    An ID the shipped grammar cannot express is treated the same way, and the
+    whole expression falls back rather than just the offending term: dropping
+    one ID from `A AND B` would understate the terms.
     """
     grants = [item for item in evidence if item.kind == "grant"]
     identified = sorted(
         {license_id for item in grants for license_id, _, _ in item.matches}
     )
+    if identified and component_key and not all(map(expressible, identified)):
+        identified = [license_ref(component_key)]
     if not identified and grants and component_key:
         identified = [license_ref(component_key)]
     concluded = _combine(identified) if identified else "NOASSERTION"

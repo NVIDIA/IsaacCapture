@@ -32,8 +32,8 @@ repo_root = _load(
     "repo_paths", Path(__file__).resolve().parents[1] / "repo_paths.py"
 ).repo_root
 
-LICENSE_DATA_ENV = "ISAACTELEOP_SBOM_LICENSE_DATA"
-BUILD_DIR_ENV = "ISAACTELEOP_SBOM_BUILD_DIR"
+LICENSE_DATA_ENV = "ISAACCAPTURE_SBOM_LICENSE_DATA"
+BUILD_DIR_ENV = "ISAACCAPTURE_SBOM_BUILD_DIR"
 
 
 @pytest.fixture(scope="session")

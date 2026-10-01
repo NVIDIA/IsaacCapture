@@ -151,6 +151,16 @@ def _replace_member(wheel, name, data):
             archive.writestr(item, payload[item])
 
 
+def _drop_member(wheel, name):
+    with zipfile.ZipFile(wheel) as archive:
+        payload = {
+            item: archive.read(item) for item in archive.namelist() if item != name
+        }
+    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in sorted(payload):
+            archive.writestr(item, payload[item])
+
+
 def test_editing_a_file_after_the_fact_fails_verification(built):
     _replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
 
@@ -180,12 +190,30 @@ def test_mutating_the_wheel_breaks_its_manifest_binding(built):
     assert any("modified after its digest was bound" in failure for failure in failures)
 
 
-def test_a_second_document_under_sboms_is_rejected(built):
-    _replace_member(built["wheel"], f"{DIST_INFO}/sboms/extra.spdx.json", b"{}")
+def test_an_empty_member_verifies(built):
+    """RECORD states size 0 for py.typed and namespace __init__.py."""
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        empty = [item.filename for item in archive.infolist() if item.file_size == 0]
+
+    assert empty, "fixture no longer carries an empty member"
+    assert validate_module.check(built["wheel"]) == []
+
+
+def test_another_tools_document_beside_ours_is_kept(built):
+    """auditwheel ships `sboms/auditwheel.cdx.json`; PEP 770 shares that directory."""
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        names = set(archive.namelist())
+
+    assert f"{DIST_INFO}/sboms/{synth.AUDITWHEEL_SBOM}" in names
+    assert validate_module.check(built["wheel"]) == []
+
+
+def test_our_own_document_going_missing_is_rejected(built):
+    _drop_member(built["wheel"], f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json")
 
     failures = validate_module.check(built["wheel"])
 
-    assert any("sboms/" in failure for failure in failures)
+    assert any("embedded SBOM" in failure for failure in failures)
 
 
 def test_duplicate_wheel_filenames_cannot_be_merged(tmp_path, built):

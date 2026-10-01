@@ -26,6 +26,7 @@ from .discovery import (
     discover_vendored,
     project_authors,
     discover_source_trees,
+    _walk,
 )
 
 # Cache entries that pin what a wheel contains. The rest of the cache is paths on
@@ -56,6 +57,8 @@ class Discovery:
     repo_files: FileIndex
     build_files: FileIndex
     ownership: Ownership
+    # build_files display prefix -> component whose tree the build staged there.
+    staged_component_dirs: dict[str, str]
 
     @property
     def staged_root(self) -> Path | None:
@@ -161,10 +164,35 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         skip=(build_dir, repo_root / "build-wheel", repo_root / "dist"),
     )
 
+    # _deps/*-src is the component-source domain, already indexed above; a wheel
+    # member matching one is a copy of upstream, not something this build made.
+    # Everything else under _deps is this build's own output -- FetchContent
+    # build trees, and trees a dependency stages for packaging -- so it belongs
+    # in build_files like any other generated file. The staged tree stays out:
+    # indexing it would let the wheel explain itself.
     build_files = FileIndex()
     build_files.add_tree(
-        build_dir, "build", skip=(deps_dir, build_dir / "python_package")
+        build_dir,
+        "build",
+        skip=(*sorted(deps_dir.glob("*-src")), build_dir / "python_package"),
     )
+
+    # A dependency may stage a packaged copy of its own tree under _deps/<name>/.
+    # Files the build transformed on the way in no longer hash to the component,
+    # so infer the directory's owner from the siblings that still do; one clear
+    # owner or nothing, since a guess here would invent a license obligation.
+    staged_component_dirs: dict[str, str] = {}
+    for root in sorted(deps_dir.iterdir()):
+        if not root.is_dir() or root.name.endswith("-src"):
+            continue
+        owners = set()
+        for path in _walk(root):
+            match = source_files.by_hash.get(build_files.digest_of(path) or "")
+            if match:
+                owners.add(match.split("/", 1)[0].removesuffix("-src"))
+        if len(owners) == 1:
+            display = f"build/{root.relative_to(build_dir).as_posix()}"
+            staged_component_dirs[display] = owners.pop()
 
     # Third-party code checked in here rather than fetched: the candidates are
     # what the build actually compiles or includes, so nothing outside the build
@@ -209,6 +237,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         repo_files=repo_files,
         build_files=build_files,
         ownership=ownership,
+        staged_component_dirs=staged_component_dirs,
     )
 
 

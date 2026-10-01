@@ -80,12 +80,10 @@ def build(
     licensing.load_corpus(license_data or default_license_data(build_dir))
     discovery = evidence_module.discover(repo_root, build_dir)
     wheel = wheelfile.scan(wheel_path, analyze_elf=True)
-    already = [
-        item.name for item in wheel.entries if f"{wheel.dist_info}/sboms/" in item.name
-    ]
-    if already:
+    sbom_name = wheelfile.sbom_member(wheel.dist_info, wheel_path.name)
+    if any(item.name == sbom_name for item in wheel.entries):
         raise BuildError(
-            f"{wheel_path.name} already carries {already[0]}. Run this on a freshly "
+            f"{wheel_path.name} already carries {sbom_name}. Run this on a freshly "
             "repaired wheel; rewriting one twice would duplicate its members."
         )
     metadata_raw, _ = wheelfile.read_metadata(wheel_path, wheel.dist_info)
@@ -140,7 +138,6 @@ def build(
     metadata_declared = patched_metadata != metadata_raw
     replacements = {f"{wheel.dist_info}/METADATA": patched_metadata}
 
-    sbom_name = f"{wheel.dist_info}/sboms/{wheel_path.name}.spdx.json"
     excluded = [f"{wheel.dist_info}/RECORD", sbom_name]
 
     projected = [item for item in wheel.entries if item.name not in replacements] + [

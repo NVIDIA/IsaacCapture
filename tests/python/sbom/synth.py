@@ -337,10 +337,14 @@ def create(root: Path) -> Workspace:
     _write(build / "lib/libgamma_renamed.so", gamma_bytes)
     _write(build / "lib/libdelta.a", b"!<arch>\ndelta\n")
     _write(build / "generated/_generated.py", _GENERATED)
+    # Empty, like the real PEP 561 marker: RECORD states size 0 for it, and the
+    # bytes explain nothing, so it also stands in for any zero-length member.
+    _write(build / "generated/stubs/isaaccapture/py.typed", b"")
 
     # Staged tree: what the wheel is built from.
     _write(workspace.staged / "isaaccapture/__init__.py", _AUTHORED_INIT)
     _write(workspace.staged / "isaaccapture/_generated.py", _GENERATED)
+    _write(workspace.staged / "isaaccapture/py.typed", b"")
     _write(workspace.staged / "isaaccapture/viz/libgamma_renamed.so", gamma_bytes)
     _write(workspace.staged / "isaaccapture/viz/GAMMA_LICENSE", spdx_text("Zlib"))
     _write(
@@ -460,6 +464,18 @@ METADATA = "\n".join(
 )
 
 
+AUDITWHEEL_SBOM = "auditwheel.cdx.json"
+AUDITWHEEL_CDX = json.dumps(
+    {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.4",
+        "version": 1,
+        "metadata": {"component": {"type": "library", "name": "isaaccapture"}},
+        "components": [],
+    }
+).encode("utf-8")
+
+
 def wheel_payload(workspace: Workspace) -> dict[str, bytes]:
     """The wheel setuptools would produce from the staged tree."""
     payload: dict[str, bytes] = {}
@@ -475,6 +491,10 @@ def wheel_payload(workspace: Workspace) -> dict[str, bytes]:
         workspace.root / "LICENSE.md"
     ).read_bytes()
     payload[f"{DIST_INFO}/top_level.txt"] = b"isaaccapture\nvendorpy\n"
+    # auditwheel runs before the collector and writes its own PEP 770 document
+    # for the libraries it vendored. Every fixture carries it so the suite works
+    # on the shape a released wheel actually has.
+    payload[f"{DIST_INFO}/sboms/{AUDITWHEEL_SBOM}"] = AUDITWHEEL_CDX
     return payload
 
 

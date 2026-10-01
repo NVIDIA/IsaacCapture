@@ -15,10 +15,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import licensing
+import hashlib
+
+from . import elf, licensing
 from .discovery import (
     Component,
     resolve_system_library,
+    resolve_system_library_by_build_id,
     sha256_file,
     system_component,
 )
@@ -85,6 +88,9 @@ class Inventory:
         )
 
 
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
 class Resolver:
     """Probes a candidate's bytes and path against every discovered index."""
 
@@ -100,7 +106,9 @@ class Resolver:
         self.build_files = discovery.build_files
         self.ownership = discovery.ownership
         self.source_files = discovery.source_files
+        self.staged_component_dirs = discovery.staged_component_dirs
         self._artifacts_by_hash: dict[str, list] = {}
+        self._artifacts_by_build_id: dict[str, list] = {}
         for artifact in self.graph.artifacts.values():
             if artifact.output.is_file():
                 # build_files already hashed everything under the build tree.
@@ -108,6 +116,11 @@ class Resolver:
                     artifact.output
                 )
                 self._artifacts_by_hash.setdefault(digest, []).append(artifact)
+                build_id = _build_id_of(artifact.output)
+                if build_id:
+                    self._artifacts_by_build_id.setdefault(build_id, []).append(
+                        artifact
+                    )
 
     def _from_artifact(self, artifact, path: str, detail: str) -> Attribution:
         contributions = self.graph.contributions(artifact, self.ownership)
@@ -136,6 +149,7 @@ class Resolver:
         digest: str,
         probe: Path | None,
         soname: str | None = None,
+        build_id: str | None = None,
     ) -> Attribution | None:
         """Explain one member: by content, then by path, then by the machine."""
         candidate_digest = digest
@@ -143,6 +157,13 @@ class Resolver:
         if probe is not None and probe.is_file():
             candidate_digest = sha256_file(probe)
             source = f"staged at {probe.relative_to(self.build_dir).as_posix()}"
+
+        # Zero bytes are identical everywhere, so a content match proves nothing:
+        # it would hand an empty marker file to whichever component happened to be
+        # indexed first, and invent that component's license obligation with it.
+        # The path is the only evidence such a file carries.
+        if candidate_digest == _EMPTY_SHA256:
+            return self._resolve_by_path(wheel_path, source)
 
         artifacts = self._artifacts_by_hash.get(candidate_digest)
         if artifacts:
@@ -179,19 +200,52 @@ class Resolver:
 
         build_file = self.build_files.by_hash.get(candidate_digest)
         if build_file:
+            # An empty file hashes the same as every other empty file, so the
+            # first indexed path wins and says nothing. Where the build tree
+            # holds the same bytes under the wheel's own path, that is the
+            # better answer.
+            if Path(build_file).name != Path(wheel_path).name:
+                by_path = self.build_files.path_suffix_match(wheel_path)
+                if by_path:
+                    build_file = by_path
+            owner = self._staged_component_of(build_file)
             return Attribution(
-                path=wheel_path, origin="generated", detail=f"{source}; {build_file}"
+                path=wheel_path,
+                origin="generated",
+                detail=f"{source}; {build_file}",
+                components={owner: {"derived-file"}} if owner else {},
+                primary=owner,
             )
+
+        # Content no longer matches, so the bytes were patched on the way in.
+        # The build-id is what the linker wrote and patchelf leaves alone, which
+        # makes it evidence where a matching file name is only a coincidence.
+        if build_id:
+            by_build_id = self._resolve_by_build_id(wheel_path, source, build_id)
+            if by_build_id is not None:
+                return by_build_id
 
         by_path = self._resolve_by_path(wheel_path, source)
         if by_path is not None:
             return by_path
+
+        if build_id:
+            from_host = self._from_build_host_by_build_id(wheel_path, build_id)
+            if from_host is not None:
+                return from_host
 
         # Nothing this build produced or fetched explains these bytes. A shared
         # library reaching that point came from the machine -- whatever the
         # repair tool chose to call its directory.
         if soname:
             return self._from_build_host(wheel_path, soname)
+        return None
+
+    def _staged_component_of(self, build_file: str) -> str | None:
+        """The component whose tree this build staged under _deps/<name>/."""
+        for prefix, key in self.staged_component_dirs.items():
+            if build_file == prefix or build_file.startswith(prefix + "/"):
+                return key
         return None
 
     def _from_build_host(self, wheel_path: str, soname: str) -> Attribution | None:
@@ -213,6 +267,55 @@ class Resolver:
             detail += f" as {origin['package']}"
         if origin.get("resolved_path"):
             detail += f" ({origin['resolved_path']})"
+        return Attribution(
+            path=wheel_path,
+            origin="build-host-library",
+            detail=detail,
+            components={component.key: {"vendored-library"}},
+            primary=component.key,
+        )
+
+    def _resolve_by_build_id(
+        self, wheel_path: str, source: str, build_id: str
+    ) -> Attribution | None:
+        """The pristine bytes this member was patched from, named by build-id."""
+        member = self.archives.by_build_id.get(build_id)
+        if member:
+            return Attribution(
+                path=wheel_path,
+                origin="archive-derived",
+                detail=(
+                    f"{source}; build-id {build_id} matches {member.path} in "
+                    f"{member.container} (origin sha256:{member.sha256})"
+                ),
+                components={member.container: {"extracted-file"}},
+                primary=member.container,
+            )
+
+        artifacts = self._artifacts_by_build_id.get(build_id)
+        if artifacts:
+            return self._from_artifact(
+                artifacts[0], wheel_path, f"{source}; build-id {build_id}, patched"
+            )
+        return None
+
+    def _from_build_host_by_build_id(
+        self, wheel_path: str, build_id: str
+    ) -> Attribution | None:
+        """The machine's own copy, found by build-id after a SONAME rewrite."""
+        origin = resolve_system_library_by_build_id(build_id)
+        if not origin.get("resolved_path"):
+            return None
+        soname = origin["soname"]
+        self.system_libraries[soname] = origin
+        component = system_component(soname, origin)
+        self.components[component.key] = component
+
+        detail = (
+            f"build-id {build_id} matches the build machine's {origin['resolved_path']}"
+        )
+        if origin.get("package"):
+            detail += f", supplied by {origin['package']}"
         return Attribution(
             path=wheel_path,
             origin="build-host-library",
@@ -268,6 +371,17 @@ class Resolver:
                 path=wheel_path,
                 origin="repo-source",
                 detail=f"{source}; derived from {repo_file}",
+            )
+
+        build_file = self.build_files.path_suffix_match(wheel_path)
+        if build_file:
+            owner = self._staged_component_of(build_file)
+            return Attribution(
+                path=wheel_path,
+                origin="generated",
+                detail=f"{source}; {build_file}",
+                components={owner: {"derived-file"}} if owner else {},
+                primary=owner,
             )
 
         return None
@@ -328,6 +442,20 @@ def build(
     )
 
 
+def _build_id_of(path: Path) -> str | None:
+    """The build-id of a file on disk, or None if it is not an ELF."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not elf.is_elf(data[:4]):
+        return None
+    try:
+        return elf.read_dynamic(data).build_id
+    except Exception:  # noqa: BLE001 - a malformed build output is not ours to fix
+        return None
+
+
 def _attribute(
     entry: Entry,
     wheel: WheelInfo,
@@ -342,7 +470,9 @@ def _attribute(
         )
 
     probe = staged_root / entry.name if staged_root is not None else None
-    return resolver.resolve(entry.name, entry.sha256, probe, entry.soname)
+    return resolver.resolve(
+        entry.name, entry.sha256, probe, entry.soname, entry.build_id
+    )
 
 
 def _spdx_tag(entry: Entry) -> str | None:

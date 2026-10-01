@@ -72,6 +72,7 @@ class Entry:
     soname: str | None = None
     needed: tuple[str, ...] = ()
     machine: str | None = None
+    build_id: str | None = None
     # Enough to find a REUSE tag, kept so nothing re-opens the archive for it.
     head: bytes = b""
 
@@ -87,6 +88,16 @@ class WheelInfo:
     version: str
     dist_info: str
     entries: tuple[Entry, ...]
+
+
+def sbom_member(dist_info: str, wheel_name: str) -> str:
+    """Where this collector's SPDX document sits inside the wheel.
+
+    PEP 770 makes `.dist-info/sboms/` a shared directory: auditwheel writes
+    `auditwheel.cdx.json` there for the libraries it vendors. Match this exact
+    name, never the directory, or a second tool's document reads as ours.
+    """
+    return f"{dist_info}/sboms/{wheel_name}.spdx.json"
 
 
 def record_hash(data: bytes) -> str:
@@ -139,13 +150,14 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
             if info.is_dir():
                 continue
             data = archive.read(info.filename)
-            soname = needed = machine = None
+            soname = needed = machine = build_id = None
             if analyze_elf and elf.is_elf(data[:4]):
                 dynamic = elf.read_dynamic(data)
-                soname, needed, machine = (
+                soname, needed, machine, build_id = (
                     dynamic.soname,
                     dynamic.needed,
                     dynamic.machine,
+                    dynamic.build_id,
                 )
             entries.append(
                 Entry(
@@ -156,6 +168,7 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
                     soname=soname,
                     needed=needed or (),
                     machine=machine,
+                    build_id=build_id,
                     head=data[:4096],
                 )
             )
@@ -221,7 +234,12 @@ def read_record(wheel_path: Path, dist_info: str) -> dict[str, tuple[str, str]]:
         lines = archive.read(f"{dist_info}/RECORD").decode("utf-8").splitlines()
     entries = (RecordEntry.from_elements(*row) for row in parse_record_file(lines))
     return {
-        entry.path: (str(entry.hash_) if entry.hash_ else "", str(entry.size or ""))
+        # `entry.size or ""` would erase a legitimate 0: py.typed and namespace
+        # __init__.py are empty, and RECORD states 0 for them.
+        entry.path: (
+            str(entry.hash_) if entry.hash_ else "",
+            "" if entry.size is None else str(entry.size),
+        )
         for entry in entries
     }
 

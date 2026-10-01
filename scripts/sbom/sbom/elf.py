@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SONAME and NEEDED for the shared libraries a wheel carries.
+"""SONAME, NEEDED and the GNU build-id for the shared libraries a wheel carries.
 
 Parsing is pyelftools' job, not ours -- it is the same library auditwheel uses
 to repair these wheels, so the tool that wrote the ELF and the tool that reads
@@ -30,6 +30,10 @@ class DynamicInfo:
     soname: str | None
     needed: tuple[str, ...]
     machine: str
+    # Identifies the bytes the linker produced, and patchelf leaves it alone.
+    # So it still matches after a repair tool rewrites SONAME and RPATH, which
+    # is what makes it the only link back to a library's pristine origin.
+    build_id: str | None = None
 
 
 class NotAnElf(Exception):
@@ -41,7 +45,7 @@ def is_elf(data: bytes) -> bool:
 
 
 def read_dynamic(data: bytes) -> DynamicInfo:
-    """Parse SONAME and NEEDED out of an in-memory ELF image."""
+    """Parse SONAME, NEEDED and the build-id out of an in-memory ELF image."""
     if not is_elf(data):
         raise NotAnElf("missing ELF magic")
 
@@ -61,8 +65,19 @@ def read_dynamic(data: bytes) -> DynamicInfo:
             elif kind == "DT_NEEDED":
                 needed.append(tag.needed)
 
+    build_id: str | None = None
+    # Segment, not section, for the same reason as above.
+    for segment in elffile.iter_segments(type="PT_NOTE"):
+        for note in segment.iter_notes():
+            if note["n_type"] == "NT_GNU_BUILD_ID":
+                build_id = note["n_desc"]
+                break
+        if build_id:
+            break
+
     return DynamicInfo(
         soname=soname,
         needed=tuple(needed),
         machine=_ARCH.get(machine, machine),
+        build_id=build_id,
     )

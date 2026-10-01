@@ -40,10 +40,14 @@ def test_release_validation_passes(built):
     assert failures == []
 
 
-def test_sbom_lands_in_dist_info_sboms_and_nothing_else_does(built):
+def test_sbom_lands_in_dist_info_sboms_beside_any_other_tools(built):
     sboms = {name for name in _names(built["wheel"]) if f"{DIST_INFO}/sboms/" in name}
 
-    assert sboms == {f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"}
+    # PEP 770 shares the directory: auditwheel wrote its document before us.
+    assert sboms == {
+        f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json",
+        f"{DIST_INFO}/sboms/{synth.AUDITWHEEL_SBOM}",
+    }
 
 
 def test_every_wheel_file_is_covered(built):

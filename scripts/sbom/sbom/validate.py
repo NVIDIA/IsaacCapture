@@ -34,13 +34,15 @@ _REQUIRED_KEYS = (
 def _embedded_sbom(
     archive: zipfile.ZipFile, dist_info: str, wheel_name: str
 ) -> tuple[str, dict]:
-    name = f"{dist_info}/sboms/{wheel_name}.spdx.json"
-    names = [
-        item for item in archive.namelist() if item.startswith(f"{dist_info}/sboms/")
-    ]
-    if names != [name]:
+    name = wheelfile.sbom_member(dist_info, wheel_name)
+    if name not in archive.namelist():
+        found = [
+            item
+            for item in archive.namelist()
+            if item.startswith(f"{dist_info}/sboms/")
+        ]
         raise LookupError(
-            f"expected exactly {name} under {dist_info}/sboms/, found {names or 'nothing'}"
+            f"expected {name}, found {found or 'nothing'} under {dist_info}/sboms/"
         )
     return name, json.loads(archive.read(name))
 
