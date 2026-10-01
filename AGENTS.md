@@ -266,6 +266,24 @@ first** if you are changing anything under `scripts/sbom/` or
 wheel-packaging steps in `build-ubuntu.yml`. It covers discovery, license
 matching and the maintenance rules; nothing here repeats them.
 
+## A rule changed in one place is changed in none
+
+When a fact is stated in more than one place — a predicate in several modules, a
+claim in both the code and the docs, a heading over the rows it describes — fixing
+one instance and leaving the rest is the most common way a correction fails to
+stick here. It has happened repeatedly: a licence rule enforced in four modules, a
+design doc contradicting its own collector, a per-row reason corrected under a
+heading that still said the opposite.
+
+- **Grep for the claim, not the line you edited.** Search the phrase, the
+  predicate, the constant — across `docs/`, `scripts/`, `tests/` and the code —
+  and fix every hit in the same pass.
+- **Prefer one authority to a swept duplicate.** If the same rule has to hold in
+  several places, give it one definition and call it; the sweep is what you do
+  when you cannot.
+- **Verify against output, not against the test suite.** Several of these passed
+  every test while producing wrong artifacts. Regenerate and look.
+
 ## Mandatory learning loop (AGENTS.md and comments)
 
 **Hard requirement:** When **any** of the following happens, you **must** complete steps 1–3 **before** you end the session or move on as if the work were complete:
