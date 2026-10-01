@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# Deliberately NOT under the isaaccapture_examples namespace other examples share
+# (see their pyproject.toml comments): this package's whole point is to be
+# importable as the bare top-level name `isaacteleop`, shadowing the real package,
+# not to live alongside it.
+name = "isaacteleop-mock"
+version = "0.0.0"  # Internal example - not versioned
+description = "Pure-Python drop-in shim for isaacteleop: no CloudXR, OpenXR, or native plugins"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "numpy>=1.23.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/isaacteleop"]
