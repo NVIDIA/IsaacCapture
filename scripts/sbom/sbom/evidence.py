@@ -30,7 +30,6 @@ from .discovery import (
     _notice_from,
     tracked_files,
     EMPTY_SHA256,
-    _walk,
 )
 
 # Suffixes whose files conventionally carry a REUSE header naming their holder.
@@ -245,19 +244,20 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     for root in sorted(deps_dir.iterdir()):
         if not root.is_dir() or root.name.endswith("-src"):
             continue
+        display = f"{build_dir.name}/{root.relative_to(build_dir).as_posix()}"
         owners = set()
-        for path in _walk(root):
-            digest = build_files.digest_of(path)
+        # From the index rather than a second walk: `build_files` already hashed
+        # every file under the build tree.
+        for _, digest in build_files.under(display):
             # Zero bytes match every other empty file, so a CMake scaffolding
             # directory full of stamps would adopt whichever component happened
             # to ship an empty file. They are evidence of nothing here too.
-            if not digest or digest == EMPTY_SHA256:
+            if digest == EMPTY_SHA256:
                 continue
             match = source_files.by_hash.get(digest)
             if match:
                 owners.add(component_of(match))
         if len(owners) == 1:
-            display = f"{build_dir.name}/{root.relative_to(build_dir).as_posix()}"
             staged_component_dirs[display] = owners.pop()
 
     # Third-party code checked in here rather than fetched: the candidates are
@@ -310,8 +310,15 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     )
 
 
-def document(discovery: Discovery, wheel_name: str, inventory) -> dict:
-    """The build-evidence sidecar: resolved facts, not the raw indexes."""
+def document(
+    discovery: Discovery, wheel_name: str, inventory, components: dict[str, Component]
+) -> dict:
+    """The build-evidence sidecar: resolved facts, not the raw indexes.
+
+    `components` is what this wheel resolved against, which is the discovered set
+    plus the system libraries its own members turned out to need. One `Discovery`
+    serves every wheel in a run, so it cannot hold those.
+    """
     repo_root = discovery.repo_root
     arch = {
         "x86_64": "amd64",
@@ -386,7 +393,7 @@ def document(discovery: Discovery, wheel_name: str, inventory) -> dict:
                 "evidence": [item.as_json() for item in component.evidence],
                 "in_this_wheel": key in inventory.components_present,
             }
-            for key, component in sorted(discovery.components.items())
+            for key, component in sorted(components.items())
         },
         "archives": {
             display: {

@@ -60,10 +60,16 @@ def build(
     out_dir: Path,
     license_data: Path | None = None,
     system_resolver=None,
+    discovery: evidence_module.Discovery | None = None,
 ) -> dict:
-    """Package evidence into `wheel_path` in place and write the sidecars."""
+    """Package evidence into `wheel_path` in place and write the sidecars.
+
+    `discovery` is the build tree read once. Reading it per wheel walks and
+    hashes the whole tree, and decompresses every fetched archive, again.
+    """
     licensing.load_corpus(license_data or default_license_data(build_dir))
-    discovery = evidence_module.discover(repo_root, build_dir)
+    if discovery is None:
+        discovery = evidence_module.discover(repo_root, build_dir)
     wheel = wheelfile.scan(wheel_path, analyze_elf=True)
     sbom_name = wheelfile.sbom_member(wheel.dist_info, wheel_path.name)
     if any(item.name == sbom_name for item in wheel.entries):
@@ -165,7 +171,9 @@ def build(
         detail="the contents SBOM this collector embedded",
     )
 
-    evidence_doc = evidence_module.document(discovery, wheel_path.name, inventory)
+    evidence_doc = evidence_module.document(
+        discovery, wheel_path.name, inventory, resolver.components
+    )
     evidence_doc["ci"] = environment_summary()
     evidence_doc["system_libraries"] = resolver.system_libraries
 

@@ -88,19 +88,30 @@ class Inventory:
     requires_dist: list[str]
     unattributed: list[str] = field(default_factory=list)
     absent_components: dict[str, str] = field(default_factory=dict)
+    _indexed: tuple[dict, dict] | None = field(default=None, repr=False)
 
     def files_of(self, key: str) -> list[str]:
-        return sorted(
-            path for path, item in self.attributions.items() if item.primary == key
-        )
+        return self._by_component()[0].get(key, [])
 
     def files_sharing(self, key: str) -> list[str]:
         """Files naming this component as one candidate among several."""
-        return sorted(
-            path
-            for path, item in self.attributions.items()
-            if item.primary is None and "shared-content" in item.components.get(key, ())
-        )
+        return self._by_component()[1].get(key, [])
+
+    def _by_component(self) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+        """One pass over the members, not one per component per caller."""
+        if self._indexed is None:
+            owned: dict[str, list[str]] = {}
+            shared: dict[str, list[str]] = {}
+            for path in sorted(self.attributions):
+                item = self.attributions[path]
+                if item.primary:
+                    owned.setdefault(item.primary, []).append(path)
+                    continue
+                for key, how in item.components.items():
+                    if "shared-content" in how:
+                        shared.setdefault(key, []).append(path)
+            self._indexed = (owned, shared)
+        return self._indexed
 
 
 class Resolver:
@@ -112,7 +123,9 @@ class Resolver:
         self.repo_root = discovery.repo_root
         self.build_dir = discovery.build_dir
         self.graph = discovery.graph
-        self.components = discovery.components
+        # A copy: `_from_build_host` adds the system libraries this wheel turned
+        # out to need, and one `Discovery` is shared by every wheel in a run.
+        self.components = dict(discovery.components)
         self.archives = discovery.archives
         self.repo_files = discovery.repo_files
         self.build_files = discovery.build_files
@@ -121,6 +134,7 @@ class Resolver:
         self.staged_component_dirs = discovery.staged_component_dirs
         self._artifacts_by_hash: dict[str, list] = {}
         self._artifacts_by_build_id: dict[str, list] = {}
+        self._build_id_of: dict[Path, str | None] = {}
         for artifact in self.graph.artifacts.values():
             if artifact.output.is_file():
                 # build_files already hashed everything under the build tree.
@@ -129,6 +143,7 @@ class Resolver:
                 )
                 self._artifacts_by_hash.setdefault(digest, []).append(artifact)
                 build_id = elf.read_build_id(artifact.output)
+                self._build_id_of[artifact.output] = build_id
                 if build_id:
                     self._artifacts_by_build_id.setdefault(build_id, []).append(
                         artifact
@@ -497,7 +512,7 @@ class Resolver:
         artifacts = [
             artifact
             for artifact in self.graph.by_name(name)
-            if not _build_ids_disagree(build_id, elf.read_build_id(artifact.output))
+            if not _build_ids_disagree(build_id, self._build_id_of.get(artifact.output))
         ]
         if len(artifacts) == 1:
             return self._from_artifact(

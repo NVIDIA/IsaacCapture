@@ -448,3 +448,60 @@ def test_two_members_under_one_name_are_refused(built):
 
     with pytest.raises(wheelfile.WheelError, match="more than one member"):
         validate_module.check(smuggled)
+
+
+def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
+    workspace, tmp_path
+):
+    """The build tree is read once for a run; a wheel's own findings are its own.
+
+    `_from_build_host` adds the system libraries a wheel turned out to need. If
+    those land on the shared `Discovery`, the next wheel's evidence inherits
+    components it does not ship; if they land nowhere the evidence reaches, the
+    document names licence texts the evidence cannot account for and the wheel
+    fails its own verification.
+    """
+    from sbom import evidence as evidence_module
+
+    copyright_file = tmp_path / "copyright"
+    copyright_file.write_text(synth.spdx_text("Zlib"), encoding="utf-8")
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture.libs/libz-a1b2c3.so"] = synth.elf_shared_object(
+        "libz.so.1", ("libc.so.6",)
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    plain = workspace.wheel.parent / "plain-1.0-py3-none-any.whl"
+    synth.write_wheel(plain, synth.wheel_payload(workspace))
+
+    licensing.load_corpus(workspace.build / "_deps" / "license-list-data-src" / "json")
+    discovery = evidence_module.discover(workspace.root, workspace.build)
+    resolver = lambda soname: {  # noqa: E731
+        "soname": soname,
+        "resolved_path": "/usr/lib/libz.so.1.3",
+        "package": "zlib1g",
+        "supplier": "Organization: Ubuntu Developers (ubuntu-devel@example.com)",
+        "copyright": str(copyright_file),
+    }
+    for wheel in (workspace.wheel, plain):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            wheel,
+            workspace.root / "sbom",
+            system_resolver=resolver,
+            discovery=discovery,
+        )
+
+    def components(wheel_name):
+        stem = wheel_name.removesuffix(".whl")
+        sidecar = workspace.root / "sbom" / f"{stem}.build-evidence.json"
+        return json.loads(sidecar.read_text())["components"]
+
+    assert "system:libz.so.1" in components(WHEEL_NAME), (
+        "the wheel's own evidence must account for what its members needed"
+    )
+    assert "system:libz.so.1" not in components(plain.name), (
+        "a wheel that ships no such library must not inherit it"
+    )
+    assert validate_module.check(workspace.wheel) == []

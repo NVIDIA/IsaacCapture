@@ -21,6 +21,7 @@ import functools
 import glob
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -61,10 +62,6 @@ _DEPS_SOURCE = re.compile(r"_deps/(?P<name>[A-Za-z0-9_.+-]+)-src(?:/|$)")
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def component_of(display: str) -> str:
     """The component a `FileIndex` display path belongs to.
 
@@ -84,21 +81,22 @@ def sha256_file(path: Path) -> str:
 
 
 def _walk(root: Path):
+    """Every regular file under `root`, never following a symlink."""
     stack = [root]
     while stack:
         current = stack.pop()
         try:
-            entries = list(current.iterdir())
+            entries = list(os.scandir(current))
         except OSError:
             continue
         for entry in entries:
             if entry.is_symlink():
                 continue
-            if entry.is_dir():
+            if entry.is_dir(follow_symlinks=False):
                 if entry.name not in _SKIP_DIRS:
-                    stack.append(entry)
-            elif entry.is_file():
-                yield entry
+                    stack.append(Path(entry.path))
+            elif entry.is_file(follow_symlinks=False):
+                yield Path(entry.path)
 
 
 # ==============================================================================
@@ -333,6 +331,7 @@ class BuildGraph:
         self.artifacts: dict[Path, Artifact] = {}
         self._nodes: dict[str, _Node] = {}
         self._by_name: dict[str, list[Artifact]] = {}
+        self._closures: dict[str, tuple[_Node, ...]] = {}
         self._load(config)
 
     def _load(self, config: str | None) -> None:
@@ -411,8 +410,15 @@ class BuildGraph:
                     found.update(item for item in include.rglob("*") if item.is_file())
         return found
 
-    def _closure(self, target_id: str) -> list[_Node]:
-        """The target and everything it depends on, transitively."""
+    def _closure(self, target_id: str) -> tuple[_Node, ...]:
+        """The target and everything it depends on, transitively.
+
+        Memoised per instance, not with `lru_cache`: a cache on the class would
+        hold every graph ever built alive for the life of the process.
+        """
+        cached = self._closures.get(target_id)
+        if cached is not None:
+            return cached
         seen: set[str] = set()
         stack = [target_id]
         found: list[_Node] = []
@@ -424,7 +430,8 @@ class BuildGraph:
             node = self._nodes[current]
             found.append(node)
             stack.extend(node.dependencies)
-        return found
+        self._closures[target_id] = tuple(found)
+        return self._closures[target_id]
 
     def contributions(
         self, artifact: Artifact, ownership: Ownership | None = None
@@ -941,13 +948,14 @@ class ArchiveIndex:
         self.archives: dict[str, dict] = {}
 
     def add_archive(self, path: Path, display: str) -> None:
-        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+        size = path.stat().st_size
+        if size > _MAX_ARCHIVE_BYTES:
             return
         members = self._read_members(path, display)
         self.archives[display] = {
             "path": display,
             "sha256": sha256_file(path),
-            "size": path.stat().st_size,
+            "size": size,
             "member_count": len(members),
         }
         for member, data in members:
@@ -988,17 +996,33 @@ class ArchiveIndex:
         """
         collected: list[tuple[Member, bytes]] = []
 
-        def take(name: str, data: bytes) -> None:
-            member = Member(display, name, sha256_bytes(data), len(data))
-            keep = b"" if Path(name).parent.as_posix() not in {".", ""} else data
-            collected.append((member, keep))
+        def take(name: str, handle) -> None:
+            # Only a root member's bytes are kept -- for its licence text or its
+            # ELF header -- so the rest stream through the digest. Reading every
+            # member whole sizes peak memory by the largest file in the archive.
+            at_root = Path(name).parent.as_posix() in {".", ""}
+            digest = hashlib.sha256()
+            size = 0
+            kept = bytearray()
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+                size += len(chunk)
+                if at_root:
+                    kept += chunk
+            collected.append(
+                (
+                    Member(display, name, digest.hexdigest(), size),
+                    bytes(kept) if at_root else b"",
+                )
+            )
 
         try:
             if path.suffix == ".zip":
                 with zipfile.ZipFile(path) as archive:
                     for info in archive.infolist():
                         if not info.is_dir():
-                            take(info.filename, archive.read(info.filename))
+                            with archive.open(info) as handle:
+                                take(info.filename, handle)
             else:
                 with tarfile.open(path) as archive:
                     for info in archive:
@@ -1006,7 +1030,7 @@ class ArchiveIndex:
                             continue
                         handle = archive.extractfile(info)
                         if handle is not None:
-                            take(info.name.removeprefix("./"), handle.read())
+                            take(info.name.removeprefix("./"), handle)
         except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:
             # Only archives this build deliberately fetched are indexed, so one
             # that will not open is a broken download, not a stray file. Saying
@@ -1105,6 +1129,9 @@ class FileIndex:
         self._add(root, display_root, (root / item for item in paths))
 
     def _add(self, root: Path, display_root: str, paths) -> None:
+        # One resolve for the tree, not one per file: `_walk` never crosses a
+        # symlink, so the resolved root plus the relative path is the real path.
+        resolved_root = root.resolve()
         for path in paths:
             if not path.is_file() or path.is_symlink():
                 continue
@@ -1114,7 +1141,7 @@ class FileIndex:
                 digest = sha256_file(path)
             except OSError:
                 continue
-            self._digests[str(path.resolve())] = digest
+            self._digests[str(resolved_root / relative)] = digest
             self.by_hash.setdefault(digest, display)
             self.all_by_hash.setdefault(digest, []).append(display)
             self._by_display[display] = digest
@@ -1126,6 +1153,15 @@ class FileIndex:
     def digest_of_display(self, display: str) -> str | None:
         """The digest this index recorded for one of its own display paths."""
         return self._by_display.get(display)
+
+    def under(self, display_prefix: str):
+        """Every (display, digest) this index holds beneath a display path."""
+        prefix = display_prefix.rstrip("/") + "/"
+        return (
+            (display, digest)
+            for display, digest in self._by_display.items()
+            if display.startswith(prefix)
+        )
 
     def path_suffix_match(self, wheel_path: str) -> str | None:
         key = "/".join(wheel_path.rsplit("/", 2)[-2:])

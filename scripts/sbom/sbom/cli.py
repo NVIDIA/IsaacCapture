@@ -64,10 +64,20 @@ def _cmd_build(args: argparse.Namespace) -> int:
         else build_module.default_license_data(build_dir)
     )
 
+    licensing.load_corpus(license_data)
+    discovery = evidence_module.discover(repo_root, build_dir)
+
     manifests: list[dict] = []
     for wheel in sorted(Path(item) for item in args.wheel):
         manifests.append(
-            build_module.build(repo_root, build_dir, wheel, out_dir, license_data)
+            build_module.build(
+                repo_root,
+                build_dir,
+                wheel,
+                out_dir,
+                license_data,
+                discovery=discovery,
+            )
         )
         print(f"packaged evidence into {wheel.name}")
 

@@ -17,6 +17,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import SPDX_VERSION, licensing, report
+from .discovery import sha256_file
 from . import document as document_module
 from . import wheelfile
 
@@ -97,9 +98,15 @@ def _embedded_sbom(
 
 
 def verify_wheel(
-    wheel_path: Path, scanned: wheelfile.WheelInfo | None = None
+    wheel_path: Path,
+    scanned: wheelfile.WheelInfo | None = None,
+    carried: list[dict] | None = None,
 ) -> list[str]:
-    """Verify a wheel against the SBOM it carries. No repository required."""
+    """Verify a wheel against the SBOM it carries. No repository required.
+
+    `carried` collects the parsed document for callers that go on to check it
+    against evidence, so the wheel is opened and the document parsed once.
+    """
     failures: list[str] = []
     wheel = scanned or wheelfile.scan(wheel_path)
 
@@ -108,6 +115,8 @@ def verify_wheel(
             sbom_name, spdx = _embedded_sbom(archive, wheel.dist_info, wheel_path.name)
         except (LookupError, json.JSONDecodeError) as error:
             return [f"embedded SBOM: {error}"]
+    if carried is not None:
+        carried.append(spdx)
 
     for key in _REQUIRED_KEYS:
         if key not in spdx:
@@ -271,7 +280,9 @@ def _check_record(wheel_path: Path, wheel: wheelfile.WheelInfo) -> list[str]:
     return failures
 
 
-def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[str]:
+def _check_attribution(
+    evidence_doc: dict, wheel: wheelfile.WheelInfo, spdx: dict | None
+) -> list[str]:
     """Every wheel member must name where it came from, and every shipped
     component must have had a license text to read."""
     stated = evidence_doc.get("wheel")
@@ -322,12 +333,15 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
                 f"{key} is redistributed but the license text recorded for it is "
                 "not packaged in this wheel"
             )
-    failures.extend(_document_agrees_with_evidence(wheel, recorded, evidence_doc))
+    failures.extend(_document_agrees_with_evidence(wheel, recorded, evidence_doc, spdx))
     return failures
 
 
 def _document_agrees_with_evidence(
-    wheel: wheelfile.WheelInfo, recorded: set[str], evidence_doc: dict
+    wheel: wheelfile.WheelInfo,
+    recorded: set[str],
+    evidence_doc: dict,
+    spdx: dict | None,
 ) -> list[str]:
     """The texts the document names must be the ones the build actually read.
 
@@ -336,11 +350,8 @@ def _document_agrees_with_evidence(
     evidence was produced before the wheel was published and states the digests
     independently, so where it is supplied it is the thing to compare against.
     """
-    with zipfile.ZipFile(wheel.path) as archive:
-        name = wheelfile.sbom_member(wheel.dist_info, wheel.path.name)
-        if name not in archive.namelist():
-            return []
-        spdx = json.loads(archive.read(name))
+    if spdx is None:
+        return []
 
     failures = []
     for package in spdx.get("packages", []):
@@ -471,11 +482,14 @@ def check(
     release has the whole set. Each input adds checks; none replaces the others.
     """
     scanned = wheelfile.scan(wheel)
-    failures = verify_wheel(wheel, scanned)
+    carried: list[dict] = []
+    failures = verify_wheel(wheel, scanned, carried)
 
     if build_evidence is not None:
         evidence_doc = json.loads(build_evidence.read_text(encoding="utf-8"))
-        failures.extend(_check_attribution(evidence_doc, scanned))
+        failures.extend(
+            _check_attribution(evidence_doc, scanned, carried[0] if carried else None)
+        )
 
     if manifest is not None:
         failures.extend(_check_manifest(manifest, wheel, evidence_dir))
@@ -493,7 +507,7 @@ def _check_manifest(
     if not record:
         return [f"{manifest_path.name} has no entry for {wheel.name}"]
 
-    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    digest = sha256_file(wheel)
     if record["sha256"] != digest:
         failures.append(
             "the wheel was modified after its digest was bound: manifest says "
@@ -505,7 +519,7 @@ def _check_manifest(
         path = beside / sidecar["filename"]
         if not path.is_file():
             failures.append(f"sidecar {kind} is missing: {sidecar['filename']}")
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != sidecar["sha256"]:
+        elif sha256_file(path) != sidecar["sha256"]:
             failures.append(f"sidecar {kind} does not match its recorded digest")
 
     published = beside / record["sidecars"]["spdx"]["filename"]
