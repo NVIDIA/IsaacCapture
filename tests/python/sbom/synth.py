@@ -32,6 +32,7 @@ CONFIG = "Release"
 WHEEL_NAME = "isaaccapture-0.4.0-cp312-cp312-manylinux_2_35_x86_64.whl"
 DIST_INFO = "isaaccapture-0.4.0.dist-info"
 SDK_ARCHIVE = "deps/vendor/demosdk-1.2.0-linux-amd64.tar.gz"
+SDK_DEMO_BUILD_ID = "1111111111111111111111111111111111111111"
 
 # ==============================================================================
 # ELF
@@ -39,6 +40,8 @@ SDK_ARCHIVE = "deps/vendor/demosdk-1.2.0-linux-amd64.tar.gz"
 
 _PT_LOAD = 1
 _PT_DYNAMIC = 2
+_PT_NOTE = 4
+_NT_GNU_BUILD_ID = 3
 _DT_NULL = 0
 _DT_NEEDED = 1
 _DT_STRTAB = 5
@@ -50,10 +53,30 @@ _PHDR_SIZE = 56
 _BASE_VADDR = 0x400000
 
 
+def _build_id_note(build_id: str) -> bytes:
+    """A .note.gnu.build-id in the form the linker writes it."""
+    name = b"GNU\0"
+    desc = bytes.fromhex(build_id)
+    padding = b"\0" * (-len(desc) % 4)
+    return (
+        struct.pack("<III", len(name), len(desc), _NT_GNU_BUILD_ID)
+        + name
+        + desc
+        + padding
+    )
+
+
 def elf_shared_object(
-    soname: str, needed: tuple[str, ...] = (), padding: bytes = b""
+    soname: str,
+    needed: tuple[str, ...] = (),
+    padding: bytes = b"",
+    build_id: str | None = None,
 ) -> bytes:
-    """A 64-bit little-endian ELF carrying just a readable dynamic segment."""
+    """A 64-bit little-endian ELF carrying a readable dynamic segment.
+
+    With `build_id`, it also carries the note the linker writes -- which is what
+    survives a repair tool rewriting SONAME and RPATH.
+    """
     strings = [b"\0"]  # index 0 is the empty string, per the ELF string-table format
     offsets: dict[str, int] = {}
     cursor = 1
@@ -69,11 +92,14 @@ def elf_shared_object(
     entries = [(_DT_SONAME, offsets[soname])]
     entries += [(_DT_NEEDED, offsets[name]) for name in needed]
 
-    header_size = _EHDR_SIZE + 2 * _PHDR_SIZE
+    note = _build_id_note(build_id) if build_id else b""
+    segments = 3 if note else 2
+    header_size = _EHDR_SIZE + segments * _PHDR_SIZE
     dynamic_offset = header_size
     dynamic_size = (len(entries) + 3) * 16
     strtab_offset = dynamic_offset + dynamic_size
-    total = strtab_offset + len(strtab) + len(padding)
+    note_offset = strtab_offset + len(strtab)
+    total = note_offset + len(note) + len(padding)
 
     entries.append((_DT_STRTAB, _BASE_VADDR + strtab_offset))
     entries.append((_DT_STRSZ, len(strtab)))
@@ -90,7 +116,7 @@ def elf_shared_object(
     struct.pack_into("<Q", image, 0x20, _EHDR_SIZE)
     struct.pack_into("<H", image, 0x34, _EHDR_SIZE)
     struct.pack_into("<H", image, 0x36, _PHDR_SIZE)
-    struct.pack_into("<H", image, 0x38, 2)
+    struct.pack_into("<H", image, 0x38, segments)
 
     def phdr(index: int, kind: int, offset: int, size: int) -> None:
         base = _EHDR_SIZE + index * _PHDR_SIZE
@@ -104,12 +130,16 @@ def elf_shared_object(
 
     phdr(0, _PT_LOAD, 0, total)
     phdr(1, _PT_DYNAMIC, dynamic_offset, len(entries) * 16)
+    if note:
+        phdr(2, _PT_NOTE, note_offset, len(note))
 
     for index, (tag, value) in enumerate(entries):
         struct.pack_into("<qQ", image, dynamic_offset + index * 16, tag, value)
     image[strtab_offset : strtab_offset + len(strtab)] = strtab
+    if note:
+        image[note_offset : note_offset + len(note)] = note
     if padding:
-        image[strtab_offset + len(strtab) :] = padding
+        image[note_offset + len(note) :] = padding
     return bytes(image)
 
 
@@ -277,7 +307,9 @@ def _sdk_tarball(path: Path) -> dict[str, bytes]:
     members = {
         "LICENSE.txt": PROPRIETARY_LICENSE.encode("utf-8"),
         "VERSION": b"1.2.0\n",
-        "libdemo.so": elf_shared_object("libdemo.so", ("libc.so.6",)),
+        "libdemo.so": elf_shared_object(
+            "libdemo.so", ("libc.so.6",), build_id=SDK_DEMO_BUILD_ID
+        ),
         "libextra.so": elf_shared_object("libextra.so", ("libssl.so.3", "libc.so.6")),
         "include/demo.h": b"#pragma once\n",
     }

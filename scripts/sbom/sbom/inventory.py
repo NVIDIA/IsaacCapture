@@ -159,7 +159,7 @@ class Resolver:
         # indexed first, and invent that component's license obligation with it.
         # The path is the only evidence such a file carries.
         if candidate_digest == EMPTY_SHA256:
-            return self._resolve_by_path(wheel_path, source)
+            return self._resolve_by_path(wheel_path, source, build_id)
 
         artifacts = self._artifacts_by_hash.get(candidate_digest)
         if artifacts:
@@ -224,7 +224,7 @@ class Resolver:
             if by_build_id is not None:
                 return by_build_id
 
-        by_path = self._resolve_by_path(wheel_path, source)
+        by_path = self._resolve_by_path(wheel_path, source, build_id)
         if by_path is not None:
             return by_path
 
@@ -323,16 +323,26 @@ class Resolver:
             primary=component.key,
         )
 
-    def _resolve_by_path(self, wheel_path: str, source: str) -> Attribution | None:
+    def _resolve_by_path(
+        self, wheel_path: str, source: str, build_id: str | None = None
+    ) -> Attribution | None:
         """Post-processing changes bytes; the path still says where they came from.
 
         patchelf, auditwheel's RPATH rewrite and the MJCF mesh stripping all leave
         a file that no longer hashes to its origin, so a unique path match is the
         remaining evidence -- recorded as derived, never as an exact copy.
+
+        A name match is only ever a guess, so a build-id that disagrees overrules
+        it: two libraries called libcloudxr.so from different SDKs are not each
+        other, and claiming they are would hand one the other's licence.
         """
         name = Path(wheel_path).name
 
-        members = self.archives.by_name.get(name, [])
+        members = [
+            member
+            for member in self.archives.by_name.get(name, [])
+            if not _build_ids_disagree(build_id, member.build_id)
+        ]
         containers = {member.container for member in members}
         if len(containers) == 1:
             member = members[0]
@@ -347,7 +357,11 @@ class Resolver:
                 primary=member.container,
             )
 
-        artifacts = self.graph.by_name(name)
+        artifacts = [
+            artifact
+            for artifact in self.graph.by_name(name)
+            if not _build_ids_disagree(build_id, _build_id_of(artifact.output))
+        ]
         if len(artifacts) == 1:
             return self._from_artifact(
                 artifacts[0], wheel_path, f"{source}; modified build output"
@@ -439,6 +453,11 @@ def build(
         unattributed=sorted(unattributed),
         absent_components=absent,
     )
+
+
+def _build_ids_disagree(left: str | None, right: str | None) -> bool:
+    """True only when both are known and differ -- that is evidence, not absence."""
+    return bool(left and right and left != right)
 
 
 def _build_id_of(path: Path) -> str | None:

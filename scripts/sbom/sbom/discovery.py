@@ -27,7 +27,7 @@ import subprocess
 import tomllib
 import tarfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from packageurl import PackageURL
@@ -768,6 +768,7 @@ class Member:
     path: str
     sha256: str
     size: int
+    build_id: str | None = None
 
 
 class ArchiveIndex:
@@ -794,15 +795,16 @@ class ArchiveIndex:
             "member_count": len(members),
         }
         for member, data in members:
-            self.by_hash.setdefault(member.sha256, member)
-            self.by_name.setdefault(Path(member.path).name, []).append(member)
             if elf.is_elf(data[:4]):
                 try:
                     build_id = elf.read_dynamic(data).build_id
                 except Exception:  # noqa: BLE001 - a malformed member is not ours to fix
                     build_id = None
                 if build_id:
+                    member = replace(member, build_id=build_id)
                     self.by_build_id.setdefault(build_id, member)
+            self.by_hash.setdefault(member.sha256, member)
+            self.by_name.setdefault(Path(member.path).name, []).append(member)
             self._maybe_license(display, member, data)
 
     def _maybe_license(self, display: str, member: Member, data: bytes) -> None:

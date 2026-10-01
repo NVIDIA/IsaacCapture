@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from packageurl import PackageURL
 
@@ -83,7 +84,30 @@ def _cmake_cache(build_dir: Path) -> dict[str, str]:
     return entries
 
 
-def _archive_components(archives: ArchiveIndex) -> dict[str, Component]:
+def _fetched_from(archive: Path) -> str | None:
+    """The URL a fetch script recorded beside an archive it downloaded.
+
+    Most archives here are downloaded at configure time rather than checked in,
+    so the origin is only knowable if whatever fetched it wrote the URL down.
+    """
+    marker = archive.with_name(archive.name + ".source")
+    if not marker.is_file():
+        return None
+    url = marker.read_text(encoding="utf-8", errors="replace").strip()
+    return url.splitlines()[0].strip() if url else None
+
+
+def _supplier_of(url: str | None) -> str:
+    """Whoever served the archive, named by the host that did."""
+    if not url:
+        return "NOASSERTION"
+    host = urlparse(url).hostname
+    return f"Organization: {host}" if host else "NOASSERTION"
+
+
+def _archive_components(
+    archives: ArchiveIndex, repo_root: Path
+) -> dict[str, Component]:
     """A tarball in the repo is a component: its members ship as they are."""
     components: dict[str, Component] = {}
     for display, record in archives.archives.items():
@@ -103,18 +127,22 @@ def _archive_components(archives: ArchiveIndex) -> dict[str, Component]:
         ]
         concluded, declared = licensing.expression(evidence, name)
 
+        source_url = _fetched_from(repo_root / display)
+        held = (
+            f"fetched from {source_url}" if source_url else "present in the source tree"
+        )
         components[display] = Component(
             key=display,
             name=name,
             kind="archive",
-            supplier="NOASSERTION",
+            supplier=_supplier_of(source_url),
             homepage="NOASSERTION",
             purl=PackageURL(type="generic", name=name).to_string(),
             version=_archive_version(archives, display) or "NOASSERTION",
-            download_location="NOASSERTION",
+            download_location=source_url or "NOASSERTION",
             source_info=(
                 f"Unpacked from {display} (sha256:{record['sha256']}, "
-                f"{record['member_count']} members) held in this repository."
+                f"{record['member_count']} members), {held}."
             ),
             license_concluded=concluded,
             license_declared=declared,
@@ -149,7 +177,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     archives = discover_archives(
         repo_root, skip=(build_dir, repo_root / "build-wheel", repo_root / "dist")
     )
-    components.update(_archive_components(archives))
+    components.update(_archive_components(archives, repo_root))
 
     source_files = FileIndex()
     for root in sorted(deps_dir.glob("*-src")):

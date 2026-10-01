@@ -314,3 +314,32 @@ def test_building_twice_on_the_same_wheel_is_refused(built):
             built["wheel"],
             built["out_dir"],
         )
+
+
+def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data):
+    """Two SDKs can ship a library under the same file name.
+
+    The patched copy no longer hashes to either, so only the name is left to go
+    on -- and a differing build-id says it is the wrong one. Claiming it would
+    hand this binary the other component's licence.
+    """
+    from sbom import licensing
+
+    licensing.load_corpus(license_data)
+    payload = synth.wheel_payload(workspace)
+    # Same basename as the member inside the SDK archive, different build-id,
+    # and patched so the content matches nothing.
+    payload["isaaccapture/other_sdk/libdemo.so"] = synth.elf_shared_object(
+        "libdemo.so",
+        ("libc.so.6", "libm.so.6"),
+        build_id="2222222222222222222222222222222222222222",
+    )
+    synth.write_wheel(workspace.wheel, payload)
+
+    with pytest.raises(build_module.BuildError, match="could not be traced"):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            workspace.wheel,
+            workspace.root / "sbom",
+        )

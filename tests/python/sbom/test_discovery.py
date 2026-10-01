@@ -213,3 +213,31 @@ def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data)
 
     assert "./src/python/isaaccapture/__init__.py" in indexed
     assert not any(item.startswith("./build-debug/") for item in indexed)
+
+
+def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
+    """Archives here are downloaded at configure time, not checked in.
+
+    The fetch script writes the URL beside the tarball, so the origin is read
+    rather than guessed; without that file the document must say it does not
+    know.
+    """
+    from sbom import evidence, licensing
+
+    licensing.load_corpus(license_data)
+    archive = workspace.root / synth.SDK_ARCHIVE
+
+    unknown = evidence.discover(workspace.root, workspace.build)
+    before = unknown.components[synth.SDK_ARCHIVE]
+    assert before.download_location == "NOASSERTION"
+    assert before.supplier == "NOASSERTION"
+
+    archive.with_name(archive.name + ".source").write_text(
+        "https://api.ngc.nvidia.com/v2/resources/example/sdk.tar.gz\n"
+    )
+    known = evidence.discover(workspace.root, workspace.build)
+    after = known.components[synth.SDK_ARCHIVE]
+
+    assert after.download_location.startswith("https://api.ngc.nvidia.com/")
+    assert after.supplier == "Organization: api.ngc.nvidia.com"
+    assert "fetched from https://" in after.source_info

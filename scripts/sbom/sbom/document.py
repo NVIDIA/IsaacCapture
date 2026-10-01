@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import os
 from datetime import datetime, timezone
 
@@ -110,6 +111,43 @@ def _extracted_licenses(components: list[Component]) -> list[dict]:
                 ),
             }
     return [entries[key] for key in sorted(entries)]
+
+
+_EXTRA_MARKER = re.compile(r"\bextra\s*==")
+
+
+def _is_extra_gated(requirement: Requirement) -> bool:
+    return requirement.marker is not None and bool(
+        _EXTRA_MARKER.search(str(requirement.marker))
+    )
+
+
+def _dependency_refs(name: str, requirement: Requirement) -> list[dict]:
+    """purl for the package, and the constraint as a range rather than prose.
+
+    purl carries one exact version, which a requirement does not have. VERS (the
+    purl project's range notation) does, so the specifier stays machine-readable
+    instead of living only in a sentence.
+    """
+    refs = [
+        {
+            "referenceCategory": "PACKAGE-MANAGER",
+            "referenceType": "purl",
+            "referenceLocator": PackageURL(type="pypi", name=name).to_string(),
+        }
+    ]
+    constraints = sorted(
+        f"{item.operator}{item.version}" for item in requirement.specifier
+    )
+    if constraints:
+        refs.append(
+            {
+                "referenceCategory": "OTHER",
+                "referenceType": "vers",
+                "referenceLocator": "vers:pypi/" + "|".join(constraints),
+            }
+        )
+    return refs
 
 
 def build_document(
@@ -274,7 +312,8 @@ def build_document(
         )
 
     for requirement in inventory.requires_dist:
-        name = Requirement(requirement).name
+        parsed = Requirement(requirement)
+        name = parsed.name
         # Not the requirement string: slugifying `websockets>=14.0` yields
         # `websockets-14.0`, which reads as a pinned version beside a
         # versionInfo this document deliberately leaves unasserted. The same
@@ -293,28 +332,32 @@ def build_document(
                 "licenseConcluded": NOASSERTION,
                 "licenseDeclared": NOASSERTION,
                 "copyrightText": NOASSERTION,
-                "externalRefs": [
-                    {
-                        "referenceCategory": "PACKAGE-MANAGER",
-                        "referenceType": "purl",
-                        "referenceLocator": PackageURL(
-                            type="pypi", name=name
-                        ).to_string(),
-                    }
-                ],
+                "externalRefs": _dependency_refs(name, parsed),
                 "comment": (
                     f"Consumer requirement declared in wheel metadata: {requirement}. "
                     "Resolved at install time; this document states no license for it."
                 ),
             }
         )
-        relationships.append(
-            {
-                "spdxElementId": wheel_id,
-                "relatedSpdxElement": package_id,
-                "relationshipType": "DEPENDS_ON",
-            }
-        )
+        # An `extra ==` marker means the requirement only applies when that extra
+        # is requested, which SPDX has a relationship for. Its direction is the
+        # reverse of DEPENDS_ON.
+        if _is_extra_gated(parsed):
+            relationships.append(
+                {
+                    "spdxElementId": package_id,
+                    "relatedSpdxElement": wheel_id,
+                    "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+                }
+            )
+        else:
+            relationships.append(
+                {
+                    "spdxElementId": wheel_id,
+                    "relatedSpdxElement": package_id,
+                    "relationshipType": "DEPENDS_ON",
+                }
+            )
 
     # SOURCE_DATE_EPOCH makes the whole wheel reproducible, which is what lets a
     # rebuild be compared against a published one byte for byte.
