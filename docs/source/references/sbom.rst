@@ -218,6 +218,12 @@ The distribution's own declared licence is an obligation like any other. A wheel
 redistributed component with no terms; where the wheel ships none, the reference text for
 each identifier is packaged from the pinned list and declared under PEP 639.
 
+The notices file opens with the distribution's own licence and copyright holder, read
+from the packaging metadata it was built from where no file it ships states one. A wheel
+that ships only metadata carries no notice otherwise: the reference text its declared
+licence packages is a template naming nobody, so a recipient holding the wheel alone could
+not say who licensed it to them.
+
 ``licenseDeclared`` on the wheel is what the distribution says of itself. ``licenseConcluded``
 is what this document found in it, so a wheel carrying a component whose terms the build
 could not name states that expression alongside the declaration — a reader asking "what is

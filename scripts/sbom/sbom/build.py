@@ -25,7 +25,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from . import discovery as discovery_module
-from .discovery import project_supplier, sha256_file
+from .discovery import project_copyright, project_supplier, sha256_file
 from .document import NOASSERTION
 from .inventory import Attribution
 from .wheelfile import Entry
@@ -61,6 +61,9 @@ def _project_facts(repo_root: Path, metadata: dict) -> dict:
         # expression, and a wheel declaring neither declares nothing.
         "license": metadata.get("license_expression") or NOASSERTION,
         "homepage": homepage,
+        # What the project states about itself, for a distribution whose own
+        # files state nothing -- a metadata-only wheel has no file to carry it.
+        "copyright": project_copyright(repo_root),
     }
 
 
@@ -366,7 +369,10 @@ def build(
 
     notices_path = report_module.notices_path(wheel.dist_info)
     additions[notices_path] = report_module.notices_markdown(
-        inventory, wheel.dist_info, wheel_path.name
+        inventory,
+        wheel.dist_info,
+        wheel_path.name,
+        _project_facts(repo_root, wheel_metadata),
     ).encode("utf-8")
     packaged_paths.append(
         report_module.declared_license_path(wheel.dist_info, notices_path)

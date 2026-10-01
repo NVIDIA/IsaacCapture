@@ -10,6 +10,8 @@ import re
 from . import licensing
 from .inventory import Inventory
 
+NOASSERTION = "NOASSERTION"
+
 _HOW_PROSE = {
     "compiled-source": "its sources were compiled into a shipped binary",
     "header-include": "its headers were compiled into a shipped binary",
@@ -87,9 +89,30 @@ def _roles(inventory: Inventory, key: str) -> str:
     return "; ".join(_HOW_PROSE.get(how, how) for how in hows) or "unrecorded"
 
 
-def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> str:
-    """The notice file that travels inside the wheel."""
-    lines = ["# Third-party notices", ""]
+def notices_markdown(
+    inventory: Inventory,
+    dist_info: str,
+    wheel_name: str,
+    project: dict | None = None,
+) -> str:
+    """The notice file that travels inside the wheel.
+
+    It opens with the distribution's own licence and holder. The reference text
+    a declared licence packages names nobody -- Apache-2.0's appendix is a
+    template -- so for a wheel shipping no source file of its own this is the
+    only place a recipient can read who licensed it to them.
+    """
+    lines = ["# Notices", ""]
+    if project:
+        # `Organization: NVIDIA` is how SPDX spells a supplier; prose does not.
+        supplier = project["supplier"].split(": ", 1)[-1]
+        lines += [f"`{wheel_name}` is distributed by {supplier}."]
+        if project.get("license", NOASSERTION) != NOASSERTION:
+            lines.append(f"It is licensed under `{project['license']}`.")
+        if project.get("copyright", NOASSERTION) != NOASSERTION:
+            lines.append(f"{project['copyright']}")
+        lines.append("")
+    lines += ["## Third-party notices", ""]
     if not inventory.components_present:
         # Saying where texts live when none were written sends a reader to a
         # directory the wheel does not contain.
@@ -107,7 +130,7 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
         "",
     ]
     for key, component in inventory.components_present.items():
-        lines.append(f"## {component.name}")
+        lines.append(f"### {component.name}")
         lines.append("")
         lines.append(f"- License: `{component.license_concluded}`")
         if component.copyright_text != "NOASSERTION":

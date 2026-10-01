@@ -359,11 +359,13 @@ def build_document(
         "licenseConcluded": _wheel_conclusion(project["license"], inventory),
         "licenseDeclared": project["license"],
         "licenseInfoFromFiles": sorted(stated_in_files) or [NOASSERTION],
-        # The notices its own files carry. Declaring none beside a supplier, a
-        # licence and files that each state one left the package saying less
-        # about itself than anything in it.
+        # The notices its own files carry, or -- for a distribution that ships
+        # no file of its own -- what the project states in the metadata it is
+        # built from. Declaring none beside a supplier and a licence left the
+        # package saying less about itself than anything in it, and left a
+        # recipient of a metadata-only wheel unable to name its licensor at all.
         "copyrightText": "\n".join(licensing.fold_notices(stated_copyright))
-        or NOASSERTION,
+        or project.get("copyright", NOASSERTION),
         "packageVerificationCode": {
             "packageVerificationCodeValue": code,
             "packageVerificationCodeExcludedFiles": [

@@ -468,3 +468,56 @@ def test_a_rewritten_licence_ref_body_is_caught_however_it_was_minted(built):
         built["wheel"], build_evidence=built["evidence_path"]
     )
     assert any("not the terms the build read" in item for item in failures), failures
+
+
+def test_a_wheel_shipping_no_source_still_names_its_licensor(workspace, license_data):
+    """The declared licence's reference text names nobody.
+
+    A metadata-only wheel ships no file carrying a notice, so without this the
+    SPDX package states NOASSERTION and the notices file says nothing about the
+    distribution -- a recipient holding only the wheel cannot tell who licensed
+    it to them, for a wheel that declares one.
+    """
+    thin = workspace.wheel.parent / "thin-0.4.0-py3-none-any.whl"
+    synth.write_wheel(
+        thin,
+        {
+            "thin-0.4.0.dist-info/METADATA": "\n".join(
+                [
+                    "Metadata-Version: 2.4",
+                    "Name: thin",
+                    "Version: 0.4.0",
+                    "Author: Example Org",
+                    "License-Expression: Apache-2.0",
+                    "",
+                ]
+            ).encode(),
+            "thin-0.4.0.dist-info/WHEEL": (
+                b"Wheel-Version: 1.0\nGenerator: setuptools\nRoot-Is-Purelib: true\n"
+            ),
+        },
+    )
+    out = workspace.root / "sbom"
+    build_module.build(workspace.root, workspace.build, thin, out, license_data)
+
+    with zipfile.ZipFile(thin) as archive:
+        spdx = json.loads(
+            archive.read(
+                "thin-0.4.0.dist-info/sboms/thin-0.4.0-py3-none-any.whl.spdx.json"
+            )
+        )
+        notices = archive.read(
+            "thin-0.4.0.dist-info/licenses/THIRD-PARTY-NOTICES.md"
+        ).decode()
+        members = set(archive.namelist())
+
+    wheel_package = next(
+        item for item in spdx["packages"] if item["SPDXID"] == "SPDXRef-Package-wheel"
+    )
+    assert wheel_package["copyrightText"] != "NOASSERTION"
+    assert "Copyright" in notices
+    assert "Example Org" in notices
+    # The SPDX spelling of a supplier is not prose.
+    assert "distributed by Organization:" not in notices
+    # The only text it ships names no holder, which is why the above matters.
+    assert "thin-0.4.0.dist-info/licenses/LICENSES/Apache-2.0.txt" in members

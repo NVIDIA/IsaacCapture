@@ -251,6 +251,9 @@ _VENDORED_HEADER = """\
 """
 
 _PROJECT_PYPROJECT = """\
+# SPDX-FileCopyrightText: Copyright (c) 2026 Example Org. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 [project]
 name = "isaaccapture"
 version = "0.4.0"

@@ -592,6 +592,25 @@ def project_supplier(repo_root: Path) -> str:
     return f"Organization: {authors[0]}"
 
 
+def project_copyright(repo_root: Path) -> str:
+    """The notice this project states about itself, from its packaging metadata.
+
+    A distribution that ships files of its own is covered by their notices. One
+    that ships only metadata states its copyright nowhere a reader can reach --
+    the reference text its declared licence packages names no holder -- and the
+    REUSE header on the file the distribution is built from is where the project
+    does state it.
+    """
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return "NOASSERTION"
+    try:
+        head = pyproject.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return "NOASSERTION"
+    return licensing.read_copyright(head) or "NOASSERTION"
+
+
 @dataclass(frozen=True)
 class _Stated:
     """What a source file says about itself in its header."""
