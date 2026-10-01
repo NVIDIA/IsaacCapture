@@ -325,12 +325,12 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
                 f"{key} is redistributed but the license text recorded for it is "
                 "not packaged in this wheel"
             )
-    failures.extend(_document_agrees_with_evidence(wheel, recorded))
+    failures.extend(_document_agrees_with_evidence(wheel, recorded, evidence_doc))
     return failures
 
 
 def _document_agrees_with_evidence(
-    wheel: wheelfile.WheelInfo, recorded: set[str]
+    wheel: wheelfile.WheelInfo, recorded: set[str], evidence_doc: dict
 ) -> list[str]:
     """The texts the document names must be the ones the build actually read.
 
@@ -356,11 +356,68 @@ def _document_agrees_with_evidence(
                     f"{package['name']}: the document names a licence text "
                     f"(sha256:{match.group('digest')}) the build never read"
                 )
+
+    # A digest is the one thing about a component that cannot change its terms.
+    # Comparing only that left every expression in the document rewritable --
+    # a proprietary EULA could be published as Apache-2.0, with the evidence
+    # beside it still saying otherwise and every gate reporting OK.
+    components = evidence_doc.get("components", {})
+    by_name = {
+        component.get("name", key): (key, component)
+        for key, component in components.items()
+    }
+    for package in spdx.get("packages", []):
+        found = by_name.get(package["name"])
+        if found is None:
+            continue
+        key, component = found
+        for field, stated in (
+            ("licenseConcluded", "license_concluded"),
+            ("licenseDeclared", "license_declared"),
+        ):
+            expected = component.get(stated)
+            actual = package.get(field)
+            if not expected or actual == expected:
+                continue
+            # Both unnameable is agreement: components sharing one text share one
+            # LicenseRef, so the document's id is not the evidence's. The text
+            # behind it is checked below, which is what the id stands for.
+            if "LicenseRef-" in str(actual) and "LicenseRef-" in expected:
+                continue
+            failures.append(
+                f"{key}: the document says {field} {actual!r}, "
+                f"the build recorded {expected!r}"
+            )
+
+    # And the text that id stands for has to be one the build read. Where a
+    # component's terms came from several files the document joins them, so
+    # there is no single digest to compare and the join is left to the
+    # packaged-path check.
+    single = {
+        item["sha256"]
+        for component in components.values()
+        for item in [component.get("evidence", [])]
+        if len(item) == 1
+        for item in item
+    }
+    for extracted in spdx.get("hasExtractedLicensingInfos", []):
+        digest = hashlib.sha256(
+            extracted.get("extractedText", "").encode("utf-8")
+        ).hexdigest()
+        if single and digest not in recorded and digest not in single:
+            failures.append(
+                f"{extracted['licenseId']}: the text it carries is not one the "
+                "build read"
+            )
     return failures
 
 
 def _refs_in(value) -> set[str]:
-    """LicenseRef identifiers in a field that may hold an expression or a list."""
+    """LicenseRef identifiers in a field that may hold an expression or a list.
+
+    An expression that cannot be read is reported as such rather than treated as
+    naming nothing.
+    """
     if value is None:
         return set()
     items = value if isinstance(value, list) else [value]
