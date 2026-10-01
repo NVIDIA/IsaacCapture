@@ -212,6 +212,10 @@ def main(argv: list[str] | None = None) -> int:
         licensing.ExpressionReadError,
         discovery.ArchiveError,
         discovery.SupplierError,
+        # Raised both for a build tree with no file API reply and for a repo
+        # root git cannot answer for; its message is the instruction to the
+        # operator, and a traceback buries it.
+        discovery.FileApiError,
         wheelfile.WheelError,
         validate_module.ManifestError,
     ) as error:

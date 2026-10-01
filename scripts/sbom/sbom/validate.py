@@ -420,23 +420,30 @@ def _document_agrees_with_evidence(
                 f"the build recorded {expected!r}"
             )
 
-    # And the text that id stands for has to be one the build read. Where a
-    # component's terms came from several files the document joins them, so
-    # there is no single digest to compare and the join is left to the
-    # packaged-path check.
-    single = {
-        component["evidence"][0]["sha256"]
-        for component in components.values()
-        if len(component.get("evidence", [])) == 1
+    # And the text a LicenseRef stands for has to be the terms the build read
+    # for some component. A component can state its licence across several
+    # files, so the body is a join with no digest of its own -- the evidence
+    # states that digest, which is what makes every entry checkable, shared ids
+    # included. An id minted for one component is held to that component's.
+    by_ref = {licensing.license_ref(key): key for key in components}
+    stated = {
+        key: component.get("verbatim_terms_sha256")
+        for key, component in components.items()
     }
+    any_stated = {digest for digest in stated.values() if digest}
     for extracted in spdx.get("hasExtractedLicensingInfos", []):
+        if not any_stated:
+            # Evidence written before this digest existed cannot answer.
+            break
         digest = hashlib.sha256(
             extracted.get("extractedText", "").encode("utf-8")
         ).hexdigest()
-        if single and digest not in recorded and digest not in single:
+        owner = by_ref.get(extracted["licenseId"])
+        expected = {stated[owner]} if owner and stated.get(owner) else any_stated
+        if digest not in expected:
             failures.append(
-                f"{extracted['licenseId']}: the text it carries is not one the "
-                "build read"
+                f"{extracted['licenseId']}: the text it carries is not the terms "
+                "the build read" + (f" for {owner}" if owner else "")
             )
     return failures
 
@@ -547,7 +554,16 @@ def _check_manifest(
     published = beside / record["sidecars"]["spdx"]["filename"]
     if published.is_file():
         with zipfile.ZipFile(wheel) as archive:
-            if archive.read(record["sbom_in_wheel"]) != published.read_bytes():
+            embedded = record["sbom_in_wheel"]
+            # Reported, not raised: the member name comes out of the manifest,
+            # so one the wheel does not hold is a disagreement between the two
+            # and reads as such, rather than as a KeyError from the zip reader.
+            if embedded not in archive.namelist():
+                failures.append(
+                    f"the manifest names {embedded} as this wheel's SBOM, and the "
+                    "wheel carries no such member"
+                )
+            elif archive.read(embedded) != published.read_bytes():
                 failures.append(
                     "the published SBOM copy differs from the one embedded in the wheel"
                 )

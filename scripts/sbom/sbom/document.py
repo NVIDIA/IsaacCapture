@@ -105,10 +105,9 @@ def _extracted_licenses(
         grants = licensing.obligation_texts(component.evidence)
         if not refs or not grants:
             continue
+        body = licensing.verbatim_terms(component.evidence)
         for ref in refs:
-            if ref in entries and entries[ref]["extractedText"] != "\n\n".join(
-                item.text for item in grants
-            ):
+            if ref in entries and entries[ref]["extractedText"] != body:
                 raise ValueError(
                     f"{ref} was minted for two components with different terms; "
                     "a LicenseRef identifies one text"
@@ -116,7 +115,7 @@ def _extracted_licenses(
             entries[ref] = {
                 "licenseId": ref,
                 "name": f"License terms shipped with {component.name}",
-                "extractedText": "\n\n".join(item.text for item in grants),
+                "extractedText": body,
                 "comment": (
                     (
                         "Matched no text in the SPDX reference corpus"

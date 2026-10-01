@@ -32,7 +32,6 @@ import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from elftools.common.exceptions import ELFError
 from packageurl import PackageURL
 
 from . import elf, licensing
@@ -49,6 +48,10 @@ _SKIP_DIRS = {
 }
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar", ".zip")
 _MAX_ARCHIVE_BYTES = 1 << 31
+# How much of a library nested in an archive is kept, to read its build-id from.
+# An SDK ships its libraries under `lib/`, not at the archive root, so without
+# this the only members with a build-id are the ones nothing links against.
+_ELF_HEAD_BYTES = 1 << 16
 
 _GITHUB_REMOTE = re.compile(
     r"github\.com[:/](?P<org>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
@@ -959,14 +962,12 @@ class ArchiveIndex:
             "member_count": len(members),
         }
         for member, data in members:
-            if elf.is_elf(data[:4]):
-                try:
-                    build_id = elf.read_dynamic(data).build_id
-                except ELFError:  # a third-party archive may hold a broken ELF
-                    build_id = None
-                if build_id:
-                    member = replace(member, build_id=build_id)
-                    self.all_by_build_id.setdefault(build_id, []).append(member)
+            # `data` is the whole member only at the archive root; elsewhere it
+            # is the head kept for exactly this, so ask only for the build-id.
+            build_id = elf.build_id_of(data)
+            if build_id:
+                member = replace(member, build_id=build_id)
+                self.all_by_build_id.setdefault(build_id, []).append(member)
             self.by_hash.setdefault(member.sha256, member)
             self.all_by_hash.setdefault(member.sha256, []).append(member)
             self.by_name.setdefault(Path(member.path).name, []).append(member)
@@ -997,22 +998,26 @@ class ArchiveIndex:
         collected: list[tuple[Member, bytes]] = []
 
         def take(name: str, handle) -> None:
-            # Only a root member's bytes are kept -- for its licence text or its
-            # ELF header -- so the rest stream through the digest. Reading every
-            # member whole sizes peak memory by the largest file in the archive.
+            # A root member's bytes are kept whole, for its licence text; every
+            # other member streams through the digest, and keeps a head only if
+            # it is a library, for its build-id. Reading every member whole
+            # sizes peak memory by the largest file in the archive.
             at_root = Path(name).parent.as_posix() in {".", ""}
             digest = hashlib.sha256()
             size = 0
             kept = bytearray()
+            head = b""
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
-                size += len(chunk)
                 if at_root:
                     kept += chunk
+                elif not size and elf.is_elf(chunk):
+                    head = chunk[:_ELF_HEAD_BYTES]
+                size += len(chunk)
             collected.append(
                 (
                     Member(display, name, digest.hexdigest(), size),
-                    bytes(kept) if at_root else b"",
+                    bytes(kept) if at_root else head,
                 )
             )
 
@@ -1069,7 +1074,10 @@ def discover_archives(
     index = ArchiveIndex()
     skipped = tuple(item.resolve() for item in skip)
     for path in _walk(repo_root):
-        if any(str(path).startswith(str(item)) for item in skipped):
+        # By path segment, not by string prefix: `dist` prefixes `distribution`
+        # and a build directory named `build` prefixes `buildtools`, and an
+        # archive skipped that way goes on to explain nothing.
+        if any(path.is_relative_to(item) for item in skipped):
             continue
         name = path.name.lower()
         if not name.endswith(ARCHIVE_SUFFIXES):

@@ -65,9 +65,7 @@ def in_dependency_order(wheels: list[Path]) -> list[Path]:
     """
     metadata = {}
     for wheel in wheels:
-        info = wheelfile.scan(wheel)
-        raw, _ = wheelfile.read_metadata(wheel, info.dist_info)
-        parsed = wheelfile.parse_metadata(raw)
+        _, parsed = wheelfile.read_metadata(wheel, wheelfile.dist_info_of(wheel))
         metadata[wheel] = (
             canonicalize_name(parsed["name"]),
             {

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from email import message_from_bytes
 from email.generator import BytesGenerator
 from email.policy import compat32
+from elftools.common.exceptions import ELFError
 from installer.records import Hash, RecordEntry, parse_record_file
 from packaging.metadata import RawMetadata, parse_email
 from packaging.version import Version
@@ -129,6 +130,17 @@ def _dist_info(names: list[str]) -> str:
     return candidates[0]
 
 
+def dist_info_of(wheel_path: Path) -> str:
+    """The `.dist-info` directory name, from the archive's index alone.
+
+    For a caller that wants only the metadata: `scan` hashes every member, which
+    over a release's worth of wheels is a full read of each for a name the
+    central directory already states.
+    """
+    with zipfile.ZipFile(wheel_path) as archive:
+        return _dist_info(archive.namelist())
+
+
 def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
     """Hash every member, and read the dynamic section of ELF members on request.
 
@@ -166,7 +178,13 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
                 data = handle.read()
             soname = needed = machine = build_id = None
             if analyze_elf and elf.is_elf(data[:4]):
-                dynamic = elf.read_dynamic(data)
+                try:
+                    dynamic = elf.read_dynamic(data)
+                except ELFError as error:
+                    raise WheelError(
+                        f"{info.filename} begins with the ELF magic but cannot be "
+                        f"read as one: {error}"
+                    ) from error
                 soname, needed, machine, build_id = (
                     dynamic.soname,
                     dynamic.needed,

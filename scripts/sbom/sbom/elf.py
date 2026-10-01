@@ -15,6 +15,7 @@ parser on that path entirely.
 from __future__ import annotations
 
 import io
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,6 +54,21 @@ def _build_id_from(elffile: ELFFile) -> str | None:
             if note["n_type"] == "NT_GNU_BUILD_ID":
                 return note["n_desc"]
     return None
+
+
+def build_id_of(data: bytes) -> str | None:
+    """The build-id of an in-memory image, which may be only its head.
+
+    The note the linker writes sits with the program headers, so a bounded
+    prefix of a large library answers this without holding the whole file. A
+    prefix too short to reach the note reads as no build-id rather than raising.
+    """
+    if not is_elf(data):
+        return None
+    try:
+        return _build_id_from(ELFFile(io.BytesIO(data)))
+    except (ELFError, OSError, struct.error):
+        return None
 
 
 def read_build_id(path: Path) -> str | None:

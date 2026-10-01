@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import platform
 import re
 from dataclasses import dataclass
@@ -391,6 +392,13 @@ def document(
                 "license_concluded": component.license_concluded,
                 "license_declared": component.license_declared,
                 "evidence": [item.as_json() for item in component.evidence],
+                # The digest of the terms verbatim, as the document carries
+                # them. A component can state its licence across several files,
+                # and the join has no digest of its own for the verifier to
+                # compare against unless the build states one.
+                "verbatim_terms_sha256": hashlib.sha256(
+                    licensing.verbatim_terms(component.evidence).encode("utf-8")
+                ).hexdigest(),
                 "in_this_wheel": key in inventory.components_present,
             }
             for key, component in sorted(components.items())

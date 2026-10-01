@@ -372,3 +372,83 @@ def test_a_requirement_this_run_also_built_points_at_its_own_document(
         for item in spdx["relationships"]
     )
     assert validate_module.check(companion) == []
+
+
+def _rewrite_document(wheel, mutate):
+    """Put a modified SBOM back into a wheel, under its own name."""
+    info = wheelfile.scan(wheel)
+    name = wheelfile.sbom_member(info.dist_info, wheel.name)
+    with zipfile.ZipFile(wheel) as archive:
+        spdx = json.loads(archive.read(name))
+    assert mutate(spdx), "nothing to mutate"
+    body = json.dumps(spdx, indent=2, sort_keys=True).encode() + b"\n"
+    staged = wheel.parent / f"staged-{wheel.name}"
+    wheelfile.rewrite(
+        wheel,
+        staged,
+        additions={},
+        replacements={name: body},
+        dist_info=info.dist_info,
+    )
+    staged.replace(wheel)
+
+
+def test_a_components_terms_may_span_several_files(workspace, license_data):
+    """A component can state its licence in more than one file.
+
+    The LicenseRef then carries the join, which has no digest of its own, so the
+    build states one. Holding the entry to a single file's digest instead failed
+    a correct wheel.
+    """
+    from sbom import licensing
+
+    licensing.load_corpus(license_data)
+    root = workspace.build / "_deps" / "alpha-src"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "LICENSE").write_text(synth.PROPRIETARY_LICENSE)
+    (root / "COPYING").write_text(synth.PROPRIETARY_LICENSE + "\nAnd a second file.")
+    synth.track(workspace.root)
+    synth.write_wheel(workspace.wheel, synth.wheel_payload(workspace))
+
+    out = workspace.root / "sbom"
+    build_module.build(workspace.root, workspace.build, workspace.wheel, out)
+
+    stem = WHEEL_NAME.removesuffix(".whl")
+    evidence_path = out / f"{stem}.build-evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    texts = [
+        item
+        for item in evidence["components"]["alpha"]["evidence"]
+        if item["kind"] in ("grant", "pool")
+    ]
+    assert len(texts) > 1, "the component was set up to state its terms twice"
+
+    spdx = _embedded(workspace.wheel)
+    joined = next(
+        item
+        for item in spdx["hasExtractedLicensingInfos"]
+        if "alpha" in item["licenseId"]
+    )
+    assert joined["extractedText"].count(synth.PROPRIETARY_LICENSE) >= 1
+    assert validate_module.check(workspace.wheel, build_evidence=evidence_path) == []
+
+
+def test_a_rewritten_licence_ref_body_is_caught_however_it_was_minted(built):
+    """The verbatim terms are what a LicenseRef stands for.
+
+    A shared id belongs to no single component, which is not a reason to stop
+    checking it: that is the id the proprietary SDK terms travel under.
+    """
+    swapped = "You may do whatever you like with this software."
+
+    def rewrite(spdx):
+        for item in spdx["hasExtractedLicensingInfos"]:
+            item["extractedText"] = swapped
+        return bool(spdx["hasExtractedLicensingInfos"])
+
+    _rewrite_document(built["wheel"], rewrite)
+
+    failures = validate_module.check(
+        built["wheel"], build_evidence=built["evidence_path"]
+    )
+    assert any("not the terms the build read" in item for item in failures), failures

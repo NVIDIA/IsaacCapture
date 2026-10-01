@@ -116,6 +116,17 @@ def obligation_texts(evidence) -> list[LicenseEvidence]:
     return [item for item in evidence if satisfies_obligation(item.kind)]
 
 
+def verbatim_terms(evidence) -> str:
+    """The body a LicenseRef carries for a component: every text it read.
+
+    One component can state its terms across several files, so this is a join
+    and not a file. The build records its digest and the verifier compares
+    against that, which only works while both sides join the same way -- so they
+    both call this.
+    """
+    return "\n\n".join(item.text for item in obligation_texts(evidence))
+
+
 _DIGITS = re.compile(r"\d+")
 
 
@@ -626,9 +637,15 @@ def canonical_evidence(
     seen: set[str] = set()
     entries = corpus()[1]
     for expression in sorted(expressions):
-        for token in _spdx_licensing().license_keys(
-            _spdx_licensing().parse(expression, validate=False)
-        ):
+        try:
+            parsed = _spdx_licensing().parse(expression, validate=False)
+        except (ExpressionError, ValueError, TypeError):
+            # A header tag is written by hand and can say anything -- "Public
+            # domain or MIT License" is not an expression. One that will not
+            # parse names no reference text; the component is then reported with
+            # no licence evidence, which is the gap, rather than stopping here.
+            continue
+        for token in _spdx_licensing().license_keys(parsed):
             reference = entries.get(token)
             if token in seen or reference is None or not reference.text:
                 continue
