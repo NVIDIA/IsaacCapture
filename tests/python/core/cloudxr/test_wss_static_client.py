@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the ``--host-client`` static routes in ``wss``.
+"""Unit tests for WSS static client, certificate, and manual helper routes.
 
 Run from this directory (after ``pip install pytest``)::
 
@@ -93,87 +93,53 @@ async def test_unknown_client_asset_is_404(static_dir: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("authority", "host", "port"),
-    [
-        ("192.168.0.201:48322", "192.168.0.201", "48322"),
-        ("robot.local:50000", "robot.local", "50000"),
-        ("robot.local", "robot.local", "443"),
-        ("[2001:db8::1]:48322", "2001:db8::1", "48322"),
-    ],
-)
-async def test_certificate_link_prefills_browser_address(
-    monkeypatch, authority, host, port
-) -> None:
-    from html import unescape
-    from urllib.parse import parse_qs, urlparse
-
-    monkeypatch.delenv("TELEOP_WEB_CLIENT_BASE", raising=False)
-    monkeypatch.setattr(
-        "cloudxr_py_test_ns.wss.default_web_client_origin",
-        lambda: "https://nvidia.github.io/IsaacCapture/client/v1.2.3/",
-    )
+async def test_certificate_page_offers_fixed_manual_helper(monkeypatch) -> None:
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", "https://[bad")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "invalid")
     request = FakeRequest("/")
-    request.headers["Host"] = authority
-    handler = _make_http_handler("localhost", 49100)
-    response = await handler(None, request)
-    html = response.body.decode()
-    link = unescape(html.split('href="')[1].split('"')[0])
-    parsed = urlparse(link)
-    assert parsed.path == "/IsaacCapture/client/v1.2.3/"
-    assert parse_qs(parsed.query) == {
-        "serverIP": [host],
-        "port": [port],
-        "serverType": ["manual"],
-    }
-    assert "Certificate Accepted" in html
-    assert "close this tab and return to the web client" in html
+    request.headers["Host"] = "[invalid"
+    response = await _make_http_handler("localhost", 49100)(None, request)
+    assert response.status_code == 200
+    assert b"Certificate Accepted" in response.body
+    assert b"close this tab and return to the web client" in response.body
+    assert b'href="/connect/"' in response.body
+    assert b"<script>" not in response.body
 
 
 @pytest.mark.asyncio
-async def test_certificate_link_prefers_hosted_client(static_dir, monkeypatch) -> None:
-    monkeypatch.delenv("TELEOP_WEB_CLIENT_BASE", raising=False)
-    handler = _make_http_handler("localhost", 49100, static_dir=static_dir)
-    request = FakeRequest("/")
-    request.headers["Host"] = "robot.local:48322"
-    response = await handler(None, request)
-    assert (
-        b'href="/client/?serverIP=robot.local&amp;port=48322&amp;serverType=manual"'
-        in response.body
+@pytest.mark.parametrize("path", ["/connect", "/connect/", "/connect/?ignored=1"])
+@pytest.mark.parametrize("host_client", [False, True])
+async def test_manual_helper_is_available_with_or_without_local_client(
+    static_dir: Path, monkeypatch: pytest.MonkeyPatch, path: str, host_client: bool
+) -> None:
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", "https://[bad")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "invalid")
+    handler = _make_http_handler(
+        "localhost", 49100, static_dir=static_dir if host_client else None
     )
+    response = await handler(None, FakeRequest(path))
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert int(response.headers["Content-Length"]) == len(response.body)
+    assert b"Manual VR connection" in response.body
+    assert b"Open NVIDIA-hosted client" in response.body
+    assert b"window.location.hostname" in response.body
+    assert b"window.location.port" in response.body
+    assert b"https://nvidia.github.io/IsaacCapture/client/main/" in response.body
+    assert b"<noscript>" in response.body
+    assert b"launcher-provided client link" in response.body
 
 
-def test_certificate_link_respects_override_and_preserves_query_and_route(monkeypatch):
-    from urllib.parse import parse_qs, urlparse
-    from cloudxr_py_test_ns.wss import _cert_client_url
-
-    monkeypatch.setenv(
-        "TELEOP_WEB_CLIENT_BASE",
-        "https://client.example/?codec=h264&serverIP=old&port=123&serverType=nvcf#/custom",
-    )
-    link = _cert_client_url("robot.local:48322", host_client=True)
-    parsed = urlparse(link)
-    assert parsed.netloc == "client.example"
-    assert parsed.fragment == "/custom"
-    assert parse_qs(parsed.query) == {
-        "codec": ["h264"],
-        "serverIP": ["robot.local"],
-        "port": ["48322"],
-        "serverType": ["manual"],
-    }
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/connect/extra", "/connectx"])
+async def test_other_paths_keep_certificate_confirmation(path: str) -> None:
+    response = await _make_http_handler("localhost", 49100)(None, FakeRequest(path))
+    assert b"Certificate Accepted" in response.body
+    assert b"<script>" not in response.body
 
 
-@pytest.mark.parametrize(
-    "authority", ["", "robot:invalid", "[broken", "user@robot", "robot/path"]
-)
-def test_certificate_link_omitted_for_invalid_authority(authority):
-    from cloudxr_py_test_ns.wss import _cert_client_url, _cert_html
-
-    assert b"href=" not in _cert_html(_cert_client_url(authority, host_client=False))
-
-
-def test_certificate_link_escapes_html():
-    from cloudxr_py_test_ns.wss import _cert_html
-
-    html = _cert_html('https://client.example/?a="<test>"&b=2')
-    assert b"a=&quot;&lt;test&gt;&quot;&amp;b=2" in html
+@pytest.mark.asyncio
+async def test_helper_path_keeps_websocket_upgrade_behavior() -> None:
+    request = FakeRequest("/connect/")
+    request.headers["Upgrade"] = "websocket"
+    assert await _make_http_handler("localhost", 49100)(None, request) is None

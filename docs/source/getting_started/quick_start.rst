@@ -243,13 +243,6 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
             **Figure:** Browser privacy warning for self-signed certificate
 
-      .. tab-item:: Certificate accepted
-
-         .. figure:: ../_static/cloudxr_accept_cert_accepted.png
-            :alt: Certificate accepted page
-
-            **Figure:** Certificate accepted page
-
    As illustrated in the figure above, there are 3 steps to connect to your headset:
 
    1. Enter the IP address of the workstation running CloudXR
@@ -257,7 +250,7 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
       - Click the **Click https://<ip>:48322/ to accept cert** link that appears on the page.
       - In the new tab, you will see a **"Your connection is not private"** warning. Click **Advanced**, then **Proceed to <ip> (unsafe)**.
-      - Once accepted, the page will show **Certificate Accepted**. Navigate back to the CloudXR.js client page.
+      - Once accepted, the page will show **Certificate Accepted**. Close this tab and return to your original client tab.
 
    .. important::
 
@@ -265,6 +258,17 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
       **H.264** in the CloudXR web client.
 
    3. Click **Connect** to begin teleoperation.
+
+   .. note::
+
+      For manual VR use without ADB, you can also open
+      ``https://<your-ip>:48322/`` directly and accept the certificate. Select
+      **Using VR without ADB? Open connection helper**, then **Open NVIDIA-hosted
+      client**. The helper fills in the host and HTTPS port from the browser
+      address. Review the client settings before clicking **Connect**; on
+      Jetson Orin, select **H.264**. For ADB or USB connections, use the
+      launcher-provided client link. If a client tab is already open, return
+      to it instead.
 
    .. note::
       For advanced usage and troubleshooting of CloudXR, see the `CloudXR documentation`_ for more

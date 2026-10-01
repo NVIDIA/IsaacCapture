@@ -9,9 +9,8 @@ import json
 import logging
 import mimetypes
 import os
-from html import escape
 from http import HTTPStatus
-from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
+from urllib.parse import unquote, urlparse
 import ssl
 import sys
 from collections.abc import Callable
@@ -23,8 +22,6 @@ from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
     default_initial_stream_config,
-    default_web_client_origin,
-    web_client_base_override_from_env,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -194,52 +191,55 @@ CORS_HEADERS = {
 }
 
 
-def _cert_client_url(authority: str, *, host_client: bool) -> str | None:
-    """Build a client link using the browser-facing TLS authority, not the backend."""
-    try:
-        address = urlparse(f"https://{authority}")
-        host, port = address.hostname, address.port or 443
-    except ValueError:
-        return None
-    if (
-        not host
-        or address.username
-        or address.password
-        or address.path
-        or address.query
-        or address.fragment
-    ):
-        return None
-    base = web_client_base_override_from_env() or (
-        "/client/" if host_client else default_web_client_origin()
-    )
-    client = urlparse(base)
-    params = dict(parse_qsl(client.query, keep_blank_values=True))
-    params.update(serverIP=host, port=str(port), serverType="manual")
-    return urlunparse(client._replace(query=urlencode(params)))
-
-
-def _cert_html(client_url: str | None = None) -> bytes:
-    """Confirm certificate acceptance and optionally offer a pre-filled web client."""
-    button = (
-        f'<p><a href="{escape(client_url, quote=True)}">Open Isaac Capture Client</a></p>'.encode()
-        if client_url is not None
-        else b""
-    )
+def _cert_html() -> bytes:
+    """Return minimal HTML confirming the self-signed certificate was accepted."""
     return (
         b"<!doctype html><html><head><meta charset=utf-8>"
         b"<style>body{font-family:system-ui,sans-serif;display:flex;"
         b"align-items:center;justify-content:center;height:100vh;margin:0;"
         b"background:#f5f5f5;color:#222}div{text-align:center}"
         b"h1{font-weight:600;font-size:1.5rem;margin-bottom:.5rem}"
-        b"p{color:#555;font-size:1rem}a{display:inline-block;padding:1rem 1.5rem;"
-        b"background:#176b27;color:white;border-radius:.5rem;font-size:1.25rem}"
-        b"</style></head>"
+        b"p{color:#555;font-size:1rem}.connect-button{display:inline-block;padding:1rem;"
+        b"background:#176b27;color:white;border-radius:.5rem}</style></head>"
         b"<body><div><h1>Certificate Accepted</h1>"
-        + button
-        + b"<p>You can close this tab and return to the web client.</p>"
+        b"<p>You can close this tab and return to the web client.</p>"
+        b'<p><a class="connect-button" href="/connect/">'
+        b"Using VR without ADB? Open connection helper</a></p>"
         b"</div></body></html>"
     )
+
+
+# Keep this manual helper independent of launcher/OOB configuration so its
+# optional link cannot break certificate confirmation or alter ADB bookmarks.
+def _connect_html() -> bytes:
+    """Offer an NVIDIA-hosted manual client link using the browser's own address."""
+    return b"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual VR connection</title>
+<style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:3rem auto;
+padding:1rem;color:#222;background:#f5f5f5}a{display:inline-block;padding:1rem;
+background:#176b27;color:white;border-radius:.5rem}p{line-height:1.5}</style>
+</head><body><h1>Manual VR connection</h1>
+<p>Using VR without ADB? Open the NVIDIA-hosted client with this server's
+host and port filled in, then review the client settings and click Connect.</p>
+<p>If you already have a client tab open, return to that tab instead.
+For ADB or USB connections, use the launcher-provided client link.</p>
+<p id="target"></p>
+<p><a id="client-link" href="https://nvidia.github.io/IsaacCapture/client/main/">
+Open NVIDIA-hosted client</a></p>
+<noscript><p>JavaScript is disabled. Enter the server host and port manually
+in the NVIDIA-hosted client.</p></noscript>
+<script>
+const host = window.location.hostname;
+const port = window.location.port || '443';
+const link = document.getElementById('client-link');
+const client = new URL(link.href);
+client.searchParams.set('serverIP', host);
+client.searchParams.set('port', port);
+client.searchParams.set('serverType', 'manual');
+link.href = client.href;
+document.getElementById('target').textContent = 'Server: ' + host + ':' + port;
+</script></body></html>"""
 
 
 def _normalize_request_path(raw_path: str) -> str:
@@ -333,10 +333,10 @@ def _json_response(status: int, phrase: str, body: dict) -> Response:
 
 
 def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
-    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page)."""
+    """Return the WSS HTTP request handler (OOB API, static client, manual helper, certificate page)."""
 
     async def handle_http_request(connection, request):
-        """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, or cert HTML."""
+        """Dispatch HTTP requests to CORS, OOB, static client, helper, or certificate pages."""
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None
 
@@ -454,15 +454,18 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 body,
             )
 
+        body = _connect_html() if path == "/connect" else _cert_html()
         return Response(
             200,
             "OK",
-            Headers({"Content-Type": "text/html; charset=utf-8", **CORS_HEADERS}),
-            _cert_html(
-                _cert_client_url(
-                    request.headers.get("Host", ""), host_client=static_dir is not None
-                )
+            Headers(
+                {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Content-Length": str(len(body)),
+                    **CORS_HEADERS,
+                }
             ),
+            body,
         )
 
     return handle_http_request
