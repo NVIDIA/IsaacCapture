@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import synth
 from sbom import discovery
@@ -302,3 +304,25 @@ def test_a_project_naming_several_authors_stops_rather_than_choosing(workspace):
 
     with pytest.raises(discovery.SupplierError, match="names 2 project authors"):
         discovery.project_supplier(workspace.root)
+
+
+def test_a_relative_build_dir_still_keeps_the_staged_tree_out(
+    workspace, license_data, monkeypatch
+):
+    """`--build-dir` is free-form, and the workflow passes a relative one.
+
+    The staged package tree is what the wheel was built from, so indexing it
+    lets a member explain itself -- the one route around the gate every other
+    member has to pass. The exclusion compared an absolute skip path against
+    relative walked ones and silently matched nothing.
+    """
+    from sbom import evidence, licensing
+
+    licensing.load_corpus(license_data)
+    monkeypatch.chdir(workspace.root)
+
+    discovered = evidence.discover(workspace.root, Path("build"))
+    indexed = set(discovered.build_files.by_hash.values())
+
+    assert indexed, "the build tree is indexed"
+    assert not any("/python_package/" in item for item in indexed)

@@ -1060,14 +1060,27 @@ class FileIndex:
     def add_tree(
         self, root: Path, display_root: str, skip: tuple[Path, ...] = ()
     ) -> None:
-        skipped = tuple(item.resolve() for item in skip)
+        # Compare inside the tree being walked. `--build-dir` is free-form, and
+        # a relative root yields relative paths that match no absolute skip
+        # entry, so passing `--build-dir build` -- what the workflow passes --
+        # indexed the staged tree and let a wheel member explain itself. A
+        # string prefix was wrong for a second reason: `_deps/foo-srcx` starts
+        # with `_deps/foo-src`.
+        inside = []
+        for item in skip:
+            try:
+                inside.append(item.resolve().relative_to(root.resolve()))
+            except ValueError:
+                continue
         self._add(
             root,
             display_root,
             (
                 path
                 for path in _walk(root)
-                if not any(str(path).startswith(str(item)) for item in skipped)
+                if not any(
+                    path.relative_to(root).is_relative_to(item) for item in inside
+                )
             ),
         )
 
