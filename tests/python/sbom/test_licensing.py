@@ -185,17 +185,42 @@ def test_notices_are_packaged_but_do_not_set_the_expression(tmp_path):
     assert licensing.expression(evidence, "thing")[0] == "Apache-2.0"
 
 
-def test_an_upstream_spdx_tag_is_reported_as_declared(tmp_path):
+def test_shipping_a_license_file_is_how_authors_declare_one(tmp_path):
+    """Declared is not an echo of the conclusion: it is read from the same file,
+    because shipping that file is the declaration."""
+    (tmp_path / "LICENSE").write_text(synth.spdx_text("MIT"), encoding="utf-8")
+
+    evidence = licensing.discover_in_tree("thing", tmp_path, "thing-src")
+
+    assert licensing.expression(evidence, "thing") == ("MIT", "MIT")
+
+
+def test_a_component_with_no_grant_declares_nothing(tmp_path):
+    (tmp_path / "README.md").write_text("nothing to see", encoding="utf-8")
+
+    evidence = licensing.discover_in_tree("thing", tmp_path, "thing-src")
+
+    assert licensing.expression(evidence, "thing") == ("NOASSERTION", "NOASSERTION")
+
+
+def test_a_tag_on_a_documentation_file_is_not_the_package_declaration(tmp_path):
+    """OpenXR's COPYING.adoc is prose about which licences the project uses,
+    tagged CC-BY-4.0 for the prose. Promoting it declared an Apache-2.0 SDK
+    under a documentation licence."""
+    (tmp_path / "LICENSE").write_text(synth.spdx_text("Apache-2.0"), encoding="utf-8")
     # REUSE-IgnoreStart
-    (tmp_path / "LICENSE").write_text(
-        "SPDX-License-Identifier: MIT\n\n" + synth.spdx_text("MIT"), encoding="utf-8"
+    (tmp_path / "COPYING").write_text(
+        "SPDX-License-Identifier: CC-BY-4.0\n\nThis project uses several licences.\n",
+        encoding="utf-8",
     )
     # REUSE-IgnoreEnd
 
-    evidence = licensing.discover_in_tree("thing", tmp_path, "thing-src")
-    concluded, declared = licensing.expression(evidence, "thing")
+    concluded, declared = licensing.expression(
+        licensing.discover_in_tree("thing", tmp_path, "thing-src"), "thing"
+    )
 
-    assert (concluded, declared) == ("MIT", "MIT")
+    assert concluded == "Apache-2.0"
+    assert "CC-BY-4.0" not in declared
 
 
 def test_a_component_carrying_two_licenses_combines_them():

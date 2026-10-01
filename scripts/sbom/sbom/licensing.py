@@ -448,15 +448,16 @@ def expression(
         identified = [license_ref(component_key)]
     concluded = _combine(identified) if identified else "NOASSERTION"
 
-    # A tag speaks for the package only where the file carrying it is a licence
-    # in its own right. OpenXR's COPYING.adoc is prose about which licences the
-    # project uses, tagged CC-BY-4.0 for the prose and matching no licence text;
-    # promoting it declared a linked SDK under a documentation licence. Where no
-    # tag qualifies the field stays unasserted rather than echoing the
-    # conclusion, which would assert a declaration nobody made and hide the one
-    # thing the field is for -- supplier and collector disagreeing.
-    tags = sorted({item.spdx_tag for item in grants if item.spdx_tag and item.matches})
-    declared = _combine(tags) if tags else NOASSERTION
+    # Declared is the same expression, because the text it was read from is the
+    # component's own LICENSE -- shipping that file is how authors declare a
+    # licence, so one artifact answers both questions. It is not an echo: a
+    # component that ships no grant declares nothing and gets NOASSERTION.
+    #
+    # Never from a REUSE tag on a grant file. OpenXR's COPYING.adoc is prose
+    # about which licences the project uses, tagged CC-BY-4.0 for the prose, and
+    # promoting that declared a linked Apache-2.0 SDK under a documentation
+    # licence.
+    declared = concluded if grants else NOASSERTION
     return concluded, declared
 
 
