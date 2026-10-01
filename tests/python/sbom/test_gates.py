@@ -126,6 +126,9 @@ def test_a_vendored_library_is_attributed_to_the_package_that_supplied_it(
             "soname": soname,
             "resolved_path": "/usr/lib/libz.so.1.3",
             "package": "zlib1g",
+            # dpkg's maintainer, not the package name: `zlib1g` names the thing,
+            # not whoever supplied it.
+            "supplier": "Organization: Ubuntu Developers (ubuntu-devel@example.com)",
             "copyright": str(copyright_file),
         },
     )
@@ -139,7 +142,9 @@ def test_a_vendored_library_is_attributed_to_the_package_that_supplied_it(
         item for item in report["components"] if item["component"] == "system:libz.so.1"
     )
     assert vendored["license_concluded"] == "Zlib"
-    assert vendored["supplier"] == "Organization: zlib1g"
+    assert vendored["supplier"] == (
+        "Organization: Ubuntu Developers (ubuntu-devel@example.com)"
+    )
 
 
 def _replace_member(wheel, name, data):

@@ -665,10 +665,37 @@ def _identify_host_package(library: Path, origin: dict) -> dict:
 
     package = result.stdout.split(":", 1)[0].strip()
     origin["package"] = package
+    origin["supplier"] = _package_supplier(package)
     copyright_file = Path("/usr/share/doc") / package / "copyright"
     if copyright_file.is_file():
         origin["copyright"] = str(copyright_file)
     return origin
+
+
+def _package_supplier(package: str) -> str | None:
+    """Who ships a distro package, in the form SPDX wants.
+
+    The package name is not a supplier: `libbsd0` names the thing, not whoever
+    provided it. dpkg records a maintainer, which is the answer.
+    """
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Maintainer}", package],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    maintainer = result.stdout.strip()
+    if result.returncode != 0 or not maintainer:
+        return None
+    # "Name <email>" is Debian's form; SPDX wants "Organization: Name (email)".
+    match = re.match(r"^(?P<name>.+?)\s*<(?P<email>[^>]+)>$", maintainer)
+    if match:
+        return f"Organization: {match['name']} ({match['email']})"
+    return f"Organization: {maintainer}"
 
 
 def _license_near(library: Path) -> Path | None:
@@ -716,7 +743,7 @@ def system_component(soname: str, origin: dict) -> Component:
         key=key,
         name=soname,
         kind="system-library",
-        supplier=f"Organization: {package}" if package else "NOASSERTION",
+        supplier=origin.get("supplier") or "NOASSERTION",
         homepage="NOASSERTION",
         purl=PackageURL(type="generic", name=soname).to_string(),
         version="NOASSERTION",

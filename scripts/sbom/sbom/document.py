@@ -275,7 +275,13 @@ def build_document(
 
     for requirement in inventory.requires_dist:
         name = Requirement(requirement).name
-        package_id = _spdx_id("Package-pypi", requirement)
+        # Not the requirement string: slugifying `websockets>=14.0` yields
+        # `websockets-14.0`, which reads as a pinned version beside a
+        # versionInfo this document deliberately leaves unasserted. The same
+        # name recurs under different extras, so uniqueness comes from a digest
+        # of the whole requirement; its text is in the comment below.
+        digest = hashlib.sha256(requirement.encode("utf-8")).hexdigest()[:8]
+        package_id = _spdx_id("Package-pypi", f"{name}-{digest}")
         packages.append(
             {
                 "SPDXID": package_id,
