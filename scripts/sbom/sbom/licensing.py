@@ -126,10 +126,16 @@ def _ngrams(words: list[str]) -> set[str]:
 
 @dataclass(frozen=True)
 class Reference:
-    """One SPDX licence, normalized for comparison."""
+    """One SPDX licence, normalized for comparison and kept verbatim.
+
+    The text is retained because it is the only authoritative copy of a licence
+    this build has: a component that states an identifier and ships no file of
+    its own has to be packaged with the text that identifier names.
+    """
 
     name: str
     grams: frozenset[str]
+    text: str = ""
 
     @property
     def size(self) -> int:
@@ -185,6 +191,7 @@ def load_corpus(json_dir: Path) -> str:
                 entries[payload["licenseId"]] = Reference(
                     name=payload.get("name", payload["licenseId"]),
                     grams=frozenset(grams),
+                    text=payload.get("licenseText", ""),
                 )
 
         if not entries:
@@ -474,31 +481,34 @@ def combine(expressions: list[str]) -> str:
     return _combine(expressions)
 
 
-def pool_evidence(
-    repo_root: Path, component_key: str, expressions: set[str]
+def canonical_evidence(
+    component_key: str, expressions: set[str]
 ) -> list[LicenseEvidence]:
-    """Texts from the repository's REUSE pool for the ids a file declares.
+    """The SPDX reference text for the ids a vendored file declares about itself.
 
-    A vendored file states an identifier and nothing else; LICENSES/ is where
-    this repository already keeps the matching text, which is what the pool is
-    for.
+    Such a component ships no licence file, so there is nothing of its own to
+    package verbatim and the text its identifier names is the only honest
+    substitute. It comes from the list this build pinned and fetched -- never
+    from this repository's own REUSE pool, whose copies exist to license *this*
+    project and carry its notices, not the component's.
     """
     found: list[LicenseEvidence] = []
     seen: set[str] = set()
+    entries = corpus()[1]
     for expression in sorted(expressions):
         for token in _spdx_licensing().license_keys(
             _spdx_licensing().parse(expression, validate=False)
         ):
-            candidate = repo_root / "LICENSES" / f"{token}.txt"
-            if token in seen or not candidate.is_file():
+            reference = entries.get(token)
+            if token in seen or reference is None or not reference.text:
                 continue
             seen.add(token)
             found.append(
                 _evidence(
                     component_key,
-                    "reuse-pool",
-                    f"LICENSES/{token}.txt",
-                    candidate.read_text(encoding="utf-8", errors="replace"),
+                    "spdx-reference",
+                    f"{token}.txt",
+                    reference.text,
                     "grant",
                 )
             )

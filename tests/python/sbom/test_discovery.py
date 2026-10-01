@@ -151,9 +151,13 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
     assert [c.name for c in vendored.values()] == ["Upstream Widgets Ltd"]
     component = next(iter(vendored.values()))
     assert component.license_concluded == "BSL-1.0"
-    # Its text comes from this repository's REUSE pool, which is what the pool
-    # is for: the file states an identifier and carries no text of its own.
-    assert [item.path for item in component.evidence] == ["LICENSES/BSL-1.0.txt"]
+    # The file states an identifier and carries no text of its own, so the text
+    # comes from the SPDX list this build pinned -- never from this repository's
+    # own REUSE pool, whose copies license this project and carry its notices.
+    assert [item.path for item in component.evidence] == ["BSL-1.0.txt"]
+    assert all(item.origin == "spdx-reference" for item in component.evidence)
+    # The notice the component states about itself is recorded, not dropped.
+    assert "Upstream Widgets Ltd" in component.copyright_text
 
 
 def test_a_vendored_header_is_credited_to_the_artifact_that_includes_it(workspace):

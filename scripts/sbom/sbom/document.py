@@ -65,7 +65,7 @@ def _component_package(component: Component, roles: set[str]) -> dict:
         "filesAnalyzed": False,
         "licenseConcluded": component.license_concluded,
         "licenseDeclared": component.license_declared,
-        "copyrightText": NOASSERTION,
+        "copyrightText": component.copyright_text,
         "externalRefs": [
             {
                 "referenceCategory": "PACKAGE-MANAGER",

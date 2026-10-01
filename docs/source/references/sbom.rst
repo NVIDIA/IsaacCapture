@@ -184,12 +184,22 @@ shipping nothing. Pinning is by commit, so no tag or branch upstream can move un
 build, and each report records the commit its identifications were made against.
 
 Consulting the list is not shipping it. Every current identifier is available to match
-against, so a dependency arriving under any of them lands with a real SPDX id. What the
-wheel carries for a third-party component is that component's own license file, verbatim,
-copyright holders and all; a reference text is never substituted for it and no file from
-the checkout is packaged. The canonical texts that do ship under
-``.dist-info/licenses/LICENSES/`` are this repository's own REUSE pool — the texts the
-SPDX headers on its sources name — and have nothing to do with the matching.
+against, so a dependency arriving under any of them lands with a real SPDX id.
+
+What the wheel carries for a third-party component is that component's own license file,
+verbatim, copyright holders and all. Substituting a reference text would convey the terms
+and drop the notice — for MIT and the BSD licenses those are the same file, differing by
+the one line that names who licensed it to you — and it would replace the component's
+actual grant with our reading of it, which is what the matching is for and not what it
+decides. Where a component has *no* license file, and only states an identifier in its
+source headers, there is nothing of its own to package: the text that identifier names in
+the pinned list ships instead, together with the copyright line those headers state.
+
+Never a file from this checkout. ``LICENSES/`` holds this repository's REUSE pool, whose
+copies exist to license *this* project and carry its notices; packaging one as a third
+party's terms would put our copyright above their code. Those texts ship under
+``.dist-info/licenses/LICENSES/`` as the project's own, and have nothing to do with the
+matching or with any other component.
 
 A match needs a canonical license text to be almost entirely present *and* to account for a
 real share of the file, which is what stops a license quoted in the appendix of a long

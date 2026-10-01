@@ -111,6 +111,9 @@ class Component:
     root: Path | None = None
     license_concluded: str = "NOASSERTION"
     license_declared: str = "NOASSERTION"
+    # The component's own copyright notice, where the build can read one. Naming
+    # a holder and then declaring none would contradict the same document.
+    copyright_text: str = "NOASSERTION"
     evidence: tuple[licensing.LicenseEvidence, ...] = ()
 
 
@@ -497,6 +500,20 @@ def _holder_of(path: Path) -> tuple[str, str | None] | None:
     return (holder, licensing.read_spdx_tag(head)) if holder else None
 
 
+def _notice_of(path: Path) -> str | None:
+    """The copyright line a file states, as written."""
+    try:
+        head = path.open("rb").read(4096).decode("utf-8", "replace")
+    except OSError:
+        return None
+    match = _COPYRIGHT_TAG.search(head)
+    if not match:
+        return None
+    notice = " ".join(match.group(0).split()).lstrip("/ *#")
+    # The tag introduces the notice; it is not part of it.
+    return re.sub(r"^SPDX-FileCopyrightText:\s*", "", notice)
+
+
 def discover_vendored(
     repo_root: Path, candidates: set[Path], authors: set[str]
 ) -> tuple[dict[str, Component], dict[str, list[Path]]]:
@@ -504,6 +521,7 @@ def discover_vendored(
     grouped: dict[str, list[Path]] = {}
     licences: dict[str, set[str]] = {}
     names: dict[str, str] = {}
+    notices: dict[str, set[str]] = {}
 
     for path in sorted(candidates):
         stated = _holder_of(path)
@@ -515,12 +533,13 @@ def discover_vendored(
         key = f"vendored:{licensing.spdx_safe(holder).lower()}"
         grouped.setdefault(key, []).append(path)
         names[key] = holder
+        notices.setdefault(key, set()).add(_notice_of(path) or holder)
         if expression:
             licences.setdefault(key, set()).add(expression)
 
     components: dict[str, Component] = {}
     for key, paths in grouped.items():
-        evidence = licensing.pool_evidence(repo_root, key, licences.get(key, set()))
+        evidence = licensing.canonical_evidence(key, licences.get(key, set()))
         concluded, declared = licensing.expression(evidence, key)
         if licences.get(key):
             declared = licensing.combine(sorted(licences[key]))
@@ -544,6 +563,7 @@ def discover_vendored(
             ),
             license_concluded=concluded,
             license_declared=declared,
+            copyright_text="\n".join(sorted(notices.get(key, {names[key]}))),
             evidence=tuple(evidence),
         )
     return components, grouped
