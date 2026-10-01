@@ -395,10 +395,10 @@ def license_ref(component_key: str) -> str:
 def expressible(license_id: str) -> bool:
     """Whether the SPDX grammar we ship can validate this identifier.
 
-    The corpus the build fetches moves ahead of what `license-expression`
-    knows -- SPDX 3.29.0 added BSD-2-Clause-pos-unchanged, which no released
-    version of the grammar recognises. Matching against the newer corpus is
-    right; naming an ID a consumer's validator will reject is not.
+    The SPDX license list the build fetches moves ahead of the list bundled in
+    `license-expression`, so the corpus can name an ID the grammar cannot parse.
+    Matching against the newer corpus is right; naming an ID that a consumer's
+    validator -- which ships the older list -- will reject is not.
     """
     if license_id.startswith("LicenseRef-"):
         return True

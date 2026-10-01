@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
 
@@ -44,6 +45,32 @@ def is_elf(data: bytes) -> bool:
     return data[:4] == ELF_MAGIC
 
 
+def _build_id_from(elffile: ELFFile) -> str | None:
+    # Segment, not section: a stripped library keeps its program headers.
+    for segment in elffile.iter_segments(type="PT_NOTE"):
+        for note in segment.iter_notes():
+            if note["n_type"] == "NT_GNU_BUILD_ID":
+                return note["n_desc"]
+    return None
+
+
+def read_build_id(path: Path) -> str | None:
+    """The build-id of a file on disk, read without loading it.
+
+    Scanning a machine's libraries means touching hundreds of files, some of
+    them hundreds of megabytes. pyelftools seeks, so only the headers and the
+    note are ever read.
+    """
+    try:
+        with path.open("rb") as handle:
+            if handle.read(4) != ELF_MAGIC:
+                return None
+            handle.seek(0)
+            return _build_id_from(ELFFile(handle))
+    except (OSError, Exception):  # noqa: B014 - a malformed file is not ours to fix
+        return None
+
+
 def read_dynamic(data: bytes) -> DynamicInfo:
     """Parse SONAME, NEEDED and the build-id out of an in-memory ELF image."""
     if not is_elf(data):
@@ -65,19 +92,9 @@ def read_dynamic(data: bytes) -> DynamicInfo:
             elif kind == "DT_NEEDED":
                 needed.append(tag.needed)
 
-    build_id: str | None = None
-    # Segment, not section, for the same reason as above.
-    for segment in elffile.iter_segments(type="PT_NOTE"):
-        for note in segment.iter_notes():
-            if note["n_type"] == "NT_GNU_BUILD_ID":
-                build_id = note["n_desc"]
-                break
-        if build_id:
-            break
-
     return DynamicInfo(
         soname=soname,
         needed=tuple(needed),
         machine=_ARCH.get(machine, machine),
-        build_id=build_id,
+        build_id=_build_id_from(elffile),
     )

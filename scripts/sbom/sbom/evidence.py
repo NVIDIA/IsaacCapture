@@ -26,6 +26,7 @@ from .discovery import (
     discover_vendored,
     project_authors,
     discover_source_trees,
+    EMPTY_SHA256,
     _walk,
 )
 
@@ -187,7 +188,13 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
             continue
         owners = set()
         for path in _walk(root):
-            match = source_files.by_hash.get(build_files.digest_of(path) or "")
+            digest = build_files.digest_of(path)
+            # Zero bytes match every other empty file, so a CMake scaffolding
+            # directory full of stamps would adopt whichever component happened
+            # to ship an empty file. They are evidence of nothing here too.
+            if not digest or digest == EMPTY_SHA256:
+                continue
+            match = source_files.by_hash.get(digest)
             if match:
                 owners.add(match.split("/", 1)[0].removesuffix("-src"))
         if len(owners) == 1:

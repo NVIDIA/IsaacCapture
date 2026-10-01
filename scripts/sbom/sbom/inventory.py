@@ -15,11 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import hashlib
-
 from . import elf, licensing
 from .discovery import (
     Component,
+    EMPTY_SHA256,
     resolve_system_library,
     resolve_system_library_by_build_id,
     sha256_file,
@@ -86,9 +85,6 @@ class Inventory:
         return sorted(
             path for path, item in self.attributions.items() if item.primary == key
         )
-
-
-_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 
 class Resolver:
@@ -162,7 +158,7 @@ class Resolver:
         # it would hand an empty marker file to whichever component happened to be
         # indexed first, and invent that component's license obligation with it.
         # The path is the only evidence such a file carries.
-        if candidate_digest == _EMPTY_SHA256:
+        if candidate_digest == EMPTY_SHA256:
             return self._resolve_by_path(wheel_path, source)
 
         artifacts = self._artifacts_by_hash.get(candidate_digest)
@@ -211,7 +207,10 @@ class Resolver:
             owner = self._staged_component_of(build_file)
             return Attribution(
                 path=wheel_path,
-                origin="generated",
+                # Transforming a component's own file leaves a derivative work,
+                # which carries that component's terms. Only output that owes
+                # nothing to a third party is merely "generated".
+                origin="derived" if owner else "generated",
                 detail=f"{source}; {build_file}",
                 components={owner: {"derived-file"}} if owner else {},
                 primary=owner,
@@ -378,7 +377,7 @@ class Resolver:
             owner = self._staged_component_of(build_file)
             return Attribution(
                 path=wheel_path,
-                origin="generated",
+                origin="derived" if owner else "generated",
                 detail=f"{source}; {build_file}",
                 components={owner: {"derived-file"}} if owner else {},
                 primary=owner,

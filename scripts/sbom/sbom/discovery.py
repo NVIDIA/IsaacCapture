@@ -56,6 +56,9 @@ _INCLUDE_FLAG = re.compile(r"-(?:I|isystem)\s*(\S+)")
 _DEPS_SOURCE = re.compile(r"_deps/(?P<name>[A-Za-z0-9_.+-]+)-src(?:/|$)")
 
 
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -594,16 +597,7 @@ def _host_build_id_index() -> dict[str, str]:
     """
     index: dict[str, str] = {}
     for path in _host_library_paths():
-        try:
-            data = path.read_bytes()
-        except OSError:
-            continue
-        if not elf.is_elf(data[:4]):
-            continue
-        try:
-            build_id = elf.read_dynamic(data).build_id
-        except Exception:  # noqa: BLE001 - a malformed host library is not ours to fix
-            continue
+        build_id = elf.read_build_id(path)
         if not build_id:
             continue
         # A regular file beats a symlink to it: dpkg-query knows the real path.
