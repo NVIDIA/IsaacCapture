@@ -282,12 +282,17 @@ def _git_checkout(root: Path, initialise: bool = True) -> None:
     real repository.
     """
     _write(root / ".gitignore", "build/\ndist/\n")
+    # Fixed identity *and* clock: a commit hashes its timestamp, the collector
+    # records the commit, and the wheel carries that record -- so a drifting
+    # clock makes two builds of the same project differ.
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "synth",
         "GIT_AUTHOR_EMAIL": "synth@example.invalid",
+        "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
         "GIT_COMMITTER_NAME": "synth",
         "GIT_COMMITTER_EMAIL": "synth@example.invalid",
+        "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
     }
     run = lambda *args: subprocess.run(  # noqa: E731 - local shorthand
         ["git", "-C", str(root), *args], check=True, capture_output=True, env=env
