@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 
 import synth
@@ -253,3 +254,42 @@ def test_source_date_epoch_normalizes_timestamps_the_input_wheel_carried(
     with zf.ZipFile(workspace.wheel) as archive:
         stamps = {info.date_time for info in archive.infolist()}
     assert len(stamps) == 1, f"members carry differing timestamps: {stamps}"
+
+
+def test_components_sharing_a_licence_text_share_one_entry(workspace, license_data):
+    """A LicenseRef identifies a text, so one text is one entry.
+
+    Two components can carry byte-identical terms -- two builds of one SDK, a
+    vendor licence applied across products -- and minting an id each duplicates
+    the whole text in the document.
+    """
+    from sbom import licensing
+
+    licensing.load_corpus(license_data)
+    for key in ("alpha", "beta"):
+        root = workspace.build / "_deps" / f"{key}-src"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "LICENSE").write_text(synth.PROPRIETARY_LICENSE)
+    synth.track(workspace.root)
+
+    payload = synth.wheel_payload(workspace)
+    for key in ("alpha", "beta"):
+        payload[f"isaaccapture/{key}_notice.txt"] = synth.PROPRIETARY_LICENSE.encode()
+    synth.write_wheel(workspace.wheel, payload)
+    build_module.build(
+        workspace.root, workspace.build, workspace.wheel, workspace.root / "sbom"
+    )
+
+    with zipfile.ZipFile(workspace.wheel) as archive:
+        spdx = json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
+    bodies = [item["extractedText"] for item in spdx["hasExtractedLicensingInfos"]]
+
+    assert len(bodies) == len(set(bodies)), "a text is carried more than once"
+    used = {
+        ref
+        for package in spdx["packages"]
+        for field in ("licenseConcluded", "licenseDeclared")
+        for ref in re.findall(r"LicenseRef-[\w.-]+", package.get(field, ""))
+    }
+    defined = {item["licenseId"] for item in spdx["hasExtractedLicensingInfos"]}
+    assert used <= defined, f"undefined after sharing: {sorted(used - defined)}"

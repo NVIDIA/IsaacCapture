@@ -83,7 +83,9 @@ def _component_package(component: Component, roles: set[str], dist_info: str) ->
     return package
 
 
-def _extracted_licenses(components: list[Component]) -> list[dict]:
+def _extracted_licenses(
+    components: list[Component],
+) -> tuple[list[dict], dict[str, str]]:
     """Texts for every LicenseRef the document uses, taken from the shipped file."""
     entries: dict[str, dict] = {}
     for component in components:
@@ -112,7 +114,46 @@ def _extracted_licenses(components: list[Component]) -> list[dict]:
                     + "."
                 ),
             }
-    return [entries[key] for key in sorted(entries)]
+    return _share_identical_texts([entries[key] for key in sorted(entries)])
+
+
+def _share_identical_texts(entries: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    """One entry per distinct text, not one per component that ships it.
+
+    Components can carry byte-identical terms -- two builds of one SDK, a licence
+    a vendor applies across products -- and a LicenseRef is an identifier for a
+    text, so minting one each duplicates the text in full. Where several share
+    one, they share one id, named after the text so it belongs to no single
+    component.
+    """
+    by_text: dict[str, list[dict]] = {}
+    for entry in entries:
+        by_text.setdefault(entry["extractedText"], []).append(entry)
+
+    shared: list[dict] = []
+    renamed: dict[str, str] = {}
+    for text, group in by_text.items():
+        if len(group) == 1:
+            shared.append(group[0])
+            continue
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        canonical = f"LicenseRef-shared-text-{digest}"
+        for entry in group:
+            renamed[entry["licenseId"]] = canonical
+        shared.append(
+            {
+                **group[0],
+                "licenseId": canonical,
+                "name": "License terms shipped with "
+                + ", ".join(
+                    sorted(
+                        item["name"].removeprefix("License terms shipped with ")
+                        for item in group
+                    )
+                ),
+            }
+        )
+    return sorted(shared, key=lambda item: item["licenseId"]), renamed
 
 
 _EXTRA_MARKER = re.compile(r"\bextra\s*==")
@@ -384,6 +425,17 @@ def build_document(
     # rebuild be compared against a published one byte for byte.
     stamp = stamped_now()
 
+    extracted, renamed = _extracted_licenses(
+        list(inventory.components_present.values())
+    )
+    if renamed:
+        # Every reference to a text that is now shared points at the shared id;
+        # leaving one behind would use a LicenseRef the document stops defining.
+        for package in packages:
+            for key in ("licenseConcluded", "licenseDeclared"):
+                for old_id, new_id in renamed.items():
+                    package[key] = package[key].replace(old_id, new_id)
+
     return {
         "spdxVersion": SPDX_VERSION,
         "dataLicense": "CC0-1.0",
@@ -408,7 +460,5 @@ def build_document(
         "packages": packages,
         "files": files,
         "relationships": relationships,
-        "hasExtractedLicensingInfos": _extracted_licenses(
-            list(inventory.components_present.values())
-        ),
+        "hasExtractedLicensingInfos": extracted,
     }
