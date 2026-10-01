@@ -496,6 +496,18 @@ class Resolver:
                 artifacts[0], wheel_path, f"{source}; modified build output"
             )
 
+        # This repository first. A member matching a file this project tracks is
+        # this project's copy; a dependency whose tree happens to end in the same
+        # two path segments is a coincidence -- our own BSL-1.0 pool text was
+        # being credited to an SDK that ships one under the same relative path.
+        # A third-party file checked in here still carries its component, because
+        # the repository branch looks its holder up.
+        repo_file = self.repo_files.path_suffix_match(wheel_path)
+        if repo_file:
+            same = self.repo_files.digest_of_display(repo_file) == digest
+            lead = f"{source}; {'identical to' if same else 'derived from'} "
+            return self._from_repo_file(wheel_path, source, repo_file, lead, same)
+
         component_file = self.source_files.path_suffix_match(wheel_path)
         if component_file:
             key = component_file.split("/", 1)[0].removesuffix("-src")
@@ -522,12 +534,6 @@ class Resolver:
                 components={key: {"copied-file" if same else "derived-file"}},
                 primary=key,
             )
-
-        repo_file = self.repo_files.path_suffix_match(wheel_path)
-        if repo_file:
-            same = self.repo_files.digest_of_display(repo_file) == digest
-            lead = f"{source}; {'identical to' if same else 'derived from'} "
-            return self._from_repo_file(wheel_path, source, repo_file, lead, same)
 
         build_file = self.build_files.path_suffix_match(wheel_path)
         if build_file:
@@ -639,9 +645,14 @@ def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
         item.primary = key
 
 
+# What a packaging backend writes, and SBOM documents other tools leave here.
+# `licenses/` is deliberately absent: the project's own texts are copies of files
+# this repository tracks, so they trace like any other copy, and the texts this
+# collector adds are attributed as it adds them. Calling the directory metadata
+# asserted an origin for files that have a real one.
 _DIST_INFO_WRITTEN = re.compile(
     r"^(METADATA|WHEEL|RECORD|INSTALLER|REQUESTED|entry_points\.txt|top_level\.txt"
-    r"|direct_url\.json|zip-safe|namespace_packages\.txt)$|^(licenses|sboms)/"
+    r"|direct_url\.json|zip-safe|namespace_packages\.txt)$|^sboms/"
 )
 
 
