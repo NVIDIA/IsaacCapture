@@ -320,6 +320,22 @@ class FileApiError(Exception):
     """The build tree carries no CMake file API reply to read."""
 
 
+def _within(repo_root: Path, build_dir: Path):
+    """Predicate: under the checkout, outside its build tree.
+
+    Both roots are resolved by the caller; `--build-dir` is free-form and a
+    relative one compared against absolute paths matches nothing.
+    """
+
+    def check(path: Path) -> bool:
+        resolved = path if path.is_absolute() else path.resolve()
+        return resolved.is_relative_to(repo_root) and not resolved.is_relative_to(
+            build_dir
+        )
+
+    return check
+
+
 class BuildGraph:
     """The link and compile graph, read from CMake's own file API.
 
@@ -392,26 +408,26 @@ class BuildGraph:
         return self._by_name.get(name, [])
 
     def repo_inputs(self, repo_root: Path, build_dir: Path) -> set[Path]:
-        """Files under `repo_root` this build compiled or included.
+        """Files this build compiled or included that the checkout itself holds.
 
-        `_deps` is the component-source domain and is attributed from its own
-        checkouts; an include directory under the build tree holds generated
-        headers, which state no upstream holder.
+        The build tree is not among them, for sources as much as for include
+        directories: `_deps` is the component-source domain and is attributed
+        from its own checkouts, generated headers state no upstream holder, and
+        vcpkg installs its ports under the build directory -- whose headers
+        carry their upstream contributors' copyright lines, which the vendored
+        scan reads as this repository having vendored each of those people.
         """
+        inside = _within(repo_root.resolve(), build_dir.resolve())
         found: set[Path] = set()
         for node in self._nodes.values():
-            found.update(
-                source
-                for source in node.sources
-                if str(source).startswith(str(repo_root))
-                and "/_deps/" not in source.as_posix()
-            )
+            found.update(item for item in node.sources if inside(item))
             for include in node.includes:
-                text = include.as_posix()
-                if not text.startswith(str(repo_root)) or "/_deps/" in text:
-                    continue
-                if include.is_dir() and not text.startswith(str(build_dir)):
-                    found.update(item for item in include.rglob("*") if item.is_file())
+                if inside(include) and include.is_dir():
+                    found.update(
+                        item
+                        for item in include.rglob("*")
+                        if item.is_file() and inside(item)
+                    )
         return found
 
     def _closure(self, target_id: str) -> tuple[_Node, ...]:

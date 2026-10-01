@@ -414,6 +414,13 @@ def create(root: Path) -> Workspace:
     _write(build / "generated/stubs/isaaccapture/py.typed", b"")
 
     # Staged tree: what the wheel is built from.
+    # What a package manager installs into the build tree: upstream headers
+    # carrying their own contributors' copyright lines.
+    _write(
+        build / "vcpkg_installed/x64-linux/include/eigen/Core.h",
+        b"// Copyright (C) 2008 Gael Guennebaud <gael.guennebaud@inria.fr>\n",
+    )
+
     _write(workspace.staged / "isaaccapture/__init__.py", _AUTHORED_INIT)
     _write(workspace.staged / "isaaccapture/_generated.py", _GENERATED)
     _write(workspace.staged / "isaaccapture/py.typed", b"")
@@ -452,10 +459,18 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
             # The project's own source, compiled against beta's headers, with
             # alpha's source compiled straight in.
             "artifacts": [extension],
-            "sources": ["src/cpp/module.cpp", "build/_deps/alpha-src/alpha.cpp"],
+            # The vcpkg port is listed as a source, not just an include: a
+            # package manager installs into the build tree, and the codemodel
+            # cites what it compiled.
+            "sources": [
+                "src/cpp/module.cpp",
+                "build/_deps/alpha-src/alpha.cpp",
+                "build/vcpkg_installed/x64-linux/include/eigen/Core.h",
+            ],
             "includes": [
                 "build/_deps/beta-src/include",
                 "build/_deps/alpha-src",
+                "build/vcpkg_installed/x64-linux/include",
                 "src/vendor",
             ],
             "dependencies": [],

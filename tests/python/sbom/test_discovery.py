@@ -328,3 +328,25 @@ def test_a_relative_build_dir_still_keeps_the_staged_tree_out(
 
     assert indexed, "the build tree is indexed"
     assert not any("/python_package/" in item for item in indexed)
+
+
+def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
+    workspace, license_data
+):
+    """vcpkg installs its ports under the build directory.
+
+    Those headers carry their upstream contributors' copyright lines. Read as
+    repository source they become one "vendored" component per person -- seventy
+    of them on a real build -- each then failing the gate for shipping no licence
+    text of its own.
+    """
+    from sbom import evidence, licensing
+
+    licensing.load_corpus(license_data)
+    port = workspace.build / "vcpkg_installed/x64-linux/include/eigen/Core.h"
+    assert port.is_file(), "the fixture no longer installs a port into the build tree"
+
+    discovered = evidence.discover(workspace.root, workspace.build)
+    holders = [key for key in discovered.components if key.startswith("vendored:")]
+
+    assert not any("guennebaud" in key for key in holders), holders
