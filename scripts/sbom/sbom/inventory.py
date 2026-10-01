@@ -407,7 +407,7 @@ class Resolver:
     ) -> Attribution | None:
         """The pristine bytes this member was patched from, named by build-id."""
         # The same library can sit in two archives under two sets of terms, and
-        # these two SDKs share five build-ids. Every neighbouring index refuses
+        # SDKs in this build do share build-ids. Every neighbouring index refuses
         # to name one of several candidates; this one must too, or a patched
         # member takes whichever archive happened to be walked first.
         members = self.archives.all_by_build_id.get(build_id, [])

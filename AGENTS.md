@@ -171,6 +171,13 @@ measurement, a trap someone already paid for. They are not a place to narrate.
   inertial frame, so STL axes need `mesh_pos`/`mesh_quat`" beats three
   paragraphs re-deriving why. Keep measured numbers and file/line references;
   cut the prose around them.
+- **No counts that drift.** A comment must not state how many files, rows,
+  components or call sites something currently has. The number is true the day
+  it is written and wrong after the next build or refactor, and nothing fails
+  when it goes stale. State the property instead — "these SDKs share build-ids",
+  not "they share five". A measured number earns its place only when it is a
+  fixed fact about the world (a protocol limit, a benchmark with its date).
+
 - **Do not narrate history.** "An earlier revision did X and it was wrong" is
   what `git log` is for. If the wrong approach is tempting enough to warn
   about, write the warning as a rule — "do not derive this from the mesh" —

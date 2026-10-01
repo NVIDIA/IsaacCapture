@@ -93,7 +93,7 @@ def _extracted_licenses(
             component.license_concluded, component.license_declared
         )
         # Same predicate as the build gate, the verifier and the report: a REUSE
-        # pool is a real text. Written four ways, it was a rule in four places.
+        # pool is a real text. Change one of those and change all of them.
         grants = [item for item in component.evidence if item.kind in ("grant", "pool")]
         if not refs or not grants:
             continue
