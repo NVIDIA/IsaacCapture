@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from . import licensing
 from .inventory import Inventory
 
 _HOW_PROSE = {
@@ -36,6 +37,35 @@ def _short(version: str) -> str:
     return version[:12] if _COMMIT.match(version) else version
 
 
+def licenses_root(dist_info: str) -> str:
+    """Where a wheel carries licence texts. PEP 639 names them relative to this."""
+    return f"{dist_info}/licenses/"
+
+
+def notices_path(dist_info: str) -> str:
+    """The notice file that travels inside the wheel, by name."""
+    return f"{licenses_root(dist_info)}THIRD-PARTY-NOTICES.md"
+
+
+def is_packaged_license(dist_info: str, member: str) -> bool:
+    return member.startswith(licenses_root(dist_info))
+
+
+def is_third_party_license(dist_info: str, member: str) -> bool:
+    """A text read out of a component, as against this distribution's own."""
+    return member.startswith(f"{licenses_root(dist_info)}third-party/")
+
+
+def declared_license_path(dist_info: str, member: str) -> str:
+    """What METADATA calls a packaged licence file.
+
+    PEP 639 states License-File relative to `.dist-info/licenses/`, which is
+    what setuptools already does for the project's own texts; declaring the
+    member path instead yields an entry that resolves to nothing.
+    """
+    return member.removeprefix(licenses_root(dist_info))
+
+
 def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
     """Where one component's license text lands inside the wheel.
 
@@ -49,7 +79,7 @@ def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
     # scheme exists to avoid, and the loser was dropped while the document went
     # on naming the path it was dropped from.
     safe = "/".join(_SAFE_NAME.sub("_", part) for part in relative.split("/"))
-    return f"{dist_info}/licenses/third-party/{folder}/{safe}"
+    return f"{licenses_root(dist_info)}third-party/{folder}/{safe}"
 
 
 def _roles(inventory: Inventory, key: str) -> str:
@@ -64,7 +94,7 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
         "",
         f"Components redistributed in `{wheel_name}`, with the license text each",
         "obligation was read from. Texts are packaged under",
-        f"`{dist_info}/licenses/third-party/`.",
+        f"`{licenses_root(dist_info)}third-party/`.",
         "",
     ]
     for key, component in inventory.components_present.items():
@@ -97,7 +127,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
     unidentified = []
 
     for key, component in inventory.components_present.items():
-        grants = [item for item in component.evidence if item.kind in ("grant", "pool")]
+        grants = licensing.obligation_texts(component.evidence)
         components.append(
             {
                 "component": key,

@@ -15,7 +15,7 @@ import re
 import zipfile
 from pathlib import Path
 
-from . import SPDX_VERSION, licensing
+from . import SPDX_VERSION, licensing, report
 from . import document as document_module
 from . import wheelfile
 
@@ -224,7 +224,7 @@ def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     packaged = {
         digest
         for name, digest in by_name.items()
-        if name.startswith(f"{wheel.dist_info}/licenses/")
+        if report.is_packaged_license(wheel.dist_info, name)
     }
     if not packaged:
         return failures
@@ -284,7 +284,7 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
     packaged = {
         entry.sha256
         for entry in wheel.entries
-        if entry.name.startswith(f"{wheel.dist_info}/licenses/")
+        if report.is_packaged_license(wheel.dist_info, entry.name)
     }
     recorded: set[str] = set()
 
@@ -301,13 +301,10 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
         # so comparing only the licence-granting ones called a NOTICE the build
         # plainly read a text it never did.
         recorded.update(item["sha256"] for item in component.get("evidence", []))
-        # The same test the build gate applies: a REUSE pool is a real text even
-        # though it names no single expression, so publishing on one and then
-        # failing verification for want of a grant would contradict the gate.
         texts = [
             item
             for item in component.get("evidence", [])
-            if item["kind"] in ("grant", "pool")
+            if licensing.satisfies_obligation(item["kind"])
         ]
         if not texts:
             failures.append(
@@ -429,7 +426,7 @@ def _refs_in(value) -> set[str]:
 def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     failures: list[str] = []
     names = {item.name for item in wheel.entries}
-    notices = f"{wheel.dist_info}/licenses/THIRD-PARTY-NOTICES.md"
+    notices = report.notices_path(wheel.dist_info)
     if notices not in names:
         failures.append(f"{notices} is not packaged")
 

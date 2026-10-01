@@ -21,6 +21,7 @@ import functools
 import glob
 import hashlib
 import json
+import platform
 import re
 import shutil
 import subprocess
@@ -62,6 +63,16 @@ EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def component_of(display: str) -> str:
+    """The component a `FileIndex` display path belongs to.
+
+    `add_tree` renders `<tree-name>/<relative>` and a fetched checkout's tree is
+    `<key>-src`, so this is the inverse of how the index was populated. Inverting
+    it at the call site made the convention an undeclared contract.
+    """
+    return display.split("/", 1)[0].removesuffix("-src")
 
 
 def sha256_file(path: Path) -> str:
@@ -377,6 +388,29 @@ class BuildGraph:
     def by_name(self, name: str) -> list[Artifact]:
         return self._by_name.get(name, [])
 
+    def repo_inputs(self, repo_root: Path, build_dir: Path) -> set[Path]:
+        """Files under `repo_root` this build compiled or included.
+
+        `_deps` is the component-source domain and is attributed from its own
+        checkouts; an include directory under the build tree holds generated
+        headers, which state no upstream holder.
+        """
+        found: set[Path] = set()
+        for node in self._nodes.values():
+            found.update(
+                source
+                for source in node.sources
+                if str(source).startswith(str(repo_root))
+                and "/_deps/" not in source.as_posix()
+            )
+            for include in node.includes:
+                text = include.as_posix()
+                if not text.startswith(str(repo_root)) or "/_deps/" in text:
+                    continue
+                if include.is_dir() and not text.startswith(str(build_dir)):
+                    found.update(item for item in include.rglob("*") if item.is_file())
+        return found
+
     def _closure(self, target_id: str) -> list[_Node]:
         """The target and everything it depends on, transitively."""
         seen: set[str] = set()
@@ -548,8 +582,17 @@ def project_supplier(repo_root: Path) -> str:
     return f"Organization: {authors[0]}"
 
 
-def _holder_of(path: Path) -> tuple[str, str | None] | None:
-    """The copyright holder and licence a file states about itself."""
+@dataclass(frozen=True)
+class _Stated:
+    """What a source file says about itself in its header."""
+
+    holder: str
+    expression: str | None
+    notice: str
+
+
+def _stated_by(path: Path) -> _Stated | None:
+    """Holder, licence and notice, from one read of the file's head."""
     try:
         head = path.open("rb").read(4096).decode("utf-8", "replace")
     except OSError:
@@ -559,21 +602,12 @@ def _holder_of(path: Path) -> tuple[str, str | None] | None:
         return None
     holder = _YEARS.sub(" ", match.group("holder") or match.group("plain") or "")
     holder = " ".join(holder.split()).removesuffix(" All rights reserved").strip()
-    return (holder, licensing.read_spdx_tag(head)) if holder else None
-
-
-def _notice_of(path: Path) -> str | None:
-    """The copyright line a file states, as written."""
-    try:
-        head = path.open("rb").read(4096).decode("utf-8", "replace")
-    except OSError:
-        return None
-    match = _COPYRIGHT_TAG.search(head)
-    if not match:
+    if not holder:
         return None
     notice = " ".join(match.group(0).split()).lstrip("/ *#")
     # The tag introduces the notice; it is not part of it.
-    return re.sub(r"^SPDX-FileCopyrightText:\s*", "", notice)
+    notice = re.sub(r"^SPDX-FileCopyrightText:\s*", "", notice)
+    return _Stated(holder, licensing.read_spdx_tag(head), notice)
 
 
 def discover_vendored(
@@ -586,18 +620,17 @@ def discover_vendored(
     notices: dict[str, set[str]] = {}
 
     for path in sorted(candidates):
-        stated = _holder_of(path)
+        stated = _stated_by(path)
         if stated is None:
             continue
-        holder, expression = stated
-        if any(author.lower() in holder.lower() for author in authors):
+        if any(author.lower() in stated.holder.lower() for author in authors):
             continue
-        key = f"vendored:{licensing.spdx_safe(holder).lower()}"
+        key = f"vendored:{licensing.spdx_safe(stated.holder).lower()}"
         grouped.setdefault(key, []).append(path)
-        names[key] = holder
-        notices.setdefault(key, set()).add(_notice_of(path) or holder)
-        if expression:
-            licences.setdefault(key, set()).add(expression)
+        names[key] = stated.holder
+        notices.setdefault(key, set()).add(stated.notice)
+        if stated.expression:
+            licences.setdefault(key, set()).add(stated.expression)
 
     components: dict[str, Component] = {}
     for key, paths in grouped.items():
@@ -668,8 +701,7 @@ def _host_library_paths() -> list[Path]:
                     paths.add(Path(target))
         except (OSError, subprocess.SubprocessError):
             pass
-    roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
-    roots += [Path(item) for item in sorted(glob.glob("/usr/local/cuda*/lib64"))]
+    roots = _library_roots()
     for root in roots:
         paths.update(item for item in root.glob("*.so*") if item.is_file())
     return sorted(paths)
@@ -724,8 +756,7 @@ def resolve_system_library(soname: str) -> dict:
         "package": None,
         "copyright": None,
     }
-    roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
-    roots += [Path(item) for item in sorted(glob.glob("/usr/local/cuda*/lib64"))]
+    roots = _library_roots()
 
     library = next((root / soname for root in roots if (root / soname).exists()), None)
     if library is None:
@@ -782,12 +813,9 @@ def _package_field(package: str, field: str) -> str | None:
 def _os_release_id() -> str | None:
     """The distribution this package manager belongs to, for the purl type."""
     try:
-        for line in Path("/etc/os-release").read_text().splitlines():
-            if line.startswith("ID="):
-                return line.partition("=")[2].strip().strip('"') or None
+        return platform.freedesktop_os_release().get("ID") or None
     except OSError:
         return None
-    return None
 
 
 def _package_supplier(package: str) -> str | None:
@@ -796,24 +824,20 @@ def _package_supplier(package: str) -> str | None:
     The package name is not a supplier: `libbsd0` names the thing, not whoever
     provided it. dpkg records a maintainer, which is the answer.
     """
-    try:
-        result = subprocess.run(
-            ["dpkg-query", "-W", "-f=${Maintainer}", package],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    maintainer = result.stdout.strip()
-    if result.returncode != 0 or not maintainer:
+    maintainer = _package_field(package, "Maintainer")
+    if not maintainer:
         return None
     # "Name <email>" is Debian's form; SPDX wants "Organization: Name (email)".
     match = re.match(r"^(?P<name>.+?)\s*<(?P<email>[^>]+)>$", maintainer)
     if match:
         return f"Organization: {match['name']} ({match['email']})"
     return f"Organization: {maintainer}"
+
+
+def _library_roots() -> list[Path]:
+    """Where a pre-built library the build machine supplied can be found."""
+    roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
+    return roots + [Path(item) for item in sorted(glob.glob("/usr/local/cuda*/lib64"))]
 
 
 def _license_near(library: Path) -> Path | None:
@@ -825,9 +849,7 @@ def _license_near(library: Path) -> Path | None:
     current = library.parent
     for _ in range(3):
         for entry in sorted(current.iterdir()) if current.is_dir() else []:
-            if entry.is_file() and licensing._classify(entry.name):  # noqa: SLF001
-                return entry
-            if entry.is_file() and entry.name.upper().startswith("EULA"):
+            if entry.is_file() and licensing.classify(entry.name):
                 return entry
         if current.parent == current:
             break
@@ -847,7 +869,7 @@ def system_component(soname: str, origin: dict) -> Component:
     if license_path and Path(license_path).is_file():
         text = Path(license_path).read_text(encoding="utf-8", errors="replace")
         evidence.append(
-            licensing._evidence(key, "build-host", license_path, text, "grant")  # noqa: SLF001
+            licensing.evidence_for(key, "build-host", license_path, text, "grant")
         )
     # `key`, not `soname`: the key is what identifies this component everywhere
     # else, and two components reduced to the same label would mint one LicenseRef
@@ -954,7 +976,7 @@ class ArchiveIndex:
             text = data.decode("utf-8", "replace").strip().splitlines()
             self.archives[display]["version_text"] = text[0].strip() if text else ""
             return
-        if not licensing._classify(name):  # noqa: SLF001 - same package
+        if not licensing.classify(name):
             return
         self.archives[display].setdefault("license_members", []).append((member, data))
 

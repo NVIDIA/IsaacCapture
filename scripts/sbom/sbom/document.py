@@ -92,9 +92,7 @@ def _extracted_licenses(
         refs = licensing.license_refs(
             component.license_concluded, component.license_declared
         )
-        # Same predicate as the build gate, the verifier and the report: a REUSE
-        # pool is a real text. Change one of those and change all of them.
-        grants = [item for item in component.evidence if item.kind in ("grant", "pool")]
+        grants = licensing.obligation_texts(component.evidence)
         if not refs or not grants:
             continue
         for ref in refs:
@@ -266,7 +264,7 @@ def build_document(
             # A packaged licence text states its component's notice, or its own
             # author's -- WTFPL names the person who wrote WTFPL. Neither is a
             # notice this distribution makes about itself.
-            and not entry.name.startswith(f"{wheel.dist_info}/licenses/")
+            and not report.is_packaged_license(wheel.dist_info, entry.name)
         ):
             stated_copyright.add(attribution.copyright_text)
 

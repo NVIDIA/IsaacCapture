@@ -100,25 +100,17 @@ def sbom_member(dist_info: str, wheel_name: str) -> str:
     return f"{dist_info}/sboms/{wheel_name}.spdx.json"
 
 
-def record_hash(data: bytes) -> str:
-    """RECORD's hash field, as PEP 376 spells it."""
-    return str(Hash.parse(f"sha256={_urlsafe_b64(data)}"))
-
-
 def record_hash_from_sha256(digest: str) -> str:
-    """The same field, from a digest already computed."""
+    """RECORD's hash field, as PEP 376 spells it, from a digest already computed."""
     encoded = (
         base64.urlsafe_b64encode(bytes.fromhex(digest)).rstrip(b"=").decode("ascii")
     )
     return str(Hash.parse(f"sha256={encoded}"))
 
 
-def _urlsafe_b64(data: bytes) -> str:
-    return (
-        base64.urlsafe_b64encode(hashlib.sha256(data).digest())
-        .rstrip(b"=")
-        .decode("ascii")
-    )
+def record_hash(data: bytes) -> str:
+    """The same field, for bytes in hand."""
+    return record_hash_from_sha256(hashlib.sha256(data).hexdigest())
 
 
 def _dist_info(names: list[str]) -> str:

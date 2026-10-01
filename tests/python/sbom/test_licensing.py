@@ -120,7 +120,7 @@ def test_a_real_license_survives_surrounding_packaging_boilerplate():
 
 def test_unmatched_grant_becomes_a_license_ref_not_a_guess():
     evidence = [
-        licensing._evidence(
+        licensing.evidence_for(
             "demo", "component-file", "demo/LICENSE", synth.PROPRIETARY_LICENSE, "grant"
         )
     ]
@@ -231,7 +231,7 @@ def test_a_component_carrying_two_licenses_combines_them():
     exercised with more than one licence.
     """
     evidence = [
-        licensing._evidence(
+        licensing.evidence_for(
             "dual",
             "component-file",
             "dual/LICENSE",

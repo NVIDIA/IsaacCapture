@@ -20,6 +20,7 @@ from . import elf, licensing
 from .discovery import (
     Component,
     EMPTY_SHA256,
+    component_of,
     resolve_system_library,
     resolve_system_library_by_build_id,
     sha256_file,
@@ -238,7 +239,7 @@ class Resolver:
 
         component_file = self.source_files.by_hash.get(candidate_digest)
         if component_file:
-            key = component_file.split("/", 1)[0].removesuffix("-src")
+            key = component_of(component_file)
             return Attribution(
                 path=wheel_path,
                 origin="copied",
@@ -377,7 +378,7 @@ class Resolver:
         """
         owners: dict[str, str] = {}
         for display in self.source_files.all_by_hash.get(digest, []):
-            owners[display.split("/", 1)[0].removesuffix("-src")] = display
+            owners[component_of(display)] = display
         for member in self.archives.all_by_hash.get(digest, []):
             owners[member.container] = f"{member.path} in {member.container}"
         # This repository holding the same bytes counts as a candidate too: a
@@ -519,7 +520,7 @@ class Resolver:
 
         component_file = self.source_files.path_suffix_match(wheel_path)
         if component_file:
-            key = component_file.split("/", 1)[0].removesuffix("-src")
+            key = component_of(component_file)
             origin_digest = self.source_files.digest_of_display(component_file)
             # Reaching this branch means the content matched more than one place,
             # not that anything transformed the file. Where the input's bytes are

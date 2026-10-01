@@ -17,6 +17,7 @@ from . import TOOL_NAME, TOOL_VERSION, licensing, stamped_now
 from .discovery import (
     ARCHIVE_SUFFIXES,
     ArchiveIndex,
+    component_of,
     Ownership,
     git,
     BuildGraph,
@@ -120,12 +121,12 @@ def _archive_components(
             name = name.removesuffix(suffix)
 
         evidence = [
-            licensing._evidence(  # noqa: SLF001 - same package
+            licensing.evidence_for(
                 display,
                 "archive-member",
                 f"{display}!{member.path}",
                 data.decode("utf-8", "replace"),
-                licensing._classify(Path(member.path).name) or "grant",  # noqa: SLF001
+                licensing.classify(Path(member.path).name) or "grant",
             )
             for member, data in record.get("license_members", [])
         ]
@@ -254,7 +255,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
                 continue
             match = source_files.by_hash.get(digest)
             if match:
-                owners.add(match.split("/", 1)[0].removesuffix("-src"))
+                owners.add(component_of(match))
         if len(owners) == 1:
             display = f"{build_dir.name}/{root.relative_to(build_dir).as_posix()}"
             staged_component_dirs[display] = owners.pop()
@@ -283,19 +284,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         for item in tracked
         if Path(item).suffix.lower() in _TAGGABLE_SOURCE
     }
-    for node in graph._nodes.values():  # noqa: SLF001 - same package
-        candidates.update(
-            source
-            for source in node.sources
-            if str(source).startswith(str(repo_root))
-            and "/_deps/" not in source.as_posix()
-        )
-        for include in node.includes:
-            text = include.as_posix()
-            if not text.startswith(str(repo_root)) or "/_deps/" in text:
-                continue
-            if include.is_dir() and not text.startswith(str(build_dir)):
-                candidates.update(item for item in include.rglob("*") if item.is_file())
+    candidates.update(graph.repo_inputs(repo_root, build_dir))
 
     vendored, owned_paths = discover_vendored(
         repo_root, candidates, project_authors(repo_root)

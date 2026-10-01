@@ -20,7 +20,7 @@ from . import licensing
 from . import inventory as inventory_module
 from . import report as report_module
 from . import wheelfile
-from .discovery import project_supplier
+from .discovery import project_supplier, sha256_file
 from .inventory import Attribution
 from .wheelfile import Entry
 
@@ -45,24 +45,6 @@ def _entry(name: str, data: bytes) -> Entry:
         sha256=hashlib.sha256(data).hexdigest(),
         sha1=hashlib.sha1(data).hexdigest(),  # noqa: S324 - SPDX 2.3 requires SHA1
     )
-
-
-def _declared_path(dist_info: str, member: str) -> str:
-    """What METADATA calls a packaged license file.
-
-    PEP 639 states License-File relative to `.dist-info/licenses/`, which is
-    what setuptools already does for the project's own texts; declaring the
-    member path instead yields an entry that resolves to nothing.
-    """
-    return member.removeprefix(f"{dist_info}/licenses/")
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def default_license_data(build_dir: Path) -> Path:
@@ -103,12 +85,10 @@ def build(
             + "\nThey reached the wheel by a route the collector cannot see."
         )
 
-    # A REUSE LICENSES/ pool is a real text even though it names no single
-    # expression for the component, so it satisfies the packaging obligation.
     missing = [
         key
         for key, component in inventory.components_present.items()
-        if not any(item.kind in ("grant", "pool") for item in component.evidence)
+        if not licensing.obligation_texts(component.evidence)
     ]
     if missing:
         raise BuildError(
@@ -128,13 +108,17 @@ def build(
             if target in additions:
                 continue
             additions[target] = item.text.encode("utf-8")
-            packaged_paths.append(_declared_path(wheel.dist_info, target))
+            packaged_paths.append(
+                report_module.declared_license_path(wheel.dist_info, target)
+            )
 
-    notices_path = f"{wheel.dist_info}/licenses/THIRD-PARTY-NOTICES.md"
+    notices_path = report_module.notices_path(wheel.dist_info)
     additions[notices_path] = report_module.notices_markdown(
         inventory, wheel.dist_info, wheel_path.name
     ).encode("utf-8")
-    packaged_paths.append(_declared_path(wheel.dist_info, notices_path))
+    packaged_paths.append(
+        report_module.declared_license_path(wheel.dist_info, notices_path)
+    )
 
     patched_metadata = wheelfile.add_license_files(metadata_raw, sorted(packaged_paths))
     metadata_declared = patched_metadata != metadata_raw
@@ -155,7 +139,9 @@ def build(
         # Only the third-party texts: the notices file and the document below
         # are this collector's own output, and reading them back found the first
         # `- Copyright:` bullet of the summary it had just generated.
-        packaged_text = name in additions and "/licenses/third-party/" in name
+        packaged_text = name in additions and report_module.is_third_party_license(
+            wheel.dist_info, name
+        )
         body = additions.get(name, b"").decode("utf-8", "replace")
         # A licence text can state its own terms and carry a notice, and these
         # were the only members never read for either -- the collector packaged

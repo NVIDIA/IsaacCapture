@@ -100,6 +100,22 @@ class LicenseEvidence:
         }
 
 
+# What counts as a text that discharges the packaging obligation. A REUSE pool
+# names no single expression for the component and is still a real text, so it
+# counts. The build gate, the document, the report and the verifier all ask this
+# question; they ask it here.
+OBLIGATION_KINDS = frozenset({"grant", "pool"})
+
+
+def satisfies_obligation(kind: str) -> bool:
+    """For callers holding the JSON form, where there is no dataclass to filter."""
+    return kind in OBLIGATION_KINDS
+
+
+def obligation_texts(evidence) -> list[LicenseEvidence]:
+    return [item for item in evidence if satisfies_obligation(item.kind)]
+
+
 _DIGITS = re.compile(r"\d+")
 
 
@@ -312,7 +328,7 @@ def _read(path: Path) -> str | None:
     return data.decode("utf-8", "replace")
 
 
-def _evidence(
+def evidence_for(
     component: str, origin: str, display: str, text: str, kind: str
 ) -> LicenseEvidence:
     matchable = kind == "grant"
@@ -333,7 +349,7 @@ def _evidence(
     )
 
 
-def _classify(name: str) -> str | None:
+def classify(name: str) -> str | None:
     if Path(name).suffix.lower() in _SKIP_SUFFIXES:
         return None
     if _GRANT_NAMES.search(name):
@@ -351,7 +367,7 @@ def discover_in_tree(
     candidates: list[tuple[Path, str]] = []
 
     for entry in sorted(root.iterdir()) if root.is_dir() else []:
-        if entry.is_file() and (kind := _classify(entry.name)):
+        if entry.is_file() and (kind := classify(entry.name)):
             candidates.append((entry, kind))
         elif entry.is_dir() and entry.name.upper() in {"LICENSES", "LICENSE"}:
             candidates.extend(
@@ -363,7 +379,7 @@ def discover_in_tree(
         if text is None:
             continue
         display = f"{display_prefix}/{path.relative_to(root).as_posix()}"
-        found.append(_evidence(component, "component-file", display, text, kind))
+        found.append(evidence_for(component, "component-file", display, text, kind))
 
     if not any(item.kind == "grant" for item in found):
         found.extend(_readme_fallback(component, root, display_prefix))
@@ -389,7 +405,9 @@ def _readme_fallback(
         # threshold and degrade to a LicenseRef.
         display = f"{display_prefix}/{entry.name}"
         return [
-            _evidence(component, "readme-section", display, section.group(0), "grant")
+            evidence_for(
+                component, "readme-section", display, section.group(0), "grant"
+            )
         ]
     return []
 
@@ -618,7 +636,7 @@ def canonical_evidence(
                 continue
             seen.add(token)
             found.append(
-                _evidence(
+                evidence_for(
                     component_key,
                     "spdx-reference",
                     f"{token}.txt",
