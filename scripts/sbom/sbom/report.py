@@ -45,7 +45,11 @@ def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
     """
     folder = _SAFE_NAME.sub("_", component_key)
     relative = evidence.path.rsplit("!", 1)[-1].split("/", 1)[-1]
-    return f"{dist_info}/licenses/third-party/{folder}/{_SAFE_NAME.sub('_', relative)}"
+    # Keep the separators: flattening them re-created the collision this whole
+    # scheme exists to avoid, and the loser was dropped while the document went
+    # on naming the path it was dropped from.
+    safe = "/".join(_SAFE_NAME.sub("_", part) for part in relative.split("/"))
+    return f"{dist_info}/licenses/third-party/{folder}/{safe}"
 
 
 def _roles(inventory: Inventory, key: str) -> str:
