@@ -53,13 +53,9 @@ class FakeSnapshot:
 
 
 class FakeTracker:
-    """Stands in for ControllerTracker; per-hand state is swapped per step.
+    """Match tracker_bindings.cpp::to_python: snapshot or None.
 
-    Shaped to match the real binding exactly, because an earlier version of
-    this fake did not and hid a crash: it wrapped every read in an extra
-    object carrying the snapshot on a ``data`` attribute. The real accessor
-    returns a ``ControllerSnapshot`` (fields ``inputs`` / ``grip_pose`` /
-    ``aim_pose``, no ``data``) or ``None`` when the controller is inactive.
+    Model the Python return value, not the C++ handle or legacy .data wrapper.
     """
 
     def __init__(self) -> None:
@@ -364,6 +360,48 @@ def test_step_survives_both_controllers_inactive():
     controls.step(1.0)
 
     assert target.lock_mode == "world"
+
+
+@pytest.mark.parametrize("right_active", [False, True])
+@pytest.mark.parametrize("left_active", [False, True])
+def test_step_handles_controller_availability(right_active, left_active):
+    """An absent hand must not crash or suppress input from the other hand."""
+    target = _switchable_target("quad")
+    target.lock_mode = "world"
+    controls, _ = _make([target])
+    controls._tracker.right = FakeInputs(a=True) if right_active else None
+    controls._tracker.left = FakeInputs(a=True) if left_active else None
+
+    for _ in range(3):
+        controls.step(1.0 / 90.0)
+
+    assert target.lock_mode == ("head" if right_active else "world")
+    assert target.shape == ("cylinder" if left_active else "quad")
+
+
+@pytest.mark.parametrize(
+    "hand, attribute, initial, after_presses",
+    [
+        ("right", "lock_mode", "world", ("head", "gimbal")),
+        ("left", "shape", "quad", ("cylinder", "equirect")),
+    ],
+)
+def test_controller_reconnect_resumes_input(hand, attribute, initial, after_presses):
+    target = _switchable_target("quad")
+    target.lock_mode = "world"
+    controls, _ = _make([target])
+    controls._tracker.right = None
+    controls._tracker.left = None
+    controls.step(1.0 / 90.0)
+    assert getattr(target, attribute) == initial
+
+    for expected in after_presses:
+        setattr(controls._tracker, hand, FakeInputs(a=True))
+        controls.step(1.0 / 90.0)
+        assert getattr(target, attribute) == expected
+        setattr(controls._tracker, hand, None)
+        controls.step(1.0 / 90.0)
+        assert getattr(target, attribute) == expected
 
 
 def test_fake_tracker_matches_the_real_snapshot_shape():

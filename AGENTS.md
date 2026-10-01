@@ -203,6 +203,16 @@ A `commit-msg` pre-commit hook enforces this. Install it **once per clone**
 pre-commit install --hook-type commit-msg
 ```
 
+## Release fixes
+
+Start fixes from `main`, then cherry-pick them to the affected release branch.
+A release reproduction does not imply a release-based fix branch; first check
+whether `main` already contains the fix.
+
+A feature branch's base and upstream are separate: use `main` as the base,
+but set the upstream to the remote branch with the same feature-branch name
+when publishing. Do not set a feature branch to track `origin/main`.
+
 ## Remote pushes
 
 - Before pushing, compare every URL from
