@@ -1148,10 +1148,25 @@ jobs:
         shopt -s nullglob
 
         mkdir -p release-evidence
-        cp sbom-sidecars/*/*.spdx.json release-evidence/
-        cp sbom-sidecars/*/*.licenses.json release-evidence/
-        cp sbom-sidecars/*/*.licenses.md release-evidence/
-        cp sbom-sidecars/*/*.build-evidence.json release-evidence/
+        # A `py3-none-any` wheel is built by every matrix entry, so its sidecars
+        # arrive once per entry under the same name. Identical copies are one
+        # file; differing ones are kept apart under the entry that produced
+        # them, because dropping one would publish evidence for a wheel nobody
+        # can tell apart from the five it is not.
+        for sidecar in sbom-sidecars/*/*.spdx.json \
+                       sbom-sidecars/*/*.licenses.json \
+                       sbom-sidecars/*/*.licenses.md \
+                       sbom-sidecars/*/*.build-evidence.json; do
+          name="$(basename "${sidecar}")"
+          entry="$(basename "$(dirname "${sidecar}")")"
+          if [[ ! -e "release-evidence/${name}" ]]; then
+            cp "${sidecar}" "release-evidence/${name}"
+          elif cmp -s "${sidecar}" "release-evidence/${name}"; then
+            continue
+          else
+            cp "${sidecar}" "release-evidence/${entry}.${name}"
+          fi
+        done
 
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom merge-manifests \
