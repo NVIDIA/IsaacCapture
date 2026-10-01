@@ -1035,10 +1035,20 @@ jobs:
 
     # Publish only for same-repo runs (pushes or non-fork PRs). github.repository
     # is the base repo even for fork PRs, so compare the PR head repo instead.
+    # `!cancelled()` because a skip propagates through the whole dependency
+    # chain, not one level: a test job that does not run -- an empty arch matrix,
+    # say -- skips `wheel-gate`'s dependents even though `wheel-gate` itself
+    # succeeded through `always()`. The result check below is what should gate
+    # this job, and without a status function it never gets the chance.
+    #
+    # Continuations sit at the block's indentation: a folded scalar keeps the
+    # newline of a more-indented line, so the expression would reach the
+    # evaluator with a newline inside it.
     if: >-
-      needs.wheel-gate.result == 'success'
+      !cancelled()
+      && needs.wheel-gate.result == 'success'
       && (github.event_name != 'pull_request'
-        || github.event.pull_request.head.repo.full_name == github.repository)
+      || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
     - name: Set up Python
