@@ -50,6 +50,10 @@ Its per-file digests are there so the description can be shown to belong to the 
 front of you, and so it can be checked against ``RECORD``; they are not a second root of
 trust.
 
+The document lists every member of the wheel except two: ``RECORD`` and the document
+itself. Neither can carry its own digest, since ``RECORD`` hashes the document and the
+document would hash ``RECORD``. ``check`` reads both against the archive directly.
+
 .. code-block:: bash
 
    git clone --depth 1 https://github.com/NVIDIA/IsaacCapture

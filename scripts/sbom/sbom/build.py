@@ -138,6 +138,11 @@ def build(
     metadata_declared = patched_metadata != metadata_raw
     replacements = {f"{wheel.dist_info}/METADATA": patched_metadata}
 
+    # Neither file can state its own digest. RECORD hashes every member, this
+    # document included, and the document is rendered before RECORD is
+    # regenerated -- listing either is a fixed point no hash function has. SPDX
+    # 2.3 requires a checksum on every file listed, so they are omitted rather
+    # than listed without one; `check` reads both against the archive instead.
     excluded = [f"{wheel.dist_info}/RECORD", sbom_name]
 
     projected = [item for item in wheel.entries if item.name not in replacements] + [
