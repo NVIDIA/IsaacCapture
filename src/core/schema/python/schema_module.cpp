@@ -8,6 +8,7 @@
 // Include binding definitions.
 #include "controller_bindings.h"
 #include "full_body_bindings.h"
+#include "gamepad_bindings.h"
 #include "hand_bindings.h"
 #include "haptic_command_bindings.h"
 #include "head_bindings.h"
@@ -45,6 +46,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind pedals types (Generic3AxisPedalOutput table).
     core::bind_pedals(m);
+
+    // Bind gamepad types (GamepadOutput table) for raw joystick-API button/axis state.
+    core::bind_gamepad(m);
 
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);

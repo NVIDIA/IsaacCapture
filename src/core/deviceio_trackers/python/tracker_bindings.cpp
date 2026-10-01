@@ -5,6 +5,7 @@
 
 #include <deviceio_trackers/controller_tracker.hpp>
 #include <deviceio_trackers/full_body_tracker.hpp>
+#include <deviceio_trackers/gamepad_tracker.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
@@ -76,6 +77,23 @@ PYBIND11_MODULE(_deviceio_trackers, m)
             [](const core::HeadTracker& self, const core::ITrackerSession& session)
             { return to_python(self.get_head(session)); },
             py::arg("session"), "Get the head tracked state (None if inactive)");
+
+    m.def("discover_gamepad_device", &core::discover_gamepad_device,
+          "The first Linux joystick-API gamepad (/dev/input/by-path/*-joystick, else the lowest "
+          "/dev/input/jsN, e.g. a Bluetooth pad), or None when none is connected.");
+
+    py::class_<core::GamepadTracker, core::ITracker, std::shared_ptr<core::GamepadTracker>>(
+        m, "GamepadTracker",
+        "In-process gamepad read from a Linux joystick-API device (/dev/input/jsN). Needs no plugin "
+        "process, no OpenXR extension and no input group membership.")
+        .def(py::init<std::string>(), py::arg("device_path") = "",
+             "Read device_path (e.g. '/dev/input/js0'); empty picks the first connected joystick.")
+        .def_property_readonly("device_path", &core::GamepadTracker::device_path)
+        .def(
+            "get_gamepad_data",
+            [](const core::GamepadTracker& self, const core::ITrackerSession& session)
+            { return to_python(self.get_data(session)); },
+            py::arg("session"), "Get this frame's GamepadOutput (None while no gamepad is connected)");
 
     py::class_<core::ControllerTracker, core::ITracker, std::shared_ptr<core::ControllerTracker>>(m, "ControllerTracker")
         .def(py::init<>())
