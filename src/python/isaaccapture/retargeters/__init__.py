@@ -16,6 +16,9 @@ Available Retargeters:
     - LocomotionRootCmdRetargeter: Locomotion from controller inputs
     - FootPedalRootCmdRetargeter: Root command from 3-axis foot pedal (horizontal/vertical + rudder)
     - GripperRetargeter: Pinch-based gripper control
+    - GamepadToSe3RelRetargeter: Gamepad stick/dpad state -> relative EE delta control
+    - GamepadGripperRetargeter: Gamepad X-button toggle -> gripper open/closed
+    - GamepadToSe2Retargeter: Gamepad stick state -> base velocity command (v_x, v_y, omega_z)
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
@@ -107,6 +110,33 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
     # .gripper_retargeter
     "GripperRetargeter": (".gripper_retargeter", "GripperRetargeter", None),
     "GripperRetargeterConfig": (".gripper_retargeter", "GripperRetargeterConfig", None),
+    # .gamepad_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "GamepadToSe3RelRetargeter": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "GamepadToSe3RelRetargeterConfig": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    "GamepadGripperRetargeter": (
+        ".gamepad_se3_retargeter",
+        "GamepadGripperRetargeter",
+        "retargeters-lite",
+    ),
+    # .gamepad_se2_retargeter
+    "GamepadToSe2Retargeter": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2Retargeter",
+        None,
+    ),
+    "GamepadToSe2RetargeterConfig": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2RetargeterConfig",
+        None,
+    ),
     # .SO101 (SO-101 5-DOF arm: clutch EE-pose, analog gripper)
     "SO101ClutchRetargeter": (
         ".SO101.clutch_retargeter",
@@ -277,6 +307,11 @@ __all__ = [
     # Manipulator retargeters
     "GripperRetargeter",
     "GripperRetargeterConfig",
+    "GamepadToSe3RelRetargeter",
+    "GamepadToSe3RelRetargeterConfig",
+    "GamepadGripperRetargeter",
+    "GamepadToSe2Retargeter",
+    "GamepadToSe2RetargeterConfig",
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",
