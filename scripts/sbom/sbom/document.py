@@ -208,6 +208,34 @@ def _dependency_refs(
     return refs
 
 
+def _source_info(project: dict, evidence_doc: dict, build: dict, wheel) -> str:
+    """Where this wheel came from, stating only what applies to it.
+
+    One build produces several wheels, so its architecture and configuration are
+    facts about the compilation -- which a pure-python wheel did not have. A
+    placeholder rendered as a noun ("Built from NOASSERTION") is worse than an
+    omitted clause.
+    """
+    source = evidence_doc.get("project", {})
+    parts = []
+    if project["homepage"] != NOASSERTION:
+        parts.append(f"Built from {project['homepage']}")
+    commit = source.get("commit")
+    if commit:
+        described = source.get("describe") or ""
+        parts.append(
+            f"at commit {commit}"
+            # A tree with uncommitted changes did not produce what that commit
+            # produces, and a report nothing can reproduce has to say so.
+            + (" with uncommitted changes" if described.endswith("-dirty") else "")
+        )
+    # `none-any` is the tag for a wheel with nothing compiled in it.
+    if "none-any" not in wheel.path.name:
+        parts.append(f"arch {build.get('arch')}")
+        parts.append(f"CMAKE_BUILD_TYPE {build.get('config')}")
+    return "; ".join(parts) + "." if parts else NOASSERTION
+
+
 def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
     """The declared licence, AND the terms of everything redistributed under its own.
 
@@ -346,11 +374,7 @@ def build_document(
             }
         ],
         "hasFiles": [file_ids[name] for name in sorted(file_ids)],
-        "sourceInfo": (
-            f"Built from {project['homepage']} at commit "
-            f"{evidence_doc.get('project', {}).get('commit') or NOASSERTION}; "
-            f"arch {build.get('arch')}; CMAKE_BUILD_TYPE {build.get('config')}."
-        ),
+        "sourceInfo": _source_info(project, evidence_doc, build, wheel),
     }
 
     packages = [wheel_package]
@@ -455,24 +479,24 @@ def build_document(
         sibling = (siblings or {}).get(canonicalize_name(name))
         if sibling is None:
             element = package_id
+            comment = (
+                f"{declared} Resolved at install time; this document states no "
+                "license for it."
+            )
             packages.append(
                 _unanalyzed_package(
-                    package_id,
-                    name,
-                    f"{declared} Resolved at install time; this document states "
-                    "no license for it.",
-                    _dependency_refs(name, group[0]),
+                    package_id, name, comment, _dependency_refs(name, group[0])
                 )
             )
-        else:
-            # Built by this same run, so it is not an install-time unknown: the
-            # dependency points straight at the package in that wheel's own
-            # document. A local stub beside it would state the version, supplier
-            # and licence a second time, from the same source.
-            element = f"DocumentRef-{licensing.spdx_safe(sibling['filename'])}"
+        elif sibling.get("namespace"):
+            # Built by this same run and already described, so the dependency
+            # points straight at the package in that wheel's own document. A
+            # local stub beside it would restate version, supplier and licence
+            # from the same source.
+            document_ref = f"DocumentRef-{licensing.spdx_safe(sibling['filename'])}"
             external_documents.append(
                 {
-                    "externalDocumentId": element,
+                    "externalDocumentId": document_ref,
                     "spdxDocument": sibling["namespace"],
                     "checksum": {
                         "algorithm": "SHA1",
@@ -480,13 +504,39 @@ def build_document(
                     },
                 }
             )
-            element = f"{element}:{WHEEL_PACKAGE_ID}"
-
-        comment = declared + (
-            f" Built by this same build as {sibling['name']} {sibling['version']}."
-            if sibling
-            else ""
-        )
+            element = f"{document_ref}:{WHEEL_PACKAGE_ID}"
+            comment = (
+                f"{declared} Built by this same build as {sibling['name']} "
+                f"{sibling['version']}; described by {sibling['filename']}."
+            )
+        else:
+            # Built by this same run but not yet described: two wheels can
+            # require each other, and a document citing another's digest cannot
+            # be written before it. What the wheel states about itself needs no
+            # document, so none of it is left unasserted.
+            element = package_id
+            comment = (
+                f"{declared} Built by this same build; its own document "
+                f"describes it, and is not referenced here because the two "
+                f"wheels require each other."
+            )
+            packages.append(
+                {
+                    "SPDXID": package_id,
+                    "name": name,
+                    "versionInfo": sibling["version"],
+                    "supplier": sibling["supplier"],
+                    "downloadLocation": NOASSERTION,
+                    "filesAnalyzed": False,
+                    "licenseConcluded": NOASSERTION,
+                    "licenseDeclared": sibling["license_declared"],
+                    "copyrightText": NOASSERTION,
+                    "externalRefs": _dependency_refs(
+                        name, group[0], version=sibling["version"]
+                    ),
+                    "comment": comment,
+                }
+            )
         # Optional only if every line that asks for it is gated on an extra. One
         # unconditional line makes the dependency unconditional.
         if all(_is_extra_gated(item) for item in group):

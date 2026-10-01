@@ -153,6 +153,29 @@ def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
     return wanted
 
 
+def siblings_of(wheels: list[Path], repo_root: Path) -> dict[str, dict]:
+    """What each wheel of this run states about itself, by canonical name.
+
+    Read before any of them is described, so a requirement naming one is never
+    reported as an install-time unknown. Two wheels can require each other -- a
+    renamed project and its transition wheel do -- and only one of them can
+    carry a digest-bound reference to the other's document; both can state what
+    the metadata says, because that needs no document.
+    """
+    known: dict[str, dict] = {}
+    for wheel in wheels:
+        _, parsed = wheelfile.read_metadata(wheel, wheelfile.dist_info_of(wheel))
+        facts = _project_facts(repo_root, parsed)
+        known[canonicalize_name(parsed["name"])] = {
+            "name": parsed["name"],
+            "version": parsed.get("version") or NOASSERTION,
+            "supplier": facts["supplier"],
+            "license_declared": facts["license"],
+            "wheel": wheel.name,
+        }
+    return known
+
+
 def in_dependency_order(wheels: list[Path]) -> list[Path]:
     """Wheels of one run, each after any sibling it requires.
 

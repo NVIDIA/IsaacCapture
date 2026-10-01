@@ -570,10 +570,78 @@ def _check_manifest(
     return failures
 
 
+def _cross_document_refs(
+    spdx: dict, documents: dict[str, bytes], filename: str
+) -> list[str]:
+    """An external document reference has to resolve to a document in this set.
+
+    Declaring one is not the check: the digest is what binds it, and a wheel
+    rebuilt without its sibling would otherwise carry a stale one and pass.
+    """
+    failures: list[str] = []
+    by_namespace = {
+        json.loads(body).get("documentNamespace"): (name, body)
+        for name, body in documents.items()
+    }
+    for ref in spdx.get("externalDocumentRefs", []):
+        found = by_namespace.get(ref.get("spdxDocument"))
+        if found is None:
+            failures.append(
+                f"{filename}: {ref.get('externalDocumentId')} names a document "
+                f"this release does not publish ({ref.get('spdxDocument')})"
+            )
+            continue
+        name, body = found
+        stated = (ref.get("checksum") or {}).get("checksumValue")
+        actual = hashlib.sha1(body).hexdigest()  # noqa: S324 - SPDX 2.3 says SHA1
+        if stated != actual:
+            failures.append(
+                f"{filename}: {ref.get('externalDocumentId')} states sha1 {stated} "
+                f"for {name}, which hashes to {actual}"
+            )
+    # And the elements those references point at have to be in that document.
+    ids = {
+        ref["externalDocumentId"]: json.loads(by_namespace[ref["spdxDocument"]][1])
+        for ref in spdx.get("externalDocumentRefs", [])
+        if ref.get("spdxDocument") in by_namespace
+    }
+    for relationship in spdx.get("relationships", []):
+        for side in ("spdxElementId", "relatedSpdxElement"):
+            prefix, _, element = str(relationship[side]).partition(":")
+            target = ids.get(prefix)
+            if target is None or not element:
+                continue
+            known = {target["SPDXID"]}
+            known |= {item["SPDXID"] for item in target.get("packages", [])}
+            known |= {item["SPDXID"] for item in target.get("files", [])}
+            if element not in known:
+                failures.append(
+                    f"{filename}: {relationship[side]} names an element the "
+                    "referenced document does not define"
+                )
+    return failures
+
+
 def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[str]:
     """Run :func:`check` over every wheel a merged manifest advertises."""
     failures: list[str] = []
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # The whole release is here, which is the only place a reference from one
+    # document to another can be resolved rather than merely declared.
+    published: dict[str, bytes] = {}
+    for entry in manifest.get("wheels") or []:
+        record = _record_for(manifest, entry.get("filename") or "")
+        sidecar = _sidecar(evidence_dir, record, "spdx") if record else None
+        if sidecar and sidecar.is_file():
+            published[sidecar.name] = sidecar.read_bytes()
+
+    for name, body in sorted(published.items()):
+        try:
+            failures.extend(_cross_document_refs(json.loads(body), published, name))
+        except json.JSONDecodeError as error:
+            failures.append(f"{name}: not readable as a document ({error})")
+
     for entry in manifest.get("wheels") or []:
         named = entry.get("filename")
         if not named:

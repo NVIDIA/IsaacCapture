@@ -319,6 +319,7 @@ def test_a_requirement_this_run_also_built_points_at_its_own_document(
                     "Version: 0.4.0",
                     "License-Expression: Apache-2.0",
                     "Requires-Dist: isaaccapture>=0.4.0",
+                    "Author: Example Org",
                     "",
                 ]
             ).encode(),
@@ -351,6 +352,21 @@ def test_a_requirement_this_run_also_built_points_at_its_own_document(
         )
         == 0
     )
+
+    # The two require each other, so only one document can cite the other's
+    # digest; neither may report the other as an install-time unknown.
+    sibling_doc = json.loads(
+        (out / f"{WHEEL_NAME.removesuffix('.whl')}.spdx.json").read_text()
+    )
+    back = next(
+        package
+        for package in sibling_doc["packages"]
+        if package["name"] == "isaacteleop"
+    )
+    assert back["versionInfo"] == "0.4.0"
+    assert back["licenseDeclared"] == "Apache-2.0"
+    assert back["supplier"] != "NOASSERTION"
+    assert "require each other" in back["comment"]
 
     spdx = json.loads((out / "isaacteleop-0.4.0-py3-none-any.spdx.json").read_text())
     assert not [

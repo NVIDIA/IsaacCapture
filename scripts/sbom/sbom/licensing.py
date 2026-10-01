@@ -176,13 +176,13 @@ class CorpusError(Exception):
 
 
 _CORPUS: tuple[str, dict[str, Reference]] | None = None
-_CORPUS_META: dict[str, str] = {}
+_CORPUS_META: dict[str, object] = {}
 # Parsing and n-gramming the whole SPDX list costs about half a second. Keyed by
 # directory and only ever read within one process, so a re-load is free.
 _PARSED: dict[str, tuple[str, dict[str, Reference]]] = {}
 
 
-def corpus_provenance() -> dict[str, str]:
+def corpus_provenance() -> dict[str, object]:
     """Which reference texts an identification was made against."""
     return dict(_CORPUS_META)
 
@@ -238,7 +238,7 @@ def load_corpus(json_dir: Path) -> str:
             "license_list_version": version,
             "source": str(json_dir),
             "commit": _checkout_commit(json_dir.parent),
-            "licenses": str(len(entries)),
+            "licenses": len(entries),
         }
     )
     return version

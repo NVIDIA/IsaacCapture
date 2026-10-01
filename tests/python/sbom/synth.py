@@ -527,6 +527,9 @@ METADATA = "\n".join(
         "License-Expression: Apache-2.0",
         "License-File: LICENSE.md",
         "Requires-Python: >=3.11",
+        # The transition wheel requires this one and this one requires it back;
+        # a cycle is the shape the real pair has.
+        "Requires-Dist: isaacteleop>=0.4.0",
         "Requires-Dist: numpy>=1.23.0",
         "Requires-Dist: pyyaml>=6.0.3",
         "",

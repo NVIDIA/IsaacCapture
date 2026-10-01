@@ -191,6 +191,11 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
         "schema": "isaaccapture-license-report/2",
         "wheel": wheel_name,
         "generated_from_commit": evidence_doc.get("project", {}).get("commit"),
+        # The commit alone does not describe a tree that was modified, and this
+        # report is what a reader uses to reproduce the build.
+        "source_tree_modified": str(
+            evidence_doc.get("project", {}).get("describe") or ""
+        ).endswith("-dirty"),
         "spdx_license_list_version": evidence_doc.get("license_list_version"),
         "license_data": evidence_doc.get("license_data", {}),
         "components": components,
@@ -213,7 +218,13 @@ def report_markdown(payload: dict) -> str:
     lines = [
         f"# Component-to-license report — `{payload['wheel']}`",
         "",
-        f"Source commit: `{payload['generated_from_commit'] or 'unknown'}`  ",
+        f"Source commit: `{payload['generated_from_commit'] or 'unknown'}`"
+        + (
+            " (built from a tree with uncommitted changes)"
+            if payload.get("source_tree_modified")
+            else ""
+        )
+        + "  ",
         f"SPDX license list: `{payload['spdx_license_list_version'] or 'unknown'}` "
         f"(spdx/license-list-data `{payload.get('license_data', {}).get('commit', '?')[:12]}`)",
         "",
@@ -255,6 +266,17 @@ def report_markdown(payload: dict) -> str:
         ]
     else:
         lines.append("None recorded.")
+
+    lines += ["", "## License texts packaged in this wheel", ""]
+    lines += [
+        f"- `{item}`" for item in payload.get("packaged_license_files") or []
+    ] or ["None."]
+    if payload.get("packaged_license_files"):
+        lines += [
+            "",
+            "Declared in METADATA as `License-File`: "
+            + ("yes" if payload.get("metadata_license_files_declared") else "no"),
+        ]
 
     lines += ["", "## Consumer requirements (wheel metadata)", ""]
     lines += [f"- `{item}`" for item in payload["consumer_requirements"]] or [
