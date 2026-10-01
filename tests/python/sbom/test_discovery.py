@@ -188,3 +188,28 @@ def test_the_codemodel_reader_works_on_a_codemodel_cmake_wrote(
         assert graph.by_name(output.name), "every artifact is findable by name"
         for how in graph.contributions(artifact).values():
             assert how <= {"compiled-source", "header-include"}
+
+
+def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data):
+    """A developer's other build directory holds staged copies of the repo.
+
+    Walking those as source makes a file's origin ambiguous, which surfaces as
+    an unexplained wheel member rather than a wrong one. A configured tree says
+    what it is with a CMakeCache.txt.
+    """
+    from sbom import evidence, licensing
+
+    licensing.load_corpus(license_data)
+    stray = workspace.root / "build-debug"
+    (stray / "isaaccapture").mkdir(parents=True)
+    (stray / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Debug\n")
+    copy = stray / "isaaccapture" / "__init__.py"
+    copy.write_text(
+        (workspace.root / "src/python/isaaccapture/__init__.py").read_text()
+    )
+
+    discovered = evidence.discover(workspace.root, workspace.build)
+    indexed = set(discovered.repo_files.by_hash.values())
+
+    assert "./src/python/isaaccapture/__init__.py" in indexed
+    assert not any(item.startswith("./build-debug/") for item in indexed)

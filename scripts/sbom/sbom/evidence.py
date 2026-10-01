@@ -159,10 +159,19 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     repo_files = FileIndex()
     # Skip the build tree by path, not by name: --build-dir is free-form, and a
     # differently-named one inside the repo would otherwise be walked twice.
+    # Any *other* configured tree is skipped too, found by the CMakeCache.txt
+    # that makes it one -- a second build directory holds staged copies of the
+    # repo, and walking them as source leaves a file's origin ambiguous rather
+    # than wrong, which reads as an unexplained member.
+    other_builds = tuple(
+        path.parent
+        for pattern in ("*/CMakeCache.txt", "*/*/CMakeCache.txt")
+        for path in repo_root.glob(pattern)
+    )
     repo_files.add_tree(
         repo_root,
         ".",
-        skip=(build_dir, repo_root / "build-wheel", repo_root / "dist"),
+        skip=(build_dir, *other_builds, repo_root / "build-wheel", repo_root / "dist"),
     )
 
     # _deps/*-src is the component-source domain, already indexed above; a wheel
