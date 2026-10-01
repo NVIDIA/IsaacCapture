@@ -425,10 +425,14 @@ class Resolver:
         component_file = self.source_files.path_suffix_match(wheel_path)
         if component_file:
             key = component_file.split("/", 1)[0].removesuffix("-src")
+            origin_digest = self.source_files.digest_of_display(component_file)
             return Attribution(
                 path=wheel_path,
                 origin="derived",
-                detail=f"{source}; derived from {component_file}",
+                detail=(
+                    f"{source}; derived from {component_file}"
+                    + (f" (origin sha256:{origin_digest})" if origin_digest else "")
+                ),
                 components={key: {"derived-file"}},
                 primary=key,
             )

@@ -28,9 +28,12 @@ Every text there comes from this repository or from a component the wheel redist
 The SPDX reference texts the collector matches against are a separate thing and are never
 packaged — see `How licenses are determined`_.
 
-``.dist-info/sboms/`` holds the contents SBOM and nothing else, which is what the
+``.dist-info/sboms/`` is what the
 `binary distribution format <https://packaging.python.org/en/latest/specifications/binary-distribution-format/>`_
-reserves it for. Reports and manifests are published beside the wheel instead.
+reserves for SBOM documents, and it is shared: ``auditwheel`` writes a CycloneDX document
+of its own there describing the libraries it vendored. This collector looks for its
+document by name and leaves anything else alone. Reports and manifests are published beside
+the wheel instead.
 
 Verifying a wheel
 -----------------
@@ -163,8 +166,9 @@ honest as the build changes.
 
 Post-processing is recorded as such. ``patchelf``, ``auditwheel``'s RPATH rewrite and the
 build's MJCF asset stripping all leave bytes that no longer hash to their origin, so those
-members are reported as *derived from* a named input, with the original digest, rather
-than as an exact copy.
+members are reported as *derived from* a named input rather than as an exact copy, with
+the input's digest wherever the input was hashed — which it is for an archive member, and
+is not for a file matched only by its path.
 
 How licenses are determined
 ---------------------------
@@ -184,7 +188,13 @@ shipping nothing. Pinning is by commit, so no tag or branch upstream can move un
 build, and each report records the commit its identifications were made against.
 
 Consulting the list is not shipping it. Every current identifier is available to match
-against, so a dependency arriving under any of them lands with a real SPDX id.
+against, so a dependency arriving under any of them is identified. Naming it in the
+document is a second question: a document states the licence list it was built against, and
+``license-expression`` — which a consumer validates with, and which
+:code-file:`scripts/sbom/pyproject.toml` pins — ships its own, older copy. An id the fetched
+list knows and that grammar does not cannot be published as an id, so it travels as a
+``LicenseRef-`` carrying the text, and the component is listed under *License evidence gaps*
+with that as the stated reason.
 
 What the wheel carries for a third-party component is that component's own license file,
 verbatim, copyright holders and all. Substituting a reference text would convey the terms
@@ -202,9 +212,12 @@ party's terms would put our copyright above their code. Those texts ship under
 matching or with any other component.
 
 A match needs a canonical license text to be almost entirely present *and* to account for a
-real share of the file, which is what stops a license quoted in the appendix of a long
-agreement from being mistaken for that agreement's own terms. A file that genuinely carries
-two licenses is reported as carrying both.
+real share of the file: a tenth of a long agreement reproducing a license in an appendix is
+not that agreement's own terms. The second threshold is the looser of the two, so a short
+file quoting a license in full still matches — the bound it sets is on padding around a
+text, not on a document that is mostly one. A file that genuinely carries two *distinct*
+licenses is reported as carrying both; where one is a near-duplicate of the other, only the
+match survives, and a disjunctive grant is not expressible here at all.
 
 A text that matches nothing is not guessed at. It becomes a ``LicenseRef-`` whose full text
 travels in the document, which says "these are the terms that shipped" without claiming to

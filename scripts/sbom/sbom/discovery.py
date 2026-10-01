@@ -978,6 +978,7 @@ class FileIndex:
         self.all_by_hash: dict[str, list[str]] = {}
         self.by_suffix: dict[str, list[str]] = {}
         self._digests: dict[str, str] = {}
+        self._by_display: dict[str, str] = {}
 
     def digest_of(self, path: Path) -> str | None:
         """The digest this index already computed for a path, if it indexed it."""
@@ -1014,10 +1015,15 @@ class FileIndex:
             self._digests[str(path.resolve())] = digest
             self.by_hash.setdefault(digest, display)
             self.all_by_hash.setdefault(digest, []).append(display)
+            self._by_display[display] = digest
             # Two trailing segments is enough to disambiguate an __init__.py.
             self.by_suffix.setdefault(
                 "/".join(relative.rsplit("/", 2)[-2:]), []
             ).append(display)
+
+    def digest_of_display(self, display: str) -> str | None:
+        """The digest this index recorded for one of its own display paths."""
+        return self._by_display.get(display)
 
     def path_suffix_match(self, wheel_path: str) -> str | None:
         key = "/".join(wheel_path.rsplit("/", 2)[-2:])
