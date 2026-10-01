@@ -8,6 +8,7 @@
 // Include binding definitions.
 #include "controller_bindings.h"
 #include "full_body_bindings.h"
+#include "guman_manus_glove_bindings.h"
 #include "hand_bindings.h"
 #include "haptic_command_bindings.h"
 #include "head_bindings.h"
@@ -67,6 +68,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind vendor-neutral HapticCommand table.
     core::bind_haptic_command(m);
+
+    // Bind Guman's native Manus-glove hand-skeleton frame table.
+    core::bind_guman_manus_glove(m);
 
     // Bind OAK types (StreamType enum, FrameMetadataOak table).
     core::bind_oak(m);

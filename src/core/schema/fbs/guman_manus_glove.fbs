@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Guman's own native Manus-glove hand-skeleton capture, pushed into IsaacTeleop's
+// DeviceIO/MCAP machinery rather than read through IsaacTeleop's own ManusXrDevice path.
+// 25 joints * 4x4 row-major pose each = 400 floats per hand.
+table GumanManusGloveFrame {
+    left_hand_pose: [float] (id: 0);
+    right_hand_pose: [float] (id: 1);
+}
+
+// MCAP recording wrapper required by the SchemaTracker<RecordT, DataTableT> template.
+table GumanManusGloveFrameRecord {
+    data: GumanManusGloveFrame (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type GumanManusGloveFrameRecord;

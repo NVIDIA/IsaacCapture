@@ -66,6 +66,9 @@ from ._schema import (
     PluginDeviceStatusSnapshotRecord,
     # Haptic command types (vendor-neutral cross-process device output).
     HapticCommand,
+    # Guman native Manus-glove hand-skeleton frame.
+    GumanManusGloveFrame,
+    GumanManusGloveFrameRecord,
     # Camera-related types.
     StreamType,
     FrameMetadataOak,
@@ -163,6 +166,9 @@ __all__ = [
     "PluginDeviceStatusSnapshotRecord",
     # Haptic command types.
     "HapticCommand",
+    # Guman native Manus-glove hand-skeleton frame.
+    "GumanManusGloveFrame",
+    "GumanManusGloveFrameRecord",
     # Camera types.
     "StreamType",
     "FrameMetadataOak",

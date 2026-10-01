@@ -60,3 +60,20 @@ tensor_identifier = "frame_metadata"
 channel = "oak"
 header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
+
+# Push + pull pair sharing one schema/collection, so Guman's own native Manus-glove capture
+# (outside IsaacTeleop entirely) can be pushed in-process and recorded via a plain reader --
+# a push-direction tracker alone has no MCAP recording path (see GumanMcapRecordingPlan.md).
+[[tracker]]
+name = "guman_manus_glove"
+direction = "push"
+table = "GumanManusGloveFrame"
+tensor_identifier = "guman_manus_glove"
+max_flatbuffer_size = 2048
+
+[[tracker]]
+name = "guman_manus_glove_reader"
+table = "GumanManusGloveFrame"
+schema = "guman_manus_glove"
+tensor_identifier = "guman_manus_glove"
+max_flatbuffer_size = 2048
