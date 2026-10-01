@@ -69,11 +69,15 @@ name = "guman_manus_glove"
 direction = "push"
 table = "GumanManusGloveFrame"
 tensor_identifier = "guman_manus_glove"
-max_flatbuffer_size = 2048
+# Two hands x 25 joints x 4x4 pose = 800 floats = 3200 raw bytes before FlatBuffers
+# overhead -- 2048 was too small for a real push. Live-path enforcement of this limit
+# (SchemaPusher/SchemaTracker) remains unverified pending a real CloudXR runtime.
+max_flatbuffer_size = 4096
 
 [[tracker]]
 name = "guman_manus_glove_reader"
 table = "GumanManusGloveFrame"
 schema = "guman_manus_glove"
 tensor_identifier = "guman_manus_glove"
-max_flatbuffer_size = 2048
+channel = "guman_manus_glove"
+max_flatbuffer_size = 4096
