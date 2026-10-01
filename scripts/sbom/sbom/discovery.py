@@ -176,8 +176,8 @@ def _notice_from(evidence) -> str:
         found
         for item in evidence
         if item.kind == "grant"
-        and (found := licensing.read_notice(item.text))
-        and not licensing.notice_is_the_licence_authors(
+        for found in licensing.read_notices(item.text)
+        if not licensing.notice_is_the_licence_authors(
             found, [license_id for license_id, _, _ in item.matches]
         )
     ]
@@ -648,8 +648,11 @@ def discover_vendored(
         concluded, declared = licensing.expression(evidence, key)
         if licences.get(key):
             declared = licensing.combine(sorted(licences[key]))
-        relative = ", ".join(
-            sorted(str(item.relative_to(repo_root)) for item in paths)[:4]
+        # Say when the list is shortened; without the marker it reads as the
+        # whole set, and the first four by name need not be the ones that ship.
+        named = sorted(str(item.relative_to(repo_root)) for item in paths)
+        relative = ", ".join(named[:4]) + (
+            f", and {len(named) - 4} more" if len(named) > 4 else ""
         )
         components[key] = Component(
             key=key,

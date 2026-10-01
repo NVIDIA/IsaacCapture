@@ -55,6 +55,12 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
                 for license_id, containment, coverage in item.matches
             )
             if item.matches
+            # No text of its own to package: this is the SPDX reference text for
+            # the identifier the component's files state about themselves, which
+            # is a substitution and not a reading of the component.
+            else f" the SPDX reference text for {item.identified}, substituted "
+            "because this component ships no license file"
+            if item.origin == licensing.SPDX_REFERENCE
             else ""
         )
         for item in component.evidence
@@ -93,10 +99,8 @@ def _component_package(component: Component, roles: set[str], dist_info: str) ->
     return package
 
 
-def _extracted_licenses(
-    components: list[Component],
-) -> tuple[list[dict], dict[str, str]]:
-    """Texts for every LicenseRef the document uses, taken from the shipped file."""
+def _extracted_entries(components: list[Component]) -> list[dict]:
+    """One entry per distinct text, named by the id the components now share."""
     entries: dict[str, dict] = {}
     for component in components:
         refs = licensing.license_refs(
@@ -112,9 +116,18 @@ def _extracted_licenses(
                     f"{ref} was minted for two components with different terms; "
                     "a LicenseRef identifies one text"
                 )
+            shipped = ", ".join(item.path for item in grants)
             entries[ref] = {
                 "licenseId": ref,
-                "name": f"License terms shipped with {component.name}",
+                "name": "License terms shipped with "
+                + ", ".join(
+                    sorted(
+                        {entries[ref]["_for"], component.name}
+                        if ref in entries
+                        else {component.name}
+                    )
+                ),
+                "_for": component.name,
                 "extractedText": body,
                 "comment": (
                     (
@@ -125,64 +138,12 @@ def _extracted_licenses(
                         else "Matched an identifier newer than the SPDX grammar "
                         "this document ships with"
                     )
-                    + "; reproduced here verbatim from "
-                    + ", ".join(item.path for item in grants)
-                    + "."
+                    + f"; reproduced here verbatim from {shipped}."
                 ),
             }
-    return _share_identical_texts([entries[key] for key in sorted(entries)])
-
-
-def _rename_refs(expression: str, renamed: dict[str, str]) -> str:
-    """Substitute whole identifiers, never substrings.
-
-    `LicenseRef-alpha` is a prefix of `LicenseRef-alpha-extra`, so a plain
-    replace turns the longer id into one nothing defines and orphans its entry.
-    """
-    for old_id, new_id in renamed.items():
-        expression = re.sub(
-            rf"(?<![\w.-]){re.escape(old_id)}(?![\w.-])", new_id, expression
-        )
-    return expression
-
-
-def _share_identical_texts(entries: list[dict]) -> tuple[list[dict], dict[str, str]]:
-    """One entry per distinct text, not one per component that ships it.
-
-    Components can carry byte-identical terms -- two builds of one SDK, a licence
-    a vendor applies across products -- and a LicenseRef is an identifier for a
-    text, so minting one each duplicates the text in full. Where several share
-    one, they share one id, named after the text so it belongs to no single
-    component.
-    """
-    by_text: dict[str, list[dict]] = {}
-    for entry in entries:
-        by_text.setdefault(entry["extractedText"], []).append(entry)
-
-    shared: list[dict] = []
-    renamed: dict[str, str] = {}
-    for text, group in by_text.items():
-        if len(group) == 1:
-            shared.append(group[0])
-            continue
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-        canonical = f"LicenseRef-shared-text-{digest}"
-        for entry in group:
-            renamed[entry["licenseId"]] = canonical
-        shared.append(
-            {
-                **group[0],
-                "licenseId": canonical,
-                "name": "License terms shipped with "
-                + ", ".join(
-                    sorted(
-                        item["name"].removeprefix("License terms shipped with ")
-                        for item in group
-                    )
-                ),
-            }
-        )
-    return sorted(shared, key=lambda item: item["licenseId"]), renamed
+    for entry in entries.values():
+        entry.pop("_for", None)
+    return sorted(entries.values(), key=lambda item: item["licenseId"])
 
 
 _EXTRA_MARKER = re.compile(r"\bextra\s*==")
@@ -245,6 +206,28 @@ def _dependency_refs(
             }
         )
     return refs
+
+
+def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
+    """The declared licence, AND the terms of everything redistributed under its own.
+
+    A component whose terms the build could not name travels as a LicenseRef,
+    and those are exactly the ones a reader must not miss -- a proprietary SDK
+    EULA among them. Components under a licence the declaration already covers
+    add nothing and are left out.
+    """
+    others = sorted(
+        {
+            component.license_concluded
+            for component in inventory.components_present.values()
+            if "LicenseRef-" in component.license_concluded
+        }
+    )
+    if not others:
+        return declared
+    if declared == NOASSERTION:
+        return licensing.combine(others)
+    return licensing.combine([declared, *others])
 
 
 def build_document(
@@ -335,7 +318,11 @@ def build_document(
         "downloadLocation": NOASSERTION,
         "filesAnalyzed": True,
         "homepage": project["homepage"],
-        "licenseConcluded": project["license"],
+        # Declared is what the distribution says of itself. Concluded is what
+        # this document found in it, and a wheel carrying a component under
+        # other terms is not wholly under the declared licence -- saying so is
+        # the field a compliance tool reads for "what is this artifact".
+        "licenseConcluded": _wheel_conclusion(project["license"], inventory),
         "licenseDeclared": project["license"],
         "licenseInfoFromFiles": sorted(stated_in_files) or [NOASSERTION],
         # The notices its own files carry. Declaring none beside a supplier, a
@@ -525,15 +512,7 @@ def build_document(
     # rebuild be compared against a published one byte for byte.
     stamp = stamped_now()
 
-    extracted, renamed = _extracted_licenses(
-        list(inventory.components_present.values())
-    )
-    if renamed:
-        # Every reference to a text that is now shared points at the shared id;
-        # leaving one behind would use a LicenseRef the document stops defining.
-        for package in packages:
-            for key in ("licenseConcluded", "licenseDeclared"):
-                package[key] = _rename_refs(package[key], renamed)
+    extracted = _extracted_entries(list(inventory.components_present.values()))
 
     return {
         "spdxVersion": SPDX_VERSION,

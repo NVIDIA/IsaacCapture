@@ -337,13 +337,22 @@ def _read(path: Path) -> str | None:
     return data.decode("utf-8", "replace")
 
 
+SPDX_REFERENCE = "spdx-reference"
+
+
 def evidence_for(
     component: str, origin: str, display: str, text: str, kind: str
 ) -> LicenseEvidence:
-    matchable = kind == "grant"
+    # A reference text is not matched: scoring it against the corpus it came
+    # from returns a perfect score, which reads as a measurement of the
+    # component's own file and is a measurement of nothing.
+    matchable = kind == "grant" and origin != SPDX_REFERENCE
     tag = _SPDX_TAG.search(text[:4096]) if matchable else None
     matches = tuple(identify(text)) if matchable else ()
     identified = " AND ".join(license_id for license_id, _, _ in matches) or None
+    if origin == SPDX_REFERENCE:
+        # Named by the identifier it was fetched for, with no score behind it.
+        identified = Path(display).stem
     return LicenseEvidence(
         component=component,
         origin=origin,
@@ -468,6 +477,13 @@ def expression(
     grants = [item for item in evidence if item.kind == "grant"]
     identified = sorted(
         {license_id for item in grants for license_id, _, _ in item.matches}
+        # A reference text is named by the identifier it was fetched for; there
+        # is no match to read, because matching it would be circular.
+        | {
+            item.identified
+            for item in grants
+            if item.origin == SPDX_REFERENCE and item.identified
+        }
     )
     if identified and component_key and not all(map(expressible, identified)):
         identified = [license_ref(component_key)]
@@ -551,10 +567,18 @@ def fold_notices(notices) -> list[str]:
     )
 
 
+# A notice is `Copyright` plus a marker that prose does not carry: a (c), a ©,
+# or a year. It need not start the line -- qhull writes `Qhull, Copyright (c)
+# 1993-2020` -- so a short lead-in is allowed before it.
 _PLAIN_COPYRIGHT = re.compile(
-    r"^[^\w\n]*(?P<notice>Copyright\b[^\n\r]*\d{4}[^\n\r]*|"
-    r"Copyright\b[^\n\r]*)$",
+    r"^[^\n\r]{0,40}?(?P<notice>Copyright\b\s*(?:\(c\)|©|\d{4})[^\n\r]*)$",
     re.MULTILINE | re.IGNORECASE,
+)
+# Lines of a licence body that mention copyright without stating one.
+_NOT_A_NOTICE = re.compile(
+    r"\bshall be\b|\bowner or entity\b|\bbe liable\b|\bmeans?\b|"
+    r"\bsubject to\b|\bdefined as\b",
+    re.IGNORECASE,
 )
 _PLACEHOLDER = re.compile(
     r"\[yyyy\]|<year>|\[name of copyright owner\]|<copyright", re.I
@@ -596,19 +620,45 @@ def notice_is_the_licence_authors(notice: str, identified: list[str]) -> bool:
     )
 
 
-def read_notice(text: str) -> str | None:
-    """A concrete copyright line stated in a licence text, if it carries one.
+def read_notices(text: str) -> list[str]:
+    """Every concrete copyright notice a licence text states.
 
-    A reference text carries the template instead -- `Copyright [yyyy] [name of
-    copyright owner]` -- which names nobody, so it is not a notice and recording
-    it would claim one where the file states none.
+    All of them: glfw names two holders and miniz names two, and under MIT, BSD
+    and Zlib the notice is the obligation, so keeping the first is a notice file
+    that does not discharge it. A reference text carries the template instead --
+    `Copyright [yyyy] [name of copyright owner]` -- which names nobody.
     """
-    for match in _PLAIN_COPYRIGHT.finditer(text):
-        notice = " ".join(match.group("notice").split()).rstrip("*/ ")
-        if _PLACEHOLDER.search(notice) or not re.search(r"\d{4}", notice):
+    lines = text.splitlines()
+    found: list[str] = []
+    for index, line in enumerate(lines):
+        match = _PLAIN_COPYRIGHT.match(line)
+        if not match:
             continue
-        return notice
-    return None
+        notice = " ".join(match.group("notice").split()).rstrip("*/ ")
+        # A holder can run on across lines -- libccd names a department, a
+        # faculty and a university -- and a trailing comma is the author saying
+        # so. Anything else ends the notice.
+        step = index
+        while notice.endswith(",") and step + 1 < len(lines):
+            step += 1
+            notice = f"{notice} {' '.join(lines[step].split())}".strip().rstrip("*/ ")
+        if _PLACEHOLDER.search(notice) or _NOT_A_NOTICE.search(notice):
+            continue
+        # Something has to follow the word: a holder, or at least the years the
+        # file states. qhull writes `Qhull, Copyright (c) 1993-2020` and puts the
+        # holder on the lines below, so a year alone is still what it states.
+        rest = notice[len("Copyright") :]
+        if not re.search(r"[A-Za-z]{2}", rest) and not re.search(r"\d{4}", rest):
+            continue
+        if notice not in found:
+            found.append(notice)
+    return found
+
+
+def read_notice(text: str) -> str | None:
+    """The first notice a licence text states, where only one is wanted."""
+    notices = read_notices(text)
+    return notices[0] if notices else None
 
 
 def read_copyright(text: str) -> str | None:
@@ -653,7 +703,7 @@ def canonical_evidence(
             found.append(
                 evidence_for(
                     component_key,
-                    "spdx-reference",
+                    SPDX_REFERENCE,
                     f"{token}.txt",
                     reference.text,
                     "grant",
@@ -664,6 +714,48 @@ def canonical_evidence(
 
 class ExpressionReadError(Exception):
     """An expression in a document cannot be read, so what it names is unknown."""
+
+
+def shared_refs(components) -> dict[str, str]:
+    """Rename map putting components with byte-identical terms on one LicenseRef.
+
+    A LicenseRef identifies a text, not a component, so two builds of one SDK
+    under the same EULA share an id. The map is produced here, before anything
+    renders, so the document, the report and the packaged notices all name the
+    same id -- they are cross-referenced, and a text shipped under one name in
+    the wheel's notices and another in the wheel's SBOM reconciles with nothing.
+    """
+    by_text: dict[str, list[str]] = {}
+    for component in components:
+        terms = verbatim_terms(component.evidence)
+        if terms:
+            by_text.setdefault(terms, []).append(component.key)
+
+    renamed: dict[str, str] = {}
+    for text, keys in by_text.items():
+        if len(keys) < 2:
+            continue
+        canonical = f"LicenseRef-shared-text-{sha256_text(text)[:12]}"
+        for key in keys:
+            renamed[license_ref(key)] = canonical
+    return renamed
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def rename_refs(expression: str, renamed: dict[str, str]) -> str:
+    """Substitute whole identifiers, never substrings.
+
+    `LicenseRef-alpha` is a prefix of `LicenseRef-alpha-extra`, so a plain
+    replace turns the longer id into one nothing defines and orphans its entry.
+    """
+    for old_id, new_id in renamed.items():
+        expression = re.sub(
+            rf"(?<![\w.-]){re.escape(old_id)}(?![\w.-])", new_id, expression
+        )
+    return expression
 
 
 def identifiers_in(expression: str) -> list[str]:

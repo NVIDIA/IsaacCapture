@@ -204,6 +204,23 @@ def build(
         wheel, metadata_raw, resolver, discovery.staged_root
     )
 
+    # Components carrying byte-identical terms share one LicenseRef, settled here
+    # so the document, the reports and the notices packaged in the wheel all name
+    # the same id. Deciding it inside the renderer left the notices file naming
+    # an id the SBOM beside it did not define.
+    renamed = licensing.shared_refs(inventory.components_present.values())
+    if renamed:
+        for key, component in inventory.components_present.items():
+            inventory.components_present[key] = replace(
+                component,
+                license_concluded=licensing.rename_refs(
+                    component.license_concluded, renamed
+                ),
+                license_declared=licensing.rename_refs(
+                    component.license_declared, renamed
+                ),
+            )
+
     if inventory.unattributed:
         raise BuildError(
             "these wheel members could not be traced to anything this build "
