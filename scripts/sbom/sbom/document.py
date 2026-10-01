@@ -229,6 +229,10 @@ def build_document(
 
     # What the files themselves state, for the package-level roll-up below.
     stated_in_files: set[str] = set()
+    # Notices stated by files this distribution's own, for the package below. A
+    # file attributed to a component carries that component's notice, which
+    # belongs to that component's package and not to this one.
+    stated_copyright: set[str] = set()
     for index, entry in enumerate(sorted(wheel.entries, key=lambda item: item.name)):
         if entry.name in excluded_files:
             continue
@@ -255,6 +259,8 @@ def build_document(
             record["licenseConcluded"] = attribution.spdx_tag
             record["licenseInfoInFiles"] = [attribution.spdx_tag]
             stated_in_files.add(attribution.spdx_tag)
+        if attribution and attribution.copyright_text and not attribution.primary:
+            stated_copyright.add(attribution.copyright_text)
 
         comment = []
         if attribution:
@@ -285,7 +291,10 @@ def build_document(
         "licenseConcluded": project["license"],
         "licenseDeclared": project["license"],
         "licenseInfoFromFiles": sorted(stated_in_files) or [NOASSERTION],
-        "copyrightText": NOASSERTION,
+        # The notices its own files carry. Declaring none beside a supplier, a
+        # licence and files that each state one left the package saying less
+        # about itself than anything in it.
+        "copyrightText": "\n".join(sorted(stated_copyright)) or NOASSERTION,
         "packageVerificationCode": {
             "packageVerificationCodeValue": code,
             "packageVerificationCodeExcludedFiles": [

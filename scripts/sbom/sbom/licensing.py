@@ -42,9 +42,9 @@ _NGRAM = 6
 _CONTAINMENT_THRESHOLD = 0.90
 # ...and has to account for a real share of the file it was found in. Large
 # agreements (the CUDA EULA, for one) reproduce whole OSS licenses in an
-# appendix; those reach full containment at about 3% coverage, while a genuine
-# match -- even a Debian copyright file wrapped in packaging boilerplate -- sits
-# at 30% or above.
+# appendix; those reach full containment at a few percent coverage, while a
+# genuine match sits well above it -- a Debian copyright file naming several
+# licenses around the one matched is the low end, at a quarter.
 _COVERAGE_THRESHOLD = 0.20
 # Two licenses are one family when either text is nearly inside the other.
 _FAMILY_THRESHOLD = 0.90
