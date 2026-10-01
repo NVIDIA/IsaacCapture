@@ -206,6 +206,22 @@ decides. Where a component has *no* license file, and only states an identifier 
 source headers, there is nothing of its own to package: the text that identifier names in
 the pinned list ships instead, together with the copyright line those headers state.
 
+A component can also state terms for one part of itself — a vendored asset set inside a
+larger project, with its own ``LICENSE`` and its own holder. Those are read and packaged
+too, but only where that directory reached the wheel, and they never change the component's
+own licence: they name a holder for the bytes that shipped, which is what the notice
+obligation is about.
+
+The distribution's own declared licence is an obligation like any other. A wheel declaring
+``License-Expression`` and shipping no text for it stops the build, the same as a
+redistributed component with no terms; where the wheel ships none, the reference text for
+each identifier is packaged from the pinned list and declared under PEP 639.
+
+``licenseDeclared`` on the wheel is what the distribution says of itself. ``licenseConcluded``
+is what this document found in it, so a wheel carrying a component whose terms the build
+could not name states that expression alongside the declaration — a reader asking "what is
+this artifact" is told about the proprietary payload rather than about the declaration only.
+
 Never a file from this checkout. ``LICENSES/`` holds this repository's REUSE pool, whose
 copies exist to license *this* project and carry its notices; packaging one as a third
 party's terms would put our copyright above their code. Those texts ship under

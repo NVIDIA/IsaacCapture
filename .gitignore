@@ -90,3 +90,6 @@ tmp/
 !/examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/follower/follower_arm.xml
 # Wheel SBOM and license evidence written by the collector in scripts/sbom/
 /sbom/
+
+# Audit notes kept with the branch, deliberately not published.
+docs/sbom-open-findings.md
