@@ -161,7 +161,7 @@ def git(repo: Path, *args: str) -> str | None:
     )
 
 
-def _notice_from(evidence) -> str:
+def notice_from(evidence) -> str:
     """The copyright a component's own licence text states, where it states one.
 
     Permissive licences generally require the notice to travel with the terms,
@@ -175,7 +175,7 @@ def _notice_from(evidence) -> str:
     notices = [
         found
         for item in evidence
-        if item.kind == "grant"
+        if item.kind in ("grant", "nested")
         for found in licensing.read_notices(item.text)
         if not licensing.notice_is_the_licence_authors(
             found, [license_id for license_id, _, _ in item.matches]
@@ -267,7 +267,7 @@ def discover_source_trees(deps_dir: Path) -> dict[str, Component]:
             download_location=download,
             source_info=" ".join(details),
             root=root,
-            copyright_text=_notice_from(evidence),
+            copyright_text=notice_from(evidence),
             license_concluded=concluded,
             license_declared=declared_expression,
             evidence=tuple(evidence),
@@ -903,7 +903,7 @@ def system_component(soname: str, origin: dict) -> Component:
         # The distro copyright file is where the holder is stated, and it was
         # read, packaged and put on the file record -- then left off the package
         # and out of the notices every other component appears in.
-        copyright_text=_notice_from(evidence),
+        copyright_text=notice_from(evidence),
         homepage="NOASSERTION",
         # A distro package the machine can name resolves; pkg:generic does not.
         purl=(

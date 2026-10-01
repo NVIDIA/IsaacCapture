@@ -72,8 +72,9 @@ class LicenseEvidence:
     sha256: str
     size: int
     text: str
-    # "grant" is the component's own license, "notice" an attribution file, and
-    # "pool" a REUSE LICENSES/ entry that applies to individual files only.
+    # "grant" is the component's own license, "notice" an attribution file,
+    # "pool" a REUSE LICENSES/ entry that applies to individual files only, and
+    # "nested" terms stated for one subdirectory of a larger component.
     kind: str
     identified: str | None = None
     matches: tuple[tuple[str, float, float], ...] = ()
@@ -392,12 +393,26 @@ def discover_in_tree(
                 (item, "pool") for item in sorted(entry.rglob("*")) if item.is_file()
             )
 
+    # A subdirectory can carry its own terms and its own holder -- a vendored
+    # asset set inside a larger project. Collected as "nested" so it neither
+    # discharges the component's packaging obligation nor changes its licence,
+    # and kept only where that directory reached the wheel; see `nested_for`.
+    for path in sorted(root.rglob("*")) if root.is_dir() else []:
+        if (
+            path.is_file()
+            and path.parent != root
+            and path.parent.name.upper() not in {"LICENSES", "LICENSE"}
+            and (classify(path.name) or _NOTICE_NAMES.match(path.name))
+        ):
+            candidates.append((path, "nested"))
+
     for path, kind in candidates:
         text = _read(path)
         if text is None:
             continue
         display = f"{display_prefix}/{path.relative_to(root).as_posix()}"
         found.append(evidence_for(component, "component-file", display, text, kind))
+    # "nested" never satisfies the grant test below; that is the point.
 
     if not any(item.kind == "grant" for item in found):
         found.extend(_readme_fallback(component, root, display_prefix))
@@ -421,7 +436,10 @@ def _readme_fallback(
         # build instructions as the terms that shipped, and would bury a real
         # licence quoted there under enough prose to fall below the coverage
         # threshold and degrade to a LicenseRef.
-        display = f"{display_prefix}/{entry.name}"
+        # The fragment is load-bearing: the digest below is of the section, not
+        # of the file, and a path naming the whole file beside it is a pair a
+        # verifier cannot reproduce.
+        display = f"{display_prefix}/{entry.name}#license-section"
         return [
             evidence_for(
                 component, "readme-section", display, section.group(0), "grant"

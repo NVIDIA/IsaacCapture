@@ -249,7 +249,9 @@ def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
     after = known.components[synth.SDK_ARCHIVE]
 
     assert after.download_location.startswith("https://api.ngc.nvidia.com/")
-    assert after.supplier == "Organization: api.ngc.nvidia.com"
+    # The registrable name, not the endpoint: SPDX supplier is who a recipient
+    # asks for source or terms, and a CDN hostname answers nobody.
+    assert after.supplier == "Organization: nvidia"
     assert "fetched from https://" in after.source_info
 
 

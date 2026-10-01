@@ -24,6 +24,7 @@ from . import wheelfile
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from . import discovery as discovery_module
 from .discovery import project_supplier, sha256_file
 from .document import NOASSERTION
 from .inventory import Attribution
@@ -79,6 +80,46 @@ def _entry(name: str, data: bytes) -> Entry:
 def default_license_data(build_dir: Path) -> Path:
     """Where deps/third_party materializes the SPDX license list for this build."""
     return build_dir / "_deps" / "license-list-data-src" / "json"
+
+
+def _with_reached_nested(inventory, components: dict) -> dict:
+    """Drop nested terms whose directory contributed nothing to this wheel.
+
+    A nested LICENSE states a holder for part of a component -- the assets under
+    it -- and dropping it names the wrong holder for those bytes. Keeping all of
+    them names holders for code that never shipped.
+    """
+    reached: dict[str, set[str]] = {}
+    for attribution in inventory.attributions.values():
+        if attribution.source_path:
+            for key in attribution.components:
+                reached.setdefault(key, set()).add(attribution.source_path)
+
+    updated = {}
+    for key, component in components.items():
+        nested = [item for item in component.evidence if item.kind == "nested"]
+        if not nested:
+            continue
+        sources = reached.get(key, set())
+        kept = [
+            item
+            for item in nested
+            if any(
+                source.startswith(item.path.rsplit("/", 1)[0] + "/")
+                for source in sources
+            )
+        ]
+        if len(kept) == len(nested):
+            continue
+        evidence = tuple(
+            item for item in component.evidence if item.kind != "nested" or item in kept
+        )
+        updated[key] = replace(
+            component,
+            evidence=evidence,
+            copyright_text=discovery_module.notice_from(evidence),
+        )
+    return updated
 
 
 def _declared_without_text(declared: str, shipped: set[str]) -> list[str]:
@@ -204,22 +245,28 @@ def build(
         wheel, metadata_raw, resolver, discovery.staged_root
     )
 
-    # Components carrying byte-identical terms share one LicenseRef, settled here
-    # so the document, the reports and the notices packaged in the wheel all name
-    # the same id. Deciding it inside the renderer left the notices file naming
-    # an id the SBOM beside it did not define.
-    renamed = licensing.shared_refs(inventory.components_present.values())
-    if renamed:
-        for key, component in inventory.components_present.items():
-            inventory.components_present[key] = replace(
-                component,
-                license_concluded=licensing.rename_refs(
-                    component.license_concluded, renamed
-                ),
-                license_declared=licensing.rename_refs(
-                    component.license_declared, renamed
-                ),
-            )
+    # Two settlements before anything renders, applied to both views of a
+    # component so the document, the reports, the packaged notices and the
+    # evidence sidecar all describe the same thing.
+    #
+    # Terms stated for one subdirectory apply only if that directory reached
+    # this wheel: a test suite's licence is not this wheel's business, a
+    # vendored asset set's is. And components carrying byte-identical terms
+    # share one LicenseRef -- settled here because deciding it in the renderer
+    # left the notices file naming an id the SBOM beside it did not define.
+    settled = _with_reached_nested(inventory, inventory.components_present)
+    present = {**inventory.components_present, **settled}
+    renamed = licensing.shared_refs(present.values())
+    for key, component in list(present.items()):
+        present[key] = replace(
+            component,
+            license_concluded=licensing.rename_refs(
+                component.license_concluded, renamed
+            ),
+            license_declared=licensing.rename_refs(component.license_declared, renamed),
+        )
+    inventory.components_present.update(present)
+    resolver.components.update(present)
 
     if inventory.unattributed:
         raise BuildError(

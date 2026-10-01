@@ -28,7 +28,7 @@ from .discovery import (
     discover_vendored,
     project_authors,
     discover_source_trees,
-    _notice_from,
+    notice_from,
     tracked_files,
     EMPTY_SHA256,
 )
@@ -103,11 +103,21 @@ def _fetched_from(archive: Path) -> str | None:
 
 
 def _supplier_of(url: str | None) -> str:
-    """Whoever served the archive, named by the host that did."""
-    if not url:
+    """Who supplied the archive, where the URL says so.
+
+    A hostname is not a supplier: `api.ngc.nvidia.com` is a CDN endpoint, and
+    SPDX `supplier` is who a recipient asks for source or terms. Only a host
+    whose registrable domain names the supplier answers that, and the download
+    location carries the URL for everything else.
+    """
+    host = urlparse(url).hostname if url else None
+    if not host:
         return "NOASSERTION"
-    host = urlparse(url).hostname
-    return f"Organization: {host}" if host else "NOASSERTION"
+    labels = host.split(".")
+    # Second-level label of a two-label public suffix (`nvidia` of
+    # `api.ngc.nvidia.com`); anything shorter is not a name.
+    name = labels[-2] if len(labels) >= 2 else ""
+    return f"Organization: {name}" if len(name) > 2 else "NOASSERTION"
 
 
 def _archive_components(
@@ -153,7 +163,7 @@ def _archive_components(
             ),
             license_concluded=concluded,
             license_declared=declared,
-            copyright_text=_notice_from(evidence),
+            copyright_text=notice_from(evidence),
             evidence=tuple(evidence),
         )
     return components

@@ -65,6 +65,10 @@ class Attribution:
     # the other made the same fact answerable two ways depending on which index
     # happened to hold the bytes.
     exact: bool = False
+    # Where in the component these bytes came from, where an index named it.
+    # The detail string says it in prose; this is the same fact in a form the
+    # rest of the collector can use to ask what else sits in that directory.
+    source_path: str | None = None
 
     def as_json(self) -> dict:
         return {
@@ -72,6 +76,7 @@ class Attribution:
             "origin": self.origin,
             "detail": self.detail,
             "primary": self.primary,
+            "source_path": self.source_path,
             "components": {
                 key: sorted(how) for key, how in sorted(self.components.items())
             },
@@ -262,6 +267,7 @@ class Resolver:
                 detail=f"{source}; byte-identical to {component_file}",
                 components={key: {"copied-file"}},
                 primary=key,
+                source_path=component_file,
             )
 
         member = self.archives.by_hash.get(candidate_digest)
@@ -290,13 +296,23 @@ class Resolver:
                 if by_path:
                     build_file = by_path
             owner = self._staged_component_of(build_file)
+            # Say which of the two this is. The bytes match the build tree, so
+            # the member is that file; what the build made it from is not
+            # recorded anywhere this can read, and claiming a derivation without
+            # naming its input is the claim the document cannot support.
+            detail = f"{source}; byte-identical to {build_file}"
+            if owner:
+                detail += (
+                    f", in a tree the build staged for {owner}; the input it was"
+                    " produced from is not recorded"
+                )
             return Attribution(
                 path=wheel_path,
                 # Transforming a component's own file leaves a derivative work,
                 # which carries that component's terms. Only output that owes
                 # nothing to a third party is merely "generated".
                 origin="derived" if owner else "generated",
-                detail=f"{source}; {build_file}",
+                detail=detail,
                 components={owner: {"derived-file"}} if owner else {},
                 primary=owner,
             )
@@ -556,6 +572,7 @@ class Resolver:
                 ),
                 components={key: {"copied-file" if same else "derived-file"}},
                 primary=key,
+                source_path=component_file,
             )
 
         build_file = self.build_files.path_suffix_match(wheel_path)
