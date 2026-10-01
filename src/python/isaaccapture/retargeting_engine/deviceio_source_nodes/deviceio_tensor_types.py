@@ -22,6 +22,7 @@ from isaaccapture.schema import (
     JointStateOutput,
     FullBodyPose,
     MessageChannelMessagesTracked,
+    SpaceMouseOutput,
 )
 
 
@@ -90,6 +91,12 @@ class Generic3AxisPedalOutputTrackedType(_PayloadTensorType):
     """Generic3AxisPedalOutput payload from DeviceIO Generic3AxisPedalTracker."""
 
     _payload_cls = Generic3AxisPedalOutput
+
+
+class SpaceMouseOutputTrackedType(_PayloadTensorType):
+    """SpaceMouseOutput payload from DeviceIO SpaceMouseTracker."""
+
+    _payload_cls = SpaceMouseOutput
 
 
 class JointStateOutputTrackedType(_PayloadTensorType):
@@ -169,6 +176,18 @@ def DeviceIOGeneric3AxisPedalOutputTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_generic_3axis_pedal_output",
         [Generic3AxisPedalOutputTrackedType("pedal_tracked")],
+    )
+
+
+def DeviceIOSpaceMouseOutputTracked() -> TensorGroupType:
+    """Tracked spacemouse data from DeviceIO SpaceMouseTracker.
+
+    Contains:
+        spacemouse_tracked: SpaceMouseOutput handle, or None when inactive
+    """
+    return TensorGroupType(
+        "deviceio_spacemouse_output",
+        [SpaceMouseOutputTrackedType("spacemouse_tracked")],
     )
 
 
