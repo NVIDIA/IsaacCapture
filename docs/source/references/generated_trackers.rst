@@ -124,6 +124,8 @@ Still hand-written
        ``HapticCommand.endpoint`` (left/right). Paired with generated ``HapticCommandPushTracker``.
    * - ``TensorPushTracker``
      - Deliberately kept as the untyped ``bytes`` escape hatch
+   * - ``GamepadTracker``
+     - In-process reader of a Linux joystick-API device (``/dev/input/jsN``), no OpenXR extension
 
 A quick way to tell the two groups apart: only schema-based impls mention ``SchemaTracker`` or
 ``SchemaPusher``. Of the hand-written live impls that use those helpers, each is listed above.
