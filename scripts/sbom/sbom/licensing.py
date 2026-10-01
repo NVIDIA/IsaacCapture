@@ -666,6 +666,15 @@ class ExpressionReadError(Exception):
     """An expression in a document cannot be read, so what it names is unknown."""
 
 
+def identifiers_in(expression: str) -> list[str]:
+    """Every licence identifier an expression names, LicenseRef included."""
+    try:
+        parsed = _spdx_licensing().parse(expression, validate=False)
+    except (ExpressionError, ValueError, TypeError) as error:
+        raise ExpressionReadError(f"{expression!r}: {error}") from error
+    return sorted(_spdx_licensing().license_keys(parsed))
+
+
 def license_refs(*expressions: str) -> list[str]:
     """The LicenseRef- identifiers an expression uses, per the SPDX grammar."""
     found: set[str] = set()

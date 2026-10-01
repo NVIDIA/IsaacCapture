@@ -89,9 +89,18 @@ def _roles(inventory: Inventory, key: str) -> str:
 
 def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> str:
     """The notice file that travels inside the wheel."""
-    lines = [
-        "# Third-party notices",
-        "",
+    lines = ["# Third-party notices", ""]
+    if not inventory.components_present:
+        # Saying where texts live when none were written sends a reader to a
+        # directory the wheel does not contain.
+        lines += [
+            f"`{wheel_name}` redistributes no third-party component, so no "
+            "license text is packaged here.",
+            "",
+        ]
+        return "\n".join(lines)
+
+    lines += [
         f"Components redistributed in `{wheel_name}`, with the license text each",
         "obligation was read from. Texts are packaged under",
         f"`{licenses_root(dist_info)}third-party/`.",
@@ -275,6 +284,10 @@ def report_markdown(payload: dict) -> str:
         ]
         lines.append("")
     if not gaps and not unidentified:
-        lines.append("None; every redistributed component ships an identified license.")
+        lines.append(
+            "None; every redistributed component ships an identified license."
+            if payload["components"]
+            else "This distribution redistributes no third-party component."
+        )
 
     return "\n".join(lines) + "\n"

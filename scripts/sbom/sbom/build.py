@@ -25,17 +25,42 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from .discovery import project_supplier, sha256_file
+from .document import NOASSERTION
 from .inventory import Attribution
 from .wheelfile import Entry
 
-# Supplier is absent on purpose: it is read from the project's own packaging
-# metadata at build time, so a fork or a rename cannot leave this file naming
-# somebody else's organisation with nothing to catch it.
-PROJECT = {
-    "homepage": "https://github.com/NVIDIA/IsaacCapture",
-    "license": "Apache-2.0",
-    "document_namespace": "https://github.com/NVIDIA/IsaacCapture/spdx",
-}
+# Only the namespace this tool mints documents under. Supplier, licence and
+# homepage are read from the wheel's own packaging metadata, so a fork, a rename
+# or a second distribution built from the same tree cannot leave this file
+# stating facts about somebody else's.
+PROJECT = {"document_namespace": "https://github.com/NVIDIA/IsaacCapture/spdx"}
+
+
+def _project_facts(repo_root: Path, metadata: dict) -> dict:
+    """What this distribution says about itself, from its own metadata."""
+    urls = metadata.get("project_urls") or {}
+    homepage = next(
+        (
+            value
+            for key, value in urls.items()
+            if key.lower() in ("homepage", "home-page", "source", "repository")
+        ),
+        metadata.get("home_page") or NOASSERTION,
+    )
+    # The wheel's own `Author` first: a second distribution built from this tree
+    # is a different project, and the checkout's `pyproject.toml` describes only
+    # the one it is the root of.
+    author = (metadata.get("author") or "").strip()
+    return {
+        **PROJECT,
+        "supplier": f"Organization: {author}"
+        if author
+        else project_supplier(repo_root),
+        # `license` is the legacy free-text field; only an expression is an
+        # expression, and a wheel declaring neither declares nothing.
+        "license": metadata.get("license_expression") or NOASSERTION,
+        "homepage": homepage,
+    }
 
 
 class BuildError(Exception):
@@ -54,6 +79,37 @@ def _entry(name: str, data: bytes) -> Entry:
 def default_license_data(build_dir: Path) -> Path:
     """Where deps/third_party materializes the SPDX license list for this build."""
     return build_dir / "_deps" / "license-list-data-src" / "json"
+
+
+def _declared_without_text(declared: str, shipped: set[str]) -> list[str]:
+    """Identifiers in the declared expression with no packaged text to match."""
+    if declared == NOASSERTION:
+        return []
+    try:
+        identifiers = licensing.identifiers_in(declared)
+    except licensing.ExpressionReadError:
+        # An expression nothing can read names nothing that can be checked, and
+        # the document carries it verbatim; say so rather than pass silently.
+        return [declared]
+    return sorted(item for item in identifiers if f"{item.lower()}.txt" not in shipped)
+
+
+def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
+    """Reference texts for the ids this distribution declares and does not ship.
+
+    The identifiers come from the wheel's own `License-Expression`, so this adds
+    the terms the distribution says apply to itself -- never a third party's,
+    which are packaged from the files those components actually carry.
+    """
+    if declared == NOASSERTION:
+        return {}
+    names = {Path(item).name.lower() for item in shipped}
+    wanted = {}
+    for item in licensing.canonical_evidence("this-distribution", {declared}):
+        identifier = item.identified
+        if identifier and f"{identifier.lower()}.txt" not in names:
+            wanted[identifier] = item.text
+    return wanted
 
 
 def in_dependency_order(wheels: list[Path]) -> list[Path]:
@@ -141,7 +197,7 @@ def build(
             f"{wheel_path.name} already carries {sbom_name}. Run this on a freshly "
             "repaired wheel; rewriting one twice would duplicate its members."
         )
-    metadata_raw, _ = wheelfile.read_metadata(wheel_path, wheel.dist_info)
+    metadata_raw, wheel_metadata = wheelfile.read_metadata(wheel_path, wheel.dist_info)
 
     resolver = inventory_module.Resolver(discovery, system_resolver)
     inventory = inventory_module.build(
@@ -183,6 +239,26 @@ def build(
                 report_module.declared_license_path(wheel.dist_info, target)
             )
 
+    # The distribution's own declared licence is an obligation like any other.
+    # Apache-2.0 asks that recipients get a copy, and the gate above covers only
+    # what the build redistributes -- so a wheel could declare a licence whose
+    # text it does not carry, and the transition wheel did.
+    declared = _project_facts(repo_root, wheel_metadata)["license"]
+    shipped = {
+        report_module.declared_license_path(wheel.dist_info, item.name)
+        for item in wheel.entries
+        if report_module.is_packaged_license(wheel.dist_info, item.name)
+    } | set(packaged_paths)
+    missing_own = _own_license_texts(declared, shipped)
+    for identifier, text in sorted(missing_own.items()):
+        target = (
+            f"{report_module.licenses_root(wheel.dist_info)}LICENSES/{identifier}.txt"
+        )
+        additions[target] = text.encode("utf-8")
+        packaged_paths.append(
+            report_module.declared_license_path(wheel.dist_info, target)
+        )
+
     notices_path = report_module.notices_path(wheel.dist_info)
     additions[notices_path] = report_module.notices_markdown(
         inventory, wheel.dist_info, wheel_path.name
@@ -190,6 +266,21 @@ def build(
     packaged_paths.append(
         report_module.declared_license_path(wheel.dist_info, notices_path)
     )
+
+    # Whatever could not be supplied from the corpus -- a LicenseRef, an id the
+    # pinned list does not carry -- is a declaration with no terms behind it.
+    unmet = _declared_without_text(
+        declared,
+        {Path(item).name.lower() for item in packaged_paths}
+        | {Path(item).name.lower() for item in shipped},
+    )
+    if unmet:
+        raise BuildError(
+            f"{wheel_path.name} declares {declared} and packages no text for "
+            + ", ".join(unmet)
+            + ".\nA distribution has to ship the terms it declares, the same as "
+            "anything it redistributes; obtain the text before publishing it."
+        )
 
     patched_metadata = wheelfile.add_license_files(metadata_raw, sorted(packaged_paths))
     metadata_declared = patched_metadata != metadata_raw
@@ -242,7 +333,7 @@ def build(
     evidence_doc["system_libraries"] = resolver.system_libraries
 
     spdx = document_module.build_document(
-        {**PROJECT, "supplier": project_supplier(repo_root)},
+        _project_facts(repo_root, wheel_metadata),
         evidence_doc,
         projected_wheel,
         inventory,

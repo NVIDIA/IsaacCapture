@@ -522,6 +522,8 @@ METADATA = "\n".join(
         "Name: isaaccapture",
         "Version: 0.4.0",
         "Summary: Isaac Capture",
+        "Author: Example Org",
+        "Project-URL: Homepage, https://example.com/isaaccapture",
         "License-Expression: Apache-2.0",
         "License-File: LICENSE.md",
         "Requires-Python: >=3.11",
