@@ -697,7 +697,11 @@ def discover_vendored(
         )
         components[key] = Component(
             key=key,
-            name=names[key],
+            # Not the bare holder: an organisation in a `name` field reads as a
+            # product, and "Collabora Ltd" is not a package anyone can obtain.
+            # The holder is the only identity this material has, so it is named
+            # for what it is and who holds it; `sourceInfo` lists the files.
+            name=f"Vendored source ({names[key]})",
             kind="vendored-source",
             supplier=f"Organization: {names[key]}",
             homepage="NOASSERTION",

@@ -33,7 +33,7 @@ _KIND_PROSE = {
     "source-tree": "fetched source",
     "archive": "fetched archive",
     "system-library": "build machine",
-    "vendored-source": "vendored source (named by copyright holder)",
+    "vendored-source": "vendored source",
 }
 
 

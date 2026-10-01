@@ -154,7 +154,13 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
         if component.kind == "vendored-source"
     }
 
-    assert [c.name for c in vendored.values()] == ["Upstream Widgets Ltd"]
+    # Named for what it is, not as though the holder were a product.
+    assert [c.name for c in vendored.values()] == [
+        "Vendored source (Upstream Widgets Ltd)"
+    ]
+    assert [c.supplier for c in vendored.values()] == [
+        "Organization: Upstream Widgets Ltd"
+    ]
     component = next(iter(vendored.values()))
     assert component.license_concluded == "BSL-1.0"
     # The file states an identifier and carries no text of its own, so the text
