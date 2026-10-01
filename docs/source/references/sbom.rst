@@ -24,9 +24,10 @@ What a wheel carries
        └── sboms/
            └── <wheel filename>.spdx.json # SPDX 2.3 contents inventory
 
-Every text there comes from this repository or from a component the wheel redistributes.
-The SPDX reference texts the collector matches against are a separate thing and are never
-packaged — see `How licenses are determined`_.
+Every text there comes from this repository, or from a component the wheel redistributes,
+or — for a component that ships no license file and states only an identifier in its source
+headers — is the reference text that identifier names, beside the copyright line those
+headers state. See `How licenses are determined`_.
 
 ``.dist-info/sboms/`` is what the
 `binary distribution format <https://packaging.python.org/en/latest/specifications/binary-distribution-format/>`_

@@ -168,7 +168,7 @@ class Resolver:
         # indexed first, and invent that component's license obligation with it.
         # The path is the only evidence such a file carries.
         if candidate_digest == EMPTY_SHA256:
-            return self._resolve_by_path(wheel_path, source, build_id)
+            return self._resolve_by_path(wheel_path, source, build_id, candidate_digest)
 
         artifacts = self._artifacts_by_hash.get(candidate_digest)
         if artifacts:
@@ -182,7 +182,9 @@ class Resolver:
         # whichever happened to be indexed first.
         shared = self._shared_content(candidate_digest)
         if shared is not None:
-            by_path = self._resolve_by_path(wheel_path, source, build_id)
+            by_path = self._resolve_by_path(
+                wheel_path, source, build_id, candidate_digest
+            )
             if by_path is not None:
                 return by_path
             return shared(wheel_path, source)
@@ -210,9 +212,7 @@ class Resolver:
 
         repo_file = self.repo_files.by_hash.get(candidate_digest)
         if repo_file:
-            return Attribution(
-                path=wheel_path, origin="repo-source", detail=f"{source}; {repo_file}"
-            )
+            return self._from_repo_file(wheel_path, source, repo_file, f"{source}; ")
 
         build_file = self.build_files.by_hash.get(candidate_digest)
         if build_file:
@@ -244,7 +244,7 @@ class Resolver:
             if by_build_id is not None:
                 return by_build_id
 
-        by_path = self._resolve_by_path(wheel_path, source, build_id)
+        by_path = self._resolve_by_path(wheel_path, source, build_id, candidate_digest)
         if by_path is not None:
             return by_path
 
@@ -259,6 +259,25 @@ class Resolver:
         if soname:
             return self._from_build_host(wheel_path, soname)
         return None
+
+    def _from_repo_file(
+        self, wheel_path: str, source: str, repo_file: str, lead: str
+    ) -> Attribution:
+        """A file this repository holds -- and, where it is not ours, whose.
+
+        Checked-in third-party code states its own copyright, which is how the
+        vendored scan found it. Reporting the member as plain repository source
+        would drop that holder, and the component would be reported as
+        contributing nothing to a wheel that ships its file.
+        """
+        owner = self.ownership.owner_of(self.repo_root / repo_file.removeprefix("./"))
+        return Attribution(
+            path=wheel_path,
+            origin="repo-source",
+            detail=f"{lead}{repo_file}",
+            components={owner: {"copied-file"}} if owner else {},
+            primary=owner,
+        )
 
     def _staged_component_of(self, build_file: str) -> str | None:
         """The component whose tree this build staged under _deps/<name>/."""
@@ -379,7 +398,11 @@ class Resolver:
         )
 
     def _resolve_by_path(
-        self, wheel_path: str, source: str, build_id: str | None = None
+        self,
+        wheel_path: str,
+        source: str,
+        build_id: str | None = None,
+        digest: str | None = None,
     ) -> Attribution | None:
         """Post-processing changes bytes; the path still says where they came from.
 
@@ -439,11 +462,9 @@ class Resolver:
 
         repo_file = self.repo_files.path_suffix_match(wheel_path)
         if repo_file:
-            return Attribution(
-                path=wheel_path,
-                origin="repo-source",
-                detail=f"{source}; derived from {repo_file}",
-            )
+            same = self.repo_files.digest_of_display(repo_file) == digest
+            lead = f"{source}; {'identical to' if same else 'derived from'} "
+            return self._from_repo_file(wheel_path, source, repo_file, lead)
 
         build_file = self.build_files.path_suffix_match(wheel_path)
         if build_file:
@@ -478,6 +499,8 @@ def build(
         attribution.spdx_tag = _spdx_tag(entry)
         attribution.copyright_text = _copyright_text(entry)
         attributions[entry.name] = attribution
+
+    _resolve_shared_by_sibling(attributions)
 
     roles: dict[str, set[str]] = {}
     for attribution in attributions.values():
@@ -518,6 +541,38 @@ def build(
 def _build_ids_disagree(left: str | None, right: str | None) -> bool:
     """True only when both are known and differ -- that is evidence, not absence."""
     return bool(left and right and left != right)
+
+
+def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
+    """Let a staged directory settle what identical bytes cannot.
+
+    `libcloudxr.so` differs between two SDKs and resolves by build-id, but the
+    libraries beside it are byte-identical in both, and MuJoCo's licence text is
+    the same file every Apache-2.0 project ships. In each case the directory the
+    build staged the member into is already explained by exactly one of the
+    candidates, which is a record of where it came from -- so saying the build
+    kept none would be untrue, and naming every candidate overstates what the
+    others contribute.
+    """
+    settled: dict[str, set[str]] = {}
+    for name, item in attributions.items():
+        if item.primary:
+            settled.setdefault(name.rsplit("/", 1)[0], set()).add(item.primary)
+
+    for name, item in attributions.items():
+        if item.primary or item.origin != "shared-content":
+            continue
+        owners = settled.get(name.rsplit("/", 1)[0], set()) & set(item.components)
+        if len(owners) != 1:
+            continue
+        key = owners.pop()
+        item.origin = "copied"
+        item.detail = (
+            f"{item.detail.split(';')[0]}; these bytes are held by more than one "
+            f"component, and the directory it is staged into is explained by {key}"
+        )
+        item.components = {key: {"copied-file"}}
+        item.primary = key
 
 
 def _attribute(

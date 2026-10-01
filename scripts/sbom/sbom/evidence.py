@@ -32,6 +32,9 @@ from .discovery import (
     _walk,
 )
 
+# Suffixes whose files conventionally carry a REUSE header naming their holder.
+_TAGGABLE_SOURCE = {".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".pyi", ".sh", ".cmake"}
+
 # Cache entries that pin what a wheel contains. The rest of the cache is paths on
 # the builder.
 _CACHE_KEYS = re.compile(
@@ -211,7 +214,8 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     # from source, so a directory walk cannot, and a wheel member matching this
     # build's own output would be reported as a copy of repository source.
     repo_files = FileIndex()
-    repo_files.add_paths(repo_root, ".", tracked_files(repo_root))
+    tracked = tracked_files(repo_root)
+    repo_files.add_paths(repo_root, ".", tracked)
 
     # _deps/*-src is the component-source domain, already indexed above; a wheel
     # member matching one is a copy of upstream, not something this build made.
@@ -249,7 +253,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
             if match:
                 owners.add(match.split("/", 1)[0].removesuffix("-src"))
         if len(owners) == 1:
-            display = f"build/{root.relative_to(build_dir).as_posix()}"
+            display = f"{build_dir.name}/{root.relative_to(build_dir).as_posix()}"
             staged_component_dirs[display] = owners.pop()
 
     # Third-party code checked in here rather than fetched: the candidates are
@@ -260,7 +264,15 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         if root.is_dir():
             ownership.register_root(root, root.name.removesuffix("-src"))
 
-    candidates: set[Path] = set()
+    # Every tracked file that can carry a REUSE header, plus whatever the build
+    # compiled. Scanning only compiled sources missed a third party whose code
+    # reaches the wheel as Python: nothing compiles it, so nothing looked at it,
+    # and the component was reported as contributing no file.
+    candidates: set[Path] = {
+        repo_root / item
+        for item in tracked
+        if Path(item).suffix.lower() in _TAGGABLE_SOURCE
+    }
     for node in graph._nodes.values():  # noqa: SLF001 - same package
         candidates.update(
             source

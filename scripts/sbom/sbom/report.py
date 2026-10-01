@@ -55,6 +55,10 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
         lines.append(f"## {component.name}")
         lines.append("")
         lines.append(f"- License: `{component.license_concluded}`")
+        if component.copyright_text != "NOASSERTION":
+            # A reference text names no holder, so for a component that ships no
+            # licence file of its own this is the only notice in the wheel.
+            lines.append(f"- Copyright: {component.copyright_text}")
         if component.license_declared != component.license_concluded:
             lines.append(f"- Declared: `{component.license_declared}`")
         if component.homepage != "NOASSERTION":
