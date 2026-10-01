@@ -509,36 +509,18 @@ def build_document(
                     package_id, name, comment, _dependency_refs(name, group[0])
                 )
             )
-        elif sibling.get("namespace"):
-            # Built by this same run and already described, so the dependency
-            # points straight at the package in that wheel's own document. A
-            # local stub beside it would restate version, supplier and licence
-            # from the same source.
-            document_ref = f"DocumentRef-{licensing.spdx_safe(sibling['filename'])}"
-            # Two requirement lines can name one sibling -- a plain one and an
-            # extra-gated one -- and SPDX wants each externalDocumentId once.
-            entry = {
-                "externalDocumentId": document_ref,
-                "spdxDocument": sibling["namespace"],
-                "checksum": {"algorithm": "SHA1", "checksumValue": sibling["sha1"]},
-            }
-            if entry not in external_documents:
-                external_documents.append(entry)
-            element = f"{document_ref}:{WHEEL_PACKAGE_ID}"
-            comment = (
-                f"{declared} Built by this same build as {sibling['name']} "
-                f"{sibling['version']}; described by {sibling['filename']}."
-            )
         else:
-            # Built by this same run but not yet described: two wheels can
-            # require each other, and a document citing another's digest cannot
-            # be written before it. What the wheel states about itself needs no
-            # document, so none of it is left unasserted.
+            # Built by this same run: not an install-time unknown, so the facts
+            # its own metadata states are recorded here. Deliberately not a
+            # digest-bound reference to that wheel's document -- a `py3-none-any`
+            # wheel is built by every matrix entry, and pinning one entry's
+            # sibling made the universal wheel differ by who built it. It also
+            # kept the two documents asymmetric, since a requirement cycle means
+            # only one of them could ever carry the reference.
             element = package_id
             comment = (
                 f"{declared} Built by this same build; its own document "
-                f"describes it, and is not referenced here because the two "
-                f"wheels require each other."
+                "describes its contents."
             )
             packages.append(
                 {

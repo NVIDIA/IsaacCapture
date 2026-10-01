@@ -222,13 +222,33 @@ def test_our_own_document_going_missing_is_rejected(built):
     assert any("embedded SBOM" in failure for failure in failures)
 
 
-def test_duplicate_wheel_filenames_cannot_be_merged(tmp_path, built):
+def test_one_wheel_described_by_several_builds_merges_to_one_record(tmp_path, built):
+    """A `py3-none-any` wheel is built by every matrix entry.
+
+    Each entry's manifest names it, so a release set sees the filename once per
+    entry. Identical records are one wheel described more than once.
+    """
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     for path in (first, second):
         path.write_text(json.dumps(built["manifest"]), encoding="utf-8")
 
-    with pytest.raises(build_module.BuildError, match="published twice"):
+    merged = build_module.merge_manifests([first, second])
+    names = [item["filename"] for item in merged["wheels"]]
+
+    assert names == sorted(set(names)), "a repeated record was published twice"
+
+
+def test_two_wheels_wearing_one_filename_are_refused(tmp_path, built):
+    """Same name, different bytes: the one thing a consumer cannot tell apart."""
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
+    other = json.loads(json.dumps(built["manifest"]))
+    other["wheels"][0]["sha256"] = "0" * 64
+    second.write_text(json.dumps(other), encoding="utf-8")
+
+    with pytest.raises(build_module.BuildError, match="different contents"):
         build_module.merge_manifests([first, second])
 
 

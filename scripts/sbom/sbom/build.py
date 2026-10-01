@@ -10,7 +10,6 @@ import json
 import os
 import shutil
 import tempfile
-from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -540,15 +539,27 @@ def merge_manifests(paths: list[Path]) -> dict:
 
 def merge_records(wheels: list[dict]) -> dict:
     """The manifest for a set of wheels, stamped when the set was complete."""
-    names = [item["filename"] for item in wheels]
-    duplicates = sorted(name for name, seen in Counter(names).items() if seen > 1)
-    if duplicates:
-        raise BuildError(f"the same wheel filename was published twice: {duplicates}")
+    # A `py3-none-any` wheel is built by every matrix entry, so a release set
+    # names it once per entry. Identical records are one wheel described more
+    # than once; records that differ are two wheels wearing one filename, which
+    # is the thing a consumer cannot tell apart and this refuses to publish.
+    unique: dict[str, dict] = {}
+    conflicting: set[str] = set()
+    for item in wheels:
+        name = item["filename"]
+        if name in unique and unique[name] != item:
+            conflicting.add(name)
+        unique.setdefault(name, item)
+    if conflicting:
+        raise BuildError(
+            "the same wheel filename was published with different contents: "
+            + ", ".join(sorted(conflicting))
+        )
     return {
         "schema": "isaaccapture-sbom-manifest/1",
         "generated_at": stamped_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
-        "wheels": sorted(wheels, key=lambda item: item["filename"]),
+        "wheels": sorted(unique.values(), key=lambda item: item["filename"]),
     }
 
 
