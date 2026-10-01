@@ -1,0 +1,33 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Raw state of a Linux joystick-API gamepad (e.g. /dev/input/js0): the set of
+// currently-held button indices and the current value of every reported axis.
+// Carries no semantic mapping -- which axis/button means what (a stick, a trigger,
+// a toggle) is entirely up to the consuming retargeter.
+//
+// All fields are always present whenever this table itself is present.
+table GamepadOutput {
+    // Button indices (Linux joystick JS_EVENT_BUTTON numbers) currently held down,
+    // in no particular order.
+    pressed_buttons: [ushort] (id: 0);
+
+    // Current value of every reported axis (Linux joystick JS_EVENT_AXIS numbers),
+    // normalized to [-1, 1]. Index i is the value of axis i.
+    axes: [float] (id: 1);
+
+    // Whether the tracker has emitted at least one sample.
+    is_valid: bool (id: 2);
+}
+
+// MCAP recording wrapper for GamepadOutput.
+table GamepadOutputRecord {
+    data: GamepadOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type GamepadOutputRecord;

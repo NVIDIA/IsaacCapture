@@ -58,6 +58,12 @@ struct KeyboardRecordingTraits
     static constexpr std::array replay_channels = { "keyboard" };
 };
 
+struct GamepadRecordingTraits
+{
+    static constexpr std::array recording_channels = { "gamepad" };
+    static constexpr std::array replay_channels = { "gamepad" };
+};
+
 // Traits for trackers declared in deviceio_trackers/trackers.toml, emitted from their
 // channel manifest key. Add traits above by hand only for hand-written trackers.
 #include "generated_recording_traits.inc"

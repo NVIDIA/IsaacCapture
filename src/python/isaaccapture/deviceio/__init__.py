@@ -20,6 +20,7 @@ from isaaccapture.deviceio_trackers import (
     FrameMetadataTrackerOak,
     Generic3AxisPedalTracker,
     KeyboardTracker,
+    GamepadTracker,
     OgloTactileTracker,
     TensorPushTracker,
     JointStateTracker,
@@ -51,6 +52,7 @@ from ..schema import (
     FrameMetadataOak,
     Generic3AxisPedalOutput,
     KeyboardOutput,
+    GamepadOutput,
     OgloGloveSample,
 )
 
@@ -63,6 +65,7 @@ __all__ = [
     "FrameMetadataOak",
     "Generic3AxisPedalOutput",
     "KeyboardOutput",
+    "GamepadOutput",
     "OgloGloveSample",
     "ITracker",
     "HandTracker",
@@ -73,6 +76,7 @@ __all__ = [
     "FrameMetadataTrackerOak",
     "Generic3AxisPedalTracker",
     "KeyboardTracker",
+    "GamepadTracker",
     "OgloTactileTracker",
     "TensorPushTracker",
     "JointStateTracker",

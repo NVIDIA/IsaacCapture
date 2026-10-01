@@ -49,6 +49,9 @@ from ._schema import (
     KeyEvent,
     KeyboardOutput,
     KeyboardOutputRecord,
+    # Gamepad types (raw joystick-API button/axis state).
+    GamepadOutput,
+    GamepadOutputRecord,
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
@@ -177,6 +180,9 @@ __all__ = [
     "KeyEvent",
     "KeyboardOutput",
     "KeyboardOutputRecord",
+    # Gamepad types (raw joystick-API button/axis state).
+    "GamepadOutput",
+    "GamepadOutputRecord",
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",

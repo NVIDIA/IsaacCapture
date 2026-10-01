@@ -5,6 +5,7 @@ pybind11_add_module(schema_py
     oak_bindings.h
     controller_bindings.h
     full_body_bindings.h
+    gamepad_bindings.h
     hand_bindings.h
     haptic_command_bindings.h
     head_bindings.h

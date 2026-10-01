@@ -39,6 +39,8 @@ class HapticCommandReaderTracker;
 class IHapticCommandReaderTrackerImpl;
 class KeyboardTracker;
 class IKeyboardTrackerImpl;
+class GamepadTracker;
+class IGamepadTrackerImpl;
 struct OpenXRSessionHandles;
 
 // Forward decls for trackers declared in deviceio_trackers/trackers.toml. Generated at
@@ -91,6 +93,7 @@ public:
     std::unique_ptr<IHapticCommandReaderTrackerImpl> create_haptic_command_reader_tracker_impl(
         const HapticCommandReaderTracker* tracker);
     std::unique_ptr<IKeyboardTrackerImpl> create_keyboard_tracker_impl(const KeyboardTracker* tracker);
+    std::unique_ptr<IGamepadTrackerImpl> create_gamepad_tracker_impl(const GamepadTracker* tracker);
     // create_<name>_tracker_impl for every manifest tracker.
 #include "generated_live_factory_declarations.inc"
 

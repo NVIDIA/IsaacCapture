@@ -7,6 +7,10 @@ add_executable(live_trackers_tests
     test_vendor_validation.cpp
     test_keyboard_session.cpp
 )
+# The gamepad tests drive the Linux joystick reader through a FIFO.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(live_trackers_tests PRIVATE test_gamepad_tracker.cpp)
+endif()
 
 target_link_libraries(live_trackers_tests PRIVATE
     deviceio::live_trackers
