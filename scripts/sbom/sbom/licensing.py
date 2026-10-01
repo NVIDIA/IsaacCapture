@@ -50,6 +50,7 @@ _COVERAGE_THRESHOLD = 0.20
 _FAMILY_THRESHOLD = 0.90
 # REUSE-IgnoreStart
 _SPDX_TAG = re.compile(r"SPDX-License-Identifier:\s*(?P<expression>[^\n\r*/#]+)")
+_FILE_COPYRIGHT = re.compile(r"SPDX-FileCopyrightText:\s*(?P<notice>[^\n\r]+)")
 # REUSE-IgnoreEnd
 # Heading, then everything up to the next heading or a blank-line run.
 # The heading has to BE about licensing, not merely start with the word --
@@ -387,6 +388,7 @@ def _readme_fallback(
     return []
 
 
+NOASSERTION = "NOASSERTION"
 _ID_SAFE = re.compile(r"[^A-Za-z0-9.-]+")
 
 
@@ -440,8 +442,15 @@ def expression(
         identified = [license_ref(component_key)]
     concluded = _combine(identified) if identified else "NOASSERTION"
 
-    tags = sorted({item.spdx_tag for item in grants if item.spdx_tag})
-    declared = _combine(tags) if tags else concluded
+    # A tag speaks for the package only where the file carrying it is a licence
+    # in its own right. OpenXR's COPYING.adoc is prose about which licences the
+    # project uses, tagged CC-BY-4.0 for the prose and matching no licence text;
+    # promoting it declared a linked SDK under a documentation licence. Where no
+    # tag qualifies the field stays unasserted rather than echoing the
+    # conclusion, which would assert a declaration nobody made and hide the one
+    # thing the field is for -- supplier and collector disagreeing.
+    tags = sorted({item.spdx_tag for item in grants if item.spdx_tag and item.matches})
+    declared = _combine(tags) if tags else NOASSERTION
     return concluded, declared
 
 
@@ -475,6 +484,12 @@ def read_spdx_tag(text: str) -> str | None:
     """The REUSE tag a file states about itself, if any."""
     match = _SPDX_TAG.search(text)
     return match.group("expression").strip() if match else None
+
+
+def read_copyright(text: str) -> str | None:
+    """The notice a file states about itself, beside its REUSE tag."""
+    match = _FILE_COPYRIGHT.search(text)
+    return " ".join(match.group("notice").split()).rstrip("*/ ") if match else None
 
 
 def combine(expressions: list[str]) -> str:

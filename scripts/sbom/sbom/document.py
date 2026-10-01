@@ -165,6 +165,8 @@ def build_document(
     file_ids: dict[str, str] = {}
     sha1_digests: list[str] = []
 
+    # What the files themselves state, for the package-level roll-up below.
+    stated_in_files: set[str] = set()
     for index, entry in enumerate(sorted(wheel.entries, key=lambda item: item.name)):
         if entry.name in excluded_files:
             continue
@@ -181,12 +183,16 @@ def build_document(
                 {"algorithm": "SHA256", "checksumValue": entry.sha256},
             ],
             "licenseConcluded": NOASSERTION,
-            "copyrightText": NOASSERTION,
+            # The notice sits directly above the identifier already parsed, so
+            # declaring none would discard something read and in hand.
+            "copyrightText": (attribution.copyright_text if attribution else None)
+            or NOASSERTION,
         }
         if attribution and attribution.spdx_tag:
             # A REUSE tag in the file is upstream stating that file's license.
             record["licenseConcluded"] = attribution.spdx_tag
             record["licenseInfoInFiles"] = [attribution.spdx_tag]
+            stated_in_files.add(attribution.spdx_tag)
 
         comment = []
         if attribution:
@@ -216,7 +222,7 @@ def build_document(
         "homepage": project["homepage"],
         "licenseConcluded": project["license"],
         "licenseDeclared": project["license"],
-        "licenseInfoFromFiles": [NOASSERTION],
+        "licenseInfoFromFiles": sorted(stated_in_files) or [NOASSERTION],
         "copyrightText": NOASSERTION,
         "packageVerificationCode": {
             "packageVerificationCodeValue": code,

@@ -704,10 +704,39 @@ def _identify_host_package(library: Path, origin: dict) -> dict:
     package = result.stdout.split(":", 1)[0].strip()
     origin["package"] = package
     origin["supplier"] = _package_supplier(package)
+    origin["version"] = _package_field(package, "Version")
+    origin["distro"] = _os_release_id()
     copyright_file = Path("/usr/share/doc") / package / "copyright"
     if copyright_file.is_file():
         origin["copyright"] = str(copyright_file)
     return origin
+
+
+def _package_field(package: str, field: str) -> str | None:
+    """One field of a distro package's metadata, as dpkg records it."""
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", f"-f=${{{field}}}", package],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value else None
+
+
+def _os_release_id() -> str | None:
+    """The distribution this package manager belongs to, for the purl type."""
+    try:
+        for line in Path("/etc/os-release").read_text().splitlines():
+            if line.startswith("ID="):
+                return line.partition("=")[2].strip().strip('"') or None
+    except OSError:
+        return None
+    return None
 
 
 def _package_supplier(package: str) -> str | None:
@@ -783,8 +812,18 @@ def system_component(soname: str, origin: dict) -> Component:
         kind="system-library",
         supplier=origin.get("supplier") or "NOASSERTION",
         homepage="NOASSERTION",
-        purl=PackageURL(type="generic", name=soname).to_string(),
-        version="NOASSERTION",
+        # A distro package the machine can name resolves; pkg:generic does not.
+        purl=(
+            PackageURL(
+                type="deb",
+                namespace=origin.get("distro"),
+                name=origin["package"],
+                version=origin.get("version"),
+            ).to_string()
+            if origin.get("package")
+            else PackageURL(type="generic", name=soname).to_string()
+        ),
+        version=origin.get("version") or "NOASSERTION",
         download_location="NOASSERTION",
         source_info=" ".join(details),
         license_concluded=concluded,

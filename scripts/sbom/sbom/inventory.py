@@ -57,6 +57,7 @@ class Attribution:
     components: dict[str, set[str]] = field(default_factory=dict)
     primary: str | None = None
     spdx_tag: str | None = None
+    copyright_text: str | None = None
 
     def as_json(self) -> dict:
         return {
@@ -471,6 +472,7 @@ def build(
             unattributed.append(entry.name)
             continue
         attribution.spdx_tag = _spdx_tag(entry)
+        attribution.copyright_text = _copyright_text(entry)
         attributions[entry.name] = attribution
 
     roles: dict[str, set[str]] = {}
@@ -531,6 +533,13 @@ def _attribute(
     return resolver.resolve(
         entry.name, entry.sha256, probe, entry.soname, entry.build_id
     )
+
+
+def _copyright_text(entry: Entry) -> str | None:
+    """The notice a file states about itself, beside the identifier."""
+    if Path(entry.name).suffix.lower() not in _TAGGABLE:
+        return None
+    return licensing.read_copyright(entry.head.decode("utf-8", "replace"))
 
 
 def _spdx_tag(entry: Entry) -> str | None:
