@@ -192,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence_module.EvidenceError,
         build_module.BuildError,
         licensing.CorpusError,
+        licensing.ExpressionReadError,
         discovery.ArchiveError,
         discovery.SupplierError,
         wheelfile.WheelError,

@@ -606,14 +606,21 @@ def canonical_evidence(
     return found
 
 
+class ExpressionReadError(Exception):
+    """An expression in a document cannot be read, so what it names is unknown."""
+
+
 def license_refs(*expressions: str) -> list[str]:
     """The LicenseRef- identifiers an expression uses, per the SPDX grammar."""
     found: set[str] = set()
     for expression in expressions:
         try:
             parsed = _spdx_licensing().parse(expression, validate=False)
-        except (ExpressionError, ValueError, TypeError):
-            continue
+        except (ExpressionError, ValueError, TypeError) as error:
+            # Walking past it hid every reference inside: a document could carry
+            # `LicenseRef-never-defined AND (((` and be reported as defining
+            # everything it uses.
+            raise ExpressionReadError(f"{expression!r}: {error}") from error
         found.update(
             key
             for key in _spdx_licensing().license_keys(parsed)
