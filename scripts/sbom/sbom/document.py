@@ -413,16 +413,20 @@ def build_document(
             }
         )
 
+    # One node per package and version range, not per requirement line. A
+    # dependency recurs once per extra that wants it, and the repeats differ
+    # only in a marker the relationship already carries.
+    wanted: dict[tuple[str, str], list[Requirement]] = {}
     for requirement in inventory.requires_dist:
         parsed = Requirement(requirement)
-        name = parsed.name
-        # Not the requirement string: slugifying `websockets>=14.0` yields
-        # `websockets-14.0`, which reads as a pinned version beside a
-        # versionInfo this document deliberately leaves unasserted. The same
-        # name recurs under different extras, so uniqueness comes from a digest
-        # of the whole requirement; its text is in the comment below.
-        digest = hashlib.sha256(requirement.encode("utf-8")).hexdigest()[:8]
-        package_id = _spdx_id("Package-pypi", f"{name}-{digest}")
+        wanted.setdefault((parsed.name, str(parsed.specifier)), []).append(parsed)
+
+    for (name, _), group in sorted(wanted.items()):
+        package_id = _spdx_id(
+            "Package-pypi",
+            f"{name}-{hashlib.sha256(str(sorted(map(str, group))).encode()).hexdigest()[:8]}",
+        )
+        extras = sorted({extra for item in group for extra in item.extras})
         packages.append(
             {
                 "SPDXID": package_id,
@@ -434,17 +438,19 @@ def build_document(
                 "licenseConcluded": NOASSERTION,
                 "licenseDeclared": NOASSERTION,
                 "copyrightText": NOASSERTION,
-                "externalRefs": _dependency_refs(name, parsed),
+                "externalRefs": _dependency_refs(name, group[0]),
                 "comment": (
-                    f"Consumer requirement declared in wheel metadata: {requirement}. "
-                    "Resolved at install time; this document states no license for it."
+                    "Consumer requirement declared in wheel metadata: "
+                    + "; ".join(sorted(str(item) for item in group))
+                    + ". Resolved at install time; this document states no "
+                    "license for it."
+                    + (f" Requested with: {', '.join(extras)}." if extras else "")
                 ),
             }
         )
-        # An `extra ==` marker means the requirement only applies when that extra
-        # is requested, which SPDX has a relationship for. Its direction is the
-        # reverse of DEPENDS_ON.
-        if _is_extra_gated(parsed):
+        # Optional only if every line that asks for it is gated on an extra. One
+        # unconditional line makes the dependency unconditional.
+        if all(_is_extra_gated(item) for item in group):
             relationships.append(
                 {
                     "spdxElementId": package_id,
