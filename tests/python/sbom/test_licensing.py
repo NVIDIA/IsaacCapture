@@ -249,3 +249,31 @@ def test_a_real_license_section_is_still_found(tmp_path):
     evidence = licensing.discover_in_tree("thing", tmp_path, "thing-src")
 
     assert [item.origin for item in evidence] == ["readme-section"]
+
+
+def test_a_notice_another_already_covers_is_dropped():
+    """One holder stated over several year ranges is one holder."""
+    folded = licensing.fold_notices(
+        [
+            "Copyright (c) 2025 Acme Ltd.",
+            "Copyright (c) 2025-2026 Acme Ltd.",
+            "Copyright (c) 2026 Acme Ltd.",
+        ]
+    )
+
+    assert folded == ["Copyright (c) 2025-2026 Acme Ltd."]
+
+
+def test_folding_never_claims_a_year_no_file_claims():
+    """Merging ranges would assert 2022; neither notice does."""
+    assert licensing.fold_notices(
+        ["Copyright (c) 2021 Acme Ltd.", "Copyright (c) 2023 Acme Ltd."]
+    ) == ["Copyright (c) 2021 Acme Ltd.", "Copyright (c) 2023 Acme Ltd."]
+
+
+def test_folding_does_not_merge_different_holders():
+    folded = licensing.fold_notices(
+        ["Copyright (c) 2026 Acme Ltd.", "Copyright (c) 2026 Other Corp."]
+    )
+
+    assert len(folded) == 2

@@ -576,7 +576,9 @@ def discover_vendored(
             ),
             license_concluded=concluded,
             license_declared=declared,
-            copyright_text="\n".join(sorted(notices.get(key, {names[key]}))),
+            copyright_text="\n".join(
+                licensing.fold_notices(notices.get(key, {names[key]}))
+            ),
             evidence=tuple(evidence),
         )
     return components, grouped

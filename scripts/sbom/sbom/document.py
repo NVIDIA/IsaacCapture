@@ -294,7 +294,8 @@ def build_document(
         # The notices its own files carry. Declaring none beside a supplier, a
         # licence and files that each state one left the package saying less
         # about itself than anything in it.
-        "copyrightText": "\n".join(sorted(stated_copyright)) or NOASSERTION,
+        "copyrightText": "\n".join(licensing.fold_notices(stated_copyright))
+        or NOASSERTION,
         "packageVerificationCode": {
             "packageVerificationCodeValue": code,
             "packageVerificationCodeExcludedFiles": [

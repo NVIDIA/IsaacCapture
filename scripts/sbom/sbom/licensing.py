@@ -492,6 +492,37 @@ def read_spdx_tag(text: str) -> str | None:
     return match.group("expression").strip() if match else None
 
 
+_NOTICE_YEARS = re.compile(r"\b(\d{4})(?:\s*[-\u2013]\s*(\d{4}))?\b")
+
+
+def fold_notices(notices) -> list[str]:
+    """Drop a notice another already covers.
+
+    Files written in different years state one holder over different year ranges,
+    and listing every one names that holder several times over. Merging the
+    ranges instead would claim a year no file claims, so only a notice whose
+    holder matches another's and whose years that other already contains is
+    dropped -- it says nothing the one kept does not.
+    """
+    parsed = []
+    for notice in notices:
+        years: set[int] = set()
+        for start, end in _NOTICE_YEARS.findall(notice):
+            years.update(range(int(start), int(end or start) + 1))
+        holder = re.sub(r"[^A-Za-z0-9]+", " ", _NOTICE_YEARS.sub("", notice))
+        parsed.append((holder.strip().lower(), frozenset(years), notice))
+
+    return sorted(
+        {
+            notice
+            for holder, years, notice in parsed
+            if not any(
+                other == holder and years < covered for other, covered, _ in parsed
+            )
+        }
+    )
+
+
 def read_copyright(text: str) -> str | None:
     """The notice a file states about itself, beside its REUSE tag."""
     match = _FILE_COPYRIGHT.search(text)
