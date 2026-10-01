@@ -242,9 +242,17 @@ def build(
 
 def merge_manifests(paths: list[Path]) -> dict:
     """Fold per-variant manifests into the one a release advertises."""
-    wheels: list[dict] = []
-    for path in sorted(paths):
-        wheels.extend(json.loads(path.read_text(encoding="utf-8"))["wheels"])
+    return merge_records(
+        [
+            item
+            for path in sorted(paths)
+            for item in json.loads(path.read_text(encoding="utf-8"))["wheels"]
+        ]
+    )
+
+
+def merge_records(wheels: list[dict]) -> dict:
+    """The manifest for a set of wheels, stamped when the set was complete."""
     names = [item["filename"] for item in wheels]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:

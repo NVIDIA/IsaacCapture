@@ -109,8 +109,17 @@ def _extracted_licenses(components: list[Component]) -> list[dict]:
                 "name": f"License terms shipped with {component.name}",
                 "extractedText": "\n\n".join(item.text for item in grants),
                 "comment": (
-                    "Matched no text in the SPDX reference corpus; reproduced here "
-                    "verbatim from " + ", ".join(item.path for item in grants) + "."
+                    (
+                        "Matched no text in the SPDX reference corpus"
+                        if not any(item.matches for item in grants)
+                        # Matched, but under an id the grammar shipped with this
+                        # document cannot validate, so it cannot be named here.
+                        else "Matched an identifier newer than the SPDX grammar "
+                        "this document ships with"
+                    )
+                    + "; reproduced here verbatim from "
+                    + ", ".join(item.path for item in grants)
+                    + "."
                 ),
             }
     return [entries[key] for key in sorted(entries)]

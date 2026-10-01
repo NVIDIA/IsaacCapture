@@ -70,10 +70,12 @@ def _cmd_build(args: argparse.Namespace) -> int:
         )
         print(f"packaged evidence into {wheel.name}")
 
-    merged = {
-        **manifests[0],
-        "wheels": [item for manifest in manifests for item in manifest["wheels"]],
-    }
+    # Through the same merge as a release: inheriting the first wheel's manifest
+    # dated the set before the last wheel it binds existed, and skipped the
+    # duplicate-filename check.
+    merged = build_module.merge_records(
+        [item for manifest in manifests for item in manifest["wheels"]]
+    )
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"

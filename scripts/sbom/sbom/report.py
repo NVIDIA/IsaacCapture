@@ -24,6 +24,18 @@ _HOW_PROSE = {
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _short(version: str) -> str:
+    """Abbreviate a commit; leave anything else whole.
+
+    Truncating to a fixed width turned `1.1.0-2build1.1` into `1.1.0-2build`,
+    which reads as a complete Debian version and is not one.
+    """
+    return version[:12] if _COMMIT.match(version) else version
+
+
 def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
     """Where one component's license text lands inside the wheel.
 
@@ -181,7 +193,7 @@ def report_markdown(payload: dict) -> str:
         )
         version = item["version"]
         lines.append(
-            f"| {item['name']} | `{version[:12]}` | `{item['license_concluded']}` | "
+            f"| {item['name']} | `{_short(version)}` | `{item['license_concluded']}` | "
             f"{how or '—'} | {evidence} |"
         )
 

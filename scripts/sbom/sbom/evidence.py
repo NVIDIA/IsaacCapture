@@ -201,8 +201,9 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         ),
     )
 
+    tracked = tracked_files(repo_root)
     components = discover_source_trees(deps_dir)
-    archives = discover_archives(repo_root, skip=not_source)
+    archives = discover_archives(repo_root, frozenset(tracked), skip=not_source)
     components.update(_archive_components(archives, repo_root))
 
     source_files = FileIndex()
@@ -214,7 +215,6 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     # from source, so a directory walk cannot, and a wheel member matching this
     # build's own output would be reported as a copy of repository source.
     repo_files = FileIndex()
-    tracked = tracked_files(repo_root)
     repo_files.add_paths(repo_root, ".", tracked)
 
     # _deps/*-src is the component-source domain, already indexed above; a wheel
@@ -263,6 +263,13 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     for root in sorted(deps_dir.glob("*-src")):
         if root.is_dir():
             ownership.register_root(root, root.name.removesuffix("-src"))
+    # A dependency generates sources into its own build tree -- glfw's Wayland
+    # protocol headers, Catch2's generated config. Those sit under the build
+    # directory and belong to no *-src checkout, so without this they count as
+    # this project's own sources and the target reads as first-party.
+    for root in sorted(deps_dir.glob("*-build")):
+        if root.is_dir():
+            ownership.register_root(root, root.name.removesuffix("-build"))
 
     # Every tracked file that can carry a REUSE header, plus whatever the build
     # compiled. Scanning only compiled sources missed a third party whose code

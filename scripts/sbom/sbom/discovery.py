@@ -953,8 +953,15 @@ def tracked_files(repo_root: Path) -> list[str]:
     return [item for item in listing.split("\0") if item]
 
 
-def discover_archives(repo_root: Path, skip: tuple[Path, ...] = ()) -> ArchiveIndex:
-    """Index archives held in the repository, not ones a build unpacked."""
+def discover_archives(
+    repo_root: Path, held: frozenset[str], skip: tuple[Path, ...] = ()
+) -> ArchiveIndex:
+    """Index archives held in the repository, not ones a build unpacked.
+
+    `held` is what the repository tracks. It has no default: an empty set
+    silently indexes nothing, and a caller that forgot it would see every
+    archive-derived wheel member become unexplainable rather than wrong.
+    """
     index = ArchiveIndex()
     skipped = tuple(item.resolve() for item in skip)
     for path in _walk(repo_root):
@@ -963,7 +970,13 @@ def discover_archives(repo_root: Path, skip: tuple[Path, ...] = ()) -> ArchiveIn
         name = path.name.lower()
         if not name.endswith(ARCHIVE_SUFFIXES):
             continue
-        index.add_archive(path, path.relative_to(repo_root).as_posix())
+        relative = path.relative_to(repo_root).as_posix()
+        # Held here, or fetched by this build and recorded as such. An archive
+        # anywhere else is output -- staged into an install prefix, say -- and
+        # letting it explain a wheel member is the build explaining itself.
+        if relative not in held and not path.with_name(path.name + ".source").is_file():
+            continue
+        index.add_archive(path, relative)
     return index
 
 

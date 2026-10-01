@@ -383,8 +383,14 @@ def _readme_fallback(
         section = _README_LICENSE_SECTION.search(text)
         if section is None or not section.group("body").strip():
             continue
+        # The section, not the whole README. Hashing the file would publish its
+        # build instructions as the terms that shipped, and would bury a real
+        # licence quoted there under enough prose to fall below the coverage
+        # threshold and degrade to a LicenseRef.
         display = f"{display_prefix}/{entry.name}"
-        return [_evidence(component, "readme-section", display, text, "grant")]
+        return [
+            _evidence(component, "readme-section", display, section.group(0), "grant")
+        ]
     return []
 
 

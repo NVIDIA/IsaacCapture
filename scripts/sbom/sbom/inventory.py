@@ -449,14 +449,25 @@ class Resolver:
         if component_file:
             key = component_file.split("/", 1)[0].removesuffix("-src")
             origin_digest = self.source_files.digest_of_display(component_file)
+            # Reaching this branch means the content matched more than one place,
+            # not that anything transformed the file. Where the input's bytes are
+            # these bytes it is a copy, and quoting an origin digest equal to the
+            # member's own would say nothing.
+            same = origin_digest == digest
             return Attribution(
                 path=wheel_path,
-                origin="derived",
+                origin="copied" if same else "derived",
                 detail=(
-                    f"{source}; derived from {component_file}"
-                    + (f" (origin sha256:{origin_digest})" if origin_digest else "")
+                    f"{source}; "
+                    + ("identical to " if same else "derived from ")
+                    + component_file
+                    + (
+                        ""
+                        if same or not origin_digest
+                        else f" (origin sha256:{origin_digest})"
+                    )
                 ),
-                components={key: {"derived-file"}},
+                components={key: {"copied-file" if same else "derived-file"}},
                 primary=key,
             )
 

@@ -95,7 +95,9 @@ def test_a_test_only_dependency_reaches_no_shipped_artifact(workspace):
 
 
 def test_archive_members_are_indexed_by_content(workspace):
-    index = discovery.discover_archives(workspace.root)
+    index = discovery.discover_archives(
+        workspace.root, frozenset(discovery.tracked_files(workspace.root))
+    )
 
     assert synth.SDK_ARCHIVE in index.archives
     demo = index.by_name["libdemo.so"]
@@ -104,7 +106,9 @@ def test_archive_members_are_indexed_by_content(workspace):
 
 
 def test_archive_version_and_license_come_from_the_archive(workspace):
-    index = discovery.discover_archives(workspace.root)
+    index = discovery.discover_archives(
+        workspace.root, frozenset(discovery.tracked_files(workspace.root))
+    )
     record = index.archives[synth.SDK_ARCHIVE]
 
     assert record["version_text"] == "1.2.0"
