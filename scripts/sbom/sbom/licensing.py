@@ -543,6 +543,11 @@ def normalized_tag(text: str) -> str | None:
     # A LicenseRef here has no text to define it with, as for any other file.
     if expression == NOASSERTION or license_refs(expression):
         return None
+    # And the grammar has to know every id in it. `normalized_expression` parses
+    # without validating, so a tag naming nothing real reached the document and
+    # failed its own conformance check -- the same reason a conclusion is tested.
+    if not all(map(expressible, _spdx_licensing().license_keys(expression))):
+        return None
     return expression
 
 
