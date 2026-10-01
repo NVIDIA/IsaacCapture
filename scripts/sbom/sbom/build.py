@@ -132,7 +132,25 @@ def _declared_without_text(declared: str, shipped: set[str]) -> list[str]:
         # An expression nothing can read names nothing that can be checked, and
         # the document carries it verbatim; say so rather than pass silently.
         return [declared]
-    return sorted(item for item in identifiers if f"{item.lower()}.txt" not in shipped)
+    return sorted(
+        item
+        for item in identifiers
+        # An exception modifies the licence it is attached to and has no text in
+        # the list this build fetches, so demanding one blocks every
+        # `X WITH <exception>` declaration with an instruction nothing can meet.
+        if not licensing.is_exception(item) and f"{item.lower()}.txt" not in shipped
+    )
+
+
+def _own_texts(shipped: set[str]) -> set[str]:
+    """The texts a wheel carries as its own, not as a third party's.
+
+    These are named relative to `.dist-info/licenses/`, so a third party's sits
+    under `third-party/`. Counting those let somebody else's copy discharge this
+    distribution's obligation -- remove that component and the wheel silently
+    loses its own terms.
+    """
+    return {item for item in shipped if not item.startswith("third-party/")}
 
 
 def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
@@ -144,7 +162,7 @@ def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
     """
     if declared == NOASSERTION:
         return {}
-    names = {Path(item).name.lower() for item in shipped}
+    names = {Path(item).name.lower() for item in _own_texts(shipped)}
     wanted = {}
     for item in licensing.canonical_evidence("this-distribution", {declared}):
         identifier = item.identified
@@ -358,8 +376,7 @@ def build(
     # pinned list does not carry -- is a declaration with no terms behind it.
     unmet = _declared_without_text(
         declared,
-        {Path(item).name.lower() for item in packaged_paths}
-        | {Path(item).name.lower() for item in shipped},
+        {Path(item).name.lower() for item in _own_texts(set(packaged_paths) | shipped)},
     )
     if unmet:
         raise BuildError(

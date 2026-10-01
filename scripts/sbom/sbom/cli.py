@@ -9,6 +9,7 @@ import argparse
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
@@ -221,6 +222,15 @@ def main(argv: list[str] | None = None) -> int:
         discovery.FileApiError,
         wheelfile.WheelError,
         validate_module.ManifestError,
+        # Malformed input reaches these through a document, a manifest or a
+        # wheel's own metadata: a corrupt JSON body, a requirement that will not
+        # parse, a `--wheel` that is not a zip, a manifest missing a key, a file
+        # that is not there. Each has something worth printing; a traceback
+        # buries it and exits 1 where the caller expects 2.
+        ValueError,
+        OSError,
+        KeyError,
+        zipfile.BadZipFile,
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

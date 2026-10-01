@@ -505,3 +505,24 @@ def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
         "a wheel that ships no such library must not inherit it"
     )
     assert validate_module.check(workspace.wheel) == []
+
+
+def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_data):
+    """The distribution's own terms must be its own.
+
+    A packaged third-party text with a matching basename satisfied the gate, so
+    a wheel that stopped shipping its own LICENSE still passed and the only copy
+    of its terms sat under `third-party/`, attributed to somebody else.
+    """
+    from sbom import build as build_module
+
+    licensing.load_corpus(license_data)
+    assert build_module._own_license_texts(
+        "Apache-2.0", {"third-party/openxr-sdk/LICENSES/Apache-2.0.txt"}
+    ), "a third party's copy must not count as this distribution's"
+    assert not build_module._own_license_texts(
+        "Apache-2.0", {"LICENSES/Apache-2.0.txt"}
+    ), "the distribution's own copy counts"
+    assert build_module._declared_without_text(
+        "Apache-2.0", {"third-party/openxr-sdk/licenses/apache-2.0.txt"}
+    ) == ["Apache-2.0"]

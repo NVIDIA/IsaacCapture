@@ -628,12 +628,16 @@ _PLAIN_COPYRIGHT = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 # A clause broken by the end of a line, left dangling by taking the line alone.
-_DANGLING = re.compile(r"(?:[,;]?\s+(?:and|or|is|was|are|were|by|under|the|a))+$", re.I)
+# Words a notice can end on only because the line broke mid-clause.
+_DANGLING_WORDS = frozenset(
+    {"and", "or", "is", "was", "are", "were", "by", "under", "the", "a"}
+)
 # Years, year ranges and the markers around them: what is left is the holder.
 # A sentence, as against a name: the Debian `Copyright:` field holds both.
 _PROSE = re.compile(
     r"\b(derived|contributed|reserved|portions?|redistribut\w+|written|"
-    r"modified|see|provided|this|these|some|all rights)\b",
+    r"modified|see|provided|permission|granted|warrant\w*|software|hereby|"
+    r"this|these|those|some|all rights)\b",
     re.IGNORECASE,
 )
 _YEARS_AND_MARKS = re.compile(r"\(c\)|©|\d{4}(?:\s*-\s*\d{2,4})?|[,;]", re.I)
@@ -714,12 +718,20 @@ def read_notices(text: str) -> list[str]:
             if ahead >= len(lines):
                 break
             following = " ".join(lines[ahead].split())
-            # A new notice, or a field of its own, is not this one's holder.
-            if not following or _PLAIN_COPYRIGHT.match(following) or ":" in following:
+            # A new notice, a field of its own, or a sentence is not a holder:
+            # a year-only notice followed by the licence body would otherwise
+            # take its first line as the name.
+            if (
+                not following
+                or _PLAIN_COPYRIGHT.match(following)
+                or ":" in following
+                or _PROSE.search(following)
+                or _NOT_A_NOTICE.search(following)
+            ):
                 break
             step = ahead
             notice = f"{notice} {following}".strip().rstrip("*/ ")
-        notice = _DANGLING.sub("", notice).rstrip("*/,; ")
+        notice = _without_dangling(notice)
         if _PLACEHOLDER.search(notice) or _NOT_A_NOTICE.search(notice):
             continue
         if not _names_a_holder(notice) and not re.search(r"\d{4}", notice):
@@ -762,6 +774,18 @@ def _debian_copyright_fields(lines: list[str]) -> list[str]:
             if _names_a_holder(f"Copyright {holder}") and holder not in found:
                 found.append(holder)
     return found
+
+
+def _without_dangling(notice: str) -> str:
+    """Drop the connectives a notice ends on because its line broke mid-clause.
+
+    By token, not by regex: a repeated or nested match over the whole string is
+    quadratic on a long line that ends in many of them.
+    """
+    words = notice.split()
+    while words and words[-1].rstrip(",;").lower() in _DANGLING_WORDS:
+        words.pop()
+    return " ".join(words).rstrip("*/,; ")
 
 
 def _names_a_holder(notice: str) -> bool:
@@ -871,6 +895,37 @@ def rename_refs(expression: str, renamed: dict[str, str]) -> str:
             rf"(?<![\w.-]){re.escape(old_id)}(?![\w.-])", new_id, expression
         )
     return expression
+
+
+def is_exception(identifier: str) -> bool:
+    """Whether an identifier is a licence exception rather than a licence.
+
+    An exception modifies the licence it is attached to; the pinned list ships
+    their texts separately and this build fetches only the licences.
+    """
+    try:
+        parsed = _spdx_licensing().parse(identifier, validate=False)
+    except (ExpressionError, ValueError, TypeError):
+        return False
+    return identifier in {str(item) for item in getattr(parsed, "symbols", ())} and any(
+        getattr(item, "is_exception", False) for item in parsed.symbols
+    )
+
+
+def operands_of(expression: str) -> list[str]:
+    """An expression split into parts that may be AND-joined without changing it.
+
+    An `OR` is one choice and splitting it asserts both halves, so it stays
+    whole. Everything else decomposes to identifiers, which keeps a roll-up flat
+    and free of an id two components happen to share.
+    """
+    try:
+        parsed = _spdx_licensing().parse(expression, validate=False)
+    except (ExpressionError, ValueError, TypeError):
+        return [expression]
+    if " OR " in str(parsed).upper():
+        return [f"({parsed})"]
+    return sorted(str(key) for key in _spdx_licensing().license_symbols(parsed))
 
 
 def identifiers_in(expression: str) -> list[str]:

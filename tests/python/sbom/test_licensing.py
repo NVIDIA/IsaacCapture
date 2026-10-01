@@ -371,3 +371,47 @@ def test_every_holder_in_a_text_is_read_not_just_the_first(license_data):
         "2010), this software is Copyright (c) 2007-2010 by B Lepilleur, and is\n"
         "released under the terms of the MIT License.\n"
     ) == ["Copyright (c) 2007-2010 by B Lepilleur"]
+
+
+def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
+    """`A OR B` is one licence at the reader's choice, not two obligations.
+
+    Rebuilding a component's conclusion from the reference texts its identifiers
+    name loses the operator, and the roll-up that splits an expression into
+    identifiers loses it again.
+    """
+    from sbom import discovery
+
+    licensing.load_corpus(license_data)
+    source = tmp_path / "vendored.h"
+    source.write_text(
+        "// SPDX-FileCopyrightText: Copyright 2020 Upstream Widgets Ltd\n"
+        "// SPDX-License-Identifier: MIT OR GPL-2.0-or-later\n"
+    )
+    components, _ = discovery.discover_vendored(tmp_path, {source}, {"NVIDIA"})
+    component = next(iter(components.values()))
+
+    assert component.license_concluded == "MIT OR GPL-2.0-or-later"
+    assert component.license_declared == "MIT OR GPL-2.0-or-later"
+    # And it survives the roll-up whole, where an AND-only one decomposes.
+    assert licensing.operands_of("MIT OR GPL-2.0-or-later") == [
+        "(MIT OR GPL-2.0-or-later)"
+    ]
+    assert licensing.operands_of("Apache-2.0 AND CC-BY-4.0") == [
+        "Apache-2.0",
+        "CC-BY-4.0",
+    ]
+
+
+def test_an_exception_is_not_a_licence_needing_its_own_text(license_data):
+    """`X WITH <exception>` must not be unsatisfiable.
+
+    The pinned list ships exception texts separately and this build fetches only
+    the licences, so demanding a text for the exception blocks such a
+    declaration with an instruction nothing in the collector can meet.
+    """
+    licensing.load_corpus(license_data)
+
+    assert licensing.is_exception("LLVM-exception")
+    assert licensing.is_exception("Classpath-exception-2.0")
+    assert not licensing.is_exception("Apache-2.0")

@@ -604,7 +604,8 @@ class _Stated:
 def _stated_by(path: Path) -> _Stated | None:
     """Holder, licence and notice, from one read of the file's head."""
     try:
-        head = path.open("rb").read(4096).decode("utf-8", "replace")
+        with path.open("rb") as handle:
+            head = handle.read(4096).decode("utf-8", "replace")
     except OSError:
         return None
     match = _COPYRIGHT_TAG.search(head)
@@ -647,7 +648,11 @@ def discover_vendored(
         evidence = licensing.canonical_evidence(key, licences.get(key, set()))
         concluded, declared = licensing.expression(evidence, key)
         if licences.get(key):
+            # The headers' own expressions, structure and all. Rebuilding this
+            # from the reference texts the identifiers name turns `A OR B` into
+            # `A AND B` -- a choice restated as both obligations at once.
             declared = licensing.combine(sorted(licences[key]))
+            concluded = declared
         # Say when the list is shortened; without the marker it reads as the
         # whole set, and the first four by name need not be the ones that ship.
         named = sorted(str(item.relative_to(repo_root)) for item in paths)

@@ -117,26 +117,29 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
                     f"{ref} was minted for two components with different terms; "
                     "a LicenseRef identifies one text"
                 )
-            shipped = ", ".join(item.path for item in grants)
+            # Accumulated, not replaced: three components sharing one text left
+            # the entry naming the last two and citing only the last one's files.
+            covers = set(entries.get(ref, {}).get("_for", ())) | {component.name}
+            cited = sorted(
+                set(entries.get(ref, {}).get("_from", ()))
+                | {item.path for item in grants}
+            )
             entries[ref] = {
                 "licenseId": ref,
-                "name": "License terms shipped with "
-                + ", ".join(
-                    sorted(
-                        {entries[ref]["_for"], component.name}
-                        if ref in entries
-                        else {component.name}
-                    )
-                ),
-                "_for": component.name,
+                "name": "License terms shipped with " + ", ".join(sorted(covers)),
+                "_for": covers,
+                "_from": cited,
                 "extractedText": body,
                 "comment": (
                     licensing.why_unnamed(grants)
-                    + f"; reproduced here verbatim from {shipped}."
+                    + "; reproduced here verbatim from "
+                    + ", ".join(cited)
+                    + "."
                 ),
             }
     for entry in entries.values():
         entry.pop("_for", None)
+        entry.pop("_from", None)
     return sorted(entries.values(), key=lambda item: item["licenseId"])
 
 
@@ -248,19 +251,17 @@ def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
     said the wheel carries no code under them. Only a component concluding the
     declared licence itself adds nothing.
     """
-    # By identifier, not by expression: combining whole expressions nests the
-    # compound ones in parentheses and repeats an id two components share.
-    identifiers: set[str] = set()
+    # Decomposed, so an id two components share appears once and a compound one
+    # does not arrive nested -- but never through an `OR`, which is one choice
+    # and becomes a claim on both halves if it is split.
+    operands: set[str] = set()
     for component in inventory.components_present.values():
         if component.license_concluded == NOASSERTION:
             continue
-        try:
-            identifiers.update(licensing.identifiers_in(component.license_concluded))
-        except licensing.ExpressionReadError:
-            identifiers.add(component.license_concluded)
+        operands.update(licensing.operands_of(component.license_concluded))
     if declared != NOASSERTION:
-        identifiers.add(declared)
-    return licensing.combine(sorted(identifiers)) if identifiers else declared
+        operands.update(licensing.operands_of(declared))
+    return licensing.combine(sorted(operands)) if operands else declared
 
 
 def build_document(
@@ -499,16 +500,15 @@ def build_document(
             # local stub beside it would restate version, supplier and licence
             # from the same source.
             document_ref = f"DocumentRef-{licensing.spdx_safe(sibling['filename'])}"
-            external_documents.append(
-                {
-                    "externalDocumentId": document_ref,
-                    "spdxDocument": sibling["namespace"],
-                    "checksum": {
-                        "algorithm": "SHA1",
-                        "checksumValue": sibling["sha1"],
-                    },
-                }
-            )
+            # Two requirement lines can name one sibling -- a plain one and an
+            # extra-gated one -- and SPDX wants each externalDocumentId once.
+            entry = {
+                "externalDocumentId": document_ref,
+                "spdxDocument": sibling["namespace"],
+                "checksum": {"algorithm": "SHA1", "checksumValue": sibling["sha1"]},
+            }
+            if entry not in external_documents:
+                external_documents.append(entry)
             element = f"{document_ref}:{WHEEL_PACKAGE_ID}"
             comment = (
                 f"{declared} Built by this same build as {sibling['name']} "
