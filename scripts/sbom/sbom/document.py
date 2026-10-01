@@ -441,7 +441,9 @@ def build_document(
                 "externalRefs": _dependency_refs(name, group[0]),
                 "comment": (
                     "Consumer requirement declared in wheel metadata: "
-                    + "; ".join(sorted(str(item) for item in group))
+                    # " | ", not "; ": a requirement string contains its own
+                    # semicolon before the marker.
+                    + " | ".join(sorted(str(item) for item in group))
                     + ". Resolved at install time; this document states no "
                     "license for it."
                     + (f" Requested with: {', '.join(extras)}." if extras else "")
