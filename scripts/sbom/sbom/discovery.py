@@ -163,7 +163,11 @@ def _notice_from(evidence) -> str:
     notices = [
         found
         for item in evidence
-        if item.kind == "grant" and (found := licensing.read_notice(item.text))
+        if item.kind == "grant"
+        and (found := licensing.read_notice(item.text))
+        and not licensing.notice_is_the_licence_authors(
+            found, [license_id for license_id, _, _ in item.matches]
+        )
     ]
     return "\n".join(licensing.fold_notices(notices)) if notices else "NOASSERTION"
 

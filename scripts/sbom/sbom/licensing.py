@@ -551,6 +551,24 @@ def normalized_tag(text: str) -> str | None:
     return expression
 
 
+def notice_is_the_licence_authors(notice: str, identified: list[str]) -> bool:
+    """Whether this notice belongs to the licence rather than to the component.
+
+    A COPYING that *is* the reference text carries the steward's own line -- the
+    FSF's in every GPL, Sam Hocevar's in WTFPL -- so a component shipping one
+    verbatim would be credited to whoever wrote the licence. The corpus already
+    holds those texts, so the question is answered by looking rather than by
+    keeping a list of stewards.
+    """
+    entries = corpus()[1]
+    collapsed = " ".join(notice.split())
+    return any(
+        (reference := entries.get(license_id))
+        and collapsed in " ".join(reference.text.split())
+        for license_id in identified
+    )
+
+
 def read_notice(text: str) -> str | None:
     """A concrete copyright line stated in a licence text, if it carries one.
 
