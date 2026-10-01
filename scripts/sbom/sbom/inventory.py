@@ -167,6 +167,17 @@ class Resolver:
                 artifacts[0], wheel_path, f"{source}; exact build output"
             )
 
+        # Identical bytes are not evidence of origin when several components
+        # hold them: a stock Apache-2.0 text is the same file in every project
+        # that ships one. Say so, and let the path decide, rather than naming
+        # whichever happened to be indexed first.
+        shared = self._shared_content(candidate_digest)
+        if shared is not None:
+            by_path = self._resolve_by_path(wheel_path, source, build_id)
+            if by_path is not None:
+                return by_path
+            return shared(wheel_path, source)
+
         component_file = self.source_files.by_hash.get(candidate_digest)
         if component_file:
             key = component_file.split("/", 1)[0].removesuffix("-src")
@@ -273,6 +284,41 @@ class Resolver:
             components={component.key: {"vendored-library"}},
             primary=component.key,
         )
+
+    def _shared_content(self, digest: str):
+        """How to describe content that more than one component also holds.
+
+        Returns None when the digest names exactly one component, which is the
+        case worth stating as a fact. Otherwise it returns a builder that names
+        every candidate and claims none of them, keeping each component's
+        licence obligation without asserting a copy that did not happen.
+        """
+        owners: dict[str, str] = {}
+        for display in self.source_files.all_by_hash.get(digest, []):
+            owners[display.split("/", 1)[0].removesuffix("-src")] = display
+        for member in self.archives.all_by_hash.get(digest, []):
+            owners[member.container] = f"{member.path} in {member.container}"
+        # This repository holding the same bytes counts as a candidate too: a
+        # module that is nothing but an SPDX header is identical in every project
+        # that uses the same header, and calling ours a copy of a dependency's
+        # would ship a first-party file as redistributed third-party content.
+        ours = self.repo_files.all_by_hash.get(digest, [])
+        if len(owners) + bool(ours) < 2:
+            return None
+
+        def build(wheel_path: str, source: str) -> Attribution:
+            where = ", ".join(sorted([*owners.values(), *ours]))
+            return Attribution(
+                path=wheel_path,
+                origin="shared-content",
+                detail=(
+                    f"{source}; these bytes are held by more than one component "
+                    f"({where}); the build does not record which supplied this file"
+                ),
+                components={key: {"shared-content"} for key in owners},
+            )
+
+        return build
 
     def _resolve_by_build_id(
         self, wheel_path: str, source: str, build_id: str

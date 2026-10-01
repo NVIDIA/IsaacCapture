@@ -781,6 +781,7 @@ class ArchiveIndex:
 
     def __init__(self) -> None:
         self.by_hash: dict[str, Member] = {}
+        self.all_by_hash: dict[str, list[Member]] = {}
         self.by_name: dict[str, list[Member]] = {}
         # Survives the RPATH/SONAME rewrite a repair tool applies on the way in,
         # so a patched wheel member still points at the archive it came from.
@@ -807,6 +808,7 @@ class ArchiveIndex:
                     member = replace(member, build_id=build_id)
                     self.by_build_id.setdefault(build_id, member)
             self.by_hash.setdefault(member.sha256, member)
+            self.all_by_hash.setdefault(member.sha256, []).append(member)
             self.by_name.setdefault(Path(member.path).name, []).append(member)
             self._maybe_license(display, member, data)
 
@@ -815,9 +817,10 @@ class ArchiveIndex:
         if Path(member.path).parent.as_posix() not in {".", ""}:
             return  # only the archive root states the bundle's own terms
         if name.upper() == "VERSION" and len(data) < 256:
-            self.archives[display]["version_text"] = data.decode(
-                "utf-8", "replace"
-            ).strip()
+            # First line only. These files carry more than one, and a newline in
+            # a version breaks every tag-value and table rendering downstream.
+            text = data.decode("utf-8", "replace").strip().splitlines()
+            self.archives[display]["version_text"] = text[0].strip() if text else ""
             return
         if not licensing._classify(name):  # noqa: SLF001 - same package
             return
@@ -880,6 +883,10 @@ class FileIndex:
 
     def __init__(self) -> None:
         self.by_hash: dict[str, str] = {}
+        # Every path sharing a digest, because one is not evidence of origin when
+        # several files hold the same bytes -- a stock licence text, or a module
+        # that is nothing but an SPDX header.
+        self.all_by_hash: dict[str, list[str]] = {}
         self.by_suffix: dict[str, list[str]] = {}
         self._digests: dict[str, str] = {}
 
@@ -902,6 +909,7 @@ class FileIndex:
                 continue
             self._digests[str(path.resolve())] = digest
             self.by_hash.setdefault(digest, display)
+            self.all_by_hash.setdefault(digest, []).append(display)
             # Two trailing segments is enough to disambiguate an __init__.py.
             self.by_suffix.setdefault(
                 "/".join(relative.rsplit("/", 2)[-2:]), []

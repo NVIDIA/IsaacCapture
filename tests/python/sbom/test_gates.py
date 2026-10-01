@@ -360,3 +360,39 @@ def test_an_unreadable_archive_says_so(workspace, license_data):
             workspace.wheel,
             workspace.root / "sbom",
         )
+
+
+def test_bytes_more_than_one_component_holds_name_no_single_source(
+    workspace, license_data
+):
+    """A stock licence text is the same file in every project that ships one.
+
+    Naming whichever was indexed first would file one project's redistribution
+    obligation under another's. Say the bytes are shared and claim no single
+    source instead.
+    """
+    from sbom import licensing
+
+    licensing.load_corpus(license_data)
+    shared = synth.spdx_text("Apache-2.0").encode()
+    for key in ("alpha", "beta"):
+        (workspace.build / "_deps" / f"{key}-src").mkdir(parents=True, exist_ok=True)
+        (workspace.build / "_deps" / f"{key}-src" / "LICENSE").write_bytes(shared)
+
+    payload = synth.wheel_payload(workspace)
+    payload["isaaccapture/viz/SOMEDEP_LICENSE"] = shared
+    synth.write_wheel(workspace.wheel, payload)
+
+    build_module.build(
+        workspace.root, workspace.build, workspace.wheel, workspace.root / "sbom"
+    )
+    with zipfile.ZipFile(workspace.wheel) as archive:
+        spdx = json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
+    entry = next(
+        item for item in spdx["files"] if item["fileName"].endswith("SOMEDEP_LICENSE")
+    )
+
+    assert "shared-content" in entry["comment"]
+    assert "more than one component" in entry["comment"]
+    # Both candidates named, neither claimed as the source.
+    assert "alpha" in entry["comment"] and "beta" in entry["comment"]

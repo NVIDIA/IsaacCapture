@@ -17,6 +17,9 @@ _HOW_PROSE = {
     "derived-file": "files were copied in and modified by the build",
     "extracted-file": "files were unpacked from its archive",
     "vendored-library": "the library was vendored in by auditwheel",
+    "shared-content": (
+        "a shipped file holds bytes this component also holds, and so do others"
+    ),
 }
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
@@ -101,13 +104,22 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                     "reason": "no license grant found in the component's own files",
                 }
             )
-        elif not any(item.identified for item in grants):
+        elif "LicenseRef-" in component.license_concluded:
+            # Keyed on the conclusion, not on whether anything matched: a text
+            # can match and still be unusable, when the id it matched is newer
+            # than the expression grammar a consumer validates with. Either way
+            # the terms are only readable as the text this wheel carries.
             unidentified.append(
                 {
                     "component": key,
                     "reason": (
-                        "the shipped grant matches no text in the SPDX reference "
-                        "corpus; it is reproduced verbatim in the document"
+                        "the shipped grant is carried verbatim rather than named: "
+                        + (
+                            "it matches no text in the SPDX reference corpus"
+                            if not any(item.identified for item in grants)
+                            else "what it matches cannot be expressed in the SPDX "
+                            "grammar shipped with this document"
+                        )
                     ),
                     "evidence": [item.path for item in grants],
                 }

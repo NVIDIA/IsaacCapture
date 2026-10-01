@@ -83,8 +83,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     for item in merged["wheels"]:
         for entry in item["components_with_unidentified_license"]:
             print(
-                f"::warning::{item['filename']}: {entry['component']} ships a license "
-                "text that matches no SPDX reference"
+                f"::warning::{item['filename']}: {entry['component']}: {entry['reason']}"
             )
     return 0
 
