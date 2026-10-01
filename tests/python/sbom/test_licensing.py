@@ -277,3 +277,13 @@ def test_folding_does_not_merge_different_holders():
     )
 
     assert len(folded) == 2
+
+
+def test_a_template_is_not_a_notice():
+    """A reference text names nobody; recording its placeholder would."""
+    assert licensing.read_notice("Copyright [yyyy] [name of copyright owner]") is None
+    assert licensing.read_notice("Copyright (c) <year> <copyright holders>") is None
+    assert (
+        licensing.read_notice("MIT\n\nCopyright (c) 2016 Wenzel Jakob\n\nPermission")
+        == "Copyright (c) 2016 Wenzel Jakob"
+    )

@@ -149,6 +149,25 @@ def git(repo: Path, *args: str) -> str | None:
     )
 
 
+def _notice_from(evidence) -> str:
+    """The copyright a component's own licence text states, where it states one.
+
+    Permissive licences generally require the notice to travel with the terms,
+    and for MIT and the BSDs it is a line of the same file -- shipped in the
+    wheel but, until now, named nowhere a reader could act on.
+    """
+    # Grants only, though a pool counts as licence evidence everywhere else: a
+    # pool is a directory of reference texts, and the notice in one is the
+    # licence's own author -- OpenXR ships WTFPL, so reading its pool credited
+    # OpenXR to the person who wrote WTFPL.
+    notices = [
+        found
+        for item in evidence
+        if item.kind == "grant" and (found := licensing.read_notice(item.text))
+    ]
+    return "\n".join(licensing.fold_notices(notices)) if notices else "NOASSERTION"
+
+
 def _identity(
     remote: str | None, name: str, commit: str | None
 ) -> tuple[str, str, str, str]:
@@ -232,6 +251,7 @@ def discover_source_trees(deps_dir: Path) -> dict[str, Component]:
             download_location=download,
             source_info=" ".join(details),
             root=root,
+            copyright_text=_notice_from(evidence),
             license_concluded=concluded,
             license_declared=declared_expression,
             evidence=tuple(evidence),
@@ -270,6 +290,10 @@ def _owner(path: Path, ownership: Ownership | None) -> str | None:
     if match:
         return match.group("name")
     return ownership.owner_of(path) if ownership is not None else None
+
+
+class SupplierError(Exception):
+    """The project does not name exactly one author to record as supplier."""
 
 
 class ArchiveError(Exception):
@@ -506,12 +530,18 @@ def project_authors(repo_root: Path) -> set[str]:
 def project_supplier(repo_root: Path) -> str:
     """Who supplied this distribution, as its own packaging metadata states it.
 
-    SPDX takes one supplier, so several authors name nobody in particular and
-    none names nobody at all; either way asserting one would be this collector
-    speaking for a project rather than reading it.
+    SPDX takes one supplier. Choosing among several, or publishing a release
+    that names none, is a question for whoever is publishing it -- so it is
+    asked here rather than answered quietly.
     """
-    authors = project_authors(repo_root)
-    return f"Organization: {authors.pop()}" if len(authors) == 1 else "NOASSERTION"
+    authors = sorted(project_authors(repo_root))
+    if len(authors) != 1:
+        raise SupplierError(
+            f"{repo_root}/pyproject.toml names {len(authors)} project authors "
+            f"({', '.join(authors) or 'none'}); SPDX records one supplier for "
+            "the distribution"
+        )
+    return f"Organization: {authors[0]}"
 
 
 def _holder_of(path: Path) -> tuple[str, str | None] | None:

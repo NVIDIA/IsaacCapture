@@ -193,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         build_module.BuildError,
         licensing.CorpusError,
         discovery.ArchiveError,
+        discovery.SupplierError,
         wheelfile.WheelError,
         validate_module.ManifestError,
     ) as error:

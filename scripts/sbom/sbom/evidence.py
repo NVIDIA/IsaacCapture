@@ -26,6 +26,7 @@ from .discovery import (
     discover_vendored,
     project_authors,
     discover_source_trees,
+    _notice_from,
     tracked_files,
     EMPTY_SHA256,
     _walk,
@@ -151,6 +152,7 @@ def _archive_components(
             ),
             license_concluded=concluded,
             license_declared=declared,
+            copyright_text=_notice_from(evidence),
             evidence=tuple(evidence),
         )
     return components

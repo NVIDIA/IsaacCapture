@@ -523,6 +523,43 @@ def fold_notices(notices) -> list[str]:
     )
 
 
+_PLAIN_COPYRIGHT = re.compile(
+    r"^[^\w\n]*(?P<notice>Copyright\b[^\n\r]*\d{4}[^\n\r]*|"
+    r"Copyright\b[^\n\r]*)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_PLACEHOLDER = re.compile(
+    r"\[yyyy\]|<year>|\[name of copyright owner\]|<copyright", re.I
+)
+
+
+def normalized_tag(text: str) -> str | None:
+    """A file's own REUSE tag, normalised, or None if it names nothing usable."""
+    tag = read_spdx_tag(text)
+    if tag is None:
+        return None
+    expression = normalized_expression(tag)
+    # A LicenseRef here has no text to define it with, as for any other file.
+    if expression == NOASSERTION or license_refs(expression):
+        return None
+    return expression
+
+
+def read_notice(text: str) -> str | None:
+    """A concrete copyright line stated in a licence text, if it carries one.
+
+    A reference text carries the template instead -- `Copyright [yyyy] [name of
+    copyright owner]` -- which names nobody, so it is not a notice and recording
+    it would claim one where the file states none.
+    """
+    for match in _PLAIN_COPYRIGHT.finditer(text):
+        notice = " ".join(match.group("notice").split()).rstrip("*/ ")
+        if _PLACEHOLDER.search(notice) or not re.search(r"\d{4}", notice):
+            continue
+        return notice
+    return None
+
+
 def read_copyright(text: str) -> str | None:
     """The notice a file states about itself, beside its REUSE tag."""
     match = _FILE_COPYRIGHT.search(text)

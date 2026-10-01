@@ -152,12 +152,19 @@ def build(
     ]
     projected_wheel = replace(wheel, entries=tuple(projected))
     for name in [*additions, *replacements]:
+        body = additions.get(name, b"").decode("utf-8", "replace")
+        # A licence text can state its own terms and carry a notice, and these
+        # were the only members never read for either -- the collector packaged
+        # them, so nothing scanned them the way it scans what it is describing.
         inventory.attributions[name] = Attribution(
             path=name,
             origin="metadata",
+            exact=True,
             detail="license evidence packaged by the SBOM collector"
             if name in additions
             else "distribution metadata, updated to declare the packaged license files",
+            spdx_tag=licensing.normalized_tag(body) if name in additions else None,
+            copyright_text=licensing.read_notice(body) if name in additions else None,
         )
     # The document is added below, after it has been rendered; record it now so
     # the evidence accounts for every member of the finished wheel.

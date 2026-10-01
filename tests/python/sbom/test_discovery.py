@@ -287,8 +287,8 @@ def test_the_supplier_is_read_from_the_project_not_written_here(workspace):
     assert discovery.project_supplier(workspace.root) == "Organization: Someone Else"
 
 
-def test_a_project_naming_several_authors_names_no_single_supplier(workspace):
-    """SPDX takes one; picking would be this tool speaking for the project."""
+def test_a_project_naming_several_authors_stops_rather_than_choosing(workspace):
+    """SPDX records one supplier; which one is not this tool's call to make."""
     from sbom import discovery
 
     pyproject = workspace.root / "pyproject.toml"
@@ -300,4 +300,5 @@ def test_a_project_naming_several_authors_names_no_single_supplier(workspace):
         encoding="utf-8",
     )
 
-    assert discovery.project_supplier(workspace.root) == "NOASSERTION"
+    with pytest.raises(discovery.SupplierError, match="names 2 project authors"):
+        discovery.project_supplier(workspace.root)

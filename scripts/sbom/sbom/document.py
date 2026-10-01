@@ -259,7 +259,15 @@ def build_document(
             record["licenseConcluded"] = attribution.spdx_tag
             record["licenseInfoInFiles"] = [attribution.spdx_tag]
             stated_in_files.add(attribution.spdx_tag)
-        if attribution and attribution.copyright_text and not attribution.primary:
+        if (
+            attribution
+            and attribution.copyright_text
+            and not attribution.primary
+            # A packaged licence text states its component's notice, or its own
+            # author's -- WTFPL names the person who wrote WTFPL. Neither is a
+            # notice this distribution makes about itself.
+            and not entry.name.startswith(f"{wheel.dist_info}/licenses/")
+        ):
             stated_copyright.add(attribution.copyright_text)
 
         comment = []

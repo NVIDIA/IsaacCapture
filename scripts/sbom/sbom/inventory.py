@@ -702,19 +702,4 @@ def _spdx_tag(entry: Entry) -> str | None:
     """REUSE tags are upstream stating the license of that exact file."""
     if Path(entry.name).suffix.lower() not in _TAGGABLE:
         return None
-    tag = licensing.read_spdx_tag(entry.head.decode("utf-8", "replace"))
-    if tag is None:
-        return None
-    # Tags are written by hand: lowercase operators and stray text reach the
-    # document as licenseConcluded, where an invalid expression fails the
-    # published SBOM's own conformance check.
-    normalized = licensing.normalized_expression(tag)
-    if normalized == "NOASSERTION":
-        return None
-    # A LicenseRef is only meaningful alongside its text, and a file tag carries
-    # none: naming one here produced a document that failed its own check for an
-    # undefined reference, on a wheel the build had already rewritten and would
-    # refuse to process again.
-    if licensing.license_refs(normalized):
-        return None
-    return normalized
+    return licensing.normalized_tag(entry.head.decode("utf-8", "replace"))
