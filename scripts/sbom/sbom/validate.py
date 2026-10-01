@@ -297,11 +297,10 @@ def _check_attribution(evidence_doc: dict, wheel: wheelfile.WheelInfo) -> list[s
     for key, component in evidence_doc.get("components", {}).items():
         if not component.get("in_this_wheel"):
             continue
-        recorded.update(
-            item["sha256"]
-            for item in component.get("evidence", [])
-            if item["kind"] in ("grant", "pool")
-        )
+        # Every kind: the document cites one attributionText per evidence item,
+        # so comparing only the licence-granting ones called a NOTICE the build
+        # plainly read a text it never did.
+        recorded.update(item["sha256"] for item in component.get("evidence", []))
         # The same test the build gate applies: a REUSE pool is a real text even
         # though it names no single expression, so publishing on one and then
         # failing verification for want of a grant would contradict the gate.
