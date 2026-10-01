@@ -20,6 +20,9 @@ from . import document as document_module
 from . import wheelfile
 
 
+_SIDECAR_KINDS = ("spdx", "build_evidence", "license_report_json", "license_report_md")
+
+
 class ManifestError(Exception):
     """A manifest is not shaped the way this tool writes them."""
 
@@ -47,6 +50,14 @@ def _record_for(manifest: dict, filename: str) -> dict:
             for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
                 if key not in record:
                     raise ManifestError(f"{filename}: manifest record has no {key!r}")
+            # Every sidecar, not just the ones a record happens to name. An
+            # absent entry is not an absent check: omitting `build_evidence`
+            # left `check-set` passing a wheel the evidence would have failed.
+            missing = sorted(set(_SIDECAR_KINDS) - set(record["sidecars"]))
+            if missing:
+                raise ManifestError(
+                    f"{filename}: manifest record names no {', '.join(missing)} sidecar"
+                )
             return record
     return {}
 
@@ -454,7 +465,10 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
     failures: list[str] = []
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     for entry in manifest.get("wheels") or []:
-        record = _record_for(manifest, entry.get("filename", ""))
+        named = entry.get("filename")
+        if not named:
+            raise ManifestError("a manifest record names no wheel")
+        record = _record_for(manifest, named)
         wheel = wheel_dir / record["filename"]
         if not wheel.is_file():
             failures.append(f"{record['filename']} is missing from {wheel_dir}")
