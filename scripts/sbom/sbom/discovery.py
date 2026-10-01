@@ -701,9 +701,11 @@ def discover_vendored(
             kind="vendored-source",
             supplier=f"Organization: {names[key]}",
             homepage="NOASSERTION",
-            purl=PackageURL(
-                type="generic", name=licensing.spdx_safe(names[key]).lower()
-            ).to_string(),
+            # No purl: this is third-party material identified by the copyright
+            # its files state, and there is no package to locate. Minting
+            # `pkg:generic/<holder>` named a package that does not exist, from
+            # an organisation rather than from anything shipped.
+            purl="NOASSERTION",
             version="NOASSERTION",
             download_location="NOASSERTION",
             source_info=(

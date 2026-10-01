@@ -85,13 +85,21 @@ def _component_package(component: Component, roles: set[str], dist_info: str) ->
         "licenseConcluded": component.license_concluded,
         "licenseDeclared": component.license_declared,
         "copyrightText": component.copyright_text,
-        "externalRefs": [
+        # Only where there is one. A package identifier a reader cannot resolve
+        # is worse than its absence.
+        **(
             {
-                "referenceCategory": "PACKAGE-MANAGER",
-                "referenceType": "purl",
-                "referenceLocator": component.purl,
+                "externalRefs": [
+                    {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": component.purl,
+                    }
+                ]
             }
-        ],
+            if component.purl != NOASSERTION
+            else {}
+        ),
         "attributionTexts": _attribution_texts(component, dist_info),
         "sourceInfo": f"{component.source_info} Reaches this wheel as: {', '.join(sorted(roles))}.",
     }

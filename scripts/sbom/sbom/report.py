@@ -26,6 +26,16 @@ _HOW_PROSE = {
 }
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
+# What a row is, so a copyright holder is not read as a package name. A vendored
+# row is named for the holder its files state, because that is the only identity
+# such material has -- there is no package behind it.
+_KIND_PROSE = {
+    "source-tree": "fetched source",
+    "archive": "fetched archive",
+    "system-library": "build machine",
+    "vendored-source": "vendored source (named by copyright holder)",
+}
+
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
@@ -265,8 +275,8 @@ def report_markdown(payload: dict) -> str:
         "",
         "## Redistributed components",
         "",
-        "| Component | Version | License | How it reaches the wheel | Evidence |",
-        "| --- | --- | --- | --- | --- |",
+        "| Component | Kind | Version | License | How it reaches the wheel | Evidence |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for item in payload["components"]:
         evidence = (
@@ -287,7 +297,8 @@ def report_markdown(payload: dict) -> str:
         )
         version = item["version"]
         lines.append(
-            f"| {item['name']} | `{_short(version)}` | `{item['license_concluded']}` | "
+            f"| {item['name']} | {_KIND_PROSE.get(item['kind'], item['kind'])} | "
+            f"`{_short(version)}` | `{item['license_concluded']}` | "
             f"{how or '—'} | {evidence} |"
         )
 

@@ -350,3 +350,31 @@ def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
     holders = [key for key in discovered.components if key.startswith("vendored:")]
 
     assert not any("guennebaud" in key for key in holders), holders
+
+
+def test_vendored_material_asserts_no_package_identifier(workspace, license_data):
+    """A copyright holder is not a package.
+
+    Checked-in third-party material is identified by the copyright its files
+    state, because that is the only identity it has. Minting
+    `pkg:generic/<holder>` from it named a package that does not exist, and a
+    reader resolving that locator finds nothing or finds something else.
+    """
+    from sbom import discovery, licensing
+
+    licensing.load_corpus(license_data)
+    source = workspace.root / "src" / "vendor" / "widget.hpp"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "// SPDX-FileCopyrightText: Copyright 2023 Upstream Widgets Ltd\n"
+        "// SPDX-License-Identifier: BSL-1.0\n"
+    )
+    components, _ = discovery.discover_vendored(
+        workspace.root, {source}, {"Example Org"}
+    )
+    component = next(iter(components.values()))
+
+    assert component.kind == "vendored-source"
+    assert component.purl == "NOASSERTION"
+    # Who it came from is still stated; that much was observed.
+    assert component.supplier == "Organization: Upstream Widgets Ltd"
