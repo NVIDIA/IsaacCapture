@@ -21,6 +21,9 @@ from .wheelfile import WheelInfo
 NOASSERTION = "NOASSERTION"
 # How a component reaches the wheel decides the relationship that says so.
 _LINK_HOWS = {"compiled-source", "header-include", "prebuilt-library"}
+# Bytes this component also holds, which is not evidence the wheel carries its
+# file. It states a candidate, so it earns no CONTAINS and no COPY_OF.
+_AMBIGUOUS_HOWS = {"shared-content"}
 
 
 def _spdx_id(prefix: str, value: str) -> str:
@@ -262,7 +265,7 @@ def build_document(
                     "relationshipType": "STATIC_LINK",
                 }
             )
-        if roles - _LINK_HOWS:
+        if roles - _LINK_HOWS - _AMBIGUOUS_HOWS:
             relationships.append(
                 {
                     "spdxElementId": wheel_id,
@@ -283,6 +286,19 @@ def build_document(
                     "relationshipType": "COPY_OF" if exact else "GENERATED_FROM",
                 }
             )
+
+        # A file whose bytes several components hold names no single source, so
+        # it has no primary and `files_of` does not see it. Stating the candidates
+        # only in prose would leave it attached to nothing any tool reads.
+        for name in inventory.files_sharing(key):
+            if name in file_ids:
+                relationships.append(
+                    {
+                        "spdxElementId": file_ids[name],
+                        "relatedSpdxElement": package_id,
+                        "relationshipType": "OTHER",
+                    }
+                )
 
     for soname, consumers in inventory.external_runtime.items():
         package_id = _spdx_id("Package-external", soname)

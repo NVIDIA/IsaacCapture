@@ -86,6 +86,14 @@ class Inventory:
             path for path, item in self.attributions.items() if item.primary == key
         )
 
+    def files_sharing(self, key: str) -> list[str]:
+        """Files naming this component as one candidate among several."""
+        return sorted(
+            path
+            for path, item in self.attributions.items()
+            if item.primary is None and "shared-content" in item.components.get(key, ())
+        )
+
 
 class Resolver:
     """Probes a candidate's bytes and path against every discovered index."""

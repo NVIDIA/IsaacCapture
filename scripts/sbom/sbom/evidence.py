@@ -27,6 +27,7 @@ from .discovery import (
     discover_vendored,
     project_authors,
     discover_source_trees,
+    tracked_files,
     EMPTY_SHA256,
     _walk,
 )
@@ -206,8 +207,11 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         if root.is_dir():
             source_files.add_tree(root, root.name)
 
+    # Tracked files only: an install prefix carries no marker distinguishing it
+    # from source, so a directory walk cannot, and a wheel member matching this
+    # build's own output would be reported as a copy of repository source.
     repo_files = FileIndex()
-    repo_files.add_tree(repo_root, ".", skip=not_source)
+    repo_files.add_paths(repo_root, ".", tracked_files(repo_root))
 
     # _deps/*-src is the component-source domain, already indexed above; a wheel
     # member matching one is a copy of upstream, not something this build made.
@@ -215,10 +219,13 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
     # build trees, and trees a dependency stages for packaging -- so it belongs
     # in build_files like any other generated file. The staged tree stays out:
     # indexing it would let the wheel explain itself.
+    # Named after the directory that was read: `--build-dir` is free-form, and a
+    # citation reading `build/...` resolves to the wrong tree, or to nothing, for
+    # anyone whose build directory is not called that.
     build_files = FileIndex()
     build_files.add_tree(
         build_dir,
-        "build",
+        build_dir.name,
         skip=(*sorted(deps_dir.glob("*-src")), build_dir / "python_package"),
     )
 

@@ -291,6 +291,7 @@ def test_a_malformed_reuse_tag_does_not_reach_the_document(workspace):
         # Authored sources, staged into the package like any other .py.
         (workspace.root / "src/python/isaaccapture" / name).write_text(text)
         (workspace.staged / "isaaccapture" / name).write_text(text)
+    synth.track(workspace.root)
     _rebuild(workspace, payload)
 
     with zipfile.ZipFile(workspace.wheel) as archive:

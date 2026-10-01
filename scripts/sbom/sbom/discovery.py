@@ -117,6 +117,19 @@ class Component:
     evidence: tuple[licensing.LicenseEvidence, ...] = ()
 
 
+def repo_head(directory: Path) -> str | None:
+    """The commit of the checkout rooted at `directory`, if it is one.
+
+    `git -C <dir> rev-parse HEAD` answers for whichever repository encloses the
+    directory, so a dependency whose checkout carries no .git of its own would
+    otherwise be stamped with this project's commit.
+    """
+    top = git(directory, "rev-parse", "--show-toplevel")
+    if top is None or Path(top).resolve() != directory.resolve():
+        return None
+    return git(directory, "rev-parse", "HEAD")
+
+
 def git(repo: Path, *args: str) -> str | None:
     """Run a read-only git query, or return None if git cannot answer."""
     try:
@@ -193,7 +206,7 @@ def discover_source_trees(deps_dir: Path) -> dict[str, Component]:
             continue
         key = root.name.removesuffix("-src")
         declared = _declared_constraint(deps_dir, key)
-        commit = git(root, "rev-parse", "HEAD")
+        commit = repo_head(root)
         remote = git(root, "config", "--get", "remote.origin.url") or declared["url"]
         describe = git(root, "describe", "--tags", "--always")
 
@@ -884,6 +897,23 @@ class ArchiveIndex:
         return collected
 
 
+def tracked_files(repo_root: Path) -> list[str]:
+    """What this repository actually holds, as git records it.
+
+    A working tree also holds whatever was built in it. An install prefix has no
+    marker saying so, so walking the directory cannot tell the two apart, and a
+    wheel member matching a *build output* would be reported as a copy of
+    repository source. Git knows the difference.
+    """
+    listing = git(repo_root, "ls-files", "-z", "--cached")
+    if listing is None:
+        raise FileApiError(
+            f"{repo_root} is not a git checkout this build can query; the SBOM "
+            "distinguishes repository source from build output by what git tracks"
+        )
+    return [item for item in listing.split("\0") if item]
+
+
 def discover_archives(repo_root: Path, skip: tuple[Path, ...] = ()) -> ArchiveIndex:
     """Index archives held in the repository, not ones a build unpacked."""
     index = ArchiveIndex()
@@ -918,8 +948,23 @@ class FileIndex:
         self, root: Path, display_root: str, skip: tuple[Path, ...] = ()
     ) -> None:
         skipped = tuple(item.resolve() for item in skip)
-        for path in _walk(root):
-            if any(str(path).startswith(str(item)) for item in skipped):
+        self._add(
+            root,
+            display_root,
+            (
+                path
+                for path in _walk(root)
+                if not any(str(path).startswith(str(item)) for item in skipped)
+            ),
+        )
+
+    def add_paths(self, root: Path, display_root: str, paths) -> None:
+        """Index an explicit list rather than whatever the tree happens to hold."""
+        self._add(root, display_root, (root / item for item in paths))
+
+    def _add(self, root: Path, display_root: str, paths) -> None:
+        for path in paths:
+            if not path.is_file() or path.is_symlink():
                 continue
             relative = path.relative_to(root).as_posix()
             display = f"{display_root}/{relative}"

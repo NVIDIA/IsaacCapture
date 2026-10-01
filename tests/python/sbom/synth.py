@@ -22,8 +22,10 @@ import csv
 import gzip
 import hashlib
 import io
+import os
 import json
 import struct
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
@@ -271,6 +273,36 @@ class Workspace:
         self.wheel = root / "dist" / WHEEL_NAME
 
 
+def _git_checkout(root: Path, initialise: bool = True) -> None:
+    """Make the generated project a real checkout.
+
+    The collector separates repository source from build output by what git
+    tracks, because an install prefix carries no marker saying it is output.
+    `build/` and `dist/` are ignored here for the same reason they are in the
+    real repository.
+    """
+    _write(root / ".gitignore", "build/\ndist/\n")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "synth",
+        "GIT_AUTHOR_EMAIL": "synth@example.invalid",
+        "GIT_COMMITTER_NAME": "synth",
+        "GIT_COMMITTER_EMAIL": "synth@example.invalid",
+    }
+    run = lambda *args: subprocess.run(  # noqa: E731 - local shorthand
+        ["git", "-C", str(root), *args], check=True, capture_output=True, env=env
+    )
+    if initialise:
+        run("init", "-q", "-b", "main")
+    run("add", "-A")
+    run("commit", "-q", "--allow-empty", "-m", "synthetic project")
+
+
+def track(root: Path) -> None:
+    """Commit whatever a test added after the project was generated."""
+    _git_checkout(root, initialise=False)
+
+
 def _write(path: Path, data: bytes | str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(data, str):
@@ -394,6 +426,7 @@ def create(root: Path) -> Workspace:
     _file_api_reply(
         root, build, (workspace.staged / extension).relative_to(build).as_posix()
     )
+    _git_checkout(root)
     _write(build / "tests/unit_tests", b"\x7fELF-not-really")
     return workspace
 

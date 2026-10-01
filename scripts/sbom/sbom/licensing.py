@@ -217,9 +217,10 @@ def load_corpus(json_dir: Path) -> str:
 
 def _checkout_commit(source_dir: Path) -> str:
     """The commit deps/third_party pinned, read back from the checkout itself."""
-    from .discovery import git
 
-    return git(source_dir, "rev-parse", "HEAD") or "NOASSERTION"
+    from .discovery import repo_head
+
+    return repo_head(source_dir) or "NOASSERTION"
 
 
 def corpus() -> tuple[str, dict[str, Reference]]:
