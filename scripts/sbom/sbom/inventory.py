@@ -112,7 +112,7 @@ class Resolver:
                     artifact.output
                 )
                 self._artifacts_by_hash.setdefault(digest, []).append(artifact)
-                build_id = _build_id_of(artifact.output)
+                build_id = elf.read_build_id(artifact.output)
                 if build_id:
                     self._artifacts_by_build_id.setdefault(build_id, []).append(
                         artifact
@@ -360,7 +360,7 @@ class Resolver:
         artifacts = [
             artifact
             for artifact in self.graph.by_name(name)
-            if not _build_ids_disagree(build_id, _build_id_of(artifact.output))
+            if not _build_ids_disagree(build_id, elf.read_build_id(artifact.output))
         ]
         if len(artifacts) == 1:
             return self._from_artifact(
@@ -458,20 +458,6 @@ def build(
 def _build_ids_disagree(left: str | None, right: str | None) -> bool:
     """True only when both are known and differ -- that is evidence, not absence."""
     return bool(left and right and left != right)
-
-
-def _build_id_of(path: Path) -> str | None:
-    """The build-id of a file on disk, or None if it is not an ELF."""
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if not elf.is_elf(data[:4]):
-        return None
-    try:
-        return elf.read_dynamic(data).build_id
-    except Exception:  # noqa: BLE001 - a malformed build output is not ours to fix
-        return None
 
 
 def _attribute(

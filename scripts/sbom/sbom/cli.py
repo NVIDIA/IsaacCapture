@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import TOOL_NAME, TOOL_VERSION
 from . import build as build_module
+from . import discovery
 from . import evidence as evidence_module
 from . import licensing
 from . import validate as validate_module
@@ -182,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence_module.EvidenceError,
         build_module.BuildError,
         licensing.CorpusError,
+        discovery.ArchiveError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

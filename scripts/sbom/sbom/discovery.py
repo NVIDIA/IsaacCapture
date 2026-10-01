@@ -30,6 +30,7 @@ import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from elftools.common.exceptions import ELFError
 from packageurl import PackageURL
 
 from . import elf, licensing
@@ -253,6 +254,10 @@ def _owner(path: Path, ownership: Ownership | None) -> str | None:
     if match:
         return match.group("name")
     return ownership.owner_of(path) if ownership is not None else None
+
+
+class ArchiveError(Exception):
+    """An archive the build fetched cannot be read."""
 
 
 class FileApiError(Exception):
@@ -786,8 +791,6 @@ class ArchiveIndex:
         if path.stat().st_size > _MAX_ARCHIVE_BYTES:
             return
         members = self._read_members(path, display)
-        if members is None:
-            return
         self.archives[display] = {
             "path": display,
             "sha256": sha256_file(path),
@@ -798,7 +801,7 @@ class ArchiveIndex:
             if elf.is_elf(data[:4]):
                 try:
                     build_id = elf.read_dynamic(data).build_id
-                except Exception:  # noqa: BLE001 - a malformed member is not ours to fix
+                except ELFError:  # a third-party archive may hold a broken ELF
                     build_id = None
                 if build_id:
                     member = replace(member, build_id=build_id)
@@ -821,7 +824,7 @@ class ArchiveIndex:
         self.archives[display].setdefault("license_members", []).append((member, data))
 
     @staticmethod
-    def _read_members(path: Path, display: str) -> list[tuple[Member, bytes]] | None:
+    def _read_members(path: Path, display: str) -> list[tuple[Member, bytes]]:
         """Hash every member; keep the bytes only of the few worth keeping.
 
         An SDK tarball expands to far more than it compresses to, so holding
@@ -849,8 +852,12 @@ class ArchiveIndex:
                         handle = archive.extractfile(info)
                         if handle is not None:
                             take(info.name.removeprefix("./"), handle.read())
-        except (OSError, tarfile.TarError, zipfile.BadZipFile):
-            return None
+        except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:
+            # Only archives this build deliberately fetched are indexed, so one
+            # that will not open is a broken download, not a stray file. Saying
+            # so beats reporting every file it should have explained as a member
+            # that reached the wheel by an unknown route.
+            raise ArchiveError(f"{display} cannot be read: {error}") from error
         return collected
 
 
@@ -864,11 +871,7 @@ def discover_archives(repo_root: Path, skip: tuple[Path, ...] = ()) -> ArchiveIn
         name = path.name.lower()
         if not name.endswith(ARCHIVE_SUFFIXES):
             continue
-        try:
-            relative = path.relative_to(repo_root).as_posix()
-        except ValueError:
-            continue
-        index.add_archive(path, relative)
+        index.add_archive(path, path.relative_to(repo_root).as_posix())
     return index
 
 
@@ -891,10 +894,7 @@ class FileIndex:
         for path in _walk(root):
             if any(str(path).startswith(str(item)) for item in skipped):
                 continue
-            try:
-                relative = path.relative_to(root).as_posix()
-            except ValueError:
-                continue
+            relative = path.relative_to(root).as_posix()
             display = f"{display_root}/{relative}"
             try:
                 digest = sha256_file(path)

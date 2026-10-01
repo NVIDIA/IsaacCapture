@@ -18,6 +18,7 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
+from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
 ELF_MAGIC = b"\x7fELF"
@@ -67,7 +68,9 @@ def read_build_id(path: Path) -> str | None:
                 return None
             handle.seek(0)
             return _build_id_from(ELFFile(handle))
-    except (OSError, Exception):  # noqa: B014 - a malformed file is not ours to fix
+    except (OSError, ELFError):
+        # Scanning a machine's libraries meets files that only look like ELF.
+        # Anything else raising here is a bug in this parser, not bad input.
         return None
 
 

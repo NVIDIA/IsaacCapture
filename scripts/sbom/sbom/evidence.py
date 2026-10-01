@@ -171,12 +171,34 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
             f"{deps_dir} not found; configure the build before collecting evidence"
         )
 
-    config = cache.get("CMAKE_BUILD_TYPE") or "Release"
+    # Guessing a configuration would point the build graph and the staged-tree
+    # probe at a directory that need not exist, and every member they would have
+    # explained then reads as having reached the wheel by an unknown route.
+    config = cache.get("CMAKE_BUILD_TYPE")
+    if not config:
+        raise EvidenceError(
+            f"{build_dir}/CMakeCache.txt states no CMAKE_BUILD_TYPE; the build "
+            "graph and the staged tree are both read per configuration"
+        )
     graph = BuildGraph(build_dir, config)
-    components = discover_source_trees(deps_dir)
-    archives = discover_archives(
-        repo_root, skip=(build_dir, repo_root / "build-wheel", repo_root / "dist")
+    # Everything that is a build tree rather than source, skipped the same way
+    # everywhere it matters. The active one is given; any other is found by the
+    # CMakeCache.txt that makes it one. A second build directory holds staged
+    # copies of the repo, and walking those as source leaves a file's origin
+    # ambiguous rather than wrong, which surfaces as an unexplained member.
+    not_source = (
+        build_dir,
+        repo_root / "build-wheel",
+        repo_root / "dist",
+        *(
+            path.parent
+            for pattern in ("*/CMakeCache.txt", "*/*/CMakeCache.txt")
+            for path in repo_root.glob(pattern)
+        ),
     )
+
+    components = discover_source_trees(deps_dir)
+    archives = discover_archives(repo_root, skip=not_source)
     components.update(_archive_components(archives, repo_root))
 
     source_files = FileIndex()
@@ -185,22 +207,7 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
             source_files.add_tree(root, root.name)
 
     repo_files = FileIndex()
-    # Skip the build tree by path, not by name: --build-dir is free-form, and a
-    # differently-named one inside the repo would otherwise be walked twice.
-    # Any *other* configured tree is skipped too, found by the CMakeCache.txt
-    # that makes it one -- a second build directory holds staged copies of the
-    # repo, and walking them as source leaves a file's origin ambiguous rather
-    # than wrong, which reads as an unexplained member.
-    other_builds = tuple(
-        path.parent
-        for pattern in ("*/CMakeCache.txt", "*/*/CMakeCache.txt")
-        for path in repo_root.glob(pattern)
-    )
-    repo_files.add_tree(
-        repo_root,
-        ".",
-        skip=(build_dir, *other_builds, repo_root / "build-wheel", repo_root / "dist"),
-    )
+    repo_files.add_tree(repo_root, ".", skip=not_source)
 
     # _deps/*-src is the component-source domain, already indexed above; a wheel
     # member matching one is a copy of upstream, not something this build made.

@@ -343,3 +343,20 @@ def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data)
             workspace.wheel,
             workspace.root / "sbom",
         )
+
+
+def test_an_unreadable_archive_says_so(workspace, license_data):
+    """Only archives this build fetched are indexed, so one that will not open
+    is a broken download -- not a stray file to walk past."""
+    from sbom import discovery, licensing
+
+    licensing.load_corpus(license_data)
+    (workspace.root / synth.SDK_ARCHIVE).write_bytes(b"not an archive at all")
+
+    with pytest.raises(discovery.ArchiveError, match="cannot be read"):
+        build_module.build(
+            workspace.root,
+            workspace.build,
+            workspace.wheel,
+            workspace.root / "sbom",
+        )

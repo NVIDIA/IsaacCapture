@@ -241,3 +241,22 @@ def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
     assert after.download_location.startswith("https://api.ngc.nvidia.com/")
     assert after.supplier == "Organization: api.ngc.nvidia.com"
     assert "fetched from https://" in after.source_info
+
+
+def test_a_build_tree_with_no_configuration_says_so(workspace):
+    """Guessing Release would read a directory that need not exist, and every
+    member it would have explained becomes an unexplained one instead."""
+    from sbom import evidence
+
+    cache = workspace.build / "CMakeCache.txt"
+    cache.write_text(
+        "\n".join(
+            line
+            for line in cache.read_text().splitlines()
+            if not line.startswith("CMAKE_BUILD_TYPE:")
+        )
+        + "\n"
+    )
+
+    with pytest.raises(evidence.EvidenceError, match="CMAKE_BUILD_TYPE"):
+        evidence.discover(workspace.root, workspace.build)
