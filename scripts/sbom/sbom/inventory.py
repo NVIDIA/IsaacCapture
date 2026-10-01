@@ -262,9 +262,7 @@ class Resolver:
 
         repo_file = self.repo_files.by_hash.get(candidate_digest)
         if repo_file:
-            return self._from_repo_file(
-                wheel_path, source, repo_file, f"{source}; ", True
-            )
+            return self._from_repo_file(wheel_path, repo_file, f"{source}; ", True)
 
         build_file = self.build_files.by_hash.get(candidate_digest)
         if build_file:
@@ -313,7 +311,7 @@ class Resolver:
         return None
 
     def _from_repo_file(
-        self, wheel_path: str, source: str, repo_file: str, lead: str, same: bool
+        self, wheel_path: str, repo_file: str, lead: str, same: bool
     ) -> Attribution:
         """A file this repository holds -- and, where it is not ours, whose.
 
@@ -516,7 +514,7 @@ class Resolver:
         if repo_file:
             same = self.repo_files.digest_of_display(repo_file) == digest
             lead = f"{source}; {'identical to' if same else 'derived from'} "
-            return self._from_repo_file(wheel_path, source, repo_file, lead, same)
+            return self._from_repo_file(wheel_path, repo_file, lead, same)
 
         component_file = self.source_files.path_suffix_match(wheel_path)
         if component_file:
@@ -575,8 +573,7 @@ def build(
         if attribution is None:
             unattributed.append(entry.name)
             continue
-        attribution.spdx_tag = _spdx_tag(entry)
-        attribution.copyright_text = _copyright_text(entry)
+        attribution.spdx_tag, attribution.copyright_text = _head_facts(entry)
         attributions[entry.name] = attribution
 
     _resolve_shared_by_sibling(attributions)
@@ -692,15 +689,9 @@ def _attribute(
     )
 
 
-def _copyright_text(entry: Entry) -> str | None:
-    """The notice a file states about itself, beside the identifier."""
+def _head_facts(entry: Entry) -> tuple[str | None, str | None]:
+    """The tag and notice a file states about itself: upstream, about that file."""
     if Path(entry.name).suffix.lower() not in _TAGGABLE:
-        return None
-    return licensing.read_copyright(entry.head.decode("utf-8", "replace"))
-
-
-def _spdx_tag(entry: Entry) -> str | None:
-    """REUSE tags are upstream stating the license of that exact file."""
-    if Path(entry.name).suffix.lower() not in _TAGGABLE:
-        return None
-    return licensing.normalized_tag(entry.head.decode("utf-8", "replace"))
+        return None, None
+    head = entry.head.decode("utf-8", "replace")
+    return licensing.normalized_tag(head), licensing.read_copyright(head)

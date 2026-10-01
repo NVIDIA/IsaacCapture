@@ -937,7 +937,6 @@ class ArchiveIndex:
         self.by_name: dict[str, list[Member]] = {}
         # Survives the RPATH/SONAME rewrite a repair tool applies on the way in,
         # so a patched wheel member still points at the archive it came from.
-        self.by_build_id: dict[str, Member] = {}
         self.all_by_build_id: dict[str, list[Member]] = {}
         self.archives: dict[str, dict] = {}
 
@@ -959,7 +958,6 @@ class ArchiveIndex:
                     build_id = None
                 if build_id:
                     member = replace(member, build_id=build_id)
-                    self.by_build_id.setdefault(build_id, member)
                     self.all_by_build_id.setdefault(build_id, []).append(member)
             self.by_hash.setdefault(member.sha256, member)
             self.all_by_hash.setdefault(member.sha256, []).append(member)
@@ -1082,12 +1080,8 @@ class FileIndex:
     def add_tree(
         self, root: Path, display_root: str, skip: tuple[Path, ...] = ()
     ) -> None:
-        # Compare inside the tree being walked. `--build-dir` is free-form, and
-        # a relative root yields relative paths that match no absolute skip
-        # entry, so passing `--build-dir build` -- what the workflow passes --
-        # indexed the staged tree and let a wheel member explain itself. A
-        # string prefix was wrong for a second reason: `_deps/foo-srcx` starts
-        # with `_deps/foo-src`.
+        # Compare skip entries as paths relative to `root`: `--build-dir` may be
+        # relative, and `_deps/foo-srcx` string-prefixes `_deps/foo-src`.
         inside = []
         for item in skip:
             try:

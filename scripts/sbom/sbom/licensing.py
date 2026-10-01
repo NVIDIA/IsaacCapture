@@ -259,10 +259,8 @@ def identify(text: str) -> list[tuple[str, float, float]]:
     file really can carry two licenses -- dual-licensed sources do -- so this
     returns every match that survives the family resolution below.
 
-    Every reference is compared. The thresholds do bound how long a reference
-    can be relative to the file, so matches could be skipped on length -- but
-    that ties correctness to the accept conditions never growing, and it fails
-    by quietly not identifying a license. Keep the comparison exhaustive.
+    Compare every reference; do not prune by length. Pruning ties correctness to
+    the accept conditions never growing, and fails by not identifying a license.
     """
     candidate = _ngrams(_normalize(text))
     if not candidate:

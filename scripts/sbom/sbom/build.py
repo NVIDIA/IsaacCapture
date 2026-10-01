@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -257,7 +258,7 @@ def merge_manifests(paths: list[Path]) -> dict:
 def merge_records(wheels: list[dict]) -> dict:
     """The manifest for a set of wheels, stamped when the set was complete."""
     names = [item["filename"] for item in wheels]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
+    duplicates = sorted(name for name, seen in Counter(names).items() if seen > 1)
     if duplicates:
         raise BuildError(f"the same wheel filename was published twice: {duplicates}")
     return {

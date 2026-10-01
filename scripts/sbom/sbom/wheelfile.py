@@ -17,6 +17,7 @@ import io
 import os
 import time
 import zipfile
+from collections import Counter
 from dataclasses import dataclass
 from email import message_from_bytes
 from email.generator import BytesGenerator
@@ -140,7 +141,7 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
         # last of them, so the first is hashed by nothing, compared to RECORD by
         # nothing, and reported as uncovered by nothing -- while which one a
         # consumer extracts is up to their unzip. Refuse the archive.
-        repeated = sorted({item for item in names if names.count(item) > 1})
+        repeated = sorted(item for item, seen in Counter(names).items() if seen > 1)
         if repeated:
             raise WheelError(
                 f"more than one member is named {repeated}; a wheel member name "

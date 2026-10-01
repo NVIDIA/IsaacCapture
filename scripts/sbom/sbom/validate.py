@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 from . import SPDX_VERSION, licensing, report
@@ -45,21 +46,21 @@ def _record_for(manifest: dict, filename: str) -> dict:
     seen = [item for item in records if item.get("filename") == filename]
     if len(seen) > 1:
         raise ManifestError(f"{filename} is advertised {len(seen)} times")
-    for record in records:
-        if record.get("filename") == filename:
-            for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
-                if key not in record:
-                    raise ManifestError(f"{filename}: manifest record has no {key!r}")
-            # Every sidecar, not just the ones a record happens to name. An
-            # absent entry is not an absent check: omitting `build_evidence`
-            # left `check-set` passing a wheel the evidence would have failed.
-            missing = sorted(set(_SIDECAR_KINDS) - set(record["sidecars"]))
-            if missing:
-                raise ManifestError(
-                    f"{filename}: manifest record names no {', '.join(missing)} sidecar"
-                )
-            return record
-    return {}
+    if not seen:
+        return {}
+    record = seen[0]
+    for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
+        if key not in record:
+            raise ManifestError(f"{filename}: manifest record has no {key!r}")
+    # Every sidecar, not just the ones a record happens to name. An absent entry
+    # is not an absent check: omitting `build_evidence` left `check-set` passing
+    # a wheel the evidence would have failed.
+    missing = sorted(set(_SIDECAR_KINDS) - set(record["sidecars"]))
+    if missing:
+        raise ManifestError(
+            f"{filename}: manifest record names no {', '.join(missing)} sidecar"
+        )
+    return record
 
 
 _EVIDENCE_DIGEST = re.compile(
@@ -121,7 +122,7 @@ def verify_wheel(
     identifiers = [spdx["SPDXID"]]
     identifiers += [item["SPDXID"] for item in spdx["packages"]]
     identifiers += [item["SPDXID"] for item in spdx["files"]]
-    duplicates = sorted({item for item in identifiers if identifiers.count(item) > 1})
+    duplicates = sorted(item for item, seen in Counter(identifiers).items() if seen > 1)
     if duplicates:
         failures.append(f"duplicate SPDXIDs: {duplicates}")
     known = set(identifiers)
@@ -335,9 +336,7 @@ def _document_agrees_with_evidence(
     evidence was produced before the wheel was published and states the digests
     independently, so where it is supplied it is the thing to compare against.
     """
-    import zipfile as _zipfile
-
-    with _zipfile.ZipFile(wheel.path) as archive:
+    with zipfile.ZipFile(wheel.path) as archive:
         name = wheelfile.sbom_member(wheel.dist_info, wheel.path.name)
         if name not in archive.namelist():
             return []
@@ -358,12 +357,15 @@ def _document_agrees_with_evidence(
     # a proprietary EULA could be published as Apache-2.0, with the evidence
     # beside it still saying otherwise and every gate reporting OK.
     components = evidence_doc.get("components", {})
-    by_name = {
-        component.get("name", key): (key, component)
+    # By the id the document assigns, not by display name: a source tree, a
+    # system library and an archive can all be called the same thing, and a name
+    # join silently drops all but one of them.
+    by_id = {
+        document_module.component_package_id(key): (key, component)
         for key, component in components.items()
     }
     for package in spdx.get("packages", []):
-        found = by_name.get(package["name"])
+        found = by_id.get(package["SPDXID"])
         if found is None:
             continue
         key, component = found
@@ -390,11 +392,9 @@ def _document_agrees_with_evidence(
     # there is no single digest to compare and the join is left to the
     # packaged-path check.
     single = {
-        item["sha256"]
+        component["evidence"][0]["sha256"]
         for component in components.values()
-        for item in [component.get("evidence", [])]
-        if len(item) == 1
-        for item in item
+        if len(component.get("evidence", [])) == 1
     }
     for extracted in spdx.get("hasExtractedLicensingInfos", []):
         digest = hashlib.sha256(
@@ -430,9 +430,7 @@ def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     if notices not in names:
         failures.append(f"{notices} is not packaged")
 
-    # Every field that can name one, through one parser. Two of these were not
-    # looked at, and packages were tokenised by hand while files went through the
-    # grammar -- two readings of one notation, disagreeing at the edges.
+    # Every field that can name one, through one parser.
     declared_refs = set()
     for item in spdx.get("files", []):
         for field in ("licenseConcluded", "licenseInfoInFiles"):

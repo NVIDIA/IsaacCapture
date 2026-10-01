@@ -12,9 +12,8 @@ SPDX_VERSION = "SPDX-2.3"
 def stamped_now():
     """The time to publish, honouring SOURCE_DATE_EPOCH.
 
-    Every artifact a release advertises uses this. Having only the SPDX document
-    honour the epoch made a rebuild comparable to a published wheel but not to
-    its published evidence, which is the chain the manifest binds.
+    Every artifact a release advertises uses this; the manifest binds them as one
+    chain, so they must agree on the clock.
     """
     import os
     from datetime import datetime, timezone

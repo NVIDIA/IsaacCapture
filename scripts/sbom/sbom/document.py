@@ -28,6 +28,11 @@ def _spdx_id(prefix: str, value: str) -> str:
     return f"SPDXRef-{prefix}-{licensing.spdx_safe(value)}"
 
 
+def component_package_id(key: str) -> str:
+    """The id this document gives a component. The verifier joins on it."""
+    return _spdx_id("Package", key)
+
+
 def verification_code(sha1_digests: list[str]) -> str:
     """SPDX package verification code: SHA1 over the sorted file SHA1s."""
     return hashlib.sha1("".join(sorted(sha1_digests)).encode("ascii")).hexdigest()  # noqa: S324
@@ -59,7 +64,7 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
 
 def _component_package(component: Component, roles: set[str], dist_info: str) -> dict:
     package = {
-        "SPDXID": _spdx_id("Package", component.key),
+        "SPDXID": component_package_id(component.key),
         "name": component.name,
         "versionInfo": component.version,
         "supplier": component.supplier,
@@ -177,6 +182,27 @@ def _share_identical_texts(entries: list[dict]) -> tuple[list[dict], dict[str, s
 
 
 _EXTRA_MARKER = re.compile(r"\bextra\s*==")
+
+
+def _unanalyzed_package(
+    package_id: str, name: str, comment: str, external_refs: list[dict] | None = None
+) -> dict:
+    """A package this document names but did not open: everything unasserted."""
+    package = {
+        "SPDXID": package_id,
+        "name": name,
+        "versionInfo": NOASSERTION,
+        "supplier": NOASSERTION,
+        "downloadLocation": NOASSERTION,
+        "filesAnalyzed": False,
+        "licenseConcluded": NOASSERTION,
+        "licenseDeclared": NOASSERTION,
+        "copyrightText": NOASSERTION,
+        "comment": comment,
+    }
+    if external_refs:
+        package["externalRefs"] = external_refs
+    return package
 
 
 def _is_extra_gated(requirement: Requirement) -> bool:
@@ -387,21 +413,12 @@ def build_document(
     for soname, consumers in inventory.external_runtime.items():
         package_id = _spdx_id("Package-external", soname)
         packages.append(
-            {
-                "SPDXID": package_id,
-                "name": soname,
-                "versionInfo": NOASSERTION,
-                "supplier": NOASSERTION,
-                "downloadLocation": NOASSERTION,
-                "filesAnalyzed": False,
-                "licenseConcluded": NOASSERTION,
-                "licenseDeclared": NOASSERTION,
-                "copyrightText": NOASSERTION,
-                "comment": (
-                    "Supplied by the installation environment, not redistributed in "
-                    f"this wheel. Required by: {', '.join(consumers)}."
-                ),
-            }
+            _unanalyzed_package(
+                package_id,
+                soname,
+                "Supplied by the installation environment, not redistributed in "
+                f"this wheel. Required by: {', '.join(consumers)}.",
+            )
         )
         relationships.append(
             {
@@ -426,27 +443,18 @@ def build_document(
         )
         extras = sorted({extra for item in group for extra in item.extras})
         packages.append(
-            {
-                "SPDXID": package_id,
-                "name": name,
-                "versionInfo": NOASSERTION,
-                "supplier": NOASSERTION,
-                "downloadLocation": NOASSERTION,
-                "filesAnalyzed": False,
-                "licenseConcluded": NOASSERTION,
-                "licenseDeclared": NOASSERTION,
-                "copyrightText": NOASSERTION,
-                "externalRefs": _dependency_refs(name, group[0]),
-                "comment": (
-                    "Consumer requirement declared in wheel metadata: "
-                    # " | ", not "; ": a requirement string contains its own
-                    # semicolon before the marker.
-                    + " | ".join(sorted(str(item) for item in group))
-                    + ". Resolved at install time; this document states no "
-                    "license for it."
-                    + (f" Requested with: {', '.join(extras)}." if extras else "")
-                ),
-            }
+            _unanalyzed_package(
+                package_id,
+                name,
+                "Consumer requirement declared in wheel metadata: "
+                # " | ", not "; ": a requirement string contains its own
+                # semicolon before the marker.
+                + " | ".join(sorted(str(item) for item in group))
+                + ". Resolved at install time; this document states no license "
+                "for it."
+                + (f" Requested with: {', '.join(extras)}." if extras else ""),
+                _dependency_refs(name, group[0]),
+            )
         )
         # Optional only if every line that asks for it is gated on an extra. One
         # unconditional line makes the dependency unconditional.
@@ -493,8 +501,11 @@ def build_document(
                 f"Tool: {TOOL_NAME}-{TOOL_VERSION}",
                 f"Organization: {project['supplier'].split(': ', 1)[-1]}",
             ],
+            # From the corpus this build identified against, never a default: a
+            # stated version the document was not built against is a false claim
+            # about every identification in it.
             "licenseListVersion": ".".join(
-                str(evidence_doc.get("license_list_version", "3.29")).split(".")[:2]
+                str(evidence_doc["license_list_version"]).split(".")[:2]
             ),
             "comment": (
                 "Contents inventory for one built wheel, discovered from the build "
