@@ -152,6 +152,10 @@ def build(
     ]
     projected_wheel = replace(wheel, entries=tuple(projected))
     for name in [*additions, *replacements]:
+        # Only the third-party texts: the notices file and the document below
+        # are this collector's own output, and reading them back found the first
+        # `- Copyright:` bullet of the summary it had just generated.
+        packaged_text = name in additions and "/licenses/third-party/" in name
         body = additions.get(name, b"").decode("utf-8", "replace")
         # A licence text can state its own terms and carry a notice, and these
         # were the only members never read for either -- the collector packaged
@@ -163,8 +167,8 @@ def build(
             detail="license evidence packaged by the SBOM collector"
             if name in additions
             else "distribution metadata, updated to declare the packaged license files",
-            spdx_tag=licensing.normalized_tag(body) if name in additions else None,
-            copyright_text=licensing.read_notice(body) if name in additions else None,
+            spdx_tag=licensing.normalized_tag(body) if packaged_text else None,
+            copyright_text=licensing.read_notice(body) if packaged_text else None,
         )
     # The document is added below, after it has been rendered; record it now so
     # the evidence accounts for every member of the finished wheel.
