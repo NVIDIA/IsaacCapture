@@ -484,7 +484,11 @@ _YEARS = re.compile(r"(copyright|\(c\)|©|\d{4}(\s*-\s*\d{4})?|,|\.)", re.IGNORE
 
 
 def project_authors(repo_root: Path) -> set[str]:
-    """Who the project says it is, read from its own packaging metadata."""
+    """Who the project says it is, read from its own packaging metadata.
+
+    As written, not folded: the same names answer "is this holder ours" and
+    "who supplied this distribution", and only the first wants them lowercased.
+    """
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
         return set()
@@ -493,10 +497,21 @@ def project_authors(repo_root: Path) -> set[str]:
     except (OSError, tomllib.TOMLDecodeError):
         return set()
     return {
-        str(author["name"]).lower()
+        str(author["name"])
         for author in data.get("project", {}).get("authors", [])
         if author.get("name")
     }
+
+
+def project_supplier(repo_root: Path) -> str:
+    """Who supplied this distribution, as its own packaging metadata states it.
+
+    SPDX takes one supplier, so several authors name nobody in particular and
+    none names nobody at all; either way asserting one would be this collector
+    speaking for a project rather than reading it.
+    """
+    authors = project_authors(repo_root)
+    return f"Organization: {authors.pop()}" if len(authors) == 1 else "NOASSERTION"
 
 
 def _holder_of(path: Path) -> tuple[str, str | None] | None:
@@ -541,7 +556,7 @@ def discover_vendored(
         if stated is None:
             continue
         holder, expression = stated
-        if any(author in holder.lower() for author in authors):
+        if any(author.lower() in holder.lower() for author in authors):
             continue
         key = f"vendored:{licensing.spdx_safe(holder).lower()}"
         grouped.setdefault(key, []).append(path)

@@ -20,11 +20,14 @@ from . import licensing
 from . import inventory as inventory_module
 from . import report as report_module
 from . import wheelfile
+from .discovery import project_supplier
 from .inventory import Attribution
 from .wheelfile import Entry
 
+# Supplier is absent on purpose: it is read from the project's own packaging
+# metadata at build time, so a fork or a rename cannot leave this file naming
+# somebody else's organisation with nothing to catch it.
 PROJECT = {
-    "supplier": "Organization: NVIDIA CORPORATION",
     "homepage": "https://github.com/NVIDIA/IsaacCapture",
     "license": "Apache-2.0",
     "document_namespace": "https://github.com/NVIDIA/IsaacCapture/spdx",
@@ -169,7 +172,11 @@ def build(
     evidence_doc["system_libraries"] = resolver.system_libraries
 
     spdx = document_module.build_document(
-        PROJECT, evidence_doc, projected_wheel, inventory, excluded
+        {**PROJECT, "supplier": project_supplier(repo_root)},
+        evidence_doc,
+        projected_wheel,
+        inventory,
+        excluded,
     )
     spdx_bytes = json.dumps(spdx, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     additions[sbom_name] = spdx_bytes

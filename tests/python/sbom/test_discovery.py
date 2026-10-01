@@ -268,3 +268,36 @@ def test_a_build_tree_with_no_configuration_says_so(workspace):
 
     with pytest.raises(evidence.EvidenceError, match="CMAKE_BUILD_TYPE"):
         evidence.discover(workspace.root, workspace.build)
+
+
+def test_the_supplier_is_read_from_the_project_not_written_here(workspace):
+    """A fork or a rename must not leave the document naming the wrong party."""
+    from sbom import discovery
+
+    assert discovery.project_supplier(workspace.root) == "Organization: NVIDIA"
+
+    pyproject = workspace.root / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            '{ name = "NVIDIA" }', '{ name = "Someone Else" }'
+        ),
+        encoding="utf-8",
+    )
+
+    assert discovery.project_supplier(workspace.root) == "Organization: Someone Else"
+
+
+def test_a_project_naming_several_authors_names_no_single_supplier(workspace):
+    """SPDX takes one; picking would be this tool speaking for the project."""
+    from sbom import discovery
+
+    pyproject = workspace.root / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            '{ name = "NVIDIA" }',
+            '{ name = "NVIDIA" }, { name = "Other Party" }',
+        ),
+        encoding="utf-8",
+    )
+
+    assert discovery.project_supplier(workspace.root) == "NOASSERTION"
