@@ -21,6 +21,7 @@ from isaaccapture.schema import (
     Generic3AxisPedalOutput,
     KeyboardOutput,
     SpaceMouseOutput,
+    GamepadOutput,
     JointStateOutput,
     FullBodyPose,
     SomaBodyJointPoses,
@@ -108,6 +109,12 @@ class SpaceMouseOutputTrackedType(_PayloadTensorType):
     """SpaceMouseOutput payload from DeviceIO SpaceMouseTracker."""
 
     _payload_cls = SpaceMouseOutput
+
+
+class GamepadOutputTrackedType(_PayloadTensorType):
+    """GamepadOutput payload from DeviceIO GamepadTracker."""
+
+    _payload_cls = GamepadOutput
 
 
 class JointStateOutputTrackedType(_PayloadTensorType):
@@ -235,6 +242,18 @@ def DeviceIOSpaceMouseOutputTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_spacemouse_output",
         [SpaceMouseOutputTrackedType("spacemouse_tracked")],
+    )
+
+
+def DeviceIOGamepadOutputTracked() -> TensorGroupType:
+    """Tracked gamepad data from DeviceIO GamepadTracker.
+
+    Contains:
+        gamepad_tracked: GamepadOutput handle, or None when inactive
+    """
+    return TensorGroupType(
+        "deviceio_gamepad_output",
+        [GamepadOutputTrackedType("gamepad_tracked")],
     )
 
 

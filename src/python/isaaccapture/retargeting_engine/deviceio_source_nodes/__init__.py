@@ -29,6 +29,8 @@ from .keyboard_source import (
 )
 from .source_lookup import find_sources
 from .key_event_testing import FakeKeyEventSource
+
+from .gamepad_source import GamepadAxesType, GamepadButtonsType, GamepadSource
 from .joint_state_source import JointStateSource
 from .full_body_source import FullBodySource
 from .soma_body_source import SomaBodyRepresentation, SomaBodySource
@@ -48,6 +50,7 @@ from .deviceio_tensor_types import (
     Generic3AxisPedalOutputTrackedType,
     KeyboardOutputTrackedType,
     SpaceMouseOutputTrackedType,
+    GamepadOutputTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
     SomaBodyJointRotationsTrackedType,
@@ -60,6 +63,7 @@ from .deviceio_tensor_types import (
     DeviceIOGeneric3AxisPedalOutputTracked,
     DeviceIOKeyboardOutputTracked,
     DeviceIOSpaceMouseOutputTracked,
+    DeviceIOGamepadOutputTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
     DeviceIOSomaBodyJointRotationsTracked,
@@ -94,6 +98,9 @@ __all__ = [
     "KeyListeners",
     "find_sources",
     "FakeKeyEventSource",
+    "GamepadAxesType",
+    "GamepadButtonsType",
+    "GamepadSource",
     "JointStateSource",
     "FullBodySource",
     "SomaBodySource",
@@ -112,6 +119,7 @@ __all__ = [
     "Generic3AxisPedalOutputTrackedType",
     "KeyboardOutputTrackedType",
     "SpaceMouseOutputTrackedType",
+    "GamepadOutputTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
     "SomaBodyJointRotationsTrackedType",
@@ -127,6 +135,7 @@ __all__ = [
     "DeviceIOGeneric3AxisPedalOutputTracked",
     "DeviceIOKeyboardOutputTracked",
     "DeviceIOSpaceMouseOutputTracked",
+    "DeviceIOGamepadOutputTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
     "DeviceIOSomaBodyJointRotationsTracked",
