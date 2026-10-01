@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from . import licensing
 from .inventory import Inventory
@@ -279,19 +280,27 @@ def report_markdown(payload: dict) -> str:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for item in payload["components"]:
-        evidence = (
-            "<br>".join(
-                f"`{record['path']}`"
-                + (f" → {record['identified']}" if record["identified"] else "")
-                + (
-                    " (SPDX reference text, substituted)"
-                    if record["origin"] == licensing.SPDX_REFERENCE
-                    else ""
-                )
-                for record in item["evidence"]
+        # Grants in full; the REUSE pool summarised. A pool is a directory of
+        # reference texts kept so that per-file tags resolve -- OpenXR's covers
+        # its fonts and spec prose -- so listing all of it buries the two files
+        # the licence was actually read from. Every path is in the JSON report
+        # and in the packaged notices, which is where the paths matter.
+        shown = [record for record in item["evidence"] if record["kind"] != "pool"]
+        pooled = [record for record in item["evidence"] if record["kind"] == "pool"]
+        parts = [
+            f"`{record['path']}`"
+            + (f" → {record['identified']}" if record["identified"] else "")
+            + (
+                " (SPDX reference text, substituted)"
+                if record["origin"] == licensing.SPDX_REFERENCE
+                else ""
             )
-            or "—"
-        )
+            for record in shown
+        ]
+        if pooled:
+            names = ", ".join(sorted(Path(record["path"]).stem for record in pooled))
+            parts.append(f"REUSE pool ({len(pooled)}): {names}")
+        evidence = "<br>".join(parts) or "—"
         how = "; ".join(
             _HOW_PROSE.get(value, value) for value in item["how_it_reaches_the_wheel"]
         )
