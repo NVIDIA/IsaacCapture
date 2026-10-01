@@ -245,7 +245,7 @@ def test_two_wheels_wearing_one_filename_are_refused(tmp_path, built):
     second = tmp_path / "b.json"
     first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
     other = json.loads(json.dumps(built["manifest"]))
-    other["wheels"][0]["sha256"] = "0" * 64
+    other["wheels"][0]["sha256"] = "0" * 64  # a different wheel, same filename
     second.write_text(json.dumps(other), encoding="utf-8")
 
     with pytest.raises(build_module.BuildError, match="different contents"):
@@ -546,3 +546,27 @@ def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_d
     assert build_module._declared_without_text(
         "Apache-2.0", {"third-party/openxr-sdk/licenses/apache-2.0.txt"}
     ) == ["Apache-2.0"]
+
+
+def test_one_wheel_with_differing_evidence_merges(tmp_path, built):
+    """Six builds of a universal wheel produce six build-evidence sidecars.
+
+    The wheel is the same artifact; the evidence describes the build that made
+    it, and those differ. A release names one evidence set, and refusing the
+    whole release over that would block every build of a `py3-none-any` wheel.
+    """
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
+    other = json.loads(json.dumps(built["manifest"]))
+    other["wheels"][0]["sidecars"]["build_evidence"]["sha256"] = "1" * 64
+    second.write_text(json.dumps(other), encoding="utf-8")
+
+    merged = build_module.merge_manifests([first, second])
+
+    assert len(merged["wheels"]) == 1
+    # The first entry's evidence, matching the set assembled alongside it.
+    assert (
+        merged["wheels"][0]["sidecars"]["build_evidence"]["sha256"]
+        == (built["manifest"]["wheels"][0]["sidecars"]["build_evidence"]["sha256"])
+    )

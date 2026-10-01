@@ -540,16 +540,25 @@ def merge_manifests(paths: list[Path]) -> dict:
 def merge_records(wheels: list[dict]) -> dict:
     """The manifest for a set of wheels, stamped when the set was complete."""
     # A `py3-none-any` wheel is built by every matrix entry, so a release set
-    # names it once per entry. Identical records are one wheel described more
-    # than once; records that differ are two wheels wearing one filename, which
-    # is the thing a consumer cannot tell apart and this refuses to publish.
+    # names it once per entry. What must agree is the wheel: one filename
+    # standing for two different artifacts is the thing a consumer cannot tell
+    # apart. The sidecars may legitimately differ -- build evidence describes
+    # the build, and six builds produced this wheel -- so the first entry's
+    # evidence is the one the manifest binds, matching the set assembled beside
+    # it.
+    identity = ("filename", "sha256", "size", "sbom_in_wheel")
     unique: dict[str, dict] = {}
     conflicting: set[str] = set()
     for item in wheels:
         name = item["filename"]
-        if name in unique and unique[name] != item:
-            conflicting.add(name)
-        unique.setdefault(name, item)
+        seen = unique.get(name)
+        if seen is not None:
+            if [seen.get(key) for key in identity] != [
+                item.get(key) for key in identity
+            ]:
+                conflicting.add(name)
+            continue
+        unique[name] = item
     if conflicting:
         raise BuildError(
             "the same wheel filename was published with different contents: "
