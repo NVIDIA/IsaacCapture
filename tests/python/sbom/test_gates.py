@@ -13,6 +13,7 @@ import pytest
 import synth
 from sbom import build as build_module
 from sbom import licensing
+from sbom import wheelfile
 from sbom import validate as validate_module
 
 DIST_INFO = synth.DIST_INFO
@@ -407,6 +408,9 @@ def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
     """
     with zipfile.ZipFile(built["wheel"]) as archive:
         payload = {item: archive.read(item) for item in archive.namelist()}
+    # write_wheel regenerates RECORD; keeping the old one would make a duplicate
+    # member, which is a different finding and now refused outright.
+    payload.pop(f"{DIST_INFO}/RECORD", None)
 
     payload["isaaccapture/_backdoor.py"] = b"import os\n"
     document = f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"
@@ -423,3 +427,24 @@ def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
 
     assert any("excluded-files list must be exactly" in item for item in failures)
     assert any("not covered by the SBOM" in item for item in failures)
+
+
+def test_two_members_under_one_name_are_refused(built):
+    """Reading by name yields the last copy, so the first is hashed by nothing.
+
+    Which one a consumer extracts is up to their unzip, so an archive carrying
+    both is not describable and must not be accepted.
+    """
+    with zipfile.ZipFile(built["wheel"]) as archive:
+        names = [item for item in archive.namelist() if not item.endswith("/")]
+        payload = {item: archive.read(item) for item in names}
+
+    smuggled = built["wheel"].with_name("duplicated.whl")
+    with zipfile.ZipFile(smuggled, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            if name == "isaaccapture/__init__.py":
+                archive.writestr(name, b"import os\n")
+            archive.writestr(name, payload[name])
+
+    with pytest.raises(wheelfile.WheelError, match="more than one member"):
+        validate_module.check(smuggled)

@@ -12,6 +12,7 @@ this collector cannot see, and it stops publication.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -638,6 +639,12 @@ def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
         item.primary = key
 
 
+_DIST_INFO_WRITTEN = re.compile(
+    r"^(METADATA|WHEEL|RECORD|INSTALLER|REQUESTED|entry_points\.txt|top_level\.txt"
+    r"|direct_url\.json|zip-safe|namespace_packages\.txt)$|^(licenses|sboms)/"
+)
+
+
 def _attribute(
     entry: Entry,
     wheel: WheelInfo,
@@ -645,11 +652,18 @@ def _attribute(
     staged_root: Path | None,
 ) -> Attribution | None:
     if entry.name.startswith(f"{wheel.dist_info}/"):
-        return Attribution(
-            path=entry.name,
-            origin="metadata",
-            detail="distribution metadata written by the build",
-        )
+        relative = entry.name[len(wheel.dist_info) + 1 :]
+        # Only what a packaging backend and this collector actually write there.
+        # Treating the whole directory as metadata asserted an origin for
+        # anything placed in it, which is the one route around the gate that
+        # every other member has to pass.
+        if _DIST_INFO_WRITTEN.match(relative):
+            return Attribution(
+                path=entry.name,
+                origin="metadata",
+                exact=True,
+                detail="distribution metadata written by the build",
+            )
 
     probe = staged_root / entry.name if staged_root is not None else None
     return resolver.resolve(
@@ -675,4 +689,12 @@ def _spdx_tag(entry: Entry) -> str | None:
     # document as licenseConcluded, where an invalid expression fails the
     # published SBOM's own conformance check.
     normalized = licensing.normalized_expression(tag)
-    return None if normalized == "NOASSERTION" else normalized
+    if normalized == "NOASSERTION":
+        return None
+    # A LicenseRef is only meaningful alongside its text, and a file tag carries
+    # none: naming one here produced a document that failed its own check for an
+    # undefined reference, on a wheel the build had already rewritten and would
+    # refuse to process again.
+    if licensing.license_refs(normalized):
+        return None
+    return normalized

@@ -11,7 +11,7 @@ import re
 from packageurl import PackageURL
 from packaging.requirements import Requirement
 
-from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing, stamped_now
+from . import SPDX_VERSION, TOOL_NAME, TOOL_VERSION, licensing, report, stamped_now
 from .discovery import Component
 from .inventory import Inventory
 from .wheelfile import WheelInfo
@@ -33,10 +33,11 @@ def verification_code(sha1_digests: list[str]) -> str:
     return hashlib.sha1("".join(sorted(sha1_digests)).encode("ascii")).hexdigest()  # noqa: S324
 
 
-def _attribution_texts(component: Component) -> list[str]:
+def _attribution_texts(component: Component, dist_info: str) -> list[str]:
     texts = [
         f"License evidence: {item.path} (sha256:{item.sha256}, {item.size} bytes, "
-        f"{item.origin}, {item.kind})"
+        f"{item.origin}, {item.kind}) packaged at "
+        f"{report.packaged_license_path(dist_info, component.key, item)}"
         + (
             " identified as "
             + "; ".join(
@@ -56,7 +57,7 @@ def _attribution_texts(component: Component) -> list[str]:
     return texts
 
 
-def _component_package(component: Component, roles: set[str]) -> dict:
+def _component_package(component: Component, roles: set[str], dist_info: str) -> dict:
     package = {
         "SPDXID": _spdx_id("Package", component.key),
         "name": component.name,
@@ -74,7 +75,7 @@ def _component_package(component: Component, roles: set[str]) -> dict:
                 "referenceLocator": component.purl,
             }
         ],
-        "attributionTexts": _attribution_texts(component),
+        "attributionTexts": _attribution_texts(component, dist_info),
         "sourceInfo": f"{component.source_info} Reaches this wheel as: {', '.join(sorted(roles))}.",
     }
     if component.homepage != NOASSERTION:
@@ -256,7 +257,7 @@ def build_document(
 
     for key, component in inventory.components_present.items():
         roles = inventory.component_roles.get(key, set())
-        package = _component_package(component, roles)
+        package = _component_package(component, roles, wheel.dist_info)
         packages.append(package)
         package_id = package["SPDXID"]
 

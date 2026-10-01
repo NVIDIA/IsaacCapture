@@ -144,12 +144,24 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
     """
     with zipfile.ZipFile(wheel_path) as archive:
         names = archive.namelist()
+        # A zip may hold two members under one name. Reading by name gives the
+        # last of them, so the first is hashed by nothing, compared to RECORD by
+        # nothing, and reported as uncovered by nothing -- while which one a
+        # consumer extracts is up to their unzip. Refuse the archive.
+        repeated = sorted({item for item in names if names.count(item) > 1})
+        if repeated:
+            raise WheelError(
+                f"more than one member is named {repeated}; a wheel member name "
+                "has to identify one file"
+            )
         dist_info = _dist_info(names)
         entries: list[Entry] = []
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            data = archive.read(info.filename)
+            # By handle, not by name: the name is what was just proven ambiguous.
+            with archive.open(info) as handle:
+                data = handle.read()
             soname = needed = machine = build_id = None
             if analyze_elf and elf.is_elf(data[:4]):
                 dynamic = elf.read_dynamic(data)
@@ -244,6 +256,11 @@ def read_record(wheel_path: Path, dist_info: str) -> dict[str, tuple[str, str]]:
     }
 
 
+def _members(path: Path) -> list[zipfile.ZipInfo]:
+    with zipfile.ZipFile(path) as archive:
+        return [item for item in archive.infolist() if not item.is_dir()]
+
+
 def rewrite(
     wheel_path: Path,
     output_path: Path,
@@ -258,6 +275,13 @@ def rewrite(
     digest cannot survive the step that writes it.
     """
     record_name = f"{dist_info}/RECORD"
+    collisions = sorted(
+        set(additions) & {item.filename for item in _members(wheel_path)}
+    )
+    if collisions:
+        raise WheelError(
+            f"these members already exist and would be added again: {collisions}"
+        )
     if record_name in additions or record_name in replacements:
         raise WheelError("RECORD is regenerated here; do not pass it in")
 

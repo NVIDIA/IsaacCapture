@@ -93,7 +93,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
     unidentified = []
 
     for key, component in inventory.components_present.items():
-        grants = [item for item in component.evidence if item.kind == "grant"]
+        grants = [item for item in component.evidence if item.kind in ("grant", "pool")]
         components.append(
             {
                 "component": key,
@@ -113,6 +113,9 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                 "evidence": [item.as_json() for item in component.evidence],
             }
         )
+        # Same test as the build gate and the verifier: a REUSE pool is a real
+        # text. Requiring a grant here advertised "no licence evidence" for a
+        # component the gates deliberately accepted on the pool they packaged.
         if not grants:
             no_evidence.append(
                 {

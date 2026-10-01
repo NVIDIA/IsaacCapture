@@ -11,12 +11,37 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 
 from . import SPDX_VERSION, licensing
 from . import document as document_module
 from . import wheelfile
+
+
+class ManifestError(Exception):
+    """A manifest is not shaped the way this tool writes them."""
+
+
+def _record_for(manifest: dict, filename: str) -> dict:
+    """One wheel's record, or a clear error rather than a KeyError traceback."""
+    try:
+        records = manifest["wheels"]
+    except (KeyError, TypeError) as error:
+        raise ManifestError("manifest has no 'wheels' list") from error
+    for record in records:
+        if record.get("filename") == filename:
+            for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
+                if key not in record:
+                    raise ManifestError(f"{filename}: manifest record has no {key!r}")
+            return record
+    return {}
+
+
+_EVIDENCE_DIGEST = re.compile(
+    r"\(sha256:(?P<digest>[0-9a-f]{64})[^)]*\) packaged at (?P<where>\S+)"
+)
 
 _REQUIRED_KEYS = (
     "spdxVersion",
@@ -158,6 +183,51 @@ def verify_wheel(
 
     failures.extend(_check_record(wheel_path, wheel))
     failures.extend(_check_licenses(wheel, spdx))
+    failures.extend(_check_license_texts(wheel, spdx))
+    return failures
+
+
+def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
+    """Every text the document describes must be a text the wheel carries.
+
+    The document states a digest for each licence it read and carries the
+    verbatim text of each LicenseRef. The wheel packages those same bytes under
+    `licenses/`. Nothing compared the two, so a packaged licence could be
+    swapped for another -- or emptied -- and every per-file digest still agreed,
+    because those describe the replacement.
+    """
+    failures: list[str] = []
+    by_name = {entry.name: entry.sha256 for entry in wheel.entries}
+    packaged = {
+        digest
+        for name, digest in by_name.items()
+        if name.startswith(f"{wheel.dist_info}/licenses/")
+    }
+    if not packaged:
+        return failures
+
+    for package in spdx.get("packages", []):
+        for text in package.get("attributionTexts", []):
+            match = _EVIDENCE_DIGEST.search(text)
+            if not match:
+                continue
+            # The path matters, not just the bytes existing somewhere: two
+            # components can ship an identical text, so a swap inside one of them
+            # survives a check that only asks whether the digest is present.
+            where = match.group("where")
+            if by_name.get(where) != match.group("digest"):
+                failures.append(
+                    f"{package['name']}: {where} does not hold the licence text "
+                    f"this document records for it (sha256:{match.group('digest')})"
+                )
+
+    for extracted in spdx.get("hasExtractedLicensingInfos", []):
+        body = extracted.get("extractedText", "").encode("utf-8")
+        if hashlib.sha256(body).hexdigest() not in packaged:
+            failures.append(
+                f"{extracted['licenseId']}: the text it carries is not packaged "
+                "in this wheel"
+            )
     return failures
 
 
@@ -280,10 +350,8 @@ def _check_manifest(
     """The manifest binds a wheel's digest and names the sidecars beside it."""
     failures: list[str] = []
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    record = next(
-        (item for item in manifest["wheels"] if item["filename"] == wheel.name), None
-    )
-    if record is None:
+    record = _record_for(manifest, wheel.name)
+    if not record:
         return [f"{manifest_path.name} has no entry for {wheel.name}"]
 
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
@@ -315,13 +383,20 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
     """Run :func:`check` over every wheel a merged manifest advertises."""
     failures: list[str] = []
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for record in manifest["wheels"]:
+    for entry in manifest.get("wheels") or []:
+        record = _record_for(manifest, entry.get("filename", ""))
         wheel = wheel_dir / record["filename"]
         if not wheel.is_file():
             failures.append(f"{record['filename']} is missing from {wheel_dir}")
             continue
         failures.extend(
             f"{record['filename']}: {item}"
-            for item in check(wheel, manifest=manifest_path, evidence_dir=evidence_dir)
+            for item in check(
+                wheel,
+                build_evidence=evidence_dir
+                / record["sidecars"]["build_evidence"]["filename"],
+                manifest=manifest_path,
+                evidence_dir=evidence_dir,
+            )
         )
     return failures
