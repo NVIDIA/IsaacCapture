@@ -7,3 +7,19 @@ TOOL_NAME = "isaaccapture-sbom"
 # Bump on any change that alters the shape of an emitted document or report.
 TOOL_VERSION = "1.0.0"
 SPDX_VERSION = "SPDX-2.3"
+
+
+def stamped_now():
+    """The time to publish, honouring SOURCE_DATE_EPOCH.
+
+    Every artifact a release advertises uses this. Having only the SPDX document
+    honour the epoch made a rebuild comparable to a published wheel but not to
+    its published evidence, which is the chain the manifest binds.
+    """
+    import os
+    from datetime import datetime, timezone
+
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch and epoch.isdigit():
+        return datetime.fromtimestamp(int(epoch), timezone.utc)
+    return datetime.now(timezone.utc)

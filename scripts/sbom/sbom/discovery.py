@@ -858,6 +858,7 @@ class ArchiveIndex:
         # Survives the RPATH/SONAME rewrite a repair tool applies on the way in,
         # so a patched wheel member still points at the archive it came from.
         self.by_build_id: dict[str, Member] = {}
+        self.all_by_build_id: dict[str, list[Member]] = {}
         self.archives: dict[str, dict] = {}
 
     def add_archive(self, path: Path, display: str) -> None:
@@ -879,6 +880,7 @@ class ArchiveIndex:
                 if build_id:
                     member = replace(member, build_id=build_id)
                     self.by_build_id.setdefault(build_id, member)
+                    self.all_by_build_id.setdefault(build_id, []).append(member)
             self.by_hash.setdefault(member.sha256, member)
             self.all_by_hash.setdefault(member.sha256, []).append(member)
             self.by_name.setdefault(Path(member.path).name, []).append(member)

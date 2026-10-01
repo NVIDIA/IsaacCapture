@@ -8,13 +8,12 @@ from __future__ import annotations
 import platform
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from packageurl import PackageURL
 
-from . import TOOL_NAME, TOOL_VERSION, licensing
+from . import TOOL_NAME, TOOL_VERSION, licensing, stamped_now
 from .discovery import (
     ARCHIVE_SUFFIXES,
     ArchiveIndex,
@@ -356,7 +355,7 @@ def document(discovery: Discovery, wheel_name: str, inventory) -> dict:
     return {
         "schema": "isaaccapture-build-evidence/2",
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
-        "collected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "collected_at": stamped_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "wheel": wheel_name,
         "project": {
             "commit": git(repo_root, "rev-parse", "HEAD"),

@@ -83,10 +83,17 @@ def _cmd_build(args: argparse.Namespace) -> int:
     print(f"manifest: {manifest_path}")
 
     for item in merged["wheels"]:
-        for entry in item["components_with_unidentified_license"]:
-            print(
-                f"::warning::{item['filename']}: {entry['component']}: {entry['reason']}"
-            )
+        # Both gap lists. They sit in the same record and mean the same kind of
+        # thing to a reader; surfacing one and not the other hid the stricter one.
+        for key in (
+            "components_without_license_evidence",
+            "components_with_unidentified_license",
+        ):
+            for entry in item[key]:
+                print(
+                    f"::warning::{item['filename']}: {entry['component']}: "
+                    f"{entry['reason']}"
+                )
     return 0
 
 

@@ -11,10 +11,9 @@ import os
 import shutil
 import tempfile
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import TOOL_NAME, TOOL_VERSION
+from . import TOOL_NAME, TOOL_VERSION, stamped_now
 from . import document as document_module
 from . import evidence as evidence_module
 from . import licensing
@@ -213,7 +212,7 @@ def build(
     # touched again no longer matches its own manifest entry.
     return {
         "schema": "isaaccapture-sbom-manifest/1",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": stamped_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "wheels": [
             {
@@ -259,7 +258,7 @@ def merge_records(wheels: list[dict]) -> dict:
         raise BuildError(f"the same wheel filename was published twice: {duplicates}")
     return {
         "schema": "isaaccapture-sbom-manifest/1",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": stamped_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "wheels": sorted(wheels, key=lambda item: item["filename"]),
     }
