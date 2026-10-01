@@ -443,6 +443,13 @@ def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     for package in spdx["packages"]:
         for field in ("licenseConcluded", "licenseDeclared", "licenseInfoFromFiles"):
             declared_refs.update(_refs_in(package.get(field)))
+    # Every file id a package claims to hold has to be a file this document has.
+    file_ids = {item["SPDXID"] for item in spdx.get("files", [])}
+    for package in spdx["packages"]:
+        for held in package.get("hasFiles", []):
+            if held not in file_ids:
+                failures.append(f"{package['name']} claims {held}, which is not here")
+
     extracted = {
         item["licenseId"] for item in spdx.get("hasExtractedLicensingInfos", [])
     }
