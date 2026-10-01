@@ -70,6 +70,10 @@ MUJOCO_LOG.TXT
 # Runtime device files injected by MCP server infrastructure
 .mcp.json
 
+# Coverage databases, written beside whichever suite was measured
+.coverage
+.coverage.*
+
 # Agent session logs (never committed)
 tmp/
 
