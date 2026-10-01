@@ -630,6 +630,12 @@ _PLAIN_COPYRIGHT = re.compile(
 # A clause broken by the end of a line, left dangling by taking the line alone.
 _DANGLING = re.compile(r"(?:[,;]?\s+(?:and|or|is|was|are|were|by|under|the|a))+$", re.I)
 # Years, year ranges and the markers around them: what is left is the holder.
+# A sentence, as against a name: the Debian `Copyright:` field holds both.
+_PROSE = re.compile(
+    r"\b(derived|contributed|reserved|portions?|redistribut\w+|written|"
+    r"modified|see|provided|this|these|some|all rights)\b",
+    re.IGNORECASE,
+)
 _YEARS_AND_MARKS = re.compile(r"\(c\)|©|\d{4}(?:\s*-\s*\d{2,4})?|[,;]", re.I)
 # Lines of a licence body that mention copyright without stating one.
 _NOT_A_NOTICE = re.compile(
@@ -686,7 +692,7 @@ def read_notices(text: str) -> list[str]:
     `Copyright [yyyy] [name of copyright owner]` -- which names nobody.
     """
     lines = text.splitlines()
-    found: list[str] = []
+    found: list[str] = _debian_copyright_fields(lines)
     for index, line in enumerate(lines):
         match = _PLAIN_COPYRIGHT.match(line)
         if not match:
@@ -720,6 +726,36 @@ def read_notices(text: str) -> list[str]:
             continue
         if notice not in found:
             found.append(notice)
+    return found
+
+
+def _debian_copyright_fields(lines: list[str]) -> list[str]:
+    """Holders a Debian copyright file states without the word `Copyright`.
+
+    `Copyright:` is a field there, and its value may be a bare name -- libmd
+    credits Poul-Henning Kamp, Colin Plumb and Steve Reid that way. Nothing else
+    in the file names them, so a parser looking for the word finds nobody.
+    """
+    found: list[str] = []
+    for index, line in enumerate(lines):
+        if line.rstrip() != "Copyright:":
+            continue
+        for position, value in enumerate(lines[index + 1 :]):
+            if not value[:1].isspace() or not value.strip():
+                break
+            holder = " ".join(value.split()).rstrip(".")
+            # A field whose value opens with a notice proper is read by the scan
+            # below, prose and all; only a field naming a bare holder is read
+            # here, and only for as long as it keeps naming one.
+            if _PLAIN_COPYRIGHT.match(holder) or _PROSE.search(holder):
+                break
+            # Debian writes `None` where a package states no holder.
+            if holder.lower() in {"none", "n/a", "unknown"}:
+                break
+            if position and len(holder) > 60:
+                break
+            if _names_a_holder(f"Copyright {holder}") and holder not in found:
+                found.append(holder)
     return found
 
 

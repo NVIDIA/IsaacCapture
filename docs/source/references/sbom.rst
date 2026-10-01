@@ -202,9 +202,10 @@ verbatim, copyright holders and all. Substituting a reference text would convey 
 and drop the notice — for MIT and the BSD licenses those are the same file, differing by
 the one line that names who licensed it to you — and it would replace the component's
 actual grant with our reading of it, which is what the matching is for and not what it
-decides. Where a component has *no* license file, and only states an identifier in its
-source headers, there is nothing of its own to package: the text that identifier names in
-the pinned list ships instead, together with the copyright line those headers state.
+decides. So a reference text is substituted only where there is nothing of the component's
+own to package: it states an identifier in its source headers and ships no licence file.
+The document says so for every such text, in as many words, because a reader cannot tell a
+template from an author's own notice by looking at it.
 
 A component can also state terms for one part of itself — a vendored asset set inside a
 larger project, with its own ``LICENSE`` and its own holder. Those are read and packaged
@@ -224,9 +225,10 @@ this artifact" is told about the proprietary payload rather than about the decla
 
 Never a file from this checkout. ``LICENSES/`` holds this repository's REUSE pool, whose
 copies exist to license *this* project and carry its notices; packaging one as a third
-party's terms would put our copyright above their code. Those texts ship under
-``.dist-info/licenses/LICENSES/`` as the project's own, and have nothing to do with the
-matching or with any other component.
+party's terms would put our copyright above their code. A substituted text comes from the
+pinned list, never from the pool — and under ``.dist-info/licenses/LICENSES/`` a wheel
+carries whichever applies: the project's own pool files where it has them, and otherwise
+the reference text for the licence it declares.
 
 A match needs a canonical license text to be almost entirely present *and* to account for a
 real share of the file: a tenth of a long agreement reproducing a license in an appendix is
@@ -241,8 +243,11 @@ travels in the document, which says "these are the terms that shipped" without c
 know which license they are. Those components are listed in the report under *License
 evidence gaps*.
 
-A component that ships **no** license text at all blocks publication, because packaging the
-text is the obligation the wheel has to meet.
+A component that states a licence nowhere at all blocks publication, because packaging the
+text is the obligation the wheel has to meet. Stating one in its source headers and nowhere
+else is not that case: there the reference text for the identifier those headers name ships
+instead, labelled in the document as a substitution rather than as the component's own words
+— it conveys the terms and names no holder, so the headers' copyright line travels with it.
 
 A shared library that none of those indexes explains did not come from this build, so the
 last thing asked is the build machine itself: resolve the library's SONAME, and take its

@@ -620,8 +620,15 @@ def build(
         for key in sorted(roles)
         if key in resolver.components
     }
+    # Say how the component got here. Checked-in sources were never fetched, and
+    # the collector's own vocabulary for them elsewhere says so.
     absent = {
-        key: "fetched for this build; contributes to no file in this wheel"
+        key: (
+            "checked into this repository"
+            if resolver.components[key].kind == "vendored-source"
+            else "fetched for this build"
+        )
+        + "; contributes to no file in this wheel"
         for key in sorted(resolver.components)
         if key not in roles
     }

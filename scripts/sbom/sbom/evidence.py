@@ -159,7 +159,7 @@ def _archive_components(
             download_location=source_url or "NOASSERTION",
             source_info=(
                 f"Unpacked from {display} (sha256:{record['sha256']}, "
-                f"{record['member_count']} members), {held}."
+                f"{record['member_count']} files), {held}."
             ),
             license_concluded=concluded,
             license_declared=declared,

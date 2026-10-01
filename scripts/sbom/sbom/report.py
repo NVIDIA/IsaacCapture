@@ -112,8 +112,12 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
         lines.append(f"- License: `{component.license_concluded}`")
         if component.copyright_text != "NOASSERTION":
             # A reference text names no holder, so for a component that ships no
-            # licence file of its own this is the only notice in the wheel.
-            lines.append(f"- Copyright: {component.copyright_text}")
+            # licence file of its own this is the only notice in the wheel. One
+            # per line, indented: a bare newline inside a list item is a lazy
+            # continuation and renders several notices as one paragraph.
+            notices = component.copyright_text.splitlines()
+            lines.append(f"- Copyright: {notices[0]}")
+            lines.extend(f"  {item}" for item in notices[1:])
         if component.license_declared != component.license_concluded:
             lines.append(f"- Declared: `{component.license_declared}`")
         if component.homepage != "NOASSERTION":
@@ -122,7 +126,16 @@ def notices_markdown(inventory: Inventory, dist_info: str, wheel_name: str) -> s
             lines.append(f"- Version: `{component.version}`")
         lines.append(f"- Reaches this wheel because {_roles(inventory, key)}")
         for item in component.evidence:
-            lines.append(f"- Text: `{packaged_license_path(dist_info, key, item)}`")
+            packaged = packaged_license_path(dist_info, key, item)
+            lines.append(
+                f"- Text: `{packaged}`"
+                + (
+                    " — the SPDX reference text for this licence, not this "
+                    "component's own file, which it ships none of"
+                    if item.origin == licensing.SPDX_REFERENCE
+                    else ""
+                )
+            )
         if not component.evidence:
             lines.append("- No license text was found in this component's own files.")
         lines.append("")
@@ -236,6 +249,11 @@ def report_markdown(payload: dict) -> str:
             "<br>".join(
                 f"`{record['path']}`"
                 + (f" → {record['identified']}" if record["identified"] else "")
+                + (
+                    " (SPDX reference text, substituted)"
+                    if record["origin"] == licensing.SPDX_REFERENCE
+                    else ""
+                )
                 for record in item["evidence"]
             )
             or "—"

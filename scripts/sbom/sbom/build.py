@@ -403,7 +403,14 @@ def build(
             if name in additions
             else "distribution metadata, updated to declare the packaged license files",
             spdx_tag=licensing.normalized_tag(body) if packaged_text else None,
-            copyright_text=licensing.read_notice(body) if packaged_text else None,
+            # Every holder the text names, as the package roll-up does: keeping
+            # the first makes a per-file notice that does not discharge the
+            # obligation -- libbsd's copyright file names forty-six.
+            copyright_text="\n".join(
+                licensing.fold_notices(licensing.read_notices(body))
+            )
+            if packaged_text
+            else None,
         )
     # The document is added below, after it has been rendered; record it now so
     # the evidence accounts for every member of the finished wheel.
