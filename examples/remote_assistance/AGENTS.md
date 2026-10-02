@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Remote Assistance prototype
 
+- For shareable diagrams in CLI sessions, provide a local SVG fallback when
+  connector generation requires a selection widget the user cannot access.
+
 - Media integration checks must verify changing pixel content against source
   frame IDs. Fresh receive timestamps and correct dimensions do not prove that
   the decoder produced a fresh image.

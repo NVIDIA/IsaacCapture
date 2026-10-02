@@ -17,11 +17,11 @@ livekit:
 cameras:
   - name: cam
     type: v4l2
-    device: /dev/video0
-    width: 1920
-    height: 1080
-    fps: 60
-    fourcc: MJPG
+    device: /dev/video4
+    width: 1280
+    height: 720
+    fps: 30
+    fourcc: YUYV
 display:
   mode: xr
   window:
