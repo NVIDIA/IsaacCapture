@@ -280,7 +280,8 @@ Build a Retargeting Pipeline
 
 A pipeline builder is a callable that constructs the retargeting graph and returns an
 ``OutputCombiner`` with a single ``"action"`` key. Here is a complete example for a Franka
-manipulator (from ``stack_ik_abs_env_cfg.py``):
+manipulator (from ``stack_ik_abs_env_cfg.py``). ``Se3AbsRetargeter`` needs ``scipy``, so install
+the ``retargeters-lite`` extra (or the full ``retargeters`` extra) to run it:
 
 .. code-block:: python
    :class: code-100col

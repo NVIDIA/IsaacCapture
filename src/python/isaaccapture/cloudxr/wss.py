@@ -35,7 +35,7 @@ try:
 except ImportError:
     sys.exit(
         "Missing dependency: websockets >= 14\n"
-        "Install with: uv pip install --find-links=install/wheels 'isaaccapture[cloudxr]'"
+        f"Install with: uv pip install --python {sys.executable} 'websockets>=14'"
     )
 
 

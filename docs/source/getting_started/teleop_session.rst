@@ -458,7 +458,12 @@ Complete Examples
 
 #. **Simplified Gripper Example**: ``examples/teleop/python/gripper_retargeting_example_simple.py``
    -- Shows the minimal configuration approach and demonstrates auto-creation
-   of input sources.
+   of input sources. Run it from the project root, with the environment set up
+   as in the :doc:`Quick Start <quick_start>`:
+
+   .. code-block:: bash
+
+      python examples/teleop/python/gripper_retargeting_example_simple.py
 
 Before vs After
 ^^^^^^^^^^^^^^^
