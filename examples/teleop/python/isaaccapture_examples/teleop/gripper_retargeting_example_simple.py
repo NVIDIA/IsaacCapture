@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -27,7 +27,9 @@ from isaaccapture.teleop_session_manager import (
 )
 
 
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
+# Six levels up is the tree root -- the checkout, or the install prefix
+# when running from install/examples/teleop/.
+PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
 PLUGIN_NAME = "controller_synthetic_hands"
 PLUGIN_ROOT_ID = "synthetic_hands"
 
