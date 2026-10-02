@@ -333,7 +333,11 @@ class ControllerControls:
             self._hud.step(dt, self._session.head_pose_now())
 
     def _step_right(self, dt: float) -> None:
-        controller = self._tracker.get_right_controller(self._device_session).data
+        # The accessor hands back the ControllerSnapshot itself, or None when
+        # the device is inactive -- a headset streaming hand tracking only
+        # never binds controllers at all, so None is a steady state here, not
+        # a blip.
+        controller = self._tracker.get_right_controller(self._device_session)
         if controller is None:
             # Controller asleep or out of range. Drop the edge state so
             # waking it mid-press doesn't fire a phantom transition.
@@ -357,7 +361,7 @@ class ControllerControls:
         self._adjust_equirect_yaw(float(inputs.thumbstick_x), dt)
 
     def _step_left(self, dt: float) -> None:
-        controller = self._tracker.get_left_controller(self._device_session).data
+        controller = self._tracker.get_left_controller(self._device_session)
         if controller is None:
             self._prev_x = self._prev_y = False
             return

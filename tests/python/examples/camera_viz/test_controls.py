@@ -52,23 +52,25 @@ class FakeSnapshot:
         self.inputs = inputs
 
 
-class FakeTracked:
-    def __init__(self, data) -> None:
-        self.data = data
-
-
 class FakeTracker:
-    """Stands in for ControllerTracker; per-hand state is swapped per step."""
+    """Stands in for ControllerTracker; per-hand state is swapped per step.
+
+    Shaped to match the real binding exactly, because an earlier version of
+    this fake did not and hid a crash: it wrapped every read in an extra
+    object carrying the snapshot on a ``data`` attribute. The real accessor
+    returns a ``ControllerSnapshot`` (fields ``inputs`` / ``grip_pose`` /
+    ``aim_pose``, no ``data``) or ``None`` when the controller is inactive.
+    """
 
     def __init__(self) -> None:
         self.right = FakeInputs()
         self.left = FakeInputs()
 
     def get_right_controller(self, _session):
-        return FakeTracked(None if self.right is None else FakeSnapshot(self.right))
+        return None if self.right is None else FakeSnapshot(self.right)
 
     def get_left_controller(self, _session):
-        return FakeTracked(None if self.left is None else FakeSnapshot(self.left))
+        return None if self.left is None else FakeSnapshot(self.left)
 
 
 class FakeSession:
@@ -344,6 +346,44 @@ def test_absent_controller_does_not_fire_a_phantom_press():
 
     _press(controls, a=True)  # still held on return
     assert target.lock_mode == "gimbal"
+
+
+def test_step_survives_both_controllers_inactive():
+    """Neither hand present: step() must return quietly, not raise.
+
+    The regression this pins is a crash, not a behaviour. ``step`` runs on the
+    render thread, so an AttributeError here is not a dropped frame -- the
+    runner re-raises it out of ``wait`` and the whole viewer exits, which is
+    what an idle pair of controllers used to do at session start.
+    """
+    target = _stereo_target(lock_mode="world")
+    controls, _ = _make([target])
+
+    controls._tracker.right = None
+    controls._tracker.left = None
+    controls.step(1.0)
+
+    assert target.lock_mode == "world"
+
+
+def test_fake_tracker_matches_the_real_snapshot_shape():
+    """Pin FakeSnapshot to the binding it stands in for.
+
+    Every other test here runs against the fake, so a fake that drifts from
+    ControllerTracker proves nothing -- that is exactly how a read of a
+    ``data`` attribute the real ControllerSnapshot has never had survived a
+    green suite and crashed the render thread in XR. Skipped when the
+    compiled package is absent (ctest supplies it on PYTHONPATH).
+    """
+    schema = pytest.importorskip("isaacteleop.schema._schema")
+
+    real = schema.ControllerSnapshot
+    assert hasattr(real, "inputs"), "binding lost 'inputs'"
+    assert hasattr(FakeSnapshot(FakeInputs()), "inputs"), "fake lost 'inputs'"
+    assert not hasattr(real, "data"), (
+        "ControllerSnapshot grew a 'data' attribute; the accessor contract "
+        "this fake encodes has changed"
+    )
 
 
 # ── Config parsing ────────────────────────────────────────────────────
