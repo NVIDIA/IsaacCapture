@@ -34,7 +34,86 @@ starting the Pico manager. For Camera Televiz, start the sender and viewer.
 
 ### One-time preparation
 
-The commands assume your existing GR00T, CloudXR and SONIC environments work.
+Complete the following preparation before starting the site processes.
+
+#### Robot Site — GR00T, SONIC and model checkpoints
+
+On the **Robot Site host**, install Git LFS and clone GR00T-WholeBodyControl
+if it is not already present:
+
+```bash
+sudo apt update
+sudo apt install -y git git-lfs python3-venv
+git lfs install
+cd ~
+git clone --recurse-submodules https://github.com/NVlabs/GR00T-WholeBodyControl.git
+cd ~/GR00T-WholeBodyControl
+git lfs pull
+git submodule update --init --recursive
+```
+
+For an existing checkout, skip the clone and run the last three commands.
+Keep any existing feature branch used by your working deployment.
+
+Next, complete the upstream
+[Installation (Deployment) guide](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_deploy.html)
+on Robot Site: install the CUDA/TensorRT prerequisites, then follow one complete
+setup path through environment setup and `just build`. The process commands in
+this README use the **Docker (ROS2 Development Environment)** path: configure
+Docker access and NVIDIA Container Toolkit, set `TensorRT_ROOT` on the host,
+launch `gear_sonic_deploy/docker/run-ros2-dev.sh`, and build inside the container.
+If choosing native deployment instead, follow the guide's dependency installer,
+environment setup and build instructions on the host, and run SONIC there.
+Do not mix host and container build directories.
+
+**Thor compatibility:** the linked guide currently specifies TensorRT 10.13 for
+x86_64 and 10.7 with JetPack 6 for Orin; it does not establish a supported SONIC
+configuration for Thor with JetPack 7.1/CUDA 13. Confirm the Thor-specific
+TensorRT/container combination with the GR00T maintainers before policy
+deployment. Our LiveKit camera/bridge installation does not validate SONIC
+inference on Thor.
+
+Download the **model checkpoints on Robot Site** by following the
+[Model Card](https://nvlabs.github.io/GR00T-WholeBodyControl/model_card.html).
+The launch commands below select the low-latency variant. From the GR00T root,
+use a dedicated download environment:
+
+```bash
+cd ~/GR00T-WholeBodyControl
+python3 -m venv .venv_models
+.venv_models/bin/python -m pip install huggingface_hub
+.venv_models/bin/python download_from_hf.py --low-latency
+```
+
+Use the matching encoder, decoder and observation configuration together. Check
+that the files referenced by our launch commands are present:
+
+```bash
+ls gear_sonic_deploy/policy/low_latency/model_encoder.onnx \
+   gear_sonic_deploy/policy/low_latency/model_decoder.onnx \
+   gear_sonic_deploy/policy/low_latency/observation_config.yaml \
+   gear_sonic_deploy/planner/target_vel/V2/planner_sonic.onnx
+```
+
+#### Robot Site — MuJoCo environment (simulation only)
+
+Before activating `.venv_sim` in Robot Site Process 0, install it from the
+**GR00T repository root**:
+
+```bash
+cd ~/GR00T-WholeBodyControl
+bash install_scripts/install_mujoco_sim.sh
+source .venv_sim/bin/activate
+```
+
+Use `install_mujoco_sim.sh` for this environment; `install_pico.sh` creates the
+teleoperation environment instead. The simulator installer recreates `.venv_sim`,
+so run it during preparation, not every session. Omit this preparation and
+Process 0 when using a physical robot. Successful installation on Thor must
+still be followed by a local simulator startup check.
+
+#### Both sites — Remote Assistance package
+
 On each machine that runs a bridge or sender, install the Remote Assistance
 package from its IsaacTeleop checkout:
 
@@ -45,7 +124,10 @@ uv pip install --python examples/remote_assistance/.venv/bin/python \
   -e 'examples/remote_assistance[camera,test]'
 ```
 
-For Camera Televiz on Edge Compute, prepare the viewer environment:
+#### Edge Compute — XR and camera viewer
+
+Use your working GR00T Pico/IsaacTeleop and CloudXR environment on Edge Compute
+for Process 3. For Camera Televiz, prepare the viewer environment:
 
 ```bash
 cd ~/IsaacTeleop
@@ -54,8 +136,6 @@ uv pip install --python examples/camera_viz/.venv/bin/python \
   -e examples/remote_assistance
 ```
 
-For MuJoCo on Robot Site, run `bash install_scripts/install_mujoco_sim.sh`
-from `~/GR00T-WholeBodyControl` if its environment is not already installed.
 NVIDIA Container Toolkit configuration and any Docker daemon restart belong to
 machine preparation, before starting LiveKit or SONIC containers. They are not
 part of each session's startup.

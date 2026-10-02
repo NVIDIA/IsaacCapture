@@ -35,6 +35,9 @@ SPDX-License-Identifier: Apache-2.0
   including the network SFU as Edge Process 0.
 - Mark host-to-container transitions explicitly in deployment instructions;
   an environment prompt prefix does not establish that Docker was entered.
+- Document fresh Robot Site provisioning (GR00T clone/LFS, deployment guide,
+  matching model downloads and the installer for each venv); do not infer Thor
+  policy support from working ARM64 transport packages or Orin instructions.
 - Pair network port tables with site-specific firewall commands, status checks,
   and address scope; distinguish host rules from upstream network policy.
   Give each site's firewall configuration its own numbered setup step and keep
