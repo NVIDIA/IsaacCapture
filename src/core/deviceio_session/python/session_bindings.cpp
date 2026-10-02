@@ -143,27 +143,34 @@ PYBIND11_MODULE(_deviceio_session, m)
                     py::arg("vendor_config") = core::VendorConfig{},
                     "Aggregate OpenXR extensions required for a live session with these tracker types "
                     "(not a per-tracker instance method). Pass a VendorConfig to resolve vendored trackers.")
+        .def_static("requires_openxr", &core::DeviceIOSession::requires_openxr, py::arg("trackers"),
+                    py::arg("vendor_config") = core::VendorConfig{},
+                    "Whether any of these trackers needs an OpenXR session. When False, run() accepts "
+                    "handles=None and no OpenXR runtime is needed.")
         .def_static(
             "run",
-            [](const std::vector<std::shared_ptr<core::ITracker>>& trackers, const core::OpenXRSessionHandles& handles,
+            [](const std::vector<std::shared_ptr<core::ITracker>>& trackers,
+               std::optional<core::OpenXRSessionHandles> handles,
                std::optional<core::McapRecordingConfig> recording_config, core::VendorConfig vendor_config)
             {
-                if (handles.instance == XR_NULL_HANDLE || handles.session == XR_NULL_HANDLE ||
-                    handles.space == XR_NULL_HANDLE || handles.xrGetInstanceProcAddr == nullptr)
+                const core::OpenXRSessionHandles resolved = handles.value_or(core::OpenXRSessionHandles{});
+                const bool has_handles = resolved.instance != XR_NULL_HANDLE && resolved.session != XR_NULL_HANDLE &&
+                                         resolved.space != XR_NULL_HANDLE && resolved.xrGetInstanceProcAddr != nullptr;
+                if (!has_handles && core::DeviceIOSession::requires_openxr(trackers, vendor_config))
                 {
                     throw std::runtime_error(
                         "DeviceIOSession.run: invalid OpenXRSessionHandles (instance, session, space must be non-null "
-                        "handles and xrGetInstanceProcAddr must be set)");
+                        "handles and xrGetInstanceProcAddr must be set); a tracker in this session needs OpenXR");
                 }
-                auto session =
-                    core::DeviceIOSession::run(trackers, handles, std::move(recording_config), std::move(vendor_config));
+                auto session = core::DeviceIOSession::run(
+                    trackers, resolved, std::move(recording_config), std::move(vendor_config));
                 return std::make_unique<core::PyDeviceIOSession>(std::move(session));
             },
-            py::arg("trackers"), py::arg("handles"), py::arg("recording_config") = py::none(),
+            py::arg("trackers"), py::arg("handles") = py::none(), py::arg("recording_config") = py::none(),
             py::arg("vendor_config") = core::VendorConfig{},
             "Create and initialize a session with trackers. "
             "Pass a McapRecordingConfig to enable MCAP recording, and a VendorConfig to select "
-            "vendors for any vendored trackers.");
+            "vendors for any vendored trackers. handles may be None only when requires_openxr() is False.");
 
     // ---- ReplaySession ----
     py::class_<core::PyReplaySession, core::ITrackerSession, std::unique_ptr<core::PyReplaySession>>(m, "ReplaySession")

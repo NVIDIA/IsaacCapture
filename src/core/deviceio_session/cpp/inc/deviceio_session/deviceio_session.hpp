@@ -68,9 +68,15 @@ public:
     static std::vector<std::string> get_required_extensions(const std::vector<std::shared_ptr<ITracker>>& trackers,
                                                             const VendorConfig& vendor_config = {});
 
+    // Static helper — whether any of the trackers needs an OpenXR session. When false, run() accepts
+    // default-constructed (null) handles, so a session of in-process devices needs no OpenXR runtime.
+    static bool requires_openxr(const std::vector<std::shared_ptr<ITracker>>& trackers,
+                                const VendorConfig& vendor_config = {});
+
     // Static factory - Create and initialize a session with trackers.
     // Optionally pass a McapRecordingConfig to enable automatic MCAP recording, and a
-    // VendorConfig to select the vendor for any vendored trackers.
+    // VendorConfig to select the vendor for any vendored trackers. Null handles are accepted only
+    // when requires_openxr() is false; otherwise std::invalid_argument is thrown.
     static std::unique_ptr<DeviceIOSession> run(const std::vector<std::shared_ptr<ITracker>>& trackers,
                                                 const OpenXRSessionHandles& handles,
                                                 std::optional<McapRecordingConfig> recording_config = std::nullopt,

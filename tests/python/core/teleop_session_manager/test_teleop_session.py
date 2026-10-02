@@ -729,11 +729,13 @@ def mock_session_dependencies(
     mock_pm=None,
     get_required_extensions_return=None,
     collected_trackers=None,
+    requires_openxr=True,
 ):
     """Patch OpenXR, DeviceIO, and PluginManager so TeleopSession.__enter__ runs without hardware.
 
     Use this when a test needs to create a TeleopSession and call __enter__ (e.g. with session:).
-    Yields nothing; create TeleopSession(config) inside the block.
+    Yields the ``OpenXRSession`` and ``DeviceIOSession.run`` mocks; create TeleopSession(config)
+    inside the block.
 
     Args:
         mock_oxr: Optional mock OpenXR session (default: MockOpenXRSession()).
@@ -741,6 +743,7 @@ def mock_session_dependencies(
         mock_pm: Optional mock PluginManager (default: MockPluginManager()).
         get_required_extensions_return: List returned by get_required_extensions (default: []).
         collected_trackers: If provided, trackers passed to get_required_extensions are appended here.
+        requires_openxr: What DeviceIOSession.requires_openxr reports for the session's trackers.
     """
     mock_oxr = mock_oxr or MockOpenXRSession()
     mock_dio = mock_dio or MockDeviceIOSession()
@@ -768,12 +771,21 @@ def mock_session_dependencies(
         )
 
     with (
-        patch("isaaccapture.oxr.OpenXRSession", return_value=mock_oxr),
-        patch("isaaccapture.deviceio.DeviceIOSession.run", return_value=mock_dio),
+        patch(
+            "isaaccapture.oxr.OpenXRSession", return_value=mock_oxr
+        ) as openxr_session,
+        # Mock trackers never reach the native binding, so their OpenXR need is set here.
+        patch(
+            "isaaccapture.deviceio.DeviceIOSession.requires_openxr",
+            return_value=requires_openxr,
+        ),
+        patch(
+            "isaaccapture.deviceio.DeviceIOSession.run", return_value=mock_dio
+        ) as deviceio_run,
         patch("isaaccapture.plugin_manager.PluginManager", return_value=mock_pm),
         patch_get_ext,
     ):
-        yield
+        yield SimpleNamespace(openxr_session=openxr_session, deviceio_run=deviceio_run)
 
 
 # ============================================================================
@@ -1557,6 +1569,72 @@ class TestPluginInitialization:
             with session:
                 assert len(mock_pm.start_calls) == 1
                 assert mock_pm.start_calls[0]["plugin_args"] == []
+
+
+class TestOpenXRRequirement:
+    """A session creates OpenXR only when a tracker, a launchable plugin, a twin or caller handles need it."""
+
+    @staticmethod
+    def _plugin(tmp_path, *, enabled=True, required=False, found=True):
+        return PluginConfig(
+            plugin_name="test_plugin",
+            plugin_root_id="/root",
+            search_paths=[tmp_path if found else tmp_path / "missing"],
+            enabled=enabled,
+            required=required,
+        )
+
+    @staticmethod
+    def _config(plugins=()):
+        return make_config(
+            MockPipeline(leaf_nodes=[]), plugins=list(plugins), trackers=[object()]
+        )
+
+    def test_trackers_without_openxr_skip_it(self):
+        with mock_session_dependencies(requires_openxr=False) as mocks:
+            with TeleopSession(self._config()) as session:
+                assert session.oxr_session is None
+        mocks.openxr_session.assert_not_called()
+        assert mocks.deviceio_run.call_args.args[1] is None  # no handles
+
+    def test_a_session_without_trackers_keeps_openxr(self):
+        with mock_session_dependencies(requires_openxr=False) as mocks:
+            with TeleopSession(make_config(MockPipeline(leaf_nodes=[]))):
+                pass
+        mocks.openxr_session.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "plugin_kwargs",
+        [
+            pytest.param({"enabled": False, "required": True}, id="disabled"),
+            pytest.param({"required": False, "found": False}, id="optional-missing"),
+        ],
+    )
+    def test_plugins_that_will_not_launch_do_not_require_openxr(
+        self, tmp_path, plugin_kwargs
+    ):
+        mock_pm = MockPluginManager(plugin_names=["test_plugin"])
+        config = self._config([self._plugin(tmp_path, **plugin_kwargs)])
+        with mock_session_dependencies(mock_pm=mock_pm, requires_openxr=False) as mocks:
+            with TeleopSession(config) as session:
+                assert session.plugin_contexts == []
+        mocks.openxr_session.assert_not_called()
+
+    def test_a_launchable_plugin_requires_openxr(self, tmp_path):
+        mock_pm = MockPluginManager(plugin_names=["test_plugin"])
+        config = self._config([self._plugin(tmp_path)])
+        with mock_session_dependencies(mock_pm=mock_pm, requires_openxr=False) as mocks:
+            with TeleopSession(config) as session:
+                assert len(session.plugin_contexts) == 1
+        mocks.openxr_session.assert_called_once()
+
+    def test_a_missing_required_plugin_fails_before_openxr(self, tmp_path):
+        config = self._config([self._plugin(tmp_path, required=True, found=False)])
+        with mock_session_dependencies(requires_openxr=False) as mocks:
+            with pytest.raises(RuntimeError, match="Required plugin 'test_plugin'"):
+                with TeleopSession(config):
+                    pass
+        mocks.openxr_session.assert_not_called()
 
 
 class TestStatusMonitoringIntegration:
@@ -3282,6 +3360,10 @@ def mock_live_dependencies_with_args():
         patch(
             "isaaccapture.deviceio.DeviceIOSession.get_required_extensions",
             return_value=[],
+        ),
+        # Mock trackers never reach the native binding; keep the OpenXR path these tests cover.
+        patch(
+            "isaaccapture.deviceio.DeviceIOSession.requires_openxr", return_value=True
         ),
         patch("isaaccapture.plugin_manager.PluginManager", return_value=MagicMock()),
         patch("isaaccapture.deviceio.McapRecordingConfig") as recording_config_cls,

@@ -64,6 +64,13 @@ logger = logging.getLogger(__name__)
 _MONITORED_PLUGIN_NAME = "manus_hand_plugin"
 
 
+def _plugin_launchable(plugin_config: Any, manager: Any) -> bool:
+    """Whether a resolved plugin will start: its manager exists and discovered it."""
+    return (
+        manager is not None and plugin_config.plugin_name in manager.get_plugin_names()
+    )
+
+
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
     """Resolve a configured ``sinks`` entry into ``(executable, sink_node)``.
 
@@ -1091,8 +1098,10 @@ class TeleopSession:
             include_openxr=live_mode,
             external_openxr=live_mode and self.config.oxr_handles is not None,
         )
+        # Resolve plugins before creating anything, so a missing required plugin fails first and
+        # only plugins that will launch count toward the OpenXR requirement below.
+        self._resolve_configured_plugins(live_mode)
         if live_mode:
-            self._resolve_monitored_plugins()
             self._status_monitor.rebuild(
                 tuple(
                     spec
@@ -1161,8 +1170,29 @@ class TeleopSession:
                 trackers, vendor_config
             )
 
+            # Skip OpenXR entirely when nothing needs it: at least one tracker, none with an
+            # OpenXR impl (every device runs in process), no plugin that will launch (they push
+            # through the OpenXR tensor extension), no robot twin and no caller-provided handles.
+            # A session with no trackers keeps its OpenXR session, as before.
+            needs_openxr = (
+                self.config.oxr_handles is not None
+                or self.config.joint_publisher is not None
+                or any(
+                    _plugin_launchable(plugin_config, manager)
+                    for plugin_config, manager, _spec in self._resolved_plugins
+                )
+                or not trackers
+                or deviceio.DeviceIOSession.requires_openxr(trackers, vendor_config)
+            )
+
             # Resolve OpenXR handles
-            if self.config.oxr_handles is not None:
+            handles: Any
+            if not needs_openxr:
+                handles = None
+                self._status_monitor.rebuild(
+                    (), include_openxr=False, external_openxr=False
+                )
+            elif self.config.oxr_handles is not None:
                 handles = self.config.oxr_handles
             elif self.config.joint_publisher is not None:
                 handles = oxr.OpenXRSessionHandles(
@@ -1260,38 +1290,32 @@ class TeleopSession:
         )
         self._twin_teardown_clean = stopped and joined
 
-    def _resolve_monitored_plugins(self) -> None:
-        """Resolve the initially supported Manus inventory and status reader."""
+    def _resolve_configured_plugins(self, live_mode: bool) -> None:
+        """Resolve every enabled plugin once, in configuration order.
+
+        A required plugin that cannot be found raises here. An optional one resolves to no
+        manager and is skipped. In live mode a launchable Manus plugin also gets its status reader.
+        """
         for plugin_config in self.config.plugins:
-            if (
-                not plugin_config.enabled
-                or plugin_config.plugin_name != _MONITORED_PLUGIN_NAME
-            ):
+            if not plugin_config.enabled:
                 continue
-
             manager = self._resolve_plugin(plugin_config)
-            if manager is None:
-                continue
-            if plugin_config.plugin_name not in manager.get_plugin_names():
-                self._resolved_plugins.append((plugin_config, manager, None))
-                continue
-
-            info = manager.get_plugin_info(plugin_config.plugin_name)
-            tracker = deviceio_trackers.PluginDeviceStatusTracker(
-                f"{plugin_config.plugin_root_id}/device_status"
-            )
-            self._resolved_plugins.append(
-                (
-                    plugin_config,
-                    manager,
-                    PluginProviderSpec(
-                        plugin_root_id=plugin_config.plugin_root_id,
-                        name=info.name,
-                        devices=tuple(info.devices),
-                        tracker=tracker,
+            spec = None
+            if (
+                live_mode
+                and plugin_config.plugin_name == _MONITORED_PLUGIN_NAME
+                and _plugin_launchable(plugin_config, manager)
+            ):
+                info = manager.get_plugin_info(plugin_config.plugin_name)
+                spec = PluginProviderSpec(
+                    plugin_root_id=plugin_config.plugin_root_id,
+                    name=info.name,
+                    devices=tuple(info.devices),
+                    tracker=deviceio_trackers.PluginDeviceStatusTracker(
+                        f"{plugin_config.plugin_root_id}/device_status"
                     ),
                 )
-            )
+            self._resolved_plugins.append((plugin_config, manager, spec))
 
     def _resolve_plugin(self, plugin_config: Any) -> pm.PluginManager | None:
         """Apply the existing enabled/path/discovery policy to one plugin."""
@@ -1320,26 +1344,12 @@ class TeleopSession:
         return manager
 
     def _start_configured_plugins(self, stack: ExitStack) -> None:
-        """Discover and start enabled plugins in configuration order."""
-        monitored_by_config = {
-            id(plugin_config): (manager, spec)
-            for plugin_config, manager, spec in self._resolved_plugins
-        }
-        for plugin_config in self.config.plugins:
-            if not plugin_config.enabled:
-                continue
-
-            monitored = monitored_by_config.get(id(plugin_config))
-            if monitored is None:
-                manager = self._resolve_plugin(plugin_config)
-                plugin_spec = None
-            else:
-                manager, plugin_spec = monitored
-
+        """Start the resolved plugins in configuration order."""
+        for plugin_config, manager, plugin_spec in self._resolved_plugins:
             if manager is None:
                 continue
             self.plugin_managers.append(manager)
-            if plugin_config.plugin_name not in manager.get_plugin_names():
+            if not _plugin_launchable(plugin_config, manager):
                 continue
 
             context = manager.start(
