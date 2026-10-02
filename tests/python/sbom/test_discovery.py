@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,26 @@ def test_a_build_tree_without_a_file_api_reply_says_so(workspace):
 
     with pytest.raises(discovery.FileApiError, match="cmake_file_api"):
         discovery.BuildGraph(workspace.build, synth.CONFIG)
+
+
+def test_a_stale_codemodel_beside_the_current_one_is_not_read(workspace):
+    """Reply filenames are unspecified, so the index is the only thing that says
+    which codemodel belongs to this configure. A leftover one sorts later here."""
+    reply = workspace.build / ".cmake" / "api" / "v1" / "reply"
+    stale = json.loads((reply / "codemodel-v2-fixture.json").read_text())
+    stale["configurations"] = [{"name": synth.CONFIG, "targets": []}]
+    (reply / "codemodel-v2-stale.json").write_text(json.dumps(stale))
+
+    graph = discovery.BuildGraph(workspace.build, synth.CONFIG)
+
+    assert graph.by_name("_ext.cpython-312-x86_64-linux-gnu.so")
+
+
+def test_a_configuration_the_codemodel_does_not_describe_is_refused(workspace):
+    """The cache names the configuration; a reply that does not describe it is a
+    reply for another build, and attributing from it would credit the wrong one."""
+    with pytest.raises(discovery.FileApiError, match="Debug"):
+        discovery.BuildGraph(workspace.build, "Debug")
 
 
 def test_the_graph_is_read_from_the_codemodel_not_from_generator_output(workspace):

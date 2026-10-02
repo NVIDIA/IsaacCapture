@@ -528,6 +528,22 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
         "configurations": [{"name": CONFIG, "targets": index}],
     }
     _write(reply / "codemodel-v2-fixture.json", json.dumps(codemodel, indent=1))
+    # The collector enters through the index, as a file API client must.
+    _write(
+        reply / "index-2026-01-01T00-00-00-0000.json",
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "kind": "codemodel",
+                        "version": {"major": 2, "minor": 6},
+                        "jsonFile": "codemodel-v2-fixture.json",
+                    }
+                ]
+            },
+            indent=1,
+        ),
+    )
 
 
 # ==============================================================================

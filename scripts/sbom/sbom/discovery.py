@@ -336,6 +336,31 @@ def _within(repo_root: Path, build_dir: Path):
     return check
 
 
+def _codemodel_file(reply: Path) -> Path | None:
+    """The current reply's codemodel, reached through its index.
+
+    Every other reply filename is documented as unspecified and not to be
+    interpreted, and CMake only *attempts* to delete what it did not just
+    write -- so globbing for a codemodel can find one from an earlier configure,
+    and sorting the matches orders content hashes. The index alone carries an
+    order: "the one with the largest name in lexicographic order is the current
+    index file".
+    """
+    if not reply.is_dir():
+        return None
+    indexes = sorted(reply.glob("index-*.json"))
+    if not indexes:
+        return None
+    index = json.loads(indexes[-1].read_text(encoding="utf-8"))
+    for item in index.get("objects", []):
+        version = item.get("version") or {}
+        if item.get("kind") == "codemodel" and version.get("major") == 2:
+            # Index references are relative to the reply directory.
+            found = reply / item["jsonFile"]
+            return found if found.is_file() else None
+    return None
+
+
 class BuildGraph:
     """The link and compile graph, read from CMake's own file API.
 
@@ -356,29 +381,43 @@ class BuildGraph:
 
     def _load(self, config: str | None) -> None:
         reply = self.build_dir / ".cmake" / "api" / "v1" / "reply"
-        models = sorted(reply.glob("codemodel-v2-*.json")) if reply.is_dir() else []
-        if not models:
+        model_file = _codemodel_file(reply)
+        if model_file is None:
             raise FileApiError(
                 f"no CMake file API codemodel under {reply}. Configure the project "
                 "with CMake 3.27 or newer, which is where cmake_file_api() asks for it."
             )
 
-        codemodel = json.loads(models[-1].read_text(encoding="utf-8"))
+        codemodel = json.loads(model_file.read_text(encoding="utf-8"))
         source_root = Path(codemodel["paths"]["source"])
         build_root = Path(codemodel["paths"]["build"])
 
         configurations = codemodel["configurations"]
         chosen = next(
-            (item for item in configurations if item["name"] == (config or "")),
-            configurations[0],
+            (item for item in configurations if item["name"] == (config or "")), None
         )
+        if chosen is None:
+            # The caller names the configuration from CMakeCache.txt, and a
+            # reply that does not describe it is a reply for another build --
+            # taking any other credits a wheel to a graph that did not build it.
+            # Unnamed is the single-configuration tree the tests construct.
+            if config:
+                raise FileApiError(
+                    f"codemodel under {reply} describes no {config!r} configuration, "
+                    f"only {[item['name'] for item in configurations]}"
+                )
+            chosen = configurations[0]
 
         def resolve(raw: str, root: Path) -> Path:
             path = Path(raw)
             return path if path.is_absolute() else (root / path)
 
         for entry in chosen["targets"]:
-            target = json.loads((reply / entry["jsonFile"]).read_text(encoding="utf-8"))
+            # Relative to the codemodel, which is what the format says, even
+            # though CMake writes it into the reply directory alongside these.
+            target = json.loads(
+                (model_file.parent / entry["jsonFile"]).read_text(encoding="utf-8")
+            )
             includes = {
                 resolve(item["path"], source_root).resolve()
                 for group in target.get("compileGroups", [])
