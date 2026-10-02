@@ -14,7 +14,10 @@ if not hasattr(isaaccapture, "__version__"):
 
 expected = os.environ.get("EXPECTED_ISAACTELEOP_VERSION", "").strip()
 if not expected:
-    raise SystemExit("EXPECTED_ISAACTELEOP_VERSION is not set")
+    raise SystemExit(
+        "EXPECTED_ISAACTELEOP_VERSION is not set. This is a CI check: "
+        "scripts/run_tests_with_cloudxr.sh sets it from the wheel name."
+    )
 
 reported = isaaccapture.__version__
 
