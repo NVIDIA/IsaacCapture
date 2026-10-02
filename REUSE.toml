@@ -44,3 +44,16 @@ path = "deps/third_party/Mujoco.cmake"
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved."
 SPDX-License-Identifier = "Apache-2.0"
+
+# Chromium's physical key code table, vendored verbatim (see its README.md).
+[[annotations]]
+path = "src/core/deviceio_trackers/cpp/third_party/chromium/dom_code_data.inc"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright 2013 The Chromium Authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "src/core/deviceio_trackers/cpp/third_party/chromium/LICENSE"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright 2015 The Chromium Authors"
+SPDX-License-Identifier = "BSD-3-Clause"

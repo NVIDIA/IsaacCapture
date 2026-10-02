@@ -37,6 +37,7 @@ dev = [
 ]
 ui = [
     "imgui[glfw]>=2.0.0",
+    "glfw>=2.7",  # platform constants for the keyboard examples
 ]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",

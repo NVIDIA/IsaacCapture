@@ -1,0 +1,47 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+enum KeyAction : ubyte {
+    Release = 0,
+    Press = 1,
+}
+
+// One transition of the merged keyboard: a key's first holder pressing it, or its last
+// holder releasing it.
+struct KeyEvent {
+    // Monotonic time (ns) at which the provider reported the transition.
+    timestamp_ns: long;
+
+    // Linux evdev key code (see linux/input-event-codes.h, e.g. KEY_W = 17).
+    code: ushort;
+
+    action: KeyAction;
+}
+
+// Keyboard state for one frame, merged across every attached provider (focused window,
+// browser tab, ...). Carries no semantic mapping: which keys mean what (an axis, a
+// toggle, a mode switch) is up to the consuming retargeter.
+table KeyboardOutput {
+    // Evdev key codes held at sample time, in no particular order.
+    pressed_keys: [ushort] (id: 0);
+
+    // Press/release transitions of the merged keyboard since the previous sample, in order;
+    // replaying them over the previous sample's pressed_keys always yields this one. A provider
+    // pressing a key another already holds adds no event, and autorepeat is never included.
+    // A session's first sample starts from no keys: keys already held appear as presses. If more
+    // than 4096 transitions occur between samples, this is instead the minimal change (releases,
+    // then presses): pressed_keys still rebuilds, but sub-frame taps and their order are lost.
+    events: [KeyEvent] (id: 1);
+}
+
+// MCAP recording wrapper for KeyboardOutput.
+table KeyboardOutputRecord {
+    data: KeyboardOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type KeyboardOutputRecord;

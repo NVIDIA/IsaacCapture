@@ -1,2 +1,3 @@
 # Optional UI dependencies for parameter tuning
 imgui[glfw]>=2.0.0
+glfw>=2.7
