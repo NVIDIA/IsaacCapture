@@ -27,10 +27,8 @@ and the BD skeleton format used on the server.
 .. note::
 
    Meta Quest 3/3S also expose body tracking to WebXR via inside-out body
-   tracking (IOBT), and the CloudXR client will stream it. However the Quest
-   skeleton is mapped to the PICO BD 24-joint layout in the current version,
-   and accuracy is lower since there are no physical trackers. See
-   `Quest Body Tracking (Limited Support)`_ for details.
+   tracking (IOBT), and the CloudXR client will stream it under the WebXR
+   Body Tracking extension.
 
 .. seealso::
 
@@ -260,21 +258,3 @@ newest one from ``./recordings/`` by default.
    :class: no-image-zoom
 
    ``replay_full_body.py`` visualizing a recorded BD 24-joint skeleton in viser.
-
-Quest Body Tracking (Limited Support)
--------------------------------------
-
-Meta Quest headsets expose inside-out body tracking (IOBT) to WebXR sessions.
-The CloudXR WebXR client will stream this data when the Quest browser grants the
-``body-tracking`` feature.
-
-However, in the current version the Quest IOBT skeleton is mapped to the PICO BD
-24-joint layout before being sent to the server. This means the server always
-receives data in the ``XR_BD_body_tracking`` joint format regardless of the
-source headset.
-
-.. note::
-
-   Quest body tracking does not require external trackers. It uses the
-   headset's built-in cameras. Tracking quality may differ from the
-   tracker-based PICO solution, particularly for lower-body joints.
