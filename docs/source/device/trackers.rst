@@ -190,7 +190,7 @@ Tracks the HMD head pose via the OpenXR view space.
 - Examples:
 
   - :code-file:`examples/oxr/cpp/oxr_simple_api_demo.cpp`
-  - :code-file:`examples/oxr/python/modular_example.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/modular_example.py`
 
 HandTracker
 ~~~~~~~~~~~
@@ -206,12 +206,12 @@ Tracks articulated hand joints (26 joints per hand, following the OpenXR
 
   - :code-file:`tests/cpp/core/schema/test_hand.cpp`
   - :code-file:`tests/python/core/schema/test_hand.py`
-  - :code-file:`examples/oxr/python/test_synthetic_hands.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_synthetic_hands.py`
 
 - Examples:
 
   - :code-file:`examples/oxr/cpp/oxr_simple_api_demo.cpp`
-  - :code-file:`examples/oxr/python/modular_example.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/modular_example.py`
   - :code-file:`examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py`
 
 ControllerTracker
@@ -228,7 +228,7 @@ axis inputs. Uses standard OpenXR action bindings.
 
   - :code-file:`tests/cpp/core/schema/test_controller.cpp`
   - :code-file:`tests/python/core/schema/test_controller.py`
-  - :code-file:`examples/oxr/python/test_controller_tracker.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_controller_tracker.py`
 
 - Examples:
 
@@ -254,7 +254,7 @@ reads the PICO ``XR_BD_body_tracking`` extension directly.
 
   - :code-file:`tests/cpp/core/schema/test_full_body.cpp`
   - :code-file:`tests/python/core/schema/test_full_body.py`
-  - :code-file:`examples/oxr/python/test_full_body_tracker.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_full_body_tracker.py`
 
 - Examples:
 
@@ -287,7 +287,7 @@ utility internally.
 
   - :code-file:`tests/cpp/core/schema/test_oak.cpp`
   - :code-file:`tests/python/core/schema/test_camera.py`
-  - :code-file:`examples/oxr/python/test_oak_camera.py`
+  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py`
 
 - Examples:
 
@@ -378,7 +378,7 @@ Usage Examples
 For end-to-end usage patterns combining trackers with a ``DeviceIOSession``, see:
 
 - **C++**: :code-file:`examples/oxr/cpp/oxr_simple_api_demo.cpp`
-- **Python**: :code-file:`examples/oxr/python/modular_example.py`
+- **Python**: :code-file:`examples/oxr/python/isaaccapture_examples/oxr/modular_example.py`
 
 For higher-level usage with the teleop session manager and retargeting, see:
 
