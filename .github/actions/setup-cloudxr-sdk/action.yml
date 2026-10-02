@@ -42,7 +42,12 @@ runs:
         path: |
           deps/cloudxr/*.tar.gz
           deps/cloudxr/*.tgz
-        key: cloudxr-sdk-${{ runner.os }}-${{ runner.arch }}-rt${{ steps.parse.outputs.runtime_version }}-web${{ steps.parse.outputs.web_version }}
+          # The URL each tarball came from, written beside it on download. A
+          # cache hit without it leaves every CloudXR wheel member unattributable:
+          # an archive explains one only if the repository tracks it or this
+          # marker says where it was fetched from.
+          deps/cloudxr/*.source
+        key: cloudxr-sdk-v2-${{ runner.os }}-${{ runner.arch }}-rt${{ steps.parse.outputs.runtime_version }}-web${{ steps.parse.outputs.web_version }}
 
     - name: Download CloudXR Runtime SDK
       shell: bash
@@ -66,4 +71,5 @@ runs:
         path: |
           deps/cloudxr/*.tar.gz
           deps/cloudxr/*.tgz
+          deps/cloudxr/*.source
         key: ${{ steps.cache.outputs.cache-primary-key }}

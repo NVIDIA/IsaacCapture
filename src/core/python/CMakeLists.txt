@@ -43,6 +43,10 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/MANIFEST.in" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/README.md"
+    # project.license-files in pyproject.toml.in names these; without them the
+    # wheel redistributes the project under a license it does not carry.
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/LICENSE.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSE.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/LICENSES" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-dev.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-ui.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
@@ -70,6 +74,11 @@ endif()
 set(STUBGEN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/generate_stubs.py")
 set(STUBGEN_PYPROJECT "${CMAKE_CURRENT_SOURCE_DIR}/stubgen_pyproject.toml")
 set(STUBGEN_PACKAGE_DIR "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>")
+# Stubs are generated here and copied into the staging tree below. Writing them
+# straight into staging would leave them with no build-tree origin, and the file
+# a wheel ships must always be traceable to one -- staging is a copy destination,
+# never the only place a file exists.
+set(STUBGEN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/stubs/$<CONFIG>")
 set(PY_TYPED_MARKER "${STUBGEN_PACKAGE_DIR}/isaaccapture/py.typed")
 
 set(STUBGEN_MODULES
@@ -101,7 +110,7 @@ foreach(_module IN LISTS STUBGEN_MODULES)
     list(APPEND STUBGEN_COMMANDS
         COMMAND ${CMAKE_COMMAND} -E env --unset=VIRTUAL_ENV
             uv run --project "${CMAKE_BINARY_DIR}/stubgen" --python ${ISAAC_TELEOP_PYTHON_VERSION}
-            python "${STUBGEN_SCRIPT}" ${_module} "${STUBGEN_PACKAGE_DIR}"
+            python "${STUBGEN_SCRIPT}" ${_module} "${STUBGEN_PACKAGE_DIR}" "${STUBGEN_OUTPUT_DIR}"
     )
 endforeach()
 
@@ -114,10 +123,14 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy "${STUBGEN_PYPROJECT}" "${CMAKE_BINARY_DIR}/stubgen/pyproject.toml"
 
     # Generate stubs for each pybind11 module using the stubgen pyproject.toml
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${STUBGEN_OUTPUT_DIR}/isaaccapture"
     ${STUBGEN_COMMANDS}
 
     # Create py.typed marker file (PEP 561) - also serves as build stamp
-    COMMAND ${CMAKE_COMMAND} -E touch "${PY_TYPED_MARKER}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${STUBGEN_OUTPUT_DIR}/isaaccapture/py.typed"
+
+    # Stage what was generated. Last, so PY_TYPED_MARKER stamps a complete copy.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${STUBGEN_OUTPUT_DIR}" "${STUBGEN_PACKAGE_DIR}"
     DEPENDS python_package "${STUBGEN_SCRIPT}" "${STUBGEN_PYPROJECT}"
             $<TARGET_FILE:deviceio_trackers_py>
             $<TARGET_FILE:deviceio_session_py>

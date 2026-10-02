@@ -78,6 +78,7 @@ Table of Contents
 
    references/requirements
    references/build
+   references/sbom
    references/generated_trackers
    references/retargeting/index
    references/device_provider_monitoring

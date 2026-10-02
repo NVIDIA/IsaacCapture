@@ -15,6 +15,7 @@ description = "Isaac Teleop"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+license-files = ["LICENSE.md", "LICENSES/*.txt"]
 authors = [
     { name = "NVIDIA" },
 ]
@@ -26,6 +27,9 @@ dependencies = [
     "numpy>=1.23.0",
     "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/NVIDIA/IsaacCapture"
 
 [project.optional-dependencies]
 dev = [
@@ -100,11 +104,11 @@ package = false
 isaacteleop = { path = "src/compat" }
 
 [tool.scikit-build]
-# Floor matches CMakeLists' cmake_minimum_required (3.24, for `cmake --fresh`).
+# Floor matches CMakeLists' cmake_minimum_required (3.27, for cmake_file_api).
 # Ubuntu 22.04's apt CMake is 3.22 and no longer satisfies it, so scikit-build-core
 # fetches CMake from PyPI there; the <4 cap keeps that fetch on the 3.x line rather
 # than silently jumping to 4.x.
-cmake.version = ">=3.24,<4"
+cmake.version = ">=3.27,<4"
 cmake.build-type = "Release"
 
 # Keep the CMake build tree under build-wheel/<cache-tag>/ (e.g.
