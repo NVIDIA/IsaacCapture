@@ -97,3 +97,6 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+When rebasing example package moves, check upstream-added `:code-file:` references
+against the new paths; Git can merge these references without detecting stale paths.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-import cloudxr_env
+from isaaccapture_examples.camera_viz import cloudxr_env
 
 
 # ── YAML -> env ───────────────────────────────────────────────────────
