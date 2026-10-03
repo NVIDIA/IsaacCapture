@@ -784,7 +784,10 @@ tensor. The <code class="docutils literal notranslate"><span class="pre">output_
 <span id="isaac-teleop-pipeline-builder"></span><h2>Build a Retargeting Pipeline<a class="headerlink" href="#build-a-retargeting-pipeline" title="Link to this heading">#</a></h2>
 <p>A pipeline builder is a callable that constructs the retargeting graph and returns an
 <code class="docutils literal notranslate"><span class="pre">OutputCombiner</span></code> with a single <code class="docutils literal notranslate"><span class="pre">&quot;action&quot;</span></code> key. Here is a complete example for a Franka
-manipulator (from <code class="docutils literal notranslate"><span class="pre">stack_ik_abs_env_cfg.py</span></code>):</p>
+manipulator, adapted from <code class="docutils literal notranslate"><span class="pre">_build_franka_stack_pipeline()</span></code> in Isaac Lab’s
+<a class="reference external" href="https://github.com/isaac-sim/IsaacLab/blob/develop/source/isaaclab_tasks/isaaclab_tasks/contrib/stack/config/franka/stack_ik_abs_env_cfg.py" rel="noopener noreferrer" target="_blank">stack_ik_abs_env_cfg.py</a>.
+<code class="docutils literal notranslate"><span class="pre">Se3AbsRetargeter</span></code> needs <code class="docutils literal notranslate"><span class="pre">scipy</span></code>, so install
+the <code class="docutils literal notranslate"><span class="pre">retargeters-lite</span></code> extra (or the full <code class="docutils literal notranslate"><span class="pre">retargeters</span></code> extra) to run it:</p>
 <div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">ControllersSource</span><span class="p">,</span> <span class="n">HandsSource</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.interface</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutputCombiner</span><span class="p">,</span> <span class="n">ValueInput</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -1010,7 +1013,7 @@ retargeter tuning UI.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 03, 2026.
       <br/>
     
   </p>

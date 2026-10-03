@@ -514,9 +514,8 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 <section id="step-4-run-the-plugin">
 <h3><a class="toc-backref" href="#id7" role="doc-backlink">Step 4: Run the plugin</a><a class="headerlink" href="#step-4-run-the-plugin" title="Link to this heading">#</a></h3>
 <p>The Haptikos plugin connects to the Teleop session through the CloudXR / OpenXR runtime, so the runtime must be running and its environment sourced in the shell that launches the plugin.</p>
-<p>Start the CloudXR runtime. It runs as a background service that outlives this shell, until you stop it with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">stop</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>isaac_teleop_env/bin/activate
-python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<p>Start the CloudXR runtime from the Python environment where <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> is installed. It runs as a background service that outlives this shell, until you stop it with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">stop</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
 <p>In the shell that runs the plugin, source the environment file that the runtime writes on startup. This points the OpenXR loader at CloudXR:</p>
@@ -689,7 +688,7 @@ by this project.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 03, 2026.
       <br/>
     
   </p>

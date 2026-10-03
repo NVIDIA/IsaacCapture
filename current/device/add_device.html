@@ -676,7 +676,10 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
 <p>The printer discovers the tensor collection created by the pusher and prints received samples.
-Both exit after 100 samples, or press Ctrl+C to exit early.</p>
+Both exit after 1000 samples, or press Ctrl+C to exit early.</p>
+<p>The same build installs <code class="docutils literal notranslate"><span class="pre">se3_printer</span></code>, <code class="docutils literal notranslate"><span class="pre">full_body_printer</span></code> and <code class="docutils literal notranslate"><span class="pre">frame_metadata_printer</span></code> next
+to them. Those read other schemas and need their own data source, so they are not part of this
+example; <code class="docutils literal notranslate"><span class="pre">full_body_printer</span></code> is covered in <a class="reference internal" href="body_tracking.html"><span class="doc">Body Tracking</span></a>.</p>
 <p><strong>Components</strong></p>
 <ul class="simple">
 <li><p><strong>SchemaPusher</strong> (<code class="docutils literal notranslate"><span class="pre">pusherio</span></code> library) — Pushes serialized FlatBuffer data via OpenXR tensor
@@ -839,7 +842,7 @@ trackers during the update loop.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 03, 2026.
       <br/>
     
   </p>

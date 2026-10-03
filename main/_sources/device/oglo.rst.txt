@@ -136,6 +136,9 @@ Tests
 12-bit packing reference, plus the schema-4 fallback and malformed-packet
 rejection:
 
+The plugin target above does not build the test, so build it first:
+
 .. code-block:: bash
 
+   cmake --build build --target test_oglo_packet_parser --parallel
    ctest --test-dir build -R oglo_packet_parser --output-on-failure

@@ -548,9 +548,12 @@ and flatten <code class="docutils literal notranslate"><span class="pre">ee_pose
 <p>The repo ships <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/joint_space_device_example.py</span></code>:</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Consumes<span class="w"> </span>the<span class="w"> </span>so101_leader<span class="w"> </span>plugin<span class="w"> </span>over<span class="w"> </span>OpenXR<span class="w"> </span><span class="o">(</span><span class="nb">source</span><span class="w"> </span>cloudxr.env<span class="w"> </span>first<span class="o">)</span>:
 <span class="gp">$ </span>python<span class="w"> </span>joint_space_device_example.py<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>joint<span class="w"> </span>--frames<span class="w"> </span><span class="m">8</span>
-<span class="gp">$ </span>python<span class="w"> </span>joint_space_device_example.py<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>so101_new_calib.urdf
+<span class="gp">$ </span>python<span class="w"> </span>joint_space_device_example.py<span class="w"> </span>--launch-plugin<span class="w"> </span>--mode<span class="w"> </span>ee<span class="w"> </span>--urdf<span class="w"> </span>/path/to/so101_new_calib.urdf
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">so101_new_calib.urdf</span></code> is not shipped in this repo. It is <code class="docutils literal notranslate"><span class="pre">Simulation/SO101/so101_new_calib.urdf</span></code>
+in <a class="reference external" href="https://github.com/TheRobotStudio/SO-ARM100" rel="noopener noreferrer" target="_blank">TheRobotStudio/SO-ARM100</a>; pass its path to
+<code class="docutils literal notranslate"><span class="pre">--urdf</span></code>. Run the commands from <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code>.</p>
 </section>
 <section id="validate">
 <h2>Validate<a class="headerlink" href="#validate" title="Link to this heading">#</a></h2>
@@ -705,7 +708,7 @@ SO-101 plugin, and MCAP record/replay.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 03, 2026.
       <br/>
     
   </p>

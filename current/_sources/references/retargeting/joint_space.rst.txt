@@ -108,7 +108,11 @@ The repo ships ``examples/teleop/python/joint_space_device_example.py``:
 
    # Consumes the so101_leader plugin over OpenXR (source cloudxr.env first):
    $ python joint_space_device_example.py --launch-plugin --mode joint --frames 8
-   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf so101_new_calib.urdf
+   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
+
+``so101_new_calib.urdf`` is not shipped in this repo. It is ``Simulation/SO101/so101_new_calib.urdf``
+in `TheRobotStudio/SO-ARM100 <https://github.com/TheRobotStudio/SO-ARM100>`_; pass its path to
+``--urdf``. Run the commands from ``examples/teleop/python/``.
 
 Validate
 --------
