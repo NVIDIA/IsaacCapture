@@ -192,6 +192,12 @@ export class CloudXR2DUI {
   private reconnectMaxAttemptsInput!: HTMLInputElement;
   /** Delay before each retry attempt, in milliseconds */
   private reconnectDelayMsInput!: HTMLInputElement;
+  /** Base timeout for passthrough-only detection, in milliseconds - independent of retry. */
+  private streamAttachTimeoutMsInput!: HTMLInputElement;
+  /** Timeout for detecting no decoder warm-up signal at all since attach, in milliseconds. */
+  private warmupBeginTimeoutMsInput!: HTMLInputElement;
+  /** Timeout for detecting decoder warm-up that began but never finished, in milliseconds. */
+  private warmupEndTimeoutMsInput!: HTMLInputElement;
   /** Button that clears stored settings and reloads to defaults. */
   private resetSettingsButton!: HTMLButtonElement;
   /** Container for the runtime-generated URL-parameter help list (optional in markup). */
@@ -500,6 +506,13 @@ export class CloudXR2DUI {
       'cloudxrReconnectMaxAttempts'
     );
     this.reconnectDelayMsInput = this.getElement<HTMLInputElement>('cloudxrReconnectDelayMs');
+    this.streamAttachTimeoutMsInput = this.getElement<HTMLInputElement>(
+      'cloudxrStreamAttachTimeoutMs'
+    );
+    this.warmupBeginTimeoutMsInput = this.getElement<HTMLInputElement>(
+      'cloudxrWarmupBeginTimeoutMs'
+    );
+    this.warmupEndTimeoutMsInput = this.getElement<HTMLInputElement>('cloudxrWarmupEndTimeoutMs');
     this.teleopModeSubtitle = this.getElement<HTMLElement>('teleopModeSubtitle');
     this.teleopProjectSelect = this.getElement<HTMLSelectElement>('teleopProjectSelect');
     this.resetSettingsButton = this.getElement<HTMLButtonElement>('resetSettingsButton');
@@ -567,6 +580,9 @@ export class CloudXR2DUI {
       reconnectEnabled: true,
       reconnectMaxAttempts: 3,
       reconnectDelayMs: 3000,
+      streamAttachTimeoutMs: 120000,
+      warmupBeginTimeoutMs: 10000,
+      warmupEndTimeoutMs: 30000,
       teleopPath: DEFAULT_TELEOP_PATH,
     };
   }
@@ -616,6 +632,9 @@ export class CloudXR2DUI {
       { el: this.reconnectEnabledInput, key: 'reconnectEnabled' },
       { el: this.reconnectMaxAttemptsInput, key: 'reconnectMaxAttempts' },
       { el: this.reconnectDelayMsInput, key: 'reconnectDelayMs' },
+      { el: this.streamAttachTimeoutMsInput, key: 'streamAttachTimeoutMs' },
+      { el: this.warmupBeginTimeoutMsInput, key: 'warmupBeginTimeoutMs' },
+      { el: this.warmupEndTimeoutMsInput, key: 'warmupEndTimeoutMs' },
     ];
   }
 
@@ -839,6 +858,12 @@ export class CloudXR2DUI {
     addListener(this.xrOffsetZInput, 'input', updateConfig);
     addListener(this.xrOffsetZInput, 'change', updateConfig);
     addListener(this.controlPanelPositionSelect, 'change', updateConfig);
+    addListener(this.streamAttachTimeoutMsInput, 'input', updateConfig);
+    addListener(this.streamAttachTimeoutMsInput, 'change', updateConfig);
+    addListener(this.warmupBeginTimeoutMsInput, 'input', updateConfig);
+    addListener(this.warmupBeginTimeoutMsInput, 'change', updateConfig);
+    addListener(this.warmupEndTimeoutMsInput, 'input', updateConfig);
+    addListener(this.warmupEndTimeoutMsInput, 'change', updateConfig);
     addListener(this.teleopProjectSelect, 'change', () => {
       const value = this.teleopProjectSelect.value;
       if (!value) return;
@@ -1091,6 +1116,18 @@ export class CloudXR2DUI {
       reconnectDelayMs: (() => {
         const v = parseInt(this.reconnectDelayMsInput.value, 10);
         return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().reconnectDelayMs;
+      })(),
+      streamAttachTimeoutMs: (() => {
+        const v = parseInt(this.streamAttachTimeoutMsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().streamAttachTimeoutMs;
+      })(),
+      warmupBeginTimeoutMs: (() => {
+        const v = parseInt(this.warmupBeginTimeoutMsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().warmupBeginTimeoutMs;
+      })(),
+      warmupEndTimeoutMs: (() => {
+        const v = parseInt(this.warmupEndTimeoutMsInput.value, 10);
+        return !isNaN(v) && v >= 0 ? v : this.getDefaultConfiguration().warmupEndTimeoutMs;
       })(),
       panelHiddenAtStart: this.panelHiddenAtStartSelect.value === 'true',
       teleopPath: this.teleopPath,
