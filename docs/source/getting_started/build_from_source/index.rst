@@ -331,20 +331,30 @@ The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build
 4. Install the ``isaaccapture`` pip package
 -------------------------------------------
 
-The wheels are built in the ``./install/wheels/`` directory. Install the package from the wheels.
-Using ``pip``, you need to pass the ``--no-index`` option to automatically find the right wheel
-based on the Python version.  Note that ``pip`` and ``uv pip`` has slightly different options.
+The build writes two wheels to ``./install/wheels/``: ``isaaccapture`` and the ``isaacteleop``
+compatibility alias. The ``isaaccapture`` wheel only installs on the Python version it was built
+for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so create and activate a venv with that
+version first.
+
+Install the ``isaaccapture`` wheel by path, so a different ``isaaccapture`` from PyPI cannot
+replace your build. ``--find-links`` supplies the alias wheel, and the other dependencies come
+from PyPI. Nothing cleans ``install/wheels/``, so pick the newest wheel built for the venv's Python:
 
 .. code-block:: bash
 
-   # Pass --no-index to use only wheels in ./install/wheels/;
+   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])')-*.whl | head -n 1)
+
+Then install it with ``pip`` or ``uv pip``, which name the reinstall option differently:
+
+.. code-block:: bash
+
    # Pass --force-reinstall to replace an existing install.
-   pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --force-reinstall
+   pip install "${WHEEL}[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --force-reinstall
 
 .. code-block:: bash
 
    # Pass --reinstall to replace an existing install.
-   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall
+   uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
