@@ -61,14 +61,14 @@ After building, install the wheels with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   # Install the wheel by path so a newer release on the index cannot win over the local build
-   # (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.
-   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
+   # Install the wheel by path so a newer release on the index cannot win over the local build.
+   # The tag matches the active Python; -t/head -1 picks the newest build if older wheels remain.
+   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])')-*.whl | head -1)
    # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
    uv pip install "${WHEEL}" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install install/wheels/isaaccapture-*.whl
+   pip install "${WHEEL}" --find-links=./install/wheels/
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
