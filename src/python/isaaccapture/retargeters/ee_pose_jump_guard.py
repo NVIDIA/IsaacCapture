@@ -10,7 +10,11 @@ from enum import IntEnum
 
 import numpy as np
 
-from isaaccapture.retargeting_engine.interface import BaseRetargeter, RetargeterIOType
+from isaaccapture.retargeting_engine.interface import (
+    BaseRetargeter,
+    ExecutionState,
+    RetargeterIOType,
+)
 from isaaccapture.retargeting_engine.interface.retargeter_core_types import RetargeterIO
 from isaaccapture.retargeting_engine.interface.tensor_group_type import (
     OptionalType,
@@ -36,6 +40,7 @@ class EePoseJumpGuardState(IntEnum):
     TRACKING = 1
     HOLDING = 2
     RECOVERING = 3
+    DISARMED = 4
 
 
 class EePoseJumpGuardDisposition(IntEnum):
@@ -129,7 +134,7 @@ def _normalize_quaternion(quaternion: np.ndarray) -> np.ndarray | None:
 class EePoseJumpGuard(BaseRetargeter):
     """Pass normal EE poses unchanged and hold linear tracking discontinuities."""
 
-    STATUS_VERSION = 1
+    STATUS_VERSION = 2
 
     def __init__(
         self,
@@ -209,6 +214,12 @@ class EePoseJumpGuard(BaseRetargeter):
         self._max_held_speed_m_s = 0.0
         self._hold_frame_count = 0
 
+    def _disarm(self, now_ns: int) -> None:
+        """Clear enforcement history while retaining the latest sample time."""
+        self._clear()
+        self._state = EePoseJumpGuardState.DISARMED
+        self._last_compute_time_ns = now_ns
+
     def _write_status(
         self,
         outputs: RetargeterIO,
@@ -242,8 +253,6 @@ class EePoseJumpGuard(BaseRetargeter):
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
         """Emit an accepted pose unchanged or hold the frozen accepted reference."""
         now_ns = int(context.graph_time.real_time_ns)
-        if context.execution_events.reset:
-            self._clear()
 
         sample_dt_s, effective_dt_s = _frame_dts(
             self._last_compute_time_ns,
@@ -259,6 +268,30 @@ class EePoseJumpGuard(BaseRetargeter):
         )
         out = outputs[EE_POSE_KEY]
         inp = inputs[EE_POSE_KEY]
+        enforced = context.execution_events.execution_state == ExecutionState.RUNNING
+
+        if not enforced:
+            self._disarm(now_ns)
+            if inp.is_none:
+                out.set_none()
+                disposition = EePoseJumpGuardDisposition.HELD_NO_INPUT
+            else:
+                pose = np.asarray(np.from_dlpack(inp[0]), dtype=np.float64)
+                orientation = _normalize_quaternion(pose[3:7])
+                if not np.all(np.isfinite(pose[:3])) or orientation is None:
+                    out.set_none()
+                    disposition = EePoseJumpGuardDisposition.HELD_INVALID
+                else:
+                    out[0] = np.concatenate([pose[:3], orientation]).astype(np.float32)
+                    disposition = EePoseJumpGuardDisposition.PASSED
+            self._write_status(
+                outputs,
+                disposition,
+                sample_dt_s=sample_dt_s,
+                effective_dt_s=effective_dt_s,
+                decision_threshold_m=decision_threshold_m,
+            )
+            return
 
         if inp.is_none:
             if self._accepted_pose is not None:

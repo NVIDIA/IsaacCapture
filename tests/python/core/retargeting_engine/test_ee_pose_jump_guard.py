@@ -47,12 +47,16 @@ def _build_io(guard):
     return inputs, outputs
 
 
-def _context(*, reset: bool = False, time_ns: int = 0) -> ComputeContext:
+def _context(
+    *,
+    state: ExecutionState = ExecutionState.RUNNING,
+    time_ns: int = 0,
+) -> ComputeContext:
     return ComputeContext(
         graph_time=GraphTime(sim_time_ns=time_ns, real_time_ns=time_ns),
         execution_events=ExecutionEvents(
-            reset=reset,
-            execution_state=ExecutionState.RUNNING,
+            reset=False,
+            execution_state=state,
         ),
     )
 
@@ -292,24 +296,85 @@ class TestEePoseJumpGuard:
         assert status["hold_frame_count"] == 199
         assert status["max_held_distance_m"] == pytest.approx(0.61, abs=1e-6)
 
-    def test_reset_relatches_distant_pose(self):
+    def test_inactive_motion_passes_without_creating_baseline(self):
+        guard = self._guard()
+        inputs, outputs = _build_io(guard)
+        _set_pose(guard, inputs, [0.0, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context(state=ExecutionState.PAUSED))
+        _set_pose(guard, inputs, [1.3715, 0.0, 0.0])
+        guard.compute(
+            inputs,
+            outputs,
+            _context(state=ExecutionState.PAUSED, time_ns=10_000_000),
+        )
+
+        np.testing.assert_allclose(_pose(outputs)[:3], [1.3715, 0.0, 0.0], atol=1e-6)
+        status = _status(outputs)
+        assert status["version"] == EePoseJumpGuard.STATUS_VERSION
+        assert status["state"] == int(EePoseJumpGuardState.DISARMED)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.PASSED)
+        assert status["trigger_step_m"] == 0.0
+        assert status["hold_frame_count"] == 0
+
+        _set_pose(guard, inputs, [2.0, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context(time_ns=20_000_000))
+        np.testing.assert_allclose(_pose(outputs)[:3], [2.0, 0.0, 0.0], atol=1e-6)
+        status = _status(outputs)
+        assert status["state"] == int(EePoseJumpGuardState.TRACKING)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.LATCHED)
+
+        _set_pose(guard, inputs, [2.61, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context(time_ns=30_000_000))
+        np.testing.assert_allclose(_pose(outputs)[:3], [2.0, 0.0, 0.0], atol=1e-6)
+        assert _status(outputs)["state"] == int(EePoseJumpGuardState.HOLDING)
+
+    def test_disarming_clears_existing_hold(self):
         guard = self._guard()
         inputs, outputs = _build_io(guard)
         _set_pose(guard, inputs, [0.0, 0.0, 0.0])
         guard.compute(inputs, outputs, _context())
         _set_pose(guard, inputs, [0.61, 0.0, 0.0])
         guard.compute(inputs, outputs, _context(time_ns=10_000_000))
+        assert _status(outputs)["state"] == int(EePoseJumpGuardState.HOLDING)
 
+        _set_pose(guard, inputs, [1.0, 0.0, 0.0])
         guard.compute(
             inputs,
             outputs,
-            _context(reset=True, time_ns=20_000_000),
+            _context(state=ExecutionState.STOPPED, time_ns=20_000_000),
         )
 
-        np.testing.assert_allclose(_pose(outputs)[:3], [0.61, 0.0, 0.0], atol=1e-6)
+        np.testing.assert_allclose(_pose(outputs)[:3], [1.0, 0.0, 0.0], atol=1e-6)
         status = _status(outputs)
-        assert status["state"] == int(EePoseJumpGuardState.TRACKING)
-        assert status["disposition"] == int(EePoseJumpGuardDisposition.LATCHED)
+        assert status["state"] == int(EePoseJumpGuardState.DISARMED)
+        assert status["trigger_step_m"] == 0.0
+        assert status["max_held_distance_m"] == 0.0
+        assert status["hold_frame_count"] == 0
+
+    @pytest.mark.parametrize(
+        "state",
+        [ExecutionState.PAUSED, ExecutionState.STOPPED, ExecutionState.UNKNOWN],
+    )
+    def test_missing_and_invalid_inactive_input_stays_disarmed(self, state):
+        guard = self._guard()
+        inputs, outputs = _build_io(guard)
+
+        guard.compute(inputs, outputs, _context(state=state))
+        assert outputs[EE_POSE_KEY].is_none
+        status = _status(outputs)
+        assert status["state"] == int(EePoseJumpGuardState.DISARMED)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.HELD_NO_INPUT)
+
+        _set_pose(guard, inputs, [0.0, 0.0, 0.0], np.zeros(4))
+        guard.compute(
+            inputs,
+            outputs,
+            _context(state=state, time_ns=10_000_000),
+        )
+        assert outputs[EE_POSE_KEY].is_none
+        status = _status(outputs)
+        assert status["state"] == int(EePoseJumpGuardState.DISARMED)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.HELD_INVALID)
 
     def test_missing_and_invalid_inputs_hold_accepted_pose(self):
         guard = self._guard()
