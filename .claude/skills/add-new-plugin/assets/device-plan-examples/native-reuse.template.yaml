@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+full_plan_template: ../device-plan.template.yaml
+copy_into_plan: "Populate all seven nodes; reuse the existing full path without adding plugin code."
+
+device: {name: example_native_pose, direction: input}
+stream:
+  name: head_pose
+  contract:
+    semantics: "Valid runtime head pose"
+    units: "metres and unit quaternion"
+    frame: "runtime local space"
+    timestamp: {source: runtime, clock: XrTime, units: nanoseconds}
+    consumer: HeadSource
+  decision:
+    route: native_reuse
+    plugin_required: false
+    schema: {action: native, table: HeadPose, record: HeadPoseRecord}
+    tracker: {mechanism: native, collection_id: not_applicable}
+    rationale: "Current runtime, tracker, source, and consumer already expose this contract."
+
+plugins: []
+
+pipeline:
+  node0_acquire:
+    action: reuse
+    reason: "The OpenXR runtime already supplies the selected head pose and validity contract."
+    reference_file: "src/core/live_trackers/cpp/live_head_tracker_impl.cpp"
+    files: []
+    verify:
+      action: undecided
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Verification gap: no hardware-free direct test proves OpenXR head acquisition, validity, frame, and timing."]
+
+  node1_schema:
+    action: reuse
+    reason: "HeadPose and HeadPoseRecord already preserve the native pose, validity, and timestamp."
+    reference_file: "src/core/schema/fbs/head.fbs"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/cpp/core/schema/test_head.cpp"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^(HeadPoseT|HeadPoseRecord)'
+      expected: ["Existing schema tests cover pose fields, validity, serialization, and Record timestamps."]
+
+  node2_tracker:
+    action: reuse
+    reason: "HeadTracker already exposes live and replay implementations through the DeviceIO session."
+    reference_file: "src/core/deviceio_trackers/cpp/head_tracker.cpp"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^ReplaySession: head tracker round-trip with multiple frames$'
+      expected: ["The existing replay test proves HeadTracker frame order, values, and end-of-stream absence."]
+
+  node3_bindings:
+    action: reuse
+    reason: "The existing head bindings expose the native payload and Record API."
+    reference_file: "src/core/schema/python/head_bindings.h"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/schema/test_head.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^schema_test_head$'
+      expected: ["Existing Python tests cover head-pose construction, fields, and Record timestamps."]
+
+  node4_source:
+    action: reuse
+    reason: "HeadSource already converts the tracked head pose to the approved graph input."
+    reference_file: "src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/head_source.py"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/retargeting_engine/test_sources.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_sources$'
+      expected: ["Existing source tests cover tracked-head conversion and missing-data behavior."]
+
+  node5_boundary:
+    action: reuse
+    reason: "HeadInput already defines the consumer's pose tensor boundary."
+    reference_file: "src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/retargeting_engine/test_sources.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_sources$'
+      expected: ["Existing source assertions cover the HeadInput fields produced at this boundary."]
+
+  node6_robot_step:
+    action: not_applicable
+    reason: "This route selects HeadSource but no robot-command consumer."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Robot-step verification is bypassed because no downstream robot behavior is selected."]

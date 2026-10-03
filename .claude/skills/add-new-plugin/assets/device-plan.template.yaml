@@ -1,0 +1,202 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+template_version: 2
+
+device:
+  name: replace_me
+  purpose: "Describe what this input contributes to teleoperation."
+  direction: input
+
+evidence:
+  - source: "Path, URL, SDK header, packet capture, or user statement"
+    supports: "Facts this source establishes"
+
+# Add one item per independently routed stream. Copy its decision shape from the
+# closest file in device-plan-examples/ and resolve every repository pointer.
+streams:
+  - name: replace_me
+    contract:
+      semantics: "Physical meaning and validity rules"
+      units: "Units or unitless"
+      frame: "Coordinate frame or not_applicable"
+      cardinality: "Scalar, fixed count, or variable count"
+      update_rate:
+        source: "Nominal device/SDK Hz, event_driven, or runtime_defined"
+        delivery: "forward_each_update, runtime_defined, or fixed Hz with acceptable minimum"
+      timestamp: {source: device, clock: replace_me, units: replace_me}
+      freshness: "When data becomes stale or inactive"
+      consumer: "Source, retargeter, recorder, or external consumer"
+    decision:
+      route: undecided
+      plugin_required: undecided
+      rationale: "Why this is the smallest truthful route"
+      schema: {action: undecided, table: undecided, record: undecided}
+      tracker: {mechanism: undecided, collection_id: undecided}
+
+plugins:
+  - required: undecided
+    name: replace_me
+    root_id: replace_me  # Empty is valid when the plugin CLI accepts no managed root-ID flag.
+    args: []
+    # Ordered candidates relative to the source root or installed example root.
+    search_paths: ["install/plugins", "plugins"]
+    folder: "src/plugins/replace_me"
+    target: replace_me_plugin
+    manifest_file: "src/plugins/replace_me/plugin.yaml"
+    manifest_command: ./replace_me_plugin
+    install_path: plugins/replace_me
+    collection_ids: []
+
+dependencies:
+  - name: replace_me_or_remove
+    version: replace_me
+    license: replace_me
+    discovery_method: "How CMake or the runtime finds it"
+    build_gate: "Option or target that controls availability"
+    behavior_when_absent: "Skip, clear configure error, or clear runtime error"
+
+# This is one device-level pipeline. For multiple streams, combine their routes
+# into these nodes and name the affected streams in each reason and expected result.
+# `undecided` is draft-only; replace it before status becomes ready. A reused node
+# points to the implementation and has no edit files.
+pipeline:
+  node0_acquire:
+    action: undecided
+    reason: "Choose from the device evidence and selected delivery route."
+    reference_file: "src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp"
+    files:
+      - CMakeLists.txt
+      - src/plugins/replace_me/CMakeLists.txt
+      - src/plugins/replace_me/replace_me_plugin.cpp
+      - src/plugins/replace_me/plugin.yaml
+    verify:
+      # Do not cite a generic repository test as proof of a new device. Build
+      # device-specific cases from the protocol, SDK, API, or supplied samples.
+      action: undecided
+      reference_file: null
+      files:
+        - tests/cpp/plugins/CMakeLists.txt
+        - tests/cpp/plugins/replace_me/CMakeLists.txt
+        - tests/cpp/plugins/replace_me/test_replace_me_acquire.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target test_replace_me_acquire &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^replace_me_acquire$'
+      expected: ["Evidence-derived acquisition behavior passes without hardware"]
+
+  node1_schema:
+    action: undecided
+    reason: "Reuse an exact semantic contract or create the smallest lossless schema."
+    reference_file: "src/core/schema/fbs/joint_state.fbs"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/cpp/core/schema/test_se3_tracker.cpp"
+      files: []
+      run: "ctest --test-dir <build-dir> --output-on-failure --no-tests=error -R '<schema-test>'"
+      expected: ["Fields, absence, and Record timestamp preserve the stream contract"]
+
+  node2_tracker:
+    action: undecided
+    reason: "Reuse or change the tracker mechanism selected by the route."
+    reference_file: "src/core/deviceio_trackers/trackers.toml"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"
+      files: []
+      run: "<configure, build, and exact tracker test or staged import command>"
+      expected: ["Collection, activation, replay, and recording behavior match the contract"]
+
+  node3_bindings:
+    action: undecided
+    reason: "Expose only schema and tracker APIs required by the selected route."
+    reference_file: "src/core/schema/python/joint_state_bindings.h"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/python/core/schema/test_se3_tracker.py"
+      files: []
+      run: "ctest --test-dir <build-dir> --output-on-failure --no-tests=error -R '<bindings-test>'"
+      expected: ["Python import, construction, fields, and timestamp access work"]
+
+  node4_source:
+    action: undecided
+    reason: "Reuse or add the conversion required by the approved consumer."
+    reference_file: "src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/joint_state_source.py"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/python/core/retargeting_engine/test_joint_state_source.py"
+      files: []
+      run: "ctest --test-dir <build-dir> --output-on-failure --no-tests=error -R '<source-test>'"
+      expected: ["Payload-to-tensor mapping and contract-defined validity are preserved"]
+
+  node5_boundary:
+    action: undecided
+    reason: "Change the tensor/type boundary only when the consumer contract requires it."
+    reference_file: "src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/python/core/retargeting_engine/test_tensor_group.py"
+      files: []
+      run: "ctest --test-dir <build-dir> --output-on-failure --no-tests=error -R '<boundary-test>'"
+      expected: ["Shape, order, dtype, and indices match the consumer boundary"]
+
+  node6_robot_step:
+    action: undecided
+    reason: "Reuse downstream behavior unless the approved integration changes it."
+    reference_file: "src/python/isaacteleop/retargeters/joint_space/joint_state_retargeter.py"
+    files: []
+    verify:
+      action: undecided
+      reference_file: "tests/python/core/retargeting_engine/test_joint_state_retargeter.py"
+      files: []
+      run: "ctest --test-dir <build-dir> --output-on-failure --no-tests=error -R '<consumer-test>'"
+      expected: ["Consumer output follows its approved pure-compute contract"]
+
+runtime:
+  available: false
+  authorized: false
+  # external, attach_or_start_detached, or embedded; service starts require authorization.
+  lifecycle: external
+  test_duration_s: replace_me  # Single bounded value-collection window.
+  poll_interval_s: replace_me
+  process_timeout_s: replace_me  # Include setup, test duration, and cleanup margin.
+  blocker: "Exact missing hardware, runtime, or permission"
+  closure_command: >-
+    timeout -s INT -k 5s <guard>s
+    python examples/replace_me/python/replace_me_live.py test
+    --no-launch-cloudxr-runtime
+
+assumptions: []
+open_questions: []
+approval:
+  state: awaiting_review
+  implementation_authorized: false
+
+whole_pipeline:
+  verify:
+    action: undecided
+    reference_file: "examples/noitom/record_noitom_full_body.py"
+    files: ["examples/replace_me/python/replace_me_live.py"]
+    stimulus: "Device action, simulator input, or none; derive it from evidence"
+    run: >-
+      timeout -s INT -k 5s <guard>s
+      python examples/replace_me/python/replace_me_live.py test
+      --no-launch-cloudxr-runtime
+    expected:
+      - "The required plugin produces usable device values during the bounded test"
+      - "The deepest self-contained device-fed output satisfies the approved contract"
+      - "The session produces usable values and resources owned by the script clean up"
+  finish:
+    run:
+      - "<format and lint touched files with commands from the applicable AGENTS.md>"
+      - "cmake --build <build-dir>"
+      - "ctest --test-dir <build-dir> --output-on-failure"
+      - "SKIP=check-copyright-year pre-commit run --all-files"
+    expected: "Formatting, build, and tests pass; the clean pre-commit pass is the final check"

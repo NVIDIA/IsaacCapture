@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+full_plan_template: ../device-plan.template.yaml
+copy_into_plan: "Populate all seven nodes; record implementation reuse and verification at each downstream node."
+
+device: {name: example_pedal, direction: input}
+stream:
+  name: pedal_axes
+  contract:
+    semantics: "Left pedal, right pedal, and rudder normalized to [-1, 1]"
+    units: unitless
+    frame: not_applicable
+    timestamp: {source: host, clock: monotonic, units: nanoseconds}
+    freshness: "A missing producer becomes inactive; no per-sample validity field is required."
+    consumer: FootPedalRootCmdRetargeter
+  decision:
+    route: existing_schema_push
+    plugin_required: true
+    schema: {action: reuse, table: Generic3AxisPedalOutput, record: Generic3AxisPedalOutputRecord}
+    tracker: {mechanism: existing, collection_id: example_pedal}
+    rationale: "Meaning, units, axes, timestamp, inactivity, and consumer contract match exactly."
+
+plugins:
+  - required: true
+    name: example_pedal
+    root_id: example_pedal
+    args: []
+    search_paths: [install/plugins, plugins]
+    folder: src/plugins/example_pedal
+    target: example_pedal_plugin
+    manifest_file: src/plugins/example_pedal/plugin.yaml
+    manifest_command: ./example_pedal_plugin
+    install_path: plugins/example_pedal
+    collection_ids: [example_pedal]
+
+pipeline:
+  node0_acquire:
+    action: create
+    reason: "The device needs a plugin decoder before samples can use the exact existing pedal contract."
+    reference_file: "src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp"
+    files:
+      - CMakeLists.txt
+      - src/plugins/example_pedal/CMakeLists.txt
+      - src/plugins/example_pedal/example_pedal_plugin.cpp
+      - src/plugins/example_pedal/plugin.yaml
+    verify:
+      action: create
+      reference_file: null
+      files:
+        - tests/cpp/plugins/CMakeLists.txt
+        - tests/cpp/plugins/example_pedal/CMakeLists.txt
+        - tests/cpp/plugins/example_pedal/test_example_pedal_decode.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target test_example_pedal_decode &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^example_pedal_decode$'
+      expected: ["Device-specific cases derived from cited evidence prove the approved acquisition contract without hardware."]
+
+  node1_schema:
+    action: reuse
+    reason: "Generic3AxisPedalOutput already matches the stream's meaning, axes, absence, and timestamp contract."
+    reference_file: "src/core/schema/fbs/pedals.fbs"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/cpp/core/schema/test_pedals.cpp"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^(Generic3AxisPedalOutput|Serialized pedal output)'
+      expected: ["Existing schema tests preserve pedal values, absence, serialization, and Record timestamps."]
+
+  node2_tracker:
+    action: reuse
+    reason: "The manifest-generated Generic3AxisPedalTracker already provides the selected collection interface."
+    reference_file: "src/core/deviceio_trackers/trackers.toml"
+    files: []
+    verify:
+      action: modify
+      reference_file: "tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"
+      files: ["tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"]
+      run: >-
+        cmake --build <build-dir> --target replay_deviceio_session_tests &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^ReplaySession: generic pedal tracker round-trip and inactive data$'
+      expected: ["The added tracker case proves collection identity, values, replay order, and inactive data."]
+
+  node3_bindings:
+    action: reuse
+    reason: "The existing pedal bindings expose the reused payload and Record API."
+    reference_file: "src/core/schema/python/pedals_bindings.h"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/schema/test_pedals.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^schema_test_pedals$'
+      expected: ["Existing Python tests cover construction, fields, absence, and Record timestamps."]
+
+  node4_source:
+    action: reuse
+    reason: "Generic3AxisPedalSource already maps the tracker payload and inactive state to the pedal tensor."
+    reference_file: "src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/pedals_source.py"
+    files: []
+    verify:
+      action: create
+      reference_file: "tests/python/core/retargeting_engine/test_joint_state_source.py"
+      files: ["tests/python/core/retargeting_engine/test_pedals_source.py"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target python_package &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_pedals_source$'
+      expected: ["The new source test proves axis mapping, dtype, and inactive output."]
+
+  node5_boundary:
+    action: reuse
+    reason: "Generic3AxisPedalInput already defines the exact three-axis consumer boundary."
+    reference_file: "src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/retargeting_engine/test_pedals_source.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_pedals_source$'
+      expected: ["The source test also proves the reused pedal boundary's field order and indices."]
+
+  node6_robot_step:
+    action: reuse
+    reason: "FootPedalRootCmdRetargeter is the approved consumer for this exact pedal contract."
+    reference_file: "src/python/isaacteleop/retargeters/foot_pedal_retargeter.py"
+    files: []
+    verify:
+      action: create
+      reference_file: "tests/python/core/retargeting_engine/test_joint_state_retargeter.py"
+      files: ["tests/python/core/retargeting_engine/test_foot_pedal_retargeter.py"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target python_package &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_foot_pedal_retargeter$'
+      expected: ["The new consumer test proves the contract-defined modes, deadzones, and command bounds."]

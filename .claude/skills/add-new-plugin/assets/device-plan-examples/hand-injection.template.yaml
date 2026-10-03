@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+full_plan_template: ../device-plan.template.yaml
+copy_into_plan: "Populate all seven nodes when native hand behavior is requested."
+
+device: {name: example_hand_sensor, direction: input}
+stream:
+  name: hands
+  contract:
+    semantics: "Truthful left/right OpenXR hand joints and validity"
+    units: "metres and unit quaternions"
+    frame: "approved wrist or runtime base space"
+    timestamp: {source: device, clock: "converted to XrTime", units: nanoseconds}
+    freshness: "Tracked independently per side; a stale side becomes invalid"
+    consumer: HandsSource
+  decision:
+    route: hand_injection
+    plugin_required: true
+    schema: {action: native, table: HandPose, record: HandPoseRecord}
+    tracker: {mechanism: native, collection_id: not_applicable}
+    rationale: "The user explicitly requires the native OpenXR hand contract."
+
+plugins:
+  - required: true
+    name: example_hand_sensor
+    root_id: example_hand_sensor
+    args: []
+    search_paths: [install/plugins, plugins]
+    folder: src/plugins/example_hand_sensor
+    target: example_hand_sensor_plugin
+    manifest_file: src/plugins/example_hand_sensor/plugin.yaml
+    manifest_command: ./example_hand_sensor_plugin
+    install_path: plugins/example_hand_sensor
+    collection_ids: []
+
+pipeline:
+  node0_acquire:
+    action: create
+    reason: "The device needs a plugin that maps its measurements into native OpenXR hand injection."
+    reference_file: "src/plugins/controller_synthetic_hands/synthetic_hands_plugin.cpp"
+    files:
+      - CMakeLists.txt
+      - src/plugins/example_hand_sensor/CMakeLists.txt
+      - src/plugins/example_hand_sensor/example_hand_sensor_plugin.cpp
+      - src/plugins/example_hand_sensor/hand_mapping.cpp
+      - src/plugins/example_hand_sensor/plugin.yaml
+    verify:
+      action: create
+      reference_file: null
+      files:
+        - tests/cpp/plugins/CMakeLists.txt
+        - tests/cpp/plugins/example_hand_sensor/CMakeLists.txt
+        - tests/cpp/plugins/example_hand_sensor/test_hand_mapping.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target test_example_hand_sensor_mapping &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^example_hand_sensor_mapping$'
+      expected: ["Device-specific cases derived from cited evidence prove the approved acquisition and hand-mapping contract."]
+
+  node1_schema:
+    action: reuse
+    reason: "Native injection needs no custom SchemaPusher schema; HandPose and HandPoseRecord remain the downstream tracker and recording output."
+    reference_file: "src/core/schema/fbs/hand.fbs"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/cpp/core/schema/test_hand.cpp"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^Hand(JointPose|Joints|PoseT|PoseRecord)'
+      expected: ["Existing schema tests cover all hand joints, serialization, and Record timestamps."]
+
+  node2_tracker:
+    action: reuse
+    reason: "LiveHandTrackerImpl already consumes native OpenXR hands and publishes the existing tracked and recorded outputs."
+    reference_file: "src/core/live_trackers/cpp/live_hand_tracker_impl.cpp"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^ReplaySession: hand tracker round-trip with left and right$'
+      expected: ["Existing replay coverage proves left/right payload availability and end-of-stream inactivity."]
+
+  node3_bindings:
+    action: reuse
+    reason: "The existing hand bindings expose the reused downstream payload and Record API."
+    reference_file: "src/core/schema/python/hand_bindings.h"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/schema/test_hand.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^schema_test_hand$'
+      expected: ["Existing Python tests cover hand construction, joint fields, serialization, and Record timestamps."]
+
+  node4_source:
+    action: reuse
+    reason: "HandsSource already maps tracked left and right hands into the approved graph input."
+    reference_file: "src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/hands_source.py"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/retargeting_engine/test_sources.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_sources$'
+      expected: ["Existing source tests cover tracker construction, left/right output shape, and optional output types."]
+
+  node5_boundary:
+    action: reuse
+    reason: "HandInput already defines the joint ordering and tensor boundary used by downstream transforms."
+    reference_file: "src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py"
+    files: []
+    verify:
+      action: reuse
+      reference_file: "tests/python/core/retargeting_engine/test_transforms.py"
+      files: []
+      run: >-
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_transforms$'
+      expected: ["Existing transform tests exercise the HandInput joint layout and pose fields."]
+
+  node6_robot_step:
+    action: not_applicable
+    reason: "This example stops at HandsSource and selects no hand retargeter or robot command."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Robot-step verification is bypassed because no downstream robot behavior is selected."]
