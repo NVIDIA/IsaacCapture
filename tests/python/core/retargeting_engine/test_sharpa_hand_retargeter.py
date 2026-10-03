@@ -14,6 +14,7 @@ from importlib.resources import files
 import numpy as np
 import pink
 import pytest
+from scipy.spatial.transform import Rotation
 
 from isaaccapture.retargeters import (
     SharpaHandRetargeter,
@@ -226,6 +227,7 @@ class TestSharpaHandRetargeter:
         cfg = SharpaHandRetargeterConfig(
             robot_asset_path=SHARPA_MJCF,
             hand_side="right",
+            input_convention="mano",
             max_iter=50,
             frequency=200.0,
         )
@@ -311,6 +313,62 @@ class TestSharpaHandRetargeter:
         assert solved_errors.mean() < neutral_errors.mean() * 0.8, (
             "solved fingertip frames are not materially closer to the curled targets"
         )
+
+    def test_openxr_output_is_invariant_to_wrist_pose(self):
+        mano_hand = _make_hand_input_curled()
+        mano_positions = np.from_dlpack(
+            mano_hand[HandInputIndex.JOINT_POSITIONS]
+        ).copy()
+        mano_rotations = Rotation.from_quat(
+            np.from_dlpack(mano_hand[HandInputIndex.JOINT_ORIENTATIONS])
+        ).as_matrix()
+
+        mano_from_openxr = np.array(
+            [[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]
+        )
+
+        def make_openxr_hand(wrist_position, wrist_rotation):
+            openxr_hand = _make_hand_input_curled()
+            openxr_positions = (
+                wrist_position
+                + (wrist_rotation @ mano_from_openxr.T @ mano_positions.T).T
+            )
+            openxr_rotations = (
+                wrist_rotation @ mano_from_openxr.T @ mano_rotations @ mano_from_openxr
+            )
+            openxr_hand[HandInputIndex.JOINT_POSITIONS] = openxr_positions.astype(
+                np.float32
+            )
+            openxr_hand[HandInputIndex.JOINT_ORIENTATIONS] = (
+                Rotation.from_matrix(openxr_rotations).as_quat().astype(np.float32)
+            )
+            return openxr_hand
+
+        def make_openxr_retargeter(name):
+            return SharpaHandRetargeter(
+                SharpaHandRetargeterConfig(
+                    robot_asset_path=SHARPA_MJCF,
+                    hand_side="right",
+                    input_convention="openxr",
+                    max_iter=50,
+                    frequency=200.0,
+                ),
+                name=name,
+            )
+
+        reference = make_openxr_hand(np.zeros(3), np.eye(3))
+        transformed = make_openxr_hand(
+            np.array([0.4, -0.2, 0.7]),
+            Rotation.from_euler("xyz", [0.3, -0.2, 0.4]).as_matrix(),
+        )
+        reference_values = _compute_joint_values(
+            make_openxr_retargeter("sharpa_openxr_reference"), reference
+        )
+        transformed_values = _compute_joint_values(
+            make_openxr_retargeter("sharpa_openxr_transformed"), transformed
+        )
+
+        assert transformed_values == pytest.approx(reference_values, abs=1e-6)
 
     def test_open_curl_open_sweep_is_smooth_and_repeatable(self, retargeter):
         samples = [

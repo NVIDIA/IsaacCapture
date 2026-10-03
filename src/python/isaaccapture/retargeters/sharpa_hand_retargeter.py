@@ -10,9 +10,9 @@ xyzw quats) to the MANO 21-joint / wxyz layout the kinematics class expects,
 runs IK, and writes the resulting finger DOFs into Teleop's TensorGroup
 output.
 
-The IK loop, MANO joint ordering, Sharpa frame mappings, rotation
-corrections, and Pinocchio/Pink configuration all live in
-`robotic_grounding`; this module deliberately contains no IK math.
+The IK loop and Pinocchio/Pink implementation live in `robotic_grounding`.
+This adapter owns the OpenXR-to-MANO normalization and the live-input task
+constraints needed when only finger DOFs are emitted.
 
 The Teleop wheel includes the public V2D retargeting source and generated
 mesh-free Sharpa MJCFs. Install `isaaccapture[grounding]` for its runtime
@@ -21,9 +21,12 @@ dependencies.
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
+from pink.limits import VelocityLimit
 from robotic_grounding.retarget.hand_kinematics import SharpaHandKinematics
+from scipy.spatial.transform import Rotation
 
 from isaaccapture.retargeting_engine.interface import (
     BaseRetargeter,
@@ -74,6 +77,17 @@ _OPENXR_TO_MANO_INDICES: list[int] = [
 # loads the MJCF with a JointModelFreeFlyer root joint.
 _FREEFLYER_NQ = 7
 
+# OpenXR hand-space (X right, Y up, -Z forward) to the V2D MANO convention
+# (X palm-normal, Y lateral, Z finger-forward).
+_MANO_FROM_OPENXR = np.array([[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
+_OPENXR_FINGER_SCALES = (
+    (1, 2, 5, 1.4),  # thumb
+    (5, 6, 9, 1.3),  # index
+    (9, 10, 13, 1.1),  # middle
+    (13, 14, 17, 1.2),  # ring
+    (17, 18, 21, 1.6),  # pinky
+)
+
 
 @dataclass
 class SharpaHandRetargeterConfig:
@@ -86,6 +100,8 @@ class SharpaHandRetargeterConfig:
         hand_side: "left" or "right".
         hand_joint_names: Output joint ordering override. If None, uses the
             finger joint names discovered from the MJCF model.
+        input_convention: Input coordinate convention. OpenXR input is
+            canonicalized into wrist-local MANO coordinates before IK.
         source_to_robot_scale: Scale factor from MANO to robot coordinates.
         solver: QP solver backend for Pink IK.
         max_iter: Maximum IK iterations per frame.
@@ -99,6 +115,7 @@ class SharpaHandRetargeterConfig:
     robot_asset_path: str
     hand_side: str = "right"
     hand_joint_names: list[str] | None = None
+    input_convention: Literal["openxr", "mano"] = "openxr"
     source_to_robot_scale: float = 1.0
     solver: str = "daqp"
     max_iter: int = 200
@@ -124,6 +141,11 @@ class SharpaHandRetargeter(BaseRetargeter):
             raise ValueError(
                 f"hand_side must be 'left' or 'right', got: {self._hand_side}"
             )
+        if config.input_convention not in ("openxr", "mano"):
+            raise ValueError(
+                "input_convention must be 'openxr' or 'mano', "
+                f"got: {config.input_convention}"
+            )
 
         self._kinematics = SharpaHandKinematics(
             side=self._hand_side,
@@ -135,6 +157,29 @@ class SharpaHandRetargeter(BaseRetargeter):
             frequency=config.frequency,
             frame_tasks_converged_threshold=config.frame_tasks_converged_threshold,
         )
+        if config.input_convention == "openxr":
+            # OpenXR joint orientation axes do not follow MANO link frames.
+            for task in self._kinematics.frame_tasks.values():
+                task.set_orientation_cost(0.0)
+
+            # The discarded FreeFlyer must not absorb tracked finger motion.
+            velocity_limit = self._kinematics.robot.model.velocityLimit.copy()
+            velocity_limit[:6] = 1e-9
+            self._kinematics.configuration_limits[-1] = VelocityLimit(
+                self._kinematics.robot.model, velocity_limit
+            )
+
+            # Sharpa MP sites and OpenXR intermediate joints are both PIP frames.
+            for finger in ("index", "middle", "ring", "pinky"):
+                frame = f"{self._hand_side}_{finger}_MP_site"
+                _, position_cost, orientation_cost = self._kinematics.target_to_source[
+                    frame
+                ]
+                self._kinematics.target_to_source[frame] = (
+                    f"{finger}2",
+                    position_cost,
+                    orientation_cost,
+                )
 
         # Finger joint names = everything Pinocchio reports past the FreeFlyer.
         self._finger_joint_names: list[str] = list(
@@ -219,6 +264,31 @@ class SharpaHandRetargeter(BaseRetargeter):
         mano_quats_wxyz = np.empty((21, 4), dtype=np.float64)
         mano_quats_wxyz[:, 0] = xyzw[:, 3]
         mano_quats_wxyz[:, 1:4] = xyzw[:, 0:3]
+
+        if self._config.input_convention == "openxr":
+            wrist_rotation = Rotation.from_quat(
+                mano_quats_wxyz[0], scalar_first=True
+            ).as_matrix()
+            joint_rotations = Rotation.from_quat(
+                mano_quats_wxyz, scalar_first=True
+            ).as_matrix()
+            mano_positions = (
+                _MANO_FROM_OPENXR
+                @ (wrist_rotation.T @ (mano_positions - mano_positions[0]).T)
+            ).T
+            joint_rotations = (
+                _MANO_FROM_OPENXR
+                @ (wrist_rotation.T @ joint_rotations)
+                @ _MANO_FROM_OPENXR.T
+            )
+            mano_quats_wxyz = Rotation.from_matrix(joint_rotations).as_quat(
+                scalar_first=True
+            )
+            for anchor, start, stop, scale in _OPENXR_FINGER_SCALES:
+                mano_positions[start:stop] = (
+                    mano_positions[anchor]
+                    + (mano_positions[start:stop] - mano_positions[anchor]) * scale
+                )
 
         # Initial qpos: warm-start from previous frame (with wrist re-anchored
         # to the new tracker reading) if available, else from q0.
