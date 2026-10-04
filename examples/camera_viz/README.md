@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 | `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy GPU) |
 | `video`     | Video-file replay (anything OpenCV/FFmpeg reads) — preview / testing without a camera. Loops by default; `stereo: true` splits side-by-side files into eyes (viewer only) |
 
-In XR mode the viewer **attaches to the CloudXR runtime + WSS proxy**, starting a background service if none is serving — nothing to start separately (`--accept-eula` for the first run; CloudXR.js is hosted at `https://<host>:48322/client/` by default when this run starts the service — `--no-host-client` only applies then; stop and restart the service to change hosting; `camera_viz.py --help` for the rest). Output: XR headset (default) or desktop window (`run CONFIG --mode window`); one surface per camera — a flat plane (default), a cylinder arc, or an equirect sphere (`placements.<name>.shape`, XR only for the curved shapes). Stereo cameras render true SBS in XR; window mode shows the left eye. XR placements: `world` / `head` / `lazy` / `gimbal`.
+In XR mode the viewer **attaches to the CloudXR runtime + WSS proxy**, starting a background service if none is serving — nothing to start separately (`--accept-eula` for the first run; CloudXR.js is hosted at `https://<host>:48322/client/` by default when this run starts the service — `--no-host-client` only applies then; stop and restart the service to change hosting; `camera_viz.sh run CONFIG --help` for the rest). Output: XR headset (default) or desktop window (`run CONFIG --mode window`); one surface per camera — a flat plane (default), a cylinder arc, or an equirect sphere (`placements.<name>.shape`, XR only for the curved shapes). Stereo cameras render true SBS in XR; window mode shows the left eye. XR placements: `world` / `head` / `lazy` / `gimbal`.
 
 ---
 
@@ -323,20 +323,21 @@ camera_viz  xr · local · 1 camera
 ```
 camera_viz/
 ├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
-├── camera_viz.py        — receiver / viewer (entrypoint + wiring)
-├── camera_streamer.py   — robot-side RTP sender (per-camera supervisor)
-├── config.py            — YAML → SourceEntry: parse + validate, no allocation
-├── display.py           — VizSession + one layer per surface
-├── cloudxr_env.py       — display.cloudxr → the runtime's env file
-├── dashboard.py         — terminal status panel
-├── controls/            — XR controller bindings, shapes, stereo geometry, HUD
-├── pipeline/            — source ABC + threaded runner
-├── placements/          — XR lock-mode strategies
-├── sources/             — V4L2 / OAK-D / ZED / synthetic / video replay / rtp_h264
-├── transports/          — RTP sender + receiver, native + GStreamer
-├── codec/               — native NVENC/NVDEC pybind module
 ├── configs/             — one YAML per camera kind
 ├── test_data/           — sample replay clip (Git LFS)
+├── python/isaaccapture_examples/camera_viz/
+│   ├── camera_viz.py    — receiver / viewer (entrypoint + wiring)
+│   ├── camera_streamer.py — robot-side RTP sender (per-camera supervisor)
+│   ├── config.py        — YAML → SourceEntry: parse + validate, no allocation
+│   ├── display.py       — VizSession + one layer per surface
+│   ├── cloudxr_env.py   — display.cloudxr → the runtime's env file
+│   ├── dashboard.py     — terminal status panel
+│   ├── controls/        — XR controller bindings, shapes, stereo geometry, HUD
+│   ├── pipeline/        — source ABC + threaded runner
+│   ├── placements/      — XR lock-mode strategies
+│   ├── sources/         — V4L2 / OAK-D / ZED / synthetic / video replay / rtp_h264
+│   ├── transports/      — RTP sender + receiver, native + GStreamer
+│   └── codec/           — native NVENC/NVDEC pybind module
 └── scripts/
     ├── _install_deps.sh             — installer (setup + deploy)
     └── camera-streamer.service.in   — systemd unit template

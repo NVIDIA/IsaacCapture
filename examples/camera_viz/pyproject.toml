@@ -7,8 +7,14 @@
 # ``camera_viz.sh setup``; pass ``setup --wheel <path>`` to use a locally
 # built wheel instead.
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "camera-viz"
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-camera-viz"
 version = "0.0.0"
 description = "Televiz camera-feed visualizer"
 requires-python = ">=3.11,<3.14"
@@ -38,13 +44,25 @@ rtp = [
     # setup script apt-installs them and uses --system-site-packages),
     # not pip — PyGObject from PyPI requires a source-build with cairo
     # + girepository dev headers. pybind11 stays in the venv as a build-
-    # time dep for the codec at ./codec/.
+    # time dep for the native codec.
     "pybind11>=2.11",
 ]
 
-# Native NVENC/NVDEC codec lives in ./codec/. Build with
-# ``codec/build.sh``; ``./camera_viz.sh setup`` does this automatically.
+# Native NVENC/NVDEC codec lives in ./python/isaaccapture_examples/camera_viz/codec/.
+# Build with
+# its build.sh; ``./camera_viz.sh setup`` does this automatically.
 # Requires CUDA toolkit + NVIDIA driver (libnvidia-encode + libnvcuvid).
+
+# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
+# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
+# the latter keeps only the last path component and would root the wheel at a
+# bare top-level `camera_viz/`.
+#
+# The native codec's .so is built in place by codec/build.sh, so it is picked up
+# from the source tree rather than shipped by this build.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/camera_viz"]
+sources = ["python"]
 
 [tool.uv]
 python-preference = "only-managed"
