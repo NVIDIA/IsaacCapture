@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Raw press state of a keyboard: the set of currently-held Linux evdev key codes
+// (see linux/input-event-codes.h, e.g. KEY_W = 17). Carries no semantic mapping --
+// which keys mean what (an axis, a toggle, a mode switch) is entirely up to the
+// consuming retargeter.
+//
+// All fields are always present whenever this table itself is present.
+table KeyboardOutput {
+    // Evdev key codes currently held down, in no particular order.
+    pressed_keys: [ushort] (id: 0);
+
+    // Whether the tracker has emitted at least one sample.
+    is_valid: bool (id: 1);
+}
+
+// MCAP recording wrapper for KeyboardOutput.
+table KeyboardOutputRecord {
+    data: KeyboardOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type KeyboardOutputRecord;

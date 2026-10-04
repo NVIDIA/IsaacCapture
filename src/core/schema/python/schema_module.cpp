@@ -13,6 +13,7 @@
 #include "head_bindings.h"
 #include "joint_se3_pose_bindings.h"
 #include "joint_state_bindings.h"
+#include "keyboard_bindings.h"
 #include "message_channel_bindings.h"
 #include "oak_bindings.h"
 #include "oglo_tactile_bindings.h"
@@ -45,6 +46,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind pedals types (Generic3AxisPedalOutput table).
     core::bind_pedals(m);
+
+    // Bind keyboard types (KeyboardOutput table) for raw keyboard press state.
+    core::bind_keyboard(m);
 
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);

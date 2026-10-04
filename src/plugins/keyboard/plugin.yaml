@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: keyboard
+description: "Raw keyboard press state (W/A/S/D/Q/E/Z/X/T/G/C/V/K) via Linux evdev device"
+command: "./keyboard_plugin"
+version: "1.0.0"
+devices:
+  - path: "/keyboard"
+    type: "keyboard"
+    description: "Keyboard press state from /dev/input/event*"
