@@ -67,6 +67,10 @@ MUJOCO_LOG.TXT
 # and its README has you run from the repo root.
 /recordings/
 
+# examples/lerobot writes here by default (Path.cwd() / "local_datasets"),
+# and its README has you run from the repo root.
+/local_datasets/
+
 # Runtime device files injected by MCP server infrastructure
 .mcp.json
 

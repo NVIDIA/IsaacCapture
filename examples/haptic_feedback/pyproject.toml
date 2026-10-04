@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 HTC CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 [build-system]
@@ -8,24 +8,19 @@ build-backend = "hatchling.build"
 [project]
 # The dist name mirrors the import path, so an installed example claims no bare
 # top-level name in site-packages.
-name = "isaaccapture-examples-cloudxr-mujoco-teleop"
-version = "0.1.0"
-description = "Visualize OpenXR / CloudXR headset + controller poses in MuJoCo."
+name = "isaaccapture-examples-haptic-feedback"
+version = "0.0.0"  # Internal examples - not versioned
+description = "Isaac Teleop haptic feedback CLI examples (OpenXR controller)."
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "isaaccapture",
-    "mujoco>=3.0",
-    "numpy>=1.22.2",
-    "scipy>=1.10",
+    "numpy>=1.23.0",
 ]
 
 # `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a
-# bare top-level `cloudxr_mujoco_teleop/`.
-#
-# vive_assets/ lives inside the package because both scripts resolve it from
-# __file__, so the meshes must travel with the modules.
+# bare top-level `haptic_feedback/`.
 [tool.hatch.build.targets.wheel]
-only-include = ["python/isaaccapture_examples/cloudxr_mujoco_teleop"]
+only-include = ["python/isaaccapture_examples/haptic_feedback"]
 sources = ["python"]
