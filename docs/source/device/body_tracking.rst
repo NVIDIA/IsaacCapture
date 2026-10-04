@@ -203,9 +203,9 @@ joint ``is_valid`` flags to determine which joints have valid poses.
 For a minimal C++ reader see ``examples/schemaio/full_body_printer.cpp``, which
 creates the tracker, queries the required OpenXR extensions, and prints the
 joint data each frame through ``DeviceIOSession``. The Python equivalent is
-``examples/oxr/python/test_full_body_tracker.py``. Neither embeds
-``CloudXRLauncher``, so start the runtime first and source its environment in
-the shell that launches them:
+``examples/oxr/python/isaaccapture_examples/oxr/test_full_body_tracker.py``. Neither
+embeds ``CloudXRLauncher``, so start the runtime first and source its
+environment in the shell that launches them:
 
 .. code-block:: bash
 

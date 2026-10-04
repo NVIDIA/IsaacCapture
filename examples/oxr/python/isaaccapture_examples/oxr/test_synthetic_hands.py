@@ -25,7 +25,9 @@ import isaaccapture.plugin_manager as pm
 # The test will look for plugins in the install directory relative to this script
 # This script is in install/examples/oxr/python
 # Plugins are in install/plugins
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
+# Six levels up is the tree root -- the checkout, or the install prefix
+# when running from install/examples/.
+PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
 
 
 def run_test():
