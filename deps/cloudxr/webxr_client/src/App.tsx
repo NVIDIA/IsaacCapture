@@ -71,10 +71,10 @@ import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
 import { TraceVisualization } from './TraceVisualization';
 import {
-  SystemNotice,
   formatSystemNotice,
   formatSystemNoticeBody,
   isSystemNoticeMessage,
+  SystemNotice,
 } from './types/serverMessages';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.

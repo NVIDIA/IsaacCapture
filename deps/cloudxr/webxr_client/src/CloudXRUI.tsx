@@ -603,10 +603,37 @@ export default function CloudXR3DUI({
                       {recorder.mode === 'recording'
                         ? `REC ${recorder.recordedFrameCount} frames`
                         : recorder.mode === 'replaying'
-                          ? 'Replaying'
+                          ? recorder.replayNeedsCalibration
+                            ? 'Replay paused'
+                            : 'Replaying'
                           : 'Recording'}
                     </Text>
+                    {recorder.replayNeedsCalibration && recorder.mode === 'replaying' && (
+                      <Text fontSize={24} color="white" textAlign="center">
+                        Return your headset to its recording-start position and heading, then
+                        calibrate.
+                      </Text>
+                    )}
+                    {recorder.mode === 'idle' && recorder.recordingInterrupted && (
+                      <Text fontSize={24} color="white" textAlign="center">
+                        Recording stopped because the tracking origin changed. Save it or start a
+                        new recording.
+                      </Text>
+                    )}
+                    {recorder.mode === 'idle' && !recorder.recordingInterrupted && (
+                      <Text fontSize={24} color="white" textAlign="center">
+                        Note your headset position and heading when starting a recording. Use the
+                        same pose to calibrate replay in a new session.
+                      </Text>
+                    )}
                     <Container flexDirection="row" gap={12} justifyContent="center">
+                      {recorder.mode === 'replaying' && recorder.replayNeedsCalibration && (
+                        <RecordingButton
+                          id="calibrate-replay"
+                          label="Calibrate"
+                          onClick={recorder.calibrateReplay}
+                        />
+                      )}
                       {recorder.mode !== 'replaying' && (
                         <RecordingButton
                           id="record-input"
