@@ -23,6 +23,7 @@ from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
     default_initial_stream_config,
+    redact_control_token,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -70,6 +71,11 @@ def _patch_request_parser_for_cors():
 _patch_request_parser_for_cors()
 
 log = logging.getLogger("isaaccapture.cloudxr.wss")
+
+
+class _WssSessionFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_control_token(super().format(record))
 
 
 @dataclass(frozen=True)
@@ -591,8 +597,13 @@ async def run(
         _handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
     elif not logging_enabled():
         _handler = logging.StreamHandler(sys.stderr)
+    failure_log = log
     if _handler is not None:
-        _handler.setFormatter(logging.Formatter(LINE_FORMAT, datefmt=DATE_FORMAT))
+        _handler.setFormatter(_WssSessionFormatter(LINE_FORMAT, datefmt=DATE_FORMAT))
+        if log_file_path is not None:
+            failure_log = logging.getLogger(f"{__name__}.session_failure")
+            failure_log.setLevel(logging.ERROR)
+            failure_log.propagate = False
         # Tracked so the finally below can detach it from every logger it was
         # attached to, not just this module's: a logger still holding a closed
         # FileHandler reopens the file on its next record, and a second run()
@@ -605,12 +616,16 @@ async def run(
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub"),
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_lifecycle"),
         ]
+        if failure_log is not log:
+            _handler_loggers.append(failure_log)
         for _attached_log in _handler_loggers:
             if not logging_enabled():
                 _attached_log.setLevel(logging.INFO)
                 _attached_log.propagate = False
             _attached_log.addHandler(_handler)
 
+    was_listening = False
+    failure_logged = False
     try:
         resolved_port = wss_proxy_port() if proxy_port is None else proxy_port
 
@@ -683,6 +698,7 @@ async def run(
                 log.info("WSS proxy listening on port %d", resolved_port)
                 if on_listening is not None:
                     on_listening()
+                was_listening = True
                 if setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"):
                     from .oob_teleop_env import resolve_oob_recovery_config
 
@@ -705,9 +721,26 @@ async def run(
                     if lifecycle_task in done and stop_future not in done:
                         try:
                             await lifecycle_task
-                        except asyncio.CancelledError:
-                            raise
+                        except asyncio.CancelledError as exc:
+                            error = RuntimeError(
+                                "OOB lifecycle worker was cancelled unexpectedly"
+                            )
+                            failure_log.exception("OOB lifecycle worker failed")
+                            failure_logged = True
+                            if on_oob_fatal is not None:
+                                try:
+                                    reported = on_oob_fatal(error)
+                                    if isawaitable(reported):
+                                        await reported
+                                except Exception:
+                                    log.exception(
+                                        "OOB fatal callback failed while reporting lifecycle cancellation"
+                                    )
+                            raise error from exc
                         except Exception as exc:
+                            # Keep the traceback in the per-session file, not the console.
+                            failure_log.exception("OOB lifecycle worker failed")
+                            failure_logged = True
                             if on_oob_fatal is not None:
                                 try:
                                     reported = on_oob_fatal(exc)
@@ -722,6 +755,8 @@ async def run(
                             exc = RuntimeError(
                                 "OOB lifecycle worker exited unexpectedly"
                             )
+                            failure_log.error("%s", exc)
+                            failure_logged = True
                             if on_oob_fatal is not None:
                                 try:
                                     reported = on_oob_fatal(exc)
@@ -744,11 +779,17 @@ async def run(
 
             log.info("Shutting down ...")
     except OSError as e:
+        if was_listening and not failure_logged:
+            failure_log.exception("WSS proxy failed after listening")
         if e.errno == errno.EADDRINUSE:
             raise RuntimeError(
                 f"WSS proxy port {resolved_port} is already in use. "
                 f"Set PROXY_PORT to a different port or stop the process using {resolved_port}."
             ) from e
+        raise
+    except Exception:
+        if was_listening and not failure_logged:
+            failure_log.exception("WSS proxy failed after listening")
         raise
     finally:
         for _attached_log in _handler_loggers:
