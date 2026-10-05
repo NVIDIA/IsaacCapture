@@ -3,32 +3,30 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# LeRobot Example Datasets
+# LeRobot example datasets
 
-This directory contains minimal usage examples for recording, visualizing and
-analyzing LeRobot datasets.
+Minimal examples for recording, visualizing and analyzing
+[LeRobot](https://github.com/huggingface/lerobot) datasets from Isaac Teleop.
 
-## Prerequisite
-
+```bash
+uv pip install -e ./examples/lerobot          # add [viz] for the rerun viewer
+python -m isaaccapture_examples.lerobot.record
 ```
-pip install lerobot
+
+| Module | What it does |
+| --- | --- |
+| `record` | Records a LeRobot-format dataset from live human data — head and hand positions only, for demonstration |
+| `visualize` | Plots a dataset with [rerun](https://rerun.io) (needs the `viz` extra) |
+| `analyze` | Parses and summarizes a recorded dataset |
+
+Datasets are written to `./local_datasets/` relative to where you run the
+command, and the other two modules read from the same place. `record` always
+creates a new dataset, so remove an old one before re-running:
+
+```bash
+rm -rf local_datasets
 ```
 
-## Examples
-
-- **record.py**
-  Record a dataset in the LeRobot format from live human data. Currently it only
-  captures head and hands position for demonstrations purpose.
-
-  Note: the record.py script always create a new dataset. You must remove
-  existing one before running it again:
-
-  ```bash
-  rm -rf local_datasets
-  ```
-
-- **visualize.py**
-  A basic rerun visualizer to plot out the dataset.
-
-- **analyze.py**
-  A quick sample to parse and analyze the LeRobot dataset.
+> The SO-101 teleoperation example referenced from the Isaac Teleop docs lives
+> in the [LeRobot repository](https://github.com/huggingface/lerobot) under
+> `examples/isaac_teleop_to_so101/`, not here.
