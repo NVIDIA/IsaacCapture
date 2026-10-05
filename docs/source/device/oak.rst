@@ -169,7 +169,7 @@ controllers, etc.):
        while True:
            session.step()  # metadata is recorded each update
 
-See also :code-file:`examples/oxr/python/test_oak_camera.py` (``--mode
+See also :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py` (``--mode
 schema-pusher``) for a standalone PluginManager + DeviceIOSession example of
 the same SchemaPusher flow.
 

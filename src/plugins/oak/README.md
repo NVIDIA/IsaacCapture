@@ -144,7 +144,7 @@ with TeleopSession(config) as session:
         session.step()  # metadata is recorded each update
 ```
 
-See also `examples/oxr/python/test_oak_camera.py --mode schema-pusher` for a
+See also `examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py --mode schema-pusher` for a
 standalone PluginManager + DeviceIOSession example of the same SchemaPusher
 flow.
 
