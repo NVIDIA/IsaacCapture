@@ -211,6 +211,33 @@ class TestOobConsoleReporter:
         assert capsys.readouterr().out.count("No USB-attached HMD detected") == 1
 
 
+def test_foreground_fatal_emits_one_operator_diagnostic(tmp_path, capsys):
+    service = MagicMock()
+    service.__enter__.return_value = service
+    fatal = {
+        "health": "fatal",
+        "state": "FATAL",
+        "reason": "OOB lifecycle worker failed: boom; check wss.log and restart",
+        "selectedSerial": None,
+        "adbReady": False,
+    }
+    service.drain_oob_updates.side_effect = [[], [], [fatal]]
+    service.oob_status.return_value = fatal
+    service.health_check.side_effect = RuntimeError("boom")
+    args = _run_args(setup_oob=True, cloudxr_install_dir=str(tmp_path))
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(cli, "CloudXRService", return_value=service),
+        patch.object(cli, "_print_service_summary"),
+    ):
+        assert cli._cmd_run(args) == 1
+    output = capsys.readouterr()
+    assert output.out.count("OOB stopped:") == 1
+    assert "restart" in output.out
+    assert output.err == ""
+    service.__exit__.assert_called_once()
+
+
 class TestStartEula:
     """The EULA gate on start."""
 

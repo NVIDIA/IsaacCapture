@@ -15,6 +15,7 @@ import ssl
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 
 from ..logging_config._core import DATE_FORMAT, LINE_FORMAT, logging_enabled
@@ -571,7 +572,7 @@ async def run(
     on_listening: Callable[[], None] | None = None,
     recovery_config=None,
     on_oob_status: Callable[[dict], object] | None = None,
-    on_oob_fatal: Callable[[Exception], None] | None = None,
+    on_oob_fatal: Callable[[Exception], object] | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
 
@@ -701,7 +702,7 @@ async def run(
                         (stop_future, lifecycle_task),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                    if lifecycle_task in done:
+                    if lifecycle_task in done and stop_future not in done:
                         try:
                             await lifecycle_task
                         except asyncio.CancelledError:
@@ -709,12 +710,28 @@ async def run(
                         except Exception as exc:
                             if on_oob_fatal is not None:
                                 try:
-                                    on_oob_fatal(exc)
+                                    reported = on_oob_fatal(exc)
+                                    if isawaitable(reported):
+                                        await reported
                                 except Exception:
                                     log.exception(
                                         "OOB fatal callback failed while reporting lifecycle failure"
                                     )
                             raise
+                        else:
+                            exc = RuntimeError(
+                                "OOB lifecycle worker exited unexpectedly"
+                            )
+                            if on_oob_fatal is not None:
+                                try:
+                                    reported = on_oob_fatal(exc)
+                                    if isawaitable(reported):
+                                        await reported
+                                except Exception:
+                                    log.exception(
+                                        "OOB fatal callback failed while reporting lifecycle exit"
+                                    )
+                            raise exc
                 else:
                     await stop_future
             finally:

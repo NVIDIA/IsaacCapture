@@ -28,6 +28,8 @@ def _service_for_status(tmp_path):
     service._oob_session_id = "test-session"
     service._fatal_error = None
     service._fatal_supervisor = None
+    service._stopping = False
+    service._wss_log_path = tmp_path / "wss.log"
     service._runtime_proc = MagicMock()
     service._runtime_proc.pid = os.getpid()
     service._runtime_proc.poll.return_value = None
@@ -198,16 +200,140 @@ def test_stop_retains_writer_until_blocked_persistence_drains(tmp_path):
         real_join(timeout=2)
 
 
-def test_fatal_callback_is_one_shot_and_health_preserves_cause(tmp_path):
+@pytest.mark.asyncio
+async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp_path):
     service = _service_for_status(tmp_path)
     service.stop = MagicMock()
+    await service._publish_oob_status(
+        {
+            "schemaVersion": 1,
+            "health": "active",
+            "state": "STREAMING",
+            "generation": 3,
+            "selectedSerial": "headset",
+            "streaming": True,
+            "browserReady": True,
+            "clientMetricsFresh": True,
+        }
+    )
+    service.drain_oob_updates()
     error = RuntimeError("fatal lifecycle failure")
-    service._on_oob_fatal(error)
-    service._on_oob_fatal(RuntimeError("another failure"))
+    await service._on_oob_fatal(error)
+    await service._on_oob_fatal(RuntimeError("another failure"))
     service._fatal_supervisor.join(timeout=2)
     service.stop.assert_called_once()
-    with pytest.raises(RuntimeError, match="fatal lifecycle failure"):
+    status = service.oob_status()
+    assert status["health"] == "fatal"
+    assert status["state"] == "FATAL"
+    assert status["generation"] == 3
+    assert status["selectedSerial"] == "headset"
+    assert status["sessionId"] == "test-session"
+    assert status["writerPid"] == os.getpid()
+    assert status["runtimePid"] == os.getpid()
+    for field in ("streaming", "browserReady", "clientMetricsFresh", "adbReady"):
+        assert status[field] is False
+    assert "fatal lifecycle failure" in status["reason"]
+    assert "wss.log" in status["reason"]
+    assert service.drain_oob_updates() == [status]
+    assert json.loads(service._oob_status_path.read_text()) == status
+    await service._publish_oob_status({"health": "active"})
+    assert service.oob_status() == status
+    with pytest.raises(RuntimeError, match="fatal lifecycle failure") as raised:
         service.health_check()
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+async def test_fatal_status_wins_over_queued_publication(tmp_path):
+    service = _service_for_status(tmp_path)
+    service.stop = MagicMock()
+    entered = threading.Event()
+    release = threading.Event()
+    original = service._persist_oob_status
+
+    def stalled(payload):
+        if payload["health"] == "active":
+            entered.set()
+            assert release.wait(timeout=3)
+        original(payload)
+
+    service._persist_oob_status = stalled
+    active = asyncio.create_task(service._publish_oob_status({"health": "active"}))
+    await asyncio.to_thread(entered.wait, 2)
+    fatal = asyncio.create_task(service._on_oob_fatal(RuntimeError("worker crashed")))
+    await asyncio.sleep(0)
+    assert service.oob_status()["health"] == "fatal"
+    release.set()
+    await asyncio.gather(active, fatal)
+    service._fatal_supervisor.join(timeout=2)
+    assert json.loads(service._oob_status_path.read_text())["health"] == "fatal"
+
+
+@pytest.mark.parametrize(
+    ("raise_error", "diagnostic"),
+    [
+        (True, "WSS proxy failed: proxy transport crashed"),
+        (False, "WSS proxy failed: WSS proxy exited unexpectedly"),
+    ],
+)
+def test_wss_exit_after_listening_publishes_fatal(tmp_path, raise_error, diagnostic):
+    service = _service_for_status(tmp_path)
+    service._setup_oob = True
+    service._usb_local = False
+    service._host_client = False
+    service._recovery_config = None
+    service.stop = MagicMock()
+
+    async def proxy(*, on_listening, **_kwargs):
+        on_listening()
+        if raise_error:
+            raise RuntimeError("proxy transport crashed")
+
+    with patch("isaaccapture.cloudxr.wss.run", side_effect=proxy):
+        service._start_wss_proxy_thread(tmp_path / "wss.log")
+    service._wss_thread.join(timeout=2)
+    service._fatal_supervisor.join(timeout=2)
+    assert service.oob_status()["health"] == "fatal"
+    assert diagnostic in service.oob_status()["reason"]
+    assert json.loads(service._oob_status_path.read_text())["health"] == "fatal"
+    service.stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fatal_callback_ignores_shutdown_before_stop_future_resolves(tmp_path):
+    service = _service_for_status(tmp_path)
+    service._stopping = True
+    await service._on_oob_fatal(RuntimeError("worker exited during shutdown"))
+    assert service.oob_status() is None
+    assert service.drain_oob_updates() == []
+    assert service._fatal_supervisor is None
+    service.health_check()
+
+
+@pytest.mark.parametrize("raise_error", [False, True])
+def test_wss_exit_during_queued_stop_is_not_fatal(tmp_path, raise_error):
+    service = _service_for_status(tmp_path)
+    service._setup_oob = True
+    service._usb_local = False
+    service._host_client = False
+    service._recovery_config = None
+    service.stop = MagicMock()
+    pending = []
+
+    async def proxy(*, on_listening, stop_future, **_kwargs):
+        on_listening()
+        service._stopping = True
+        pending.append(stop_future.done())
+        if raise_error:
+            raise RuntimeError("proxy exited during shutdown")
+
+    with patch("isaaccapture.cloudxr.wss.run", side_effect=proxy):
+        service._start_wss_proxy_thread(tmp_path / "wss.log")
+    service._wss_thread.join(timeout=2)
+    assert pending == [False]
+    assert service.oob_status() is None
+    assert service._fatal_supervisor is None
+    assert not service._oob_status_path.exists()
 
 
 def test_stop_only_cleans_status_owned_by_its_session(tmp_path):

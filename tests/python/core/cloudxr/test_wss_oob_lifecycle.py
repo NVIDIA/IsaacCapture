@@ -167,6 +167,86 @@ async def test_wss_reports_unexpected_lifecycle_failure_before_cleanup(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_wss_reports_unexpected_lifecycle_return(tmp_path):
+    stop = asyncio.get_running_loop().create_future()
+    failures = []
+
+    @asynccontextmanager
+    async def serving(*args, **kwargs):
+        yield
+
+    async def lifecycle_run():
+        return
+
+    lifecycle = MagicMock()
+    lifecycle.run = lifecycle_run
+    with (
+        patch.object(wss, "ws_serve", side_effect=serving),
+        patch.object(wss, "ensure_certificate"),
+        patch.object(
+            wss,
+            "default_cert_paths",
+            return_value=SimpleNamespace(cert_file="c", key_file="k"),
+        ),
+        patch.object(wss, "build_ssl_context", return_value=object()),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
+            return_value=lifecycle,
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError, match="OOB lifecycle worker exited unexpectedly"
+        ):
+            await wss.run(
+                tmp_path / "wss.log",
+                stop,
+                setup_oob=True,
+                recovery_config=RecoveryConfig(),
+                on_oob_fatal=failures.append,
+            )
+    assert len(failures) == 1
+    assert str(failures[0]) == "OOB lifecycle worker exited unexpectedly"
+
+
+@pytest.mark.asyncio
+async def test_wss_intentional_stop_does_not_report_simultaneous_worker_exit(tmp_path):
+    stop = asyncio.get_running_loop().create_future()
+    failures = []
+
+    @asynccontextmanager
+    async def serving(*args, **kwargs):
+        yield
+
+    async def lifecycle_run():
+        stop.set_result(None)
+
+    lifecycle = MagicMock()
+    lifecycle.run = lifecycle_run
+    with (
+        patch.object(wss, "ws_serve", side_effect=serving),
+        patch.object(wss, "ensure_certificate"),
+        patch.object(
+            wss,
+            "default_cert_paths",
+            return_value=SimpleNamespace(cert_file="c", key_file="k"),
+        ),
+        patch.object(wss, "build_ssl_context", return_value=object()),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.OobLifecycle",
+            return_value=lifecycle,
+        ),
+    ):
+        await wss.run(
+            tmp_path / "wss.log",
+            stop,
+            setup_oob=True,
+            recovery_config=RecoveryConfig(),
+            on_oob_fatal=failures.append,
+        )
+    assert failures == []
+
+
+@pytest.mark.asyncio
 async def test_wss_preserves_lifecycle_error_when_fatal_callback_fails(tmp_path):
     stop = asyncio.get_running_loop().create_future()
     error = RuntimeError("original lifecycle failure")

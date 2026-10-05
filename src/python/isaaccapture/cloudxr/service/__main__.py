@@ -477,7 +477,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
         while not stop:
             report_oob_updates()
-            service.health_check()
+            try:
+                service.health_check()
+            except RuntimeError:
+                status = service.oob_status()
+                if reporter is None or not status or status.get("health") != "fatal":
+                    raise
+                report_oob_updates()
+                return 1
             time.sleep(0.1)
 
     _out("Stopped.")
