@@ -1807,8 +1807,13 @@ async def attach_existing_oob_tab(
     """Attach CDP monitoring to a surviving OOB tab without navigating it.
 
     When *click_connect* is true, dispatch one trusted CONNECT click in the
-    existing tab. This path never closes tabs, invokes ``am start``, reloads,
-    or creates a new browser page.
+    existing tab, then unconditionally reset the panel (see
+    :func:`_cdp_send_reset_panel_key`) — this is the one reconnect path the
+    client's own automatic initial-placement reset never covers, since no new
+    XR session starts (the page was never reloaded). Best-effort: a reset
+    failure is logged and swallowed, not fatal to the reattach. This path
+    never closes tabs, invokes ``am start``, reloads, or creates a new
+    browser page.
     """
     socket_name = await asyncio.to_thread(_discover_devtools_socket)
     if not socket_name:
@@ -1837,6 +1842,10 @@ async def attach_existing_oob_tab(
                 on_dispatched=on_dispatched,
                 on_client_loaded=on_client_loaded,
             )
+            try:
+                await _cdp_send_reset_panel_key(ws_url)
+            except Exception as exc:
+                log.warning("CDP: reset-panel key failed after reattach: %s", exc)
         return asyncio.create_task(
             _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT),
             name="cloudxr-oob-error-monitor",
@@ -1854,7 +1863,6 @@ async def run_oob_connect(
     host_client: bool = False,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
-    reset_panel_on_connect: bool = False,
 ) -> asyncio.Task | None:
     """Open the teleop page on the headset via ``am start`` and click CONNECT via CDP.
 
@@ -1866,11 +1874,14 @@ async def run_oob_connect(
       4. Bring the tab to the foreground (required by WebXR ``requestSession``).
       5. Handle the self-signed cert interstitial if present.
       6. Find the CONNECT button and click it via ``Input.dispatchMouseEvent``.
-      7. If *reset_panel_on_connect*, synthesize the reset-panel keypress so the
-         in-headset panel starts in front of the operator rather than wherever
-         it was left (world position persists across sessions via the drag handle).
-      8. Start a background monitor that forwards mid-stream errors from the
+      7. Start a background monitor that forwards mid-stream errors from the
          web client's ``errorMessageBox`` into the server log.
+
+    No reset-panel keypress here (unlike :func:`attach_existing_oob_tab`): this
+    path always navigates to a fresh page, and ``CloudXRUI.tsx``'s own
+    first-XR-frame placement already resets the panel unconditionally on every
+    new session — sending the key too would just be a redundant second write
+    to the same position.
 
     Args:
         resolved_port: WSS proxy port used for signalling.
@@ -1882,11 +1893,6 @@ async def run_oob_connect(
             GitHub Pages origin.
         on_dispatched: Called after the trusted CONNECT mouse click, before
             the Quest DOM fallback and connection polling.
-        reset_panel_on_connect: When ``True``, send the reset-panel key
-            (:func:`_cdp_send_reset_panel_key`) right after CONNECT is
-            clicked. Off by default: it repositions the panel every launch,
-            which overrides any deliberate manual placement from the
-            previous session.
 
     Returns:
         A running :class:`asyncio.Task` that monitors the headset's error
@@ -2097,12 +2103,6 @@ async def run_oob_connect(
             on_dispatched=on_dispatched,
             on_client_loaded=on_client_loaded,
         )
-
-        if reset_panel_on_connect:
-            try:
-                await _cdp_send_reset_panel_key(ws_url)
-            except Exception as exc:
-                log.warning("CDP: reset-panel key send failed (non-fatal): %s", exc)
 
         # --- Step 5: background monitor for mid-stream error banners ---------
         # Keep the adb forward alive; the monitor tears it down on exit.

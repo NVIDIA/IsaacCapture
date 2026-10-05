@@ -189,6 +189,7 @@ async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() ->
             ],
         ),
         patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "_cdp_send_reset_panel_key") as reset_key,
         patch.object(adb_module, "_monitor_teleop_error_banner", side_effect=monitor),
         patch.object(adb_module, "_close_stale_teleop_tabs") as close_tabs,
         patch.object(adb_module, "run_adb_headset_bookmark") as launch,
@@ -202,6 +203,9 @@ async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() ->
             on_dispatched=None,
             on_client_loaded=None,
         )
+        # Unconditional: this reattach path is the one case the client's own
+        # automatic first-XR-frame reset never covers (no new session starts).
+        reset_key.assert_awaited_once_with("ws://teleop")
         close_tabs.assert_not_called()
         launch.assert_not_called()
         task.cancel()
