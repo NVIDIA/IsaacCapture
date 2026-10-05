@@ -324,7 +324,13 @@ class CloudXRService:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Stop the service on exiting the ``with`` block."""
-        self.stop()
+        try:
+            self.stop()
+        except RuntimeError:
+            # Fatal status was already reported, and the runtime is gone. A
+            # stalled WSS status writer may still own its thread and log file.
+            if self._fatal_error is None or self._runtime_proc is not None:
+                raise
 
     def stop(self) -> None:
         """Shut down the WSS proxy and terminate the runtime process.
@@ -342,7 +348,14 @@ class CloudXRService:
                 return
             self._stopping = True
             try:
-                self._stop_wss_proxy()
+                wss_error = None
+                try:
+                    self._stop_wss_proxy()
+                except RuntimeError as exc:
+                    if self._fatal_error is None:
+                        raise
+                    # A stalled WSS writer must not keep a failed service alive.
+                    wss_error = exc
 
                 if self._runtime_proc is not None:
                     try:
@@ -370,6 +383,8 @@ class CloudXRService:
                         logger.warning(
                             "Cannot clean OOB status %s: %s", self._oob_status_path, exc
                         )
+                if wss_error is not None:
+                    raise wss_error
             finally:
                 self._restore_signal_handlers()
                 self._stopping = False
@@ -433,6 +448,7 @@ class CloudXRService:
         """Publish one terminal transition before the supervisor tears down WSS."""
         from ..oob_teleop_env import redact_control_token  # noqa: PLC0415
 
+        # Status is operator-facing and persisted; never put a URL or token in it.
         detail = re.sub(r"https?://\S+", "<URL>", redact_control_token(str(error)))[
             :180
         ]
@@ -473,21 +489,28 @@ class CloudXRService:
                 payload[flag] = False
             self._oob_snapshot = payload
             self._oob_updates.append(payload)
-        try:
-            async with self._oob_publish_lock:
-                persistence = asyncio.create_task(
-                    asyncio.to_thread(self._persist_oob_status, payload)
-                )
-                try:
-                    await asyncio.shield(persistence)
-                except asyncio.CancelledError:
-                    await persistence
-                    raise
-        finally:
-            self._fatal_supervisor = threading.Thread(
-                target=self.stop, name="cloudxr-oob-fatal-supervisor", daemon=True
+        self._fatal_supervisor = threading.Thread(
+            target=self._stop_after_oob_fatal,
+            name="cloudxr-oob-fatal-supervisor",
+            daemon=True,
+        )
+        self._fatal_supervisor.start()
+        async with self._oob_publish_lock:
+            persistence = asyncio.create_task(
+                asyncio.to_thread(self._persist_oob_status, payload)
             )
-            self._fatal_supervisor.start()
+            try:
+                await asyncio.shield(persistence)
+            except asyncio.CancelledError:
+                await persistence
+                raise
+
+    def _stop_after_oob_fatal(self) -> None:
+        """Stop the runtime even if the WSS status writer cannot finish."""
+        try:
+            self.stop()
+        except RuntimeError as exc:
+            logger.debug("Fatal OOB teardown retained a WSS handle: %s", exc)
 
     def health_check(self) -> None:
         """Verify that the runtime process and WSS proxy are healthy.

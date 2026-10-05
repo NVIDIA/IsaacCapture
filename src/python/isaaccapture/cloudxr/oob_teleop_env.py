@@ -517,13 +517,17 @@ def build_headset_bookmark_url(
 
 
 def redact_control_token(text: str) -> str:
-    """Mask ``controlToken`` values in *text* for display or logging.
+    """Mask ``controlToken`` and ``token`` query values in display or log text.
 
-    Shared by every path that surfaces a bookmark URL — the startup banner,
-    the ``am start`` log line, and the standalone opener — so a token can
-    never reach a terminal or log file through one of them.
+    Shared by every path that surfaces a credential-bearing URL, including
+    the OOB WSS failure log and service status diagnostic.
     """
-    return re.sub(r"(controlToken=)[^&\s'\"]+", r"\1<REDACTED>", text)
+    return re.sub(
+        r"(?<![\w])((?:controlToken|token)=)[^&\s'\"#]+",
+        r"\1<REDACTED>",
+        text,
+        flags=re.IGNORECASE,
+    )
 
 
 def resolve_lan_host_for_oob() -> str:

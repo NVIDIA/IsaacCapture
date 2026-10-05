@@ -244,6 +244,44 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
 
 
 @pytest.mark.asyncio
+async def test_fatal_teardown_stops_runtime_while_status_writer_is_stalled(tmp_path):
+    service = _service_for_status(tmp_path)
+    service._stop_lock = threading.RLock()
+    service._restore_signal_handlers = MagicMock()
+    service._stop_wss_proxy = MagicMock(
+        side_effect=RuntimeError("status persistence may still be draining")
+    )
+    service._terminate_runtime = MagicMock()
+    entered = threading.Event()
+    release = threading.Event()
+    original = service._persist_oob_status
+
+    def stalled(payload):
+        entered.set()
+        assert release.wait(timeout=5)
+        original(payload)
+
+    service._persist_oob_status = stalled
+    task = asyncio.create_task(
+        service._on_oob_fatal(RuntimeError("failed with token=secret-value"))
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        assert not task.done()
+        await asyncio.to_thread(service._fatal_supervisor.join, 2)
+        assert not service._fatal_supervisor.is_alive()
+        service._terminate_runtime.assert_called_once()
+        assert service._runtime_proc is None
+        assert service.oob_status()["health"] == "fatal"
+        assert "secret-value" not in service.oob_status()["reason"]
+        assert "token=<REDACTED>" in service.oob_status()["reason"]
+    finally:
+        release.set()
+        await task
+    assert json.loads(service._oob_status_path.read_text())["health"] == "fatal"
+
+
+@pytest.mark.asyncio
 async def test_fatal_status_wins_over_queued_publication(tmp_path):
     service = _service_for_status(tmp_path)
     service.stop = MagicMock()
@@ -263,9 +301,11 @@ async def test_fatal_status_wins_over_queued_publication(tmp_path):
     fatal = asyncio.create_task(service._on_oob_fatal(RuntimeError("worker crashed")))
     await asyncio.sleep(0)
     assert service.oob_status()["health"] == "fatal"
+    await asyncio.to_thread(service._fatal_supervisor.join, 2)
+    service.stop.assert_called_once()
+    assert not fatal.done()
     release.set()
     await asyncio.gather(active, fatal)
-    service._fatal_supervisor.join(timeout=2)
     assert json.loads(service._oob_status_path.read_text())["health"] == "fatal"
 
 
@@ -334,6 +374,13 @@ def test_wss_exit_during_queued_stop_is_not_fatal(tmp_path, raise_error):
     assert service.oob_status() is None
     assert service._fatal_supervisor is None
     assert not service._oob_status_path.exists()
+
+
+def test_context_exit_keeps_nonfatal_stop_failure_visible(tmp_path):
+    service = _service_for_status(tmp_path)
+    service.stop = MagicMock(side_effect=RuntimeError("WSS proxy did not stop"))
+    with pytest.raises(RuntimeError, match="WSS proxy did not stop"):
+        service.__exit__(None, None, None)
 
 
 def test_stop_only_cleans_status_owned_by_its_session(tmp_path):

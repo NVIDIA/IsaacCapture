@@ -451,11 +451,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             include_oob=True,
         )
         _out_interactive("\033[33mKeep this terminal open, Ctrl+C to terminate.\033[0m")
-        reporter = (
-            _OobConsoleReporter()
-            if args.setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
-            else None
-        )
+        reporter = _OobConsoleReporter() if args.setup_oob else None
 
         def report_oob_updates() -> None:
             if reporter is not None:

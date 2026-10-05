@@ -624,6 +624,16 @@ async def run(
                 _attached_log.propagate = False
             _attached_log.addHandler(_handler)
 
+    async def report_fatal(error: Exception, circumstance: str) -> None:
+        if on_oob_fatal is None:
+            return
+        try:
+            reported = on_oob_fatal(error)
+            if isawaitable(reported):
+                await reported
+        except Exception:
+            log.exception("OOB fatal callback failed while reporting %s", circumstance)
+
     was_listening = False
     failure_logged = False
     try:
@@ -727,29 +737,13 @@ async def run(
                             )
                             failure_log.exception("OOB lifecycle worker failed")
                             failure_logged = True
-                            if on_oob_fatal is not None:
-                                try:
-                                    reported = on_oob_fatal(error)
-                                    if isawaitable(reported):
-                                        await reported
-                                except Exception:
-                                    log.exception(
-                                        "OOB fatal callback failed while reporting lifecycle cancellation"
-                                    )
+                            await report_fatal(error, "lifecycle cancellation")
                             raise error from exc
                         except Exception as exc:
                             # Keep the traceback in the per-session file, not the console.
                             failure_log.exception("OOB lifecycle worker failed")
                             failure_logged = True
-                            if on_oob_fatal is not None:
-                                try:
-                                    reported = on_oob_fatal(exc)
-                                    if isawaitable(reported):
-                                        await reported
-                                except Exception:
-                                    log.exception(
-                                        "OOB fatal callback failed while reporting lifecycle failure"
-                                    )
+                            await report_fatal(exc, "lifecycle failure")
                             raise
                         else:
                             exc = RuntimeError(
@@ -757,15 +751,7 @@ async def run(
                             )
                             failure_log.error("%s", exc)
                             failure_logged = True
-                            if on_oob_fatal is not None:
-                                try:
-                                    reported = on_oob_fatal(exc)
-                                    if isawaitable(reported):
-                                        await reported
-                                except Exception:
-                                    log.exception(
-                                        "OOB fatal callback failed while reporting lifecycle exit"
-                                    )
+                            await report_fatal(exc, "lifecycle exit")
                             raise exc
                 else:
                     await stop_future

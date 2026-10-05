@@ -126,7 +126,7 @@ async def test_wss_reports_unexpected_lifecycle_failure_before_cleanup(
     failures = []
     stop = asyncio.get_running_loop().create_future()
     error = RuntimeError(
-        "lifecycle crashed at https://headset.example/client/?controlToken=secret-value&mode=oob"
+        "lifecycle crashed at https://headset.example/client/?controlToken=secret-value&token=oob-secret&mode=oob"
     )
 
     @asynccontextmanager
@@ -173,7 +173,9 @@ async def test_wss_reports_unexpected_lifecycle_failure_before_cleanup(
     assert "Traceback (most recent call last)" in log_text
     assert "RuntimeError: lifecycle crashed" in log_text
     assert "controlToken=<REDACTED>" in log_text
+    assert "token=<REDACTED>" in log_text
     assert "secret-value" not in log_text
+    assert "oob-secret" not in log_text
     terminal = capsys.readouterr()
     assert "OOB lifecycle worker failed" not in terminal.err
     assert "secret-value" not in terminal.err
