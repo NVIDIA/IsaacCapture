@@ -162,7 +162,9 @@ Start for firewall configuration.
 2. Verify with the CLI tool
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Verify that the gloves are working using the CLI tool:
+Verify that the gloves are working using the CLI tool. It runs from the build
+tree, while the plugin in the next step runs from the install tree; both come
+from the same build:
 
 .. code-block:: bash
 

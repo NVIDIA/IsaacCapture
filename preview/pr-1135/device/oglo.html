@@ -571,7 +571,9 @@ extrinsic supplied with the hardware, or calibrate against gravity for just “u
 <p><code class="docutils literal notranslate"><span class="pre">test_oglo_packet_parser</span></code> validates the wire decode against the firmware’s own
 12-bit packing reference, plus the schema-4 fallback and malformed-packet
 rejection:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>-R<span class="w"> </span>oglo_packet_parser<span class="w"> </span>--output-on-failure
+<p>The plugin target above does not build the test, so build it first:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>test_oglo_packet_parser<span class="w"> </span>--parallel
+ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>-R<span class="w"> </span>oglo_packet_parser<span class="w"> </span>--output-on-failure
 </pre></div>
 </div>
 </section>
@@ -714,7 +716,7 @@ rejection:</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 05, 2026.
       <br/>
     
   </p>
