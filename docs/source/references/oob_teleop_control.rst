@@ -312,6 +312,14 @@ session's headset selection, and ``ignoredSerials`` lists other observed ADB
 devices (up to eight display-safe serials). Selection is scoped to the current
 service session; a previous status file never pins a new session.
 
+If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
+service publishes a terminal snapshot with ``health=fatal`` and ``state=FATAL``,
+clears readiness and streaming flags, and stops the runtime. Unlike a normal
+shutdown, it retains ``oob_status.json`` so ``service status`` can show the
+failure reason after the runtime stops. Foreground ``service run`` prints one
+actionable ``OOB stopped`` message and exits nonzero. An intentional shutdown
+does not create a fatal snapshot.
+
 .. list-table:: Metrics reported per cadence (CloudXR.js 6.3.0)
    :header-rows: 1
    :widths: 12 40 48
