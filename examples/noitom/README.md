@@ -45,10 +45,11 @@ MCAP script because the recording uses the standard `full_body` channel.
 
 ![Noitom full-body recording](assets/record.gif)
 
-Record the Noitom full-body stream:
+Install the example once, then record the Noitom full-body stream:
 
 ```bash
-uv run python examples/noitom/record_noitom_full_body.py \
+uv pip install -e ./examples/noitom
+python -m isaaccapture_examples.noitom.record_noitom_full_body \
   10 examples/noitom/recordings/noitom_full_body.mcap
 ```
 
@@ -70,14 +71,22 @@ python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
 Run Isaac Lab with the external task registration callback. The task launches
 `noitom_mocap_plugin` through IsaacTeleop's plugin manager by default.
 
+The callback runs inside Isaac Lab's own interpreter, so install the example
+into *that* environment rather than a venv of your own — this replaces the
+`PYTHONPATH=` prefix these commands used to carry:
+
 ```bash
 cd ~/dependence/IsaacLab3-0
-PYTHONPATH=~/IsaacTeleop/examples/noitom:$PYTHONPATH \
-  ./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
+./isaaclab.sh -p -m pip install -e ~/IsaacTeleop/examples/noitom
+```
+
+```bash
+cd ~/dependence/IsaacLab3-0
+./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
   --task Isaac-PickPlace-Locomanipulation-G1-Noitom-Abs-v0 \
   --visualizer kit \
   --xr \
-  --external_callback noitom_tasks.register_tasks
+  --external_callback isaaccapture_examples.noitom.noitom_tasks.register_tasks
 ```
 
 For advanced manual plugin control, start the plugin yourself and disable
@@ -87,12 +96,11 @@ auto-launch in the Isaac Lab terminal:
 ./install/plugins/noitom_mocap/noitom_mocap_plugin
 
 NOITOM_MOCAP_AUTO_LAUNCH=0 \
-PYTHONPATH=~/IsaacTeleop/examples/noitom:$PYTHONPATH \
-  ./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
+./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \
   --task Isaac-PickPlace-Locomanipulation-G1-Noitom-Abs-v0 \
   --visualizer kit \
   --xr \
-  --external_callback noitom_tasks.register_tasks
+  --external_callback isaaccapture_examples.noitom.noitom_tasks.register_tasks
 ```
 
 If you run a dedicated CloudXR runtime yourself, source its environment before

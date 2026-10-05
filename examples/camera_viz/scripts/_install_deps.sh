@@ -569,6 +569,13 @@ else
     uv pip install --python "$PY" --upgrade "${PKGS[@]}"
 fi
 
+# The example itself, so `python -m isaaccapture_examples.camera_viz` resolves
+# without the source directory on sys.path. Editable, so edits need no
+# reinstall -- and the native codec .so, built in place below, is picked up
+# from the source tree either way.
+step "installing camera_viz"
+uv pip install --python "$PY" -e "$CAMERA_VIZ_DIR" --no-deps
+
 # ZED SDK ships get_python_api.py which downloads a matching pyzed wheel
 # and then tries ``pip install`` it (which fails in uv venvs, no pip).
 # We let that fail and install the wheel ourselves.
@@ -595,7 +602,7 @@ fi
 # Native NVENC/NVDEC codec. Failures are non-fatal: the runtime falls
 # back to the GStreamer encoder when the native ``.so`` isn't importable.
 if $WITH_RTP; then
-    CODEC_DIR="$CAMERA_VIZ_DIR/codec"
+    CODEC_DIR="$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/codec"
     if [[ -d "$CODEC_DIR" ]]; then
         step "building native NVENC/NVDEC codec"
         # shellcheck disable=SC1091
@@ -609,7 +616,7 @@ fi
 
 # Smoke imports. ``gi`` is in the list under RTP to confirm PyGObject
 # built and installed cleanly into the venv.
-SMOKE_MODS="cupy yaml scipy.spatial.transform"
+SMOKE_MODS="isaaccapture_examples.camera_viz cupy yaml scipy.spatial.transform"
 # ``websockets`` comes from the cloudxr extra and is what the XR default mode
 # needs to launch the runtime; check it here so a missing extra fails setup
 # rather than the first ``run --mode xr``.
