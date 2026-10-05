@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import sys
+import time
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -893,6 +894,7 @@ def test_wait_for_oob_stage_rejects_stale_or_fatal_status():
                     "health": "active",
                     "streamConfirmed": True,
                     "readinessStage": "streamConfirmed",
+                    "updatedAt": time.time(),
                 },
             ],
         ),
@@ -941,4 +943,24 @@ def test_wait_for_oob_stage_times_out_with_last_stage():
         patch.object(launcher, "health_check"),
     ):
         with pytest.raises(TimeoutError, match="stage=clientLoaded"):
+            launcher.wait_for_oob_stage(timeout_sec=0.01)
+
+
+def test_wait_for_oob_stage_rejects_old_success_snapshot():
+    launcher = object.__new__(CloudXRLauncher)
+    with (
+        patch.object(
+            launcher,
+            "oob_status",
+            return_value={
+                "health": "active",
+                "readinessStage": "streamConfirmed",
+                "streamConfirmed": True,
+                "updatedAt": time.time() - 60,
+                "reason": "Previous stream report",
+            },
+        ),
+        patch.object(launcher, "health_check"),
+    ):
+        with pytest.raises(TimeoutError, match="stage=streamConfirmed"):
             launcher.wait_for_oob_stage(timeout_sec=0.01)

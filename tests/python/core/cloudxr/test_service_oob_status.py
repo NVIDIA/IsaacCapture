@@ -449,3 +449,31 @@ def test_attached_launcher_rejects_stale_writer_or_runtime(tmp_path):
             )
         )
         assert launcher.oob_status()["health"] == "degraded"
+
+
+def test_attached_launcher_preserves_only_observed_fatal_session(tmp_path):
+    launcher = object.__new__(CloudXRLauncher)
+    launcher._service = None
+    launcher._run_dir = str(tmp_path)
+    launcher._observed_oob_session = None
+    path = tmp_path / "oob_status.json"
+    identity = {
+        "schemaVersion": 1,
+        "sessionId": "current-session",
+        "writerPid": os.getpid(),
+        "runtimePid": os.getpid(),
+    }
+    path.write_text(json.dumps({**identity, "health": "active"}))
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=True):
+        assert launcher.oob_status()["health"] == "active"
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=False):
+        path.write_text(
+            json.dumps({**identity, "health": "fatal", "reason": "Worker failed"})
+        )
+        assert launcher.oob_status()["reason"] == "Worker failed"
+        with pytest.raises(RuntimeError, match="Worker failed"):
+            launcher.wait_for_oob_stage(timeout_sec=1)
+        path.write_text(
+            json.dumps({**identity, "sessionId": "other", "health": "fatal"})
+        )
+        assert launcher.oob_status() is None

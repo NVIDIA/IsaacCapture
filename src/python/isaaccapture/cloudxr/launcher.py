@@ -86,6 +86,9 @@ ENV_CONFIG_PAUSE_SEC = 5.0
 #: Redraw interval of the countdown, and so how fast the dots move.
 _PAUSE_TICK_SEC = 0.25
 
+# A live runtime cannot prove a headset stream from an old lifecycle snapshot.
+_OOB_STATUS_MAX_AGE_SEC = 30.0
+
 _ENV_CONFIG_PAUSE = (
     "  \033[33mContinuing with the running configuration in {seconds}s{dots} — "
     "press any key to abort.\033[0m"
@@ -188,6 +191,7 @@ class CloudXRLauncher:
         self._run_dir = os.path.join(os.path.expanduser(install_dir), "run")
         self._logs_dir = Path(os.path.expanduser(install_dir)) / "logs"
         self._service: CloudXRService | None = None
+        self._observed_oob_session: tuple[str, int, int] | None = None
 
         if run_embedded:
             self._refuse_beside_live_runtime()
@@ -204,6 +208,7 @@ class CloudXRLauncher:
 
         if is_runtime_live(self._run_dir):
             self._attach(device_profile, env_config, host_client)
+            self.oob_status()
             return
 
         started = self._start_service(
@@ -223,6 +228,7 @@ class CloudXRLauncher:
             None if started else env_config,
             None if started else host_client,
         )
+        self.oob_status()
         # After attach so wss_proxy_port() sees PROXY_PORT from cloudxr.env,
         # not a stale caller environment.
         if started and (host_client or usb_local):
@@ -844,7 +850,19 @@ class CloudXRLauncher:
                     f"OOB startup failed: {last_status.get('reason', 'unknown reason')}"
                 )
             self.health_check()
-            if last_status and last_status.get(stage) is True:
+            updated_at = (last_status or {}).get("updatedAt")
+            age = (
+                time.time() - updated_at
+                if isinstance(updated_at, (int, float))
+                and not isinstance(updated_at, bool)
+                and math.isfinite(updated_at)
+                else float("inf")
+            )
+            if (
+                last_status
+                and last_status.get(stage) is True
+                and 0 <= age <= _OOB_STATUS_MAX_AGE_SEC
+            ):
                 return last_status
             if time.monotonic() >= deadline:
                 current = (last_status or {}).get("readinessStage", "unavailable")
@@ -869,17 +887,26 @@ class CloudXRLauncher:
             return None
         if not isinstance(status, dict) or status.get("schemaVersion") != 1:
             return None
-        if not is_runtime_live(self._run_dir):
-            return None
+        runtime_live = is_runtime_live(self._run_dir)
         writer_pid = status.get("writerPid")
         runtime_pid = status.get("runtimePid")
         if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
+            return None
+        session_id = status.get("sessionId")
+        identity = (session_id, writer_pid, runtime_pid)
+        if not runtime_live:
+            if status.get("health") == "fatal" and identity == getattr(
+                self, "_observed_oob_session", None
+            ):
+                return status
             return None
         try:
             os.kill(writer_pid, 0)
             os.kill(runtime_pid, 0)
         except (OSError, ValueError):
             return None
+        if isinstance(session_id, str) and session_id:
+            self._observed_oob_session = identity
         return status
 
     @property

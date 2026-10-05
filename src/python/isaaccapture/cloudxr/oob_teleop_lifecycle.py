@@ -583,9 +583,19 @@ class OobLifecycle:
         await self._stop_monitor()
         self.connect_dispatched = False
 
-        def on_dispatched() -> None:
+        def on_dispatched() -> Awaitable[None]:
             self.connect_at = time.time()
             self.connect_dispatched = True
+            return self._publish(
+                "degraded",
+                "CONNECT_DISPATCHED",
+                "Existing browser CONNECT dispatched; waiting for fresh stream evidence",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=self.usb_local,
+                turnPrerequisitesReady=self.usb_local,
+                connectDispatched=True,
+            )
 
         try:
             self.monitor = await adb.attach_existing_oob_tab(
@@ -595,7 +605,7 @@ class OobLifecycle:
             self.monitor = None
             return False
         if not self.connect_dispatched:
-            on_dispatched()
+            await on_dispatched()
         self._client_grace_deadline = self._bounded_client_grace_deadline()
         await self._publish(
             "degraded",
@@ -1120,12 +1130,9 @@ class OobLifecycle:
                     continue
                 if network.state is adb.HeadsetNetworkState.NETWORK_PRESENT:
                     self.last_network_at = time.time()
-                if (
-                    self.usb_local
-                    and network.state is adb.HeadsetNetworkState.NO_NETWORK
-                ):
-                    # Preserve the page while the headset network returns;
-                    # transport repair runs before any browser fallback.
+                if network.state is adb.HeadsetNetworkState.NO_NETWORK:
+                    # An absent non-loopback interface cannot satisfy transport
+                    # readiness or support browser automation in either mode.
                     await self._enter_transport_recovery(
                         "Headset has no non-loopback network",
                         "PREPARING_DEVICE",

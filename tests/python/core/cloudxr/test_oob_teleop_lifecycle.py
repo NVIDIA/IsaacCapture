@@ -2202,7 +2202,9 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
     async def attach(*, click_connect, on_dispatched=None):
         clicks.append(click_connect)
         if on_dispatched:
-            on_dispatched()
+            dispatched = on_dispatched()
+            if asyncio.iscoroutine(dispatched):
+                await dispatched
         return asyncio.create_task(asyncio.Event().wait())
 
     with patch(
@@ -2468,3 +2470,69 @@ async def test_readiness_stages_require_live_transport_and_fresh_stream():
     await lifecycle._publish("degraded", "WAITING_FOR_ADB", "Cable lost")
     assert hub.statuses[-1]["readinessStage"] == "socketBound"
     assert hub.statuses[-1]["streamConfirmed"] is False
+
+
+async def test_wifi_network_loss_does_not_claim_transport_ready():
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+
+    async def stop_after_transition(_seconds):
+        raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=True,
+        config=RecoveryConfig(),
+        sleep=stop_after_transition,
+    )
+    lifecycle.selected = "original"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NO_NETWORK),
+        ),
+        patch.object(lifecycle, "_automate") as automate,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    automate.assert_not_called()
+    assert hub.statuses[-1]["networkPresent"] is False
+    assert hub.statuses[-1]["transportReady"] is False
+
+
+async def test_same_tab_connect_publishes_dispatch_before_monitor_returns():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.selected = "original"
+    lifecycle.client_loaded = True
+
+    async def attach(*, click_connect, on_dispatched):
+        assert click_connect
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
+        assert hub.statuses[-1]["state"] == "CONNECT_DISPATCHED"
+        assert hub.statuses[-1]["connectDispatched"] is True
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with patch(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+        side_effect=attach,
+    ):
+        assert await lifecycle._same_tab_connect("terminal:1")
+    await lifecycle._stop_monitor()
