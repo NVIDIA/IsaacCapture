@@ -849,8 +849,6 @@ async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
 # ============================================================================
 
 import http.server  # noqa: E402
-import json  # noqa: E402
-import threading  # noqa: E402
 from contextlib import contextmanager  # noqa: E402
 from typing import ClassVar  # noqa: E402
 
