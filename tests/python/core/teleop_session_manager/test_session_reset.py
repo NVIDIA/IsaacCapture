@@ -55,6 +55,10 @@ def _mock_session_deps():
 
     with (
         patch("isaaccapture.oxr.OpenXRSession", return_value=mock_oxr),
+        # Mock trackers never reach the native binding; keep the OpenXR path these tests cover.
+        patch(
+            "isaaccapture.deviceio.DeviceIOSession.requires_openxr", return_value=True
+        ),
         patch("isaaccapture.deviceio.DeviceIOSession.run", return_value=mock_dio),
         patch(
             "isaaccapture.deviceio.DeviceIOSession.get_required_extensions",

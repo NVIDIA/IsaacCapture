@@ -8,7 +8,6 @@
 #include <openxr/openxr.h>
 #include <oxr_utils/os_time.hpp>
 
-#include <cassert>
 #include <stdexcept>
 
 namespace core
@@ -118,14 +117,26 @@ std::vector<std::string> DeviceIOSession::get_required_extensions(const std::vec
     return LiveDeviceIOFactory::get_required_extensions(trackers, vendor_config.tracker_vendors);
 }
 
+bool DeviceIOSession::requires_openxr(const std::vector<std::shared_ptr<ITracker>>& trackers,
+                                      const VendorConfig& vendor_config)
+{
+    validate_vendor_config(trackers, vendor_config.tracker_vendors);
+    return LiveDeviceIOFactory::requires_openxr(trackers, vendor_config.tracker_vendors);
+}
+
 std::unique_ptr<DeviceIOSession> DeviceIOSession::run(const std::vector<std::shared_ptr<ITracker>>& trackers,
                                                       const OpenXRSessionHandles& handles,
                                                       std::optional<McapRecordingConfig> recording_config,
                                                       VendorConfig vendor_config)
 {
-    assert(handles.instance != XR_NULL_HANDLE && "OpenXR instance handle cannot be null");
-    assert(handles.session != XR_NULL_HANDLE && "OpenXR session handle cannot be null");
-    assert(handles.space != XR_NULL_HANDLE && "OpenXR space handle cannot be null");
+    const bool has_handles = handles.instance != XR_NULL_HANDLE && handles.session != XR_NULL_HANDLE &&
+                             handles.space != XR_NULL_HANDLE && handles.xrGetInstanceProcAddr != nullptr;
+    if (!has_handles && requires_openxr(trackers, vendor_config))
+    {
+        throw std::invalid_argument(
+            "DeviceIOSession::run: OpenXR session handles are required (instance, session, space and "
+            "xrGetInstanceProcAddr must be set) because at least one tracker needs OpenXR");
+    }
 
     isaaccapture::Logger::get("isaaccapture.core.DeviceIOSession")
         ->info("DeviceIOSession: Creating session with {} trackers", trackers.size());
