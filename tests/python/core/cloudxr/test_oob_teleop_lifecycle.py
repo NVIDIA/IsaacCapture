@@ -1816,6 +1816,7 @@ async def test_existing_page_retrying_then_streaming_within_grace_never_clicks()
     same_tab.assert_not_called()
     full_bootstrap.assert_not_called()
     assert lifecycle.snapshot["health"] == "active"
+    assert lifecycle.snapshot["lastMetricsAt"] == (now + 1) * 1000
 
 
 async def test_fresh_stream_without_cdp_never_mutates_live_browser():
@@ -1940,6 +1941,7 @@ async def test_fresh_stream_passively_recovers_after_episode_expires():
     assert attach_times == []
     assert lifecycle.snapshot["health"] == "active"
     assert lifecycle.snapshot["state"] == "ACTIVE"
+    assert lifecycle.snapshot["lastMetricsAt"] == report["lastMetricsAt"]
     assert lifecycle.generation == 4
     same_tab.assert_not_called()
     full_bootstrap.assert_not_called()

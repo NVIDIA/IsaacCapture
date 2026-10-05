@@ -319,8 +319,11 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; ``connectDispatched`` records a
 host CONNECT click; and ``streamConfirmed`` requires a streaming report with
 fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
-milestone and when it was entered. Recovery can move the stage backward, and a
-surviving browser can resume a stream without another host CONNECT click.
+milestone and when it was entered. ``lastMetricsAt`` is the host-received
+metrics time in epoch milliseconds; the launcher accepts ``streamConfirmed``
+only while those metrics and the lifecycle status are less than five seconds
+old. Recovery can move the stage backward, and a surviving browser can resume
+a stream without another host CONNECT click.
 
 ``CloudXRLauncher.wait_for_oob_stage("streamConfirmed", timeout_sec=90)``
 waits for live status and raises on a fatal worker failure or timeout. Call it

@@ -895,6 +895,7 @@ def test_wait_for_oob_stage_rejects_stale_or_fatal_status():
                     "streamConfirmed": True,
                     "readinessStage": "streamConfirmed",
                     "updatedAt": time.time(),
+                    "lastMetricsAt": int(time.time() * 1000),
                 },
             ],
         ),
@@ -946,7 +947,11 @@ def test_wait_for_oob_stage_times_out_with_last_stage():
             launcher.wait_for_oob_stage(timeout_sec=0.01)
 
 
-def test_wait_for_oob_stage_rejects_old_success_snapshot():
+@pytest.mark.parametrize(
+    "status_age, metrics_age",
+    [(20, 20), (0, 10), (0, None)],
+)
+def test_wait_for_oob_stage_rejects_old_success_snapshot(status_age, metrics_age):
     launcher = object.__new__(CloudXRLauncher)
     with (
         patch.object(
@@ -956,7 +961,12 @@ def test_wait_for_oob_stage_rejects_old_success_snapshot():
                 "health": "active",
                 "readinessStage": "streamConfirmed",
                 "streamConfirmed": True,
-                "updatedAt": time.time() - 60,
+                "updatedAt": time.time() - status_age,
+                "lastMetricsAt": (
+                    int((time.time() - metrics_age) * 1000)
+                    if metrics_age is not None
+                    else None
+                ),
                 "reason": "Previous stream report",
             },
         ),

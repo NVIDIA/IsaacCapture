@@ -88,6 +88,7 @@ _PAUSE_TICK_SEC = 0.25
 
 # A live runtime cannot prove a headset stream from an old lifecycle snapshot.
 _OOB_STATUS_MAX_AGE_SEC = 30.0
+_OOB_METRICS_MAX_AGE_SEC = 5.0
 
 _ENV_CONFIG_PAUSE = (
     "  \033[33mContinuing with the running configuration in {seconds}s{dots} — "
@@ -858,10 +859,25 @@ class CloudXRLauncher:
                 and math.isfinite(updated_at)
                 else float("inf")
             )
+            metrics_at = (last_status or {}).get("lastMetricsAt")
+            metrics_age = (
+                time.time() - metrics_at / 1000
+                if isinstance(metrics_at, (int, float))
+                and not isinstance(metrics_at, bool)
+                and math.isfinite(metrics_at)
+                else float("inf")
+            )
             if (
                 last_status
                 and last_status.get(stage) is True
                 and 0 <= age <= _OOB_STATUS_MAX_AGE_SEC
+                and (
+                    stage != "streamConfirmed"
+                    or (
+                        age < _OOB_METRICS_MAX_AGE_SEC
+                        and 0 <= metrics_age < _OOB_METRICS_MAX_AGE_SEC
+                    )
+                )
             ):
                 return last_status
             if time.monotonic() >= deadline:

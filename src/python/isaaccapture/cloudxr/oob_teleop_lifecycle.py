@@ -195,6 +195,7 @@ class OobLifecycle:
             "lastTurnAt": self.last_turn_at,
             "lastBrowserAt": self.last_browser_at,
             "lastStreamAt": self.last_stream_at,
+            "lastMetricsAt": self.last_metrics_at,
             "adbReady": False,
             "networkPresent": False,
             "reverseRulesVerified": False,
@@ -661,6 +662,7 @@ class OobLifecycle:
         )
         terminal_event = report.get("terminalEventId")
         metrics_at = report.get("lastMetricsAt")
+        self.last_metrics_at = metrics_at
         fresh_post_repair = bool(
             metrics_at
             and metrics_at > self._repair_started_at * 1000
@@ -788,6 +790,7 @@ class OobLifecycle:
             "streaming" if report.get("streaming") else "idle"
         )
         metrics_at = report.get("lastMetricsAt")
+        self.last_metrics_at = metrics_at
         fresh_post_repair = bool(
             metrics_at
             and metrics_at > self._repair_started_at * 1000
@@ -930,6 +933,7 @@ class OobLifecycle:
                 self._client_grace_deadline = self._bounded_client_grace_deadline()
             return
         # Snapshot timestamps are epoch milliseconds; local time.time() values are seconds.
+        self.last_metrics_at = client.get("lastMetricsAt")
         fresh = bool(
             client.get("lastMetricsAt")
             and (time.time() * 1000 - client["lastMetricsAt"])
