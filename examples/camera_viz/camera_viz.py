@@ -53,6 +53,15 @@ def _parse_args(argv: Optional[list[str]]):
         help="Override display.mode from the config "
         "(default: the config's value, or xr when the config omits it).",
     )
+    parser.add_argument(
+        "--xr-wait",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Override display.xr.system_wait_seconds: how long to wait for the "
+        "headset to connect. Negative waits forever (the default); 0 fails fast. "
+        "Ctrl-C is not delivered until the wait ends.",
+    )
     CloudXRLauncher.add_launcher_arguments(parser)
     return parser.parse_args(argv)
 
@@ -233,12 +242,29 @@ def main(argv: Optional[list[str]] = None) -> int:
         controls_cfg = controls_config_from_yaml(cfg.get("display", {}))
         # Window mode has no controllers, so don't ask for their extensions.
         want_controls = controls_cfg.enabled and effective_mode == "xr"
+        if effective_mode == "xr":
+            # create() blocks here with the GIL held, so say so before it does:
+            # an unexplained stall plus a dead Ctrl-C reads as a hang.
+            xr_cfg = cfg.get("display", {}).get("xr", {})
+            wait = (
+                args.xr_wait
+                if args.xr_wait is not None
+                else int(xr_cfg.get("system_wait_seconds", display.WAIT_FOR_HEADSET))
+            )
+            if wait != 0:
+                how = "indefinitely" if wait < 0 else f"up to {wait}s"
+                print(
+                    f"camera_viz: waiting {how} for the headset to connect "
+                    "(Ctrl-C only lands once it does; kill the process to abort)",
+                    flush=True,
+                )
         session = display.make_session(
             cfg,
             mode_override=args.mode,
             required_extensions=(
                 ControllerControls.required_extensions() if want_controls else None
             ),
+            xr_wait_override=args.xr_wait,
         )
         is_xr = session.is_xr_mode()
 

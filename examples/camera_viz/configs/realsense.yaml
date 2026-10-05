@@ -44,6 +44,10 @@ display:
   xr:
     near_z: 0.05
     far_z: 100.0
+    # How long create() waits for the headset to connect. -1 (default) waits
+    # forever, so you can start the viewer before putting the Quest on; 0
+    # fails fast. Ctrl-C is only delivered once the wait ends.
+    system_wait_seconds: -1
   clear_color: [0.0, 0.0, 0.0, 0.0]
   placements:
     cam:                        # size defaults to 1.0 m wide × aspect-derived height
