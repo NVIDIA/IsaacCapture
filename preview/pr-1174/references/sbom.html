@@ -1,0 +1,857 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Wheel contents SBOM and license evidence &#8212; Isaac Teleop Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'references/sbom';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Generated Tracker Code" href="generated_trackers.html" />
+    <link rel="prev" title="Build System" href="build.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.6.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Wheel contents SBOM and license evidence</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="wheel-contents-sbom-and-license-evidence">
+<h1>Wheel contents SBOM and license evidence<a class="headerlink" href="#wheel-contents-sbom-and-license-evidence" title="Link to this heading">#</a></h1>
+<p>Every published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel carries a machine-readable inventory of what it
+redistributes, plus the license text behind each obligation. You can inspect both
+without installing the package, running it, or contacting a hosted service.</p>
+<section id="what-a-wheel-carries">
+<h2>What a wheel carries<a class="headerlink" href="#what-a-wheel-carries" title="Link to this heading">#</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
+└── isaaccapture-&lt;version&gt;.dist-info/
+    ├── METADATA                       # License-Expression + one License-File per text below
+    ├── licenses/
+    │   ├── LICENSE.md                 # this project's own license
+    │   ├── LICENSES/*.txt             # texts the SPDX headers on this project's sources name
+    │   ├── THIRD-PARTY-NOTICES.md     # component -&gt; license -&gt; text, with roles
+    │   └── third-party/&lt;component&gt;/   # its own file verbatim, or a reference text, labelled
+    └── sboms/
+        └── &lt;wheel filename&gt;.spdx.json # SPDX 2.3 contents inventory
+</pre></div>
+</div>
+<p>Every text there comes from this repository, or from a component the wheel redistributes,
+or — for a component that ships no license file and states only an identifier in its source
+headers — is the reference text that identifier names, beside the copyright line those
+headers state. See <a class="reference internal" href="#how-licenses-are-determined">How licenses are determined</a>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">.dist-info/sboms/</span></code> is what the
+<a class="reference external" href="https://packaging.python.org/en/latest/specifications/binary-distribution-format/" rel="noopener noreferrer" target="_blank">binary distribution format</a>
+reserves for SBOM documents, and it is shared: <code class="docutils literal notranslate"><span class="pre">auditwheel</span></code> writes a CycloneDX document
+of its own there describing the libraries it vendored. This collector looks for its
+document by name and leaves anything else alone. Reports and manifests are published beside
+the wheel instead.</p>
+</section>
+<section id="verifying-a-wheel">
+<h2>Verifying a wheel<a class="headerlink" href="#verifying-a-wheel" title="Link to this heading">#</a></h2>
+<p>Integrity and provenance are the packaging ecosystem’s job, not this document’s:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">RECORD</span></code></dt><dd><p>Every wheel already carries a <code class="docutils literal notranslate"><span class="pre">sha256</span></code> and size for each of its files, and
+installers check them. That is the integrity mechanism for a wheel’s contents.</p>
+</dd>
+<dt><a class="reference external" href="https://peps.python.org/pep-0740/" rel="noopener noreferrer" target="_blank">PEP 740</a> attestations</dt><dd><p>Signed attestations binding a publisher identity to an artifact’s hash, served
+through PyPI’s Integrity API. That is the provenance mechanism.</p>
+</dd>
+</dl>
+<p>The SBOM <em>describes</em> what those files are — where each came from, under what license.
+Its per-file digests are there so the description can be shown to belong to the wheel in
+front of you, and so it can be checked against <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>; they are not a second root of
+trust.</p>
+<p>The document lists every member of the wheel except two: <code class="docutils literal notranslate"><span class="pre">RECORD</span></code> and the document
+itself. Neither can carry its own digest, since <code class="docutils literal notranslate"><span class="pre">RECORD</span></code> hashes the document and the
+document would hash <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>. <code class="docutils literal notranslate"><span class="pre">check</span></code> reads both against the archive directly.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/NVIDIA/IsaacCapture
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--wheel<span class="w"> </span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
+</pre></div>
+</div>
+<p>The collector is a project of its own, <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/scripts/sbom/pyproject.toml" rel="noopener noreferrer" target="_blank">scripts/sbom/pyproject.toml</a>, so its
+dependencies come with it and are pinned there rather than at each call site. They are the
+packages that own the formats involved — <code class="docutils literal notranslate"><span class="pre">installer</span></code> for <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>, <code class="docutils literal notranslate"><span class="pre">packaging</span></code> for
+core metadata, <code class="docutils literal notranslate"><span class="pre">license-expression</span></code> for SPDX expressions, <code class="docutils literal notranslate"><span class="pre">packageurl-python</span></code> for
+purls, <code class="docutils literal notranslate"><span class="pre">pyelftools</span></code> for ELF.</p>
+<p>One command, widening with whatever you have. With just a wheel it confirms that</p>
+<ul class="simple">
+<li><p>the SBOM covers every file in the wheel except <code class="docutils literal notranslate"><span class="pre">RECORD</span></code> and the SBOM itself,</p></li>
+<li><p>each digest the SBOM records matches the bytes present, and agrees with <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RECORD</span></code> itself agrees with the archive, so the wheel is still installable,</p></li>
+<li><p>the packaged notices are there, and every <code class="docutils literal notranslate"><span class="pre">LicenseRef-</span></code> has its text embedded.</p></li>
+</ul>
+<p>Add <code class="docutils literal notranslate"><span class="pre">--build-evidence</span></code> and it also checks that the build accounts for every member;
+add <code class="docutils literal notranslate"><span class="pre">--manifest</span></code> and it checks the wheel against the digest bound at publication and
+the sidecars beside it. <code class="docutils literal notranslate"><span class="pre">check-set</span></code> runs the whole thing over every wheel in a release.</p>
+<p>To read the inventory directly, unzip <code class="docutils literal notranslate"><span class="pre">.dist-info/sboms/*.spdx.json</span></code> and feed it to any
+SPDX 2.3 consumer. CI validates each published document with <code class="docutils literal notranslate"><span class="pre">spdx-tools</span></code> before release.</p>
+</section>
+<section id="evidence-published-beside-a-wheel">
+<h2>Evidence published beside a wheel<a class="headerlink" href="#evidence-published-beside-a-wheel" title="Link to this heading">#</a></h2>
+<p>Tagged releases attach the following to the GitHub release, so the evidence outlives the
+CI artifacts it travelled in:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.spdx.json</span></code></dt><dd><p>Byte-identical copy of the document embedded in that wheel.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.md</span></code> / <code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.json</span></code></dt><dd><p>Component-to-license report: every redistributed component, the SPDX expression
+concluded for it, the file that expression was read from, how the component reaches
+the wheel, what is supplied by the installation environment instead, and what is
+excluded and why.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.build-evidence.json</span></code></dt><dd><p>Resolved commits, declared constraints, archive digests and build options recorded on
+the machine that built the wheel.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-manifest.json</span></code></dt><dd><p>Maps each published wheel filename and SHA-256 to its evidence files and their digests.
+The wheel digest is bound here, after the last change to the wheel, so a wheel that was
+touched again no longer matches.</p>
+</dd>
+</dl>
+<p>Downloading a whole release? Check the wheels and the evidence against the manifest in
+one step:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check-set<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--manifest<span class="w"> </span>isaaccapture-sbom-manifest.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--wheel-dir<span class="w"> </span>.<span class="w"> </span>--evidence-dir<span class="w"> </span>.
+</pre></div>
+</div>
+</section>
+<section id="what-is-in-scope">
+<h2>What is in scope<a class="headerlink" href="#what-is-in-scope" title="Link to this heading">#</a></h2>
+<p>The document describes <strong>the contents of one built wheel</strong>: compiled-in static and
+header-only dependencies, bundled shared libraries, vendored sources, SDK binaries and
+packaged assets, for all six published variants (<code class="docutils literal notranslate"><span class="pre">x86_64</span></code> and <code class="docutils literal notranslate"><span class="pre">aarch64</span></code> × CPython
+3.11, 3.12, 3.13).</p>
+<p>Deliberately <strong>not</strong> described by it:</p>
+<ul class="simple">
+<li><p>Build-time-only inputs — test frameworks, code generators, CMake modules, toolchains.
+They appear in the report under <em>Present in this build but not in this wheel</em>; a full
+build inventory is separate work.</p></li>
+<li><p>Source distributions and the <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">.</span></code> path, which produce different contents.</p></li>
+<li><p>Containers and the web client, which are distributed on their own.</p></li>
+<li><p>Dependencies resolved at install time. The wheel’s <code class="docutils literal notranslate"><span class="pre">Requires-Dist</span></code> metadata stays
+authoritative for those; the document records the requirement, never a license for it.</p></li>
+</ul>
+</section>
+<section id="how-the-inventory-is-worked-out">
+<h2>How the inventory is worked out<a class="headerlink" href="#how-the-inventory-is-worked-out" title="Link to this heading">#</a></h2>
+<p>There is no checked-in dependency list. Every entry is derived from the build that
+produced the wheel, so a dependency that builds is a dependency that appears:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">build/_deps/*-src</span></code></dt><dd><p>FetchContent checkouts. <code class="docutils literal notranslate"><span class="pre">git</span></code> in each one supplies the commit, the remote, and from
+the remote the supplier, homepage and purl.</p>
+</dd>
+<dt>CMake’s file API codemodel</dt><dd><p>The build graph, as CMake itself describes it: which sources were compiled into which
+binary, which targets it depends on, and — through include paths — which header-only
+dependencies it was compiled against. Followed transitively, so a library linked into a
+library linked into the wheel is still reported. The top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> asks
+for it with <code class="docutils literal notranslate"><span class="pre">cmake_file_api()</span></code>, which CMake 3.27 added — so a wheel with an SBOM
+needs at least that, though the project builds without it. Reading the generator’s own
+output instead would only work under Makefiles, since Ninja writes no <code class="docutils literal notranslate"><span class="pre">link.txt</span></code>.</p>
+</dd>
+<dt>Archives in the repository</dt><dd><p>Every member of every tarball is hashed. A wheel member that matches one is recorded as
+having been unpacked from that archive.</p>
+</dd>
+<dt>The working tree and the build tree</dt><dd><p>What remains is matched against the project’s own sources and its generated output.</p>
+</dd>
+</dl>
+<p><strong>Every member of the wheel must be explained by one of those.</strong> A file that is not stops
+the build rather than being quietly omitted — that is the check that keeps the inventory
+honest as the build changes.</p>
+<p>Post-processing is recorded as such. <code class="docutils literal notranslate"><span class="pre">patchelf</span></code>, <code class="docutils literal notranslate"><span class="pre">auditwheel</span></code>’s RPATH rewrite and the
+build’s MJCF asset stripping all leave bytes that no longer hash to their origin, so those
+members are reported as <em>derived from</em> a named input rather than as an exact copy, with
+the input’s digest wherever the input was hashed — which it is for an archive member, and
+is not for a file matched only by its path.</p>
+</section>
+<section id="how-licenses-are-determined">
+<h2>How licenses are determined<a class="headerlink" href="#how-licenses-are-determined" title="Link to this heading">#</a></h2>
+<p>Licenses are never inferred from this project’s license, and never read from a list
+someone maintained by hand. For each component the collector finds the license and notice
+files the component itself ships — <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>, <code class="docutils literal notranslate"><span class="pre">COPYING</span></code>, <code class="docutils literal notranslate"><span class="pre">BSD-LICENSE</span></code>, a <code class="docutils literal notranslate"><span class="pre">LICENSES/</span></code>
+pool, or, where upstream ships no file at all, the license section of its README — and
+matches each text against a corpus of SPDX reference texts.</p>
+<p>Those reference texts are a dependency like any other. <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/deps/third_party/CMakeLists.txt" rel="noopener noreferrer" target="_blank">deps/third_party/CMakeLists.txt</a>
+fetches
+<code class="docutils literal notranslate"><span class="pre">spdx/license-list-data</span></code> at a pinned commit into <code class="docutils literal notranslate"><span class="pre">_deps/license-list-data-src</span></code>, the same
+mechanism and the same place as every other dependency — which means the collector
+discovers it as a component of the build and reports it, alongside the rest, as fetched but
+shipping nothing. Pinning is by commit, so no tag or branch upstream can move underneath a
+build, and each report records the commit its identifications were made against.</p>
+<p>Consulting the list is not shipping it. Every current identifier is available to match
+against, so a dependency arriving under any of them is identified. Naming it in the
+document is a second question: a document states the licence list it was built against, and
+<code class="docutils literal notranslate"><span class="pre">license-expression</span></code> — which a consumer validates with, and which
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/scripts/sbom/pyproject.toml" rel="noopener noreferrer" target="_blank">scripts/sbom/pyproject.toml</a> pins — ships its own, older copy. An id the fetched
+list knows and that grammar does not cannot be published as an id, so it travels as a
+<code class="docutils literal notranslate"><span class="pre">LicenseRef-</span></code> carrying the text, and the component is listed under <em>License evidence gaps</em>
+with that as the stated reason.</p>
+<p>What the wheel carries for a third-party component is that component’s own license file,
+verbatim, copyright holders and all. Substituting a reference text would convey the terms
+and drop the notice — for MIT and the BSD licenses those are the same file, differing by
+the one line that names who licensed it to you — and it would replace the component’s
+actual grant with our reading of it, which is what the matching is for and not what it
+decides. So a reference text is substituted only where there is nothing of the component’s
+own to package: it states an identifier in its source headers and ships no licence file.
+The document says so for every such text, in as many words, because a reader cannot tell a
+template from an author’s own notice by looking at it.</p>
+<p>A component can also state terms for one part of itself — a vendored asset set inside a
+larger project, with its own <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code> and its own holder. Those are read and packaged
+too, but only where that directory reached the wheel, and they never change the component’s
+own licence: they name a holder for the bytes that shipped, which is what the notice
+obligation is about.</p>
+<p>The distribution’s own declared licence is an obligation like any other. A wheel declaring
+<code class="docutils literal notranslate"><span class="pre">License-Expression</span></code> and shipping no text for it stops the build, the same as a
+redistributed component with no terms; where the wheel ships none, the reference text for
+each identifier is packaged from the pinned list and declared under PEP 639.</p>
+<p>The notices file opens with the distribution’s own licence and copyright holder, read
+from the packaging metadata it was built from where no file it ships states one. A wheel
+that ships only metadata carries no notice otherwise: the reference text its declared
+licence packages is a template naming nobody, so a recipient holding the wheel alone could
+not say who licensed it to them.</p>
+<p><code class="docutils literal notranslate"><span class="pre">licenseDeclared</span></code> on the wheel is what the distribution says of itself. <code class="docutils literal notranslate"><span class="pre">licenseConcluded</span></code>
+is what this document found in it, so a wheel carrying a component whose terms the build
+could not name states that expression alongside the declaration — a reader asking “what is
+this artifact” is told about the proprietary payload rather than about the declaration only.</p>
+<p>Never a file from this checkout. <code class="docutils literal notranslate"><span class="pre">LICENSES/</span></code> holds this repository’s REUSE pool, whose
+copies exist to license <em>this</em> project and carry its notices; packaging one as a third
+party’s terms would put our copyright above their code. A substituted text comes from the
+pinned list, never from the pool — and under <code class="docutils literal notranslate"><span class="pre">.dist-info/licenses/LICENSES/</span></code> a wheel
+carries whichever applies: the project’s own pool files where it has them, and otherwise
+the reference text for the licence it declares.</p>
+<p>A match needs a canonical license text to be almost entirely present <em>and</em> to account for a
+real share of the file: a tenth of a long agreement reproducing a license in an appendix is
+not that agreement’s own terms. The second threshold is the looser of the two, so a short
+file quoting a license in full still matches — the bound it sets is on padding around a
+text, not on a document that is mostly one. A file that genuinely carries two <em>distinct</em>
+licenses is reported as carrying both; where one is a near-duplicate of the other, only the
+match survives, and a disjunctive grant is not expressible here at all.</p>
+<p>A text that matches nothing is not guessed at. It becomes a <code class="docutils literal notranslate"><span class="pre">LicenseRef-</span></code> whose full text
+travels in the document, which says “these are the terms that shipped” without claiming to
+know which license they are. Those components are listed in the report under <em>License
+evidence gaps</em>.</p>
+<p>A component that states a licence nowhere at all blocks publication, because packaging the
+text is the obligation the wheel has to meet. Stating one in its source headers and nowhere
+else is not that case: there the reference text for the identifier those headers name ships
+instead, labelled in the document as a substitution rather than as the component’s own words
+— it conveys the terms and names no holder, so the headers’ copyright line travels with it.</p>
+<p>A shared library that none of those indexes explains did not come from this build, so the
+last thing asked is the build machine itself: resolve the library’s SONAME, and take its
+license from the supplying package’s copyright file, or from a license file beside the
+library for toolchains that install outside the package manager. Resolving the SONAME is
+what licenses the claim — a library the machine cannot find is reported as unexplained,
+not attributed to something nobody located. No repair tool’s directory name is consulted,
+so a library the build produced is attributed to the build wherever it ends up.</p>
+</section>
+<section id="running-the-collector-locally">
+<h2>Running the collector locally<a class="headerlink" href="#running-the-collector-locally" title="Link to this heading">#</a></h2>
+<p>Against a configured build tree:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release
+cmake<span class="w"> </span>--build<span class="w"> </span>build
+cmake<span class="w"> </span>--install<span class="w"> </span>build
+
+<span class="c1"># Configuring fetched the SPDX reference texts into</span>
+<span class="c1"># build/_deps/license-list-data-src/json, which is where `build` looks</span>
+<span class="c1"># unless --license-data says otherwise.</span>
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--build-dir<span class="w"> </span>build<span class="w"> </span>--wheel<span class="w"> </span>install/wheels/&lt;name&gt;.whl<span class="w"> </span>--out-dir<span class="w"> </span>sbom
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check<span class="w"> </span>--wheel<span class="w"> </span>install/wheels/&lt;name&gt;.whl<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--manifest<span class="w"> </span>sbom/manifest.json<span class="w"> </span>--build-evidence<span class="w"> </span>sbom/&lt;name&gt;.build-evidence.json
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">build</span></code> rewrites the wheel in place, so run it on a repaired wheel and do not touch the
+wheel afterwards. Set <code class="docutils literal notranslate"><span class="pre">SOURCE_DATE_EPOCH</span></code> to make the result reproducible.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--project</span></code> points <code class="docutils literal notranslate"><span class="pre">uv</span></code> at the collector, not at this repository: it resolves the
+collector’s own pins and runs it from wherever you are. The checkout it inventories is the
+one you are standing in, or <code class="docutils literal notranslate"><span class="pre">--repo-root</span></code>.</p>
+</section>
+<section id="maintaining-it">
+<h2>Maintaining it<a class="headerlink" href="#maintaining-it" title="Link to this heading">#</a></h2>
+<p>Adding a dependency takes no SBOM change: declare it the way you already would — a
+<code class="docutils literal notranslate"><span class="pre">FetchContent_Declare</span></code>, a tarball under <code class="docutils literal notranslate"><span class="pre">deps/</span></code> — and it appears in the next wheel’s
+inventory with its identity, its license and the route it took to get there.</p>
+<p>Two things do need attention:</p>
+<ul class="simple">
+<li><p><strong>A component that states its license nowhere stops the build.</strong> The fix is to obtain the
+terms, not to record an assumption. Stating one only in its source headers is not that
+case: the reference text for that identifier ships, labelled as a substitution.</p></li>
+<li><p><strong>A new member that the build cannot explain stops the build.</strong> That means something
+reached the wheel by a route the collector cannot see; teach it that route rather than
+excluding the file.</p></li>
+</ul>
+<p>Moving to a newer SPDX license list is a dependency bump like any other: change
+<code class="docutils literal notranslate"><span class="pre">SPDX_LICENSE_DATA_COMMIT</span></code> in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/deps/third_party/CMakeLists.txt" rel="noopener noreferrer" target="_blank">deps/third_party/CMakeLists.txt</a>, with its release
+comment. There is no separate list of identifiers to extend — the whole SPDX list comes
+with the checkout.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="build.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Build System</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="generated_trackers.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Generated Tracker Code</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-a-wheel-carries">What a wheel carries</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#verifying-a-wheel">Verifying a wheel</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#evidence-published-beside-a-wheel">Evidence published beside a wheel</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-in-scope">What is in scope</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-the-inventory-is-worked-out">How the inventory is worked out</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-licenses-are-determined">How licenses are determined</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-collector-locally">Running the collector locally</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#maintaining-it">Maintaining it</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 02, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
