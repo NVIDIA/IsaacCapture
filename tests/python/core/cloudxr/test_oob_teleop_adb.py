@@ -123,12 +123,28 @@ async def test_local_client_reloads_without_http_cache_before_connect() -> None:
 
     cdp = FakeCDP()
     dispatched = []
+    milestones = []
+
+    async def loaded():
+        milestones.append("clientLoaded")
+
+    def on_dispatched():
+        dispatched.append(list(cdp.methods))
+
+        async def publish():
+            assert "startButton" in cdp.last["params"]["expression"]
+            milestones.append("connectDispatched")
+
+        return publish()
+
     with patch("websockets.asyncio.client.connect", return_value=cdp):
         await adb_module._cdp_session_click_connect(
             "ws://test",
             refresh_static_assets=True,
-            on_dispatched=lambda: dispatched.append(list(cdp.methods)),
+            on_client_loaded=loaded,
+            on_dispatched=on_dispatched,
         )
+    assert milestones == ["clientLoaded", "connectDispatched"]
     assert len(dispatched) == 1
     assert dispatched[0][-1] == "Input.dispatchMouseEvent"
     assert cdp.methods.index("Network.setCacheDisabled") < cdp.methods.index(
@@ -177,6 +193,7 @@ async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() ->
             allow_navigation=False,
             clear_stale_error=True,
             on_dispatched=None,
+            on_client_loaded=None,
         )
         close_tabs.assert_not_called()
         launch.assert_not_called()

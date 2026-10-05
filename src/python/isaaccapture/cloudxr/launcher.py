@@ -303,6 +303,12 @@ class CloudXRLauncher:
             # what this path wanted.  Its configuration is not ours, though.
             return False
         print(_STARTED_SERVICE.format(pid=pid, log=log), file=sys.stderr)
+        if setup_oob:
+            print(
+                "  Headset setup is retrying until stream confirmation; "
+                "service startup does not confirm streaming.",
+                file=sys.stderr,
+            )
         return True
 
     def _announce_hosted_client(self, *, usb_local: bool = False) -> None:
@@ -813,6 +819,41 @@ class CloudXRLauncher:
             raise RuntimeError(
                 f"The CloudXR runtime serving {self._run_dir} has stopped"
             )
+
+    def wait_for_oob_stage(
+        self, stage: str = "streamConfirmed", *, timeout_sec: float = 90.0
+    ) -> dict:
+        """Wait for live OOB evidence, or raise with the last recovery reason."""
+        stages = {
+            "socketBound",
+            "transportReady",
+            "clientLoaded",
+            "connectDispatched",
+            "streamConfirmed",
+        }
+        if stage not in stages:
+            raise ValueError(f"Unknown OOB readiness stage: {stage}")
+        if not math.isfinite(timeout_sec) or timeout_sec <= 0:
+            raise ValueError("timeout_sec must be positive and finite")
+        deadline = time.monotonic() + timeout_sec
+        last_status: dict | None = None
+        while True:
+            last_status = self.oob_status()
+            if last_status and last_status.get("health") == "fatal":
+                raise RuntimeError(
+                    f"OOB startup failed: {last_status.get('reason', 'unknown reason')}"
+                )
+            self.health_check()
+            if last_status and last_status.get(stage) is True:
+                return last_status
+            if time.monotonic() >= deadline:
+                current = (last_status or {}).get("readinessStage", "unavailable")
+                reason = (last_status or {}).get("reason", "no OOB status published")
+                raise TimeoutError(
+                    f"OOB startup did not reach {stage} within {timeout_sec:g}s "
+                    f"(stage={current}, reason={reason})"
+                )
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
 
     def oob_status(self) -> dict | None:
         """Return the OOB lifecycle status for owned or attached services."""

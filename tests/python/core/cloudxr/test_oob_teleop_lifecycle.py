@@ -1663,7 +1663,9 @@ async def test_timeout_after_connect_click_does_not_dispatch_again():
 
     async def connect(*, on_dispatched, **_kwargs):
         clicks.append(True)
-        on_dispatched()
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
         await asyncio.sleep(0.1)
 
     with (
@@ -2414,3 +2416,55 @@ async def test_post_deadline_stale_evidence_remains_passive_and_degraded():
     attach.assert_not_called()
     same_tab.assert_not_called()
     automate.assert_not_called()
+
+
+async def test_readiness_stages_require_live_transport_and_fresh_stream():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+
+    await lifecycle._publish("starting", "WAITING_FOR_ADB", "Waiting for headset")
+    assert hub.statuses[-1]["readinessStage"] == "socketBound"
+
+    transport = dict(
+        adbReady=True,
+        networkPresent=True,
+        reverseRulesVerified=True,
+        turnPrerequisitesReady=True,
+    )
+    await lifecycle._publish(
+        "degraded", "AUTOMATING_BROWSER", "Transport ready", **transport
+    )
+    assert hub.statuses[-1]["readinessStage"] == "transportReady"
+
+    lifecycle.client_loaded = True
+    await lifecycle._publish("degraded", "CLIENT_LOADED", "Client loaded", **transport)
+    assert hub.statuses[-1]["clientLoaded"] is True
+    assert hub.statuses[-1]["streamConfirmed"] is False
+
+    lifecycle.connect_dispatched = True
+    await lifecycle._publish(
+        "degraded", "CONNECT_DISPATCHED", "CONNECT sent", **transport
+    )
+    assert hub.statuses[-1]["readinessStage"] == "connectDispatched"
+
+    await lifecycle._publish(
+        "active",
+        "ACTIVE",
+        "Stream confirmed",
+        **transport,
+        streaming=True,
+        clientMetricsFresh=True,
+    )
+    assert hub.statuses[-1]["readinessStage"] == "streamConfirmed"
+    assert hub.statuses[-1]["streamConfirmed"] is True
+
+    await lifecycle._publish("degraded", "WAITING_FOR_ADB", "Cable lost")
+    assert hub.statuses[-1]["readinessStage"] == "socketBound"
+    assert hub.statuses[-1]["streamConfirmed"] is False

@@ -33,7 +33,8 @@ import subprocess
 import time
 import urllib.request
 from contextvars import ContextVar
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from dataclasses import dataclass
 from enum import Enum
 from .oob_teleop_env import (
@@ -1442,7 +1443,8 @@ async def _cdp_session_click_connect(
     refresh_static_assets: bool = False,
     allow_navigation: bool = True,
     clear_stale_error: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> None:
     """Open a single CDP session and click the CONNECT button.
 
@@ -1651,6 +1653,10 @@ async def _cdp_session_click_connect(
             )
 
         log.info("CDP: page ready in %.1fs", loop.time() - start_ready)
+        if on_client_loaded is not None:
+            result = on_client_loaded()
+            if isawaitable(result):
+                await result
 
         # Extra grace period: the CONNECT button can become enabled before the
         # React <XR> store is fully mounted, which causes "XR is not available"
@@ -1683,17 +1689,20 @@ async def _cdp_session_click_connect(
                     "clickCount": 1,
                 },
             )
-        if on_dispatched is not None:
-            on_dispatched()
-        # Follow-up DOM click (safety net for Quest Browser) — inside the
-        # user-activation window opened by the trusted mouse events above.
-        await send(
-            ws,
-            "Runtime.evaluate",
-            {
-                "expression": "document.getElementById('startButton')?.click()",
-            },
-        )
+        dispatched = on_dispatched() if on_dispatched is not None else None
+        # Keep the Quest fallback inside the user-activation window; status
+        # persistence may block, so await it only after the DOM click.
+        try:
+            await send(
+                ws,
+                "Runtime.evaluate",
+                {
+                    "expression": "document.getElementById('startButton')?.click()",
+                },
+            )
+        finally:
+            if isawaitable(dispatched):
+                await dispatched
         log.info("CDP: CONNECT click dispatched (mouse + DOM)")
 
         # ---- monitor connection outcome -------------------------------------
@@ -1748,7 +1757,8 @@ async def _cdp_session_click_connect(
 async def attach_existing_oob_tab(
     *,
     click_connect: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> asyncio.Task:
     """Attach CDP monitoring to a surviving OOB tab without navigating it.
 
@@ -1781,6 +1791,7 @@ async def attach_existing_oob_tab(
                 allow_navigation=False,
                 clear_stale_error=True,
                 on_dispatched=on_dispatched,
+                on_client_loaded=on_client_loaded,
             )
         return asyncio.create_task(
             _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT),
@@ -1797,7 +1808,8 @@ async def run_oob_connect(
     timeout: float = 60.0,
     usb_local: bool = False,
     host_client: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> asyncio.Task | None:
     """Open the teleop page on the headset via ``am start`` and click CONNECT via CDP.
 
@@ -2030,6 +2042,7 @@ async def run_oob_connect(
             ws_url,
             refresh_static_assets=usb_local or host_client,
             on_dispatched=on_dispatched,
+            on_client_loaded=on_client_loaded,
         )
 
         # --- Step 5: background monitor for mid-stream error banners ---------

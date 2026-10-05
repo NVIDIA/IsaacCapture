@@ -312,6 +312,23 @@ session's headset selection, and ``ignoredSerials`` lists other observed ADB
 devices (up to eight display-safe serials). Selection is scoped to the current
 service session; a previous status file never pins a new session.
 
+The snapshot exposes separate readiness facts: ``socketBound`` means the WSS
+listener is serving; ``transportReady`` means the selected headset's network
+and, in USB-local mode, TURN and reverse rules have been verified;
+``clientLoaded`` means the browser's CONNECT control is actionable or a
+matching browser health report was received; ``connectDispatched`` records a
+host CONNECT click; and ``streamConfirmed`` requires a streaming report with
+fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
+milestone and when it was entered. Recovery can move the stage backward, and a
+surviving browser can resume a stream without another host CONNECT click.
+
+``CloudXRLauncher.wait_for_oob_stage("streamConfirmed", timeout_sec=90)``
+waits for live status and raises on a fatal worker failure or timeout. Call it
+after creating the OpenXR session when the application needs a confirmed
+headset stream before announcing startup. Starting the standalone CloudXR
+service confirms its listener only; headset setup continues with bounded
+retries and is visible through the OOB status.
+
 If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
 service publishes a terminal snapshot with ``health=fatal`` and ``state=FATAL``,
 clears readiness and streaming flags, and stops the runtime. Unlike a normal

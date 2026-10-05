@@ -213,6 +213,12 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
             "selectedSerial": "headset",
             "streaming": True,
             "browserReady": True,
+            "socketBound": True,
+            "transportReady": True,
+            "clientLoaded": True,
+            "connectDispatched": True,
+            "streamConfirmed": True,
+            "readinessStage": "streamConfirmed",
             "clientMetricsFresh": True,
         }
     )
@@ -230,8 +236,19 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
     assert status["sessionId"] == "test-session"
     assert status["writerPid"] == os.getpid()
     assert status["runtimePid"] == os.getpid()
-    for field in ("streaming", "browserReady", "clientMetricsFresh", "adbReady"):
+    for field in (
+        "streaming",
+        "browserReady",
+        "clientMetricsFresh",
+        "adbReady",
+        "socketBound",
+        "transportReady",
+        "clientLoaded",
+        "connectDispatched",
+        "streamConfirmed",
+    ):
         assert status[field] is False
+    assert status["readinessStage"] == "fatal"
     assert "fatal lifecycle failure" in status["reason"]
     assert "wss.log" in status["reason"]
     assert service.drain_oob_updates() == [status]
