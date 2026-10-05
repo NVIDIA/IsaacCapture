@@ -317,8 +317,9 @@ service publishes a terminal snapshot with ``health=fatal`` and ``state=FATAL``,
 clears readiness and streaming flags, and stops the runtime. Unlike a normal
 shutdown, it retains ``oob_status.json`` so ``service status`` can show the
 failure reason after the runtime stops. Foreground ``service run`` prints one
-actionable ``OOB stopped`` message and exits nonzero. An intentional shutdown
-does not create a fatal snapshot.
+actionable ``OOB stopped`` message and exits nonzero. The per-session WSS
+log contains the worker traceback, or a clear message if the worker returned
+without an exception. An intentional shutdown does not create a fatal snapshot.
 
 .. list-table:: Metrics reported per cadence (CloudXR.js 6.3.0)
    :header-rows: 1
