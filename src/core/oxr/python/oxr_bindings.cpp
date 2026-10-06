@@ -90,7 +90,7 @@ PYBIND11_MODULE(_oxr, m)
 
     py::enum_<core::OpenXRProviderReason>(m, "OpenXRProviderReason")
         .value("NONE", core::OpenXRProviderReason::NONE)
-        .value("FORM_FACTOR_UNAVAILABLE", core::OpenXRProviderReason::FORM_FACTOR_UNAVAILABLE)
+        .value("TRACKING_UNAVAILABLE", core::OpenXRProviderReason::TRACKING_UNAVAILABLE)
         .value("SESSION_LOST", core::OpenXRProviderReason::SESSION_LOST)
         .value("INSTANCE_LOST", core::OpenXRProviderReason::INSTANCE_LOST)
         .value("POLL_ERROR", core::OpenXRProviderReason::POLL_ERROR);

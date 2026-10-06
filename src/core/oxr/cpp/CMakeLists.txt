@@ -29,6 +29,9 @@ target_link_libraries(oxr_core
         OpenXR::OpenXR
         oxr::oxr_utils
         log_bridge::log_bridge_core
+    PRIVATE
+        # oxr_time.hpp includes the NVIDIA action-context extension declarations.
+        Teleop::openxr_extensions
 )
 
 # Create alias for consistent naming

@@ -345,10 +345,9 @@ def _reduce_openxr(
     if state != "AVAILABLE":
         raise ValueError(f"OpenXR provider snapshot has invalid state {state!r}")
     if headset_state == "DISCONNECTED":
-        if reason != "FORM_FACTOR_UNAVAILABLE":
+        if reason != "TRACKING_UNAVAILABLE":
             raise ValueError(
-                "disconnected OpenXR headset snapshot must report "
-                "FORM_FACTOR_UNAVAILABLE"
+                f"disconnected OpenXR headset snapshot has invalid reason {reason!r}"
             )
         return (
             replace(
@@ -360,7 +359,7 @@ def _reduce_openxr(
             replace(
                 headset,
                 status=DeviceState.DISCONNECTED,
-                reason=StatusReason.OPENXR_FORM_FACTOR_UNAVAILABLE,
+                reason=StatusReason.NO_CURRENT_DATA,
                 error=error,
             ),
         )

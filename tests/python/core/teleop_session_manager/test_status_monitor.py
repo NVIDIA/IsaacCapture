@@ -377,13 +377,12 @@ def test_openxr_owned_and_external_states(external, device_state, reason):
         (
             openxr_snapshot(
                 headset_state="DISCONNECTED",
-                reason="FORM_FACTOR_UNAVAILABLE",
-                result_code=-35,
-                error="HMD unavailable",
+                reason="TRACKING_UNAVAILABLE",
+                error="head tracking unavailable",
             ),
             ProviderState.AVAILABLE,
             DeviceState.DISCONNECTED,
-            StatusReason.OPENXR_FORM_FACTOR_UNAVAILABLE,
+            StatusReason.NO_CURRENT_DATA,
         ),
         (
             openxr_snapshot(
@@ -481,8 +480,7 @@ def test_owned_openxr_headset_reconnects_while_provider_remains_available():
     openxr_session = FakeOpenXRSession(
         openxr_snapshot(
             headset_state="DISCONNECTED",
-            reason="FORM_FACTOR_UNAVAILABLE",
-            result_code=-35,
+            reason="TRACKING_UNAVAILABLE",
         )
     )
     monitor.refresh(object(), openxr_session, now_ns=3)

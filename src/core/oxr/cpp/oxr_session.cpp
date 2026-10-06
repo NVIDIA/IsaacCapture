@@ -3,6 +3,9 @@
 
 #include "inc/oxr/oxr_session.hpp"
 
+#include <oxr_utils/oxr_time.hpp>
+
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +20,7 @@ namespace
 {
 
 constexpr std::chrono::seconds kSystemRetryDelay{ 1 };
+constexpr std::chrono::seconds kTrackingLossDelay{ 1 };
 
 // Helper to get user home directory (cross-platform: HOME on Unix, USERPROFILE on Windows)
 std::string get_home_dir()
@@ -78,14 +82,18 @@ OpenXRSession::OpenXRSession(const std::string& app_name, const std::vector<std:
       system_id_(XR_NULL_SYSTEM_ID),
       session_(XR_NULL_HANDLE, &xrDestroySession),
       space_(XR_NULL_HANDLE, &xrDestroySpace),
+      headset_space_(XR_NULL_HANDLE, &xrDestroySpace),
       wait_for_system_(wait_for_system)
 {
     create_instance(app_name, extensions);
     create_system();
     create_session();
     create_reference_space();
+    create_headset_probe();
     begin();
 }
+
+OpenXRSession::~OpenXRSession() = default;
 
 OpenXRSessionHandles OpenXRSession::get_handles() const
 {
@@ -166,29 +174,61 @@ OpenXRProviderSnapshot OpenXRSession::get_provider_snapshot()
         return fail(*terminal_reason, std::nullopt, std::move(terminal_error));
     }
 
-    XrSystemGetInfo system_info{ XR_TYPE_SYSTEM_GET_INFO };
-    system_info.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-    XrSystemId system_id = XR_NULL_SYSTEM_ID;
-    const XrResult result = xrGetSystem(instance_.get(), &system_info, &system_id);
-    if (result == XR_ERROR_FORM_FACTOR_UNAVAILABLE)
+    const auto disconnect = [this](std::string error)
     {
         provider_snapshot_.headset_state = OpenXRHeadsetState::DISCONNECTED;
-        provider_snapshot_.reason = OpenXRProviderReason::FORM_FACTOR_UNAVAILABLE;
-        provider_snapshot_.result_code = static_cast<std::int32_t>(result);
-        provider_snapshot_.error = "OpenXR HMD form factor is unavailable (XrResult " + std::to_string(result) + ")";
+        provider_snapshot_.reason = OpenXRProviderReason::TRACKING_UNAVAILABLE;
+        provider_snapshot_.result_code.reset();
+        provider_snapshot_.error = std::move(error);
         return provider_snapshot_;
+    };
+
+    XrTime now;
+    try
+    {
+        now = time_converter_->os_monotonic_now();
     }
+    catch (const std::exception& error)
+    {
+        return fail(OpenXRProviderReason::POLL_ERROR, std::nullopt,
+                    "Failed to obtain OpenXR time for headset tracking: " + std::string(error.what()));
+    }
+
+    XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
+    const XrResult result = xrLocateSpace(headset_space_.get(), space_.get(), now, &location);
     if (result == XR_ERROR_INSTANCE_LOST)
     {
         return fail(OpenXRProviderReason::INSTANCE_LOST, static_cast<std::int32_t>(result),
-                    "xrGetSystem failed because the OpenXR instance was lost");
+                    "xrLocateSpace failed because the OpenXR instance was lost");
+    }
+    if (result == XR_ERROR_SESSION_LOST)
+    {
+        return fail(OpenXRProviderReason::SESSION_LOST, static_cast<std::int32_t>(result),
+                    "xrLocateSpace failed because the OpenXR session was lost");
     }
     if (XR_FAILED(result))
     {
         return fail(OpenXRProviderReason::POLL_ERROR, static_cast<std::int32_t>(result),
-                    "xrGetSystem failed with XrResult " + std::to_string(result));
+                    "xrLocateSpace failed with XrResult " + std::to_string(result));
     }
 
+    const XrSpaceLocationFlags tracked_flags =
+        XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+    if ((location.locationFlags & tracked_flags) != tracked_flags)
+    {
+        const auto monotonic_now = std::chrono::steady_clock::now();
+        if (!untracked_since_)
+        {
+            untracked_since_ = monotonic_now;
+        }
+        if (monotonic_now - *untracked_since_ >= kTrackingLossDelay)
+        {
+            return disconnect("OpenXR head pose has not been actively tracked for 1 second");
+        }
+        return provider_snapshot_;
+    }
+
+    untracked_since_.reset();
     provider_snapshot_.headset_state = OpenXRHeadsetState::CONNECTED;
     provider_snapshot_.reason = OpenXRProviderReason::NONE;
     provider_snapshot_.result_code.reset();
@@ -207,11 +247,22 @@ void OpenXRSession::create_instance(const std::string& app_name, const std::vect
     strncpy(create_info.applicationInfo.engineName, "OXR_Tracking", XR_MAX_ENGINE_NAME_SIZE - 1);
 
     // Create a combined list with required extensions for headless/overlay mode
+    // and the headset tracking probe.
     std::vector<std::string> all_extensions = extensions;
 
-    // Add headless and overlay extensions automatically
-    all_extensions.push_back("XR_MND_headless");
-    all_extensions.push_back("XR_EXTX_overlay");
+    const auto add_extension = [&all_extensions](const std::string& extension)
+    {
+        if (std::find(all_extensions.begin(), all_extensions.end(), extension) == all_extensions.end())
+        {
+            all_extensions.push_back(extension);
+        }
+    };
+    add_extension("XR_MND_headless");
+    add_extension("XR_EXTX_overlay");
+    for (const auto& extension : XrTimeConverter::get_required_extensions())
+    {
+        add_extension(extension);
+    }
 
     // Convert vector<string> to array of const char* for OpenXR API
     std::vector<const char*> extension_ptrs;
@@ -246,6 +297,8 @@ void OpenXRSession::create_system()
         XrResult result = xrGetSystem(instance_.get(), &system_info, &system_id_);
         if (XR_SUCCEEDED(result))
         {
+            // xrGetSystem discovers the runtime's HMD system. CloudXR keeps
+            // that system available after its headset client disconnects.
             break;
         }
 
@@ -327,6 +380,23 @@ void OpenXRSession::create_reference_space()
     space_.reset(space);
 
     logger_->info("Created reference space, handle: {}", fmt::ptr(space_.get()));
+}
+
+void OpenXRSession::create_headset_probe()
+{
+    XrReferenceSpaceCreateInfo create_info{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
+    create_info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    create_info.poseInReferenceSpace.orientation.w = 1.0f;
+
+    XrSpace space = XR_NULL_HANDLE;
+    const XrResult result = xrCreateReferenceSpace(session_.get(), &create_info, &space);
+    if (XR_FAILED(result))
+    {
+        throw std::runtime_error("Failed to create headset tracking space: " + std::to_string(result));
+    }
+
+    headset_space_.reset(space);
+    time_converter_ = std::make_unique<XrTimeConverter>(get_handles());
 }
 
 void OpenXRSession::begin()
