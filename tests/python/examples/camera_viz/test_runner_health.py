@@ -31,3 +31,18 @@ def test_wait_propagates_health_check_failure() -> None:
         runner.wait(health_check=health_check)
 
     assert checks == 1
+
+
+def test_source_failure_stops_runner_and_reaches_wait() -> None:
+    failure = RuntimeError("camera producer: CUDA_ERROR_NO_BINARY_FOR_GPU")
+
+    class FailedSource:
+        def latest(self):
+            raise failure
+
+    runner = VizRunner(object(), [FailedSource()], [object()])
+    runner._submit_loop()
+    assert runner._stop.is_set()
+    with pytest.raises(RuntimeError, match="CUDA_ERROR_NO_BINARY_FOR_GPU") as error:
+        runner.wait()
+    assert error.value is failure

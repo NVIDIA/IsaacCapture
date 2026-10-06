@@ -88,19 +88,10 @@ if [[ "$MODE" == sender ]]; then
     WITH_RTP=true
 fi
 
-# major picks the cupy wheel (cupy-cuda12x / cupy-cuda13x).
-# major.minor picks the apt nvrtc package (cuda-nvrtc-12-6 on Orin/JP6,
-# cuda-nvrtc-13-0 on Thor/JP7); JetPack only publishes the exact-minor.
-cuda_major=12
-cuda_minor=0
-if [[ -e /usr/local/cuda ]]; then
-    cuda_resolved=$(readlink -f /usr/local/cuda 2>/dev/null)
-    full=$(echo "$cuda_resolved" | grep -oE 'cuda-[0-9]+\.[0-9]+' | head -1 | sed 's/cuda-//')
-    if [[ -n "$full" ]]; then
-        cuda_major=$(echo "$full" | cut -d. -f1)
-        cuda_minor=$(echo "$full" | cut -d. -f2)
-    fi
-fi
+# Select the toolkit CuPy will discover, without guessing from the driver.
+cuda_info=$(python3 "$HERE/check_cuda.py" --detect) || die "CUDA toolkit detection failed"
+IFS=$'\t' read -r cuda_root cuda_major cuda_minor <<< "$cuda_info"
+note "CUDA $cuda_major.$cuda_minor at $cuda_root"
 
 # System-dep check. apt-installable bits are NOT auto-installed — we
 # only probe what's present and, if anything is missing, print the
@@ -219,10 +210,10 @@ check_cuda_symlinks() {
     if ! $JETSON; then
         return 0
     fi
-    if [[ ! -d /usr/local/cuda/lib64 ]]; then
+    if [[ ! -d "$cuda_root/lib64" ]]; then
         return 0
     fi
-    local lib64=/usr/local/cuda/lib64
+    local lib64="$cuda_root/lib64"
     local cmds=()
     for stem in libnvrtc.so libnvrtc-builtins.so libcudart.so; do
         if [[ ! -e "$lib64/$stem" ]]; then
@@ -638,6 +629,10 @@ for m, why in fail:
     print(f"  {m}: {why}", file=sys.stderr)
 sys.exit(0 if not fail else 1)
 PY
+
+step "verifying CUDA kernel execution"
+"$PY" "$HERE/check_cuda.py" --cuda-major "$cuda_major" \
+    || die "CUDA kernel execution failed — see the diagnostics above"
 
 # Close on what the user can do next, not on the fact that the script ended.
 step "setup complete"
