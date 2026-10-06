@@ -433,375 +433,157 @@
                   
   <section id="camera-streaming">
 <h1>Camera Streaming<a class="headerlink" href="#camera-streaming" title="Link to this heading">#</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">camera_viz</span></code> is the reference camera-streaming sample built on <a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Televiz</span></a> (<code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code>). It captures frames from one or more cameras
-and streams them to an XR headset — one plane per camera, aspect-fit — either directly or from a
-robot to a workstation over the network (split mode). It can also stream <a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">recorded camera
-data</span></a> — a video file replayed in place of a live camera — and render
-to a desktop window instead of the headset.</p>
-<p>The sample lives at <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz" rel="noopener noreferrer" target="_blank">examples/camera_viz/</a>. This page walks you
-from setup and a camera-free first run to real cameras and the robot → workstation split mode.
-For the exact command surface and flags, see the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a>.</p>
+<p>Use <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz" rel="noopener noreferrer" target="_blank">camera_viz</a> to stream live cameras or recordings to an XR
+headset or desktop window. The sample uses <a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Televiz</span></a> and supports
+cameras attached locally or streamed from a robot over RTP.</p>
 <figure class="align-default" id="id1">
-<a class="no-image-zoom reference internal image-reference" href="../_images/televiz_2d.gif"><img alt="camera_viz in window mode with synthetic multi-camera feeds" class="no-image-zoom" src="../_images/televiz_2d.gif" style="width: 420px;" />
+<a class="no-image-zoom reference internal image-reference" href="../_images/televiz_2d.gif"><img alt="camera_viz with multiple camera feeds" class="no-image-zoom" src="../_images/televiz_2d.gif" style="width: 420px;" />
 </a>
 <figcaption>
-<p><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">camera_viz</span></code> in XR mode — one plane per camera.</span><a class="headerlink" href="#id1" title="Link to this image">#</a></p>
+<p><span class="caption-text">One plane per camera.</span><a class="headerlink" href="#id1" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <nav class="contents local" id="on-this-page">
 <p class="topic-title">On this page</p>
 <ul class="simple">
-<li><p><a class="reference internal" href="#requirements" id="id3">Requirements</a></p>
-<ul>
-<li><p><a class="reference internal" href="#required" id="id4">Required</a></p></li>
-<li><p><a class="reference internal" href="#optional-recommended-hardware" id="id5">Optional, recommended hardware</a></p></li>
-<li><p><a class="reference internal" href="#jetson-cuda-prerequisites" id="id6">Jetson CUDA prerequisites</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="#setup" id="id7">Setup</a></p>
-<ul>
-<li><p><a class="reference internal" href="#using-an-external-virtual-environment" id="id8">Using an external virtual environment</a></p></li>
-<li><p><a class="reference internal" href="#check-cuda-execution" id="id9">Check CUDA execution</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="#first-run-a-recording-no-camera-required" id="id10">First run — a recording, no camera required</a></p>
-<ul>
-<li><p><a class="reference internal" href="#first-session-checklist" id="id11">First-session checklist</a></p></li>
-<li><p><a class="reference internal" href="#replaying-your-own-recording" id="id12">Replaying your own recording</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="#supported-sources" id="id13">Supported sources</a></p></li>
-<li><p><a class="reference internal" href="#running-with-a-real-camera" id="id14">Running with a real camera</a></p></li>
-<li><p><a class="reference internal" href="#display-modes" id="id15">Display modes</a></p>
-<ul>
-<li><p><a class="reference internal" href="#controller-bindings" id="id16">Controller bindings</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="#display-surfaces" id="id17">Display surfaces</a></p></li>
-<li><p><a class="reference internal" href="#cloudxr-runtime-flags" id="id18">CloudXR runtime flags</a></p></li>
-<li><p><a class="reference internal" href="#split-mode-robot-workstation-over-rtp" id="id19">Split mode — robot → workstation over RTP</a></p>
-<ul>
-<li><p><a class="reference internal" href="#loopback" id="id20">Loopback</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="#configuration" id="id21">Configuration</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id22">Troubleshooting</a></p></li>
-<li><p><a class="reference internal" href="#how-it-works" id="id23">How it works</a></p></li>
-<li><p><a class="reference internal" href="#sharing-the-xr-session-with-teleopsession" id="id24">Sharing the XR session with TeleopSession</a></p></li>
-<li><p><a class="reference internal" href="#next-steps" id="id25">Next steps</a></p></li>
+<li><p><a class="reference internal" href="#requirements" id="id2">Requirements</a></p></li>
+<li><p><a class="reference internal" href="#setup" id="id3">Setup</a></p></li>
+<li><p><a class="reference internal" href="#first-run-a-recording-no-camera-required" id="id4">First run — a recording, no camera required</a></p></li>
+<li><p><a class="reference internal" href="#running-with-a-real-camera" id="id5">Running with a real camera</a></p></li>
+<li><p><a class="reference internal" href="#replaying-your-own-recording" id="id6">Replaying your own recording</a></p></li>
+<li><p><a class="reference internal" href="#display-modes" id="id7">Display modes</a></p></li>
+<li><p><a class="reference internal" href="#setup-options" id="id8">Setup options</a></p></li>
+<li><p><a class="reference internal" href="#cloudxr-runtime-flags" id="id9">CloudXR runtime flags</a></p></li>
+<li><p><a class="reference internal" href="#split-mode-robot-workstation-over-rtp" id="id10">Split mode — robot → workstation over RTP</a></p></li>
+<li><p><a class="reference internal" href="#configuration" id="id11">Configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id12">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#next-steps" id="id13">Next steps</a></p></li>
 </ul>
 </nav>
 <section id="requirements">
-<h2><a class="toc-backref" href="#id3" role="doc-backlink">Requirements</a><a class="headerlink" href="#requirements" title="Link to this heading">#</a></h2>
-<section id="required">
-<h3><a class="toc-backref" href="#id4" role="doc-backlink">Required</a><a class="headerlink" href="#required" title="Link to this heading">#</a></h3>
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Requirements</a><a class="headerlink" href="#requirements" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>GPU host:</strong> an Ubuntu workstation meeting the <a class="reference internal" href="requirements.html"><span class="doc">system requirements</span></a>, or a Jetson with the appropriate JetPack installation:
-<strong>Orin:</strong> <a class="reference external" href="https://developer.nvidia.com/embedded/jetpack-sdk-62" rel="noopener noreferrer" target="_blank">JetPack 6.2.x</a> or
-<a class="reference external" href="https://docs.nvidia.com/jetson/agx-orin-devkit/user-guide/latest/setup_jetpack.html" rel="noopener noreferrer" target="_blank">7.2.1</a>;
-<strong>Thor:</strong> <a class="reference external" href="https://developer.nvidia.com/embedded/jetpack" rel="noopener noreferrer" target="_blank">JetPack 7.x</a>, including 7.2.1.
-Every source uses GPU-resident frames through CuPy, including recordings and synthetic
-patterns. Window mode also requires the NVIDIA GPU.</p></li>
-<li><p><strong>CUDA development components:</strong> the CUDA runtime, NVRTC, and development headers matching
-the installed CUDA version. CuPy compiles kernels at runtime; a working driver alone is
-insufficient. For JetPack 7.2.1 / CUDA 13.2, follow <a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a> below.</p></li>
-<li><p><strong>Display:</strong> for XR, a supported headset running the CloudXR client, with network access to
-the GPU host and the <a class="reference internal" href="../getting_started/quick_start.html#whitelist-firewall-ports"><span class="std std-ref">CloudXR firewall ports</span></a> open. Follow
-<a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">5. Connect an XR headset</span></a> for headset setup. Alternatively, <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> needs a local
-desktop display or a video-capable remote desktop. The viewer starts CloudXR when needed.</p></li>
-<li><p><strong>Sample and dependencies:</strong> a repository checkout, Git LFS for the bundled replay clip,
-and network access for setup and the first CloudXR launch. Setup creates a Python 3.12
-environment and installs the sample’s Python dependencies. Have sudo access available if
-it prompts to install missing system packages.</p></li>
+<li><p><strong>Host:</strong> Ubuntu with an NVIDIA GPU; see <a class="reference internal" href="requirements.html"><span class="doc">system requirements</span></a>.
+Jetson: Orin with JetPack 6.2.x or 7.2.1; Thor with JetPack 7.x.</p></li>
+<li><p><strong>CUDA:</strong> runtime, NVRTC, and development headers matching the installed toolkit.
+JetPack 7.2.1 uses CUDA 13.2; see <a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a>.
+A GPU is required even for recordings and window mode.</p></li>
+<li><p><strong>Display:</strong> a <a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">supported XR headset</span></a> with network access to the host
+and <a class="reference internal" href="../getting_started/quick_start.html#whitelist-firewall-ports"><span class="std std-ref">CloudXR ports</span></a> open, or a desktop display for window mode.</p></li>
+<li><p><strong>Camera — optional, recommended:</strong> USB / UVC, OAK-D, or supported ZED camera for a live feed.
+Start with the bundled recording if no camera is available. ZED requires its SDK.</p></li>
+<li><p><strong>Controllers — optional:</strong> for adjusting the view in XR.</p></li>
 </ul>
-</section>
-<section id="optional-recommended-hardware">
-<h3><a class="toc-backref" href="#id5" role="doc-backlink">Optional, recommended hardware</a><a class="headerlink" href="#optional-recommended-hardware" title="Link to this heading">#</a></h3>
-<ul class="simple">
-<li><p><strong>Camera:</strong> recommended for checking the actual live view and capture latency, but optional
-for the first run. Use a USB / UVC webcam, OAK-D, or supported ZED camera; see
-<a class="reference internal" href="#camera-streaming-sources"><span class="std std-ref">Supported sources</span></a>. Connect it to the viewer host for direct mode, with the
-camera’s required USB connection, power, device permissions, and SDK. OAK-D and UVC support
-are installed by default; ZED needs its SDK and <code class="docutils literal notranslate"><span class="pre">setup</span> <span class="pre">--with-zed</span></code>. A recording or synthetic
-pattern lets you complete the initial display checks without a camera.</p></li>
-<li><p><strong>XR controllers:</strong> optional for viewing, recommended for testing the live placement and
-display controls in <a class="reference internal" href="#camera-streaming-controls"><span class="std std-ref">Controller bindings</span></a>.</p></li>
-</ul>
-</section>
-<section id="jetson-cuda-prerequisites">
-<span id="camera-streaming-jetson-cuda"></span><h3><a class="toc-backref" href="#id6" role="doc-backlink">Jetson CUDA prerequisites</a><a class="headerlink" href="#jetson-cuda-prerequisites" title="Link to this heading">#</a></h3>
-<p>On JetPack 7.2.1, use the CUDA 13.2 development components from the matching NVIDIA package
-repositories. Check the BSP and toolkit before running sample setup:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cat<span class="w"> </span>/etc/nv_tegra_release
-readlink<span class="w"> </span>-f<span class="w"> </span>/usr/local/cuda
-/usr/local/cuda/bin/nvcc<span class="w"> </span>--version
-</pre></div>
-</div>
-<p>JetPack 7.2.1 reports L4T <code class="docutils literal notranslate"><span class="pre">R39</span></code>, <code class="docutils literal notranslate"><span class="pre">REVISION:</span> <span class="pre">2.1</span></code>; the toolkit should report CUDA 13.2.
-If the development components are missing, follow NVIDIA’s
-<a class="reference external" href="https://docs.nvidia.com/jetson/agx-orin-devkit/user-guide/latest/setup_jetpack.html" rel="noopener noreferrer" target="_blank">JetPack installation instructions</a> for your
-BSP. The full <code class="docutils literal notranslate"><span class="pre">nvidia-jetpack</span></code> package includes them; for just CUDA, NVIDIA documents
-<a class="reference external" href="https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_jetpack.html#install-specific-jetpack-components" rel="noopener noreferrer" target="_blank">nvidia-cuda-dev</a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>update
-sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>nvidia-cuda-dev
-</pre></div>
-</div>
-<p>The runtime-only <code class="docutils literal notranslate"><span class="pre">nvidia-cuda</span></code> package is insufficient. Check that <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> points
-at the intended toolkit before setup: the sample uses it to select <code class="docutils literal notranslate"><span class="pre">cupy-cuda12x</span></code> or
-<code class="docutils literal notranslate"><span class="pre">cupy-cuda13x</span></code>. On JetPack 6.2.x, keep the matching CUDA 12.x components. The sample’s
-<code class="docutils literal notranslate"><span class="pre">--jetson</span></code> flag handles CUDA library discovery; it does not install the full toolkit or
-upgrade JetPack.</p>
-</section>
 </section>
 <section id="setup">
-<h2><a class="toc-backref" href="#id7" role="doc-backlink">Setup</a><a class="headerlink" href="#setup" title="Link to this heading">#</a></h2>
-<p>Clone the repository if you haven’t already (quick start step <a class="reference internal" href="../getting_started/quick_start.html#check-out-code-base"><span class="std std-ref">1. Check out code base (for examples)</span></a>), then
-run the sample’s one-time setup:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup
-<span class="nb">source</span><span class="w"> </span>examples/camera_viz/.venv/bin/activate
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Setup</a><a class="headerlink" href="#setup" title="Link to this heading">#</a></h2>
+<p>From a <a class="reference internal" href="../getting_started/quick_start.html#check-out-code-base"><span class="std std-ref">repository checkout</span></a>, run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/camera_viz
+./camera_viz.sh<span class="w"> </span>setup
 </pre></div>
 </div>
-<p>On a Jetson, add <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> to the setup command. Activating the environment is optional
-for <code class="docutils literal notranslate"><span class="pre">camera_viz.sh</span></code> commands; the wrapper selects the sample’s environment explicitly.</p>
-<p>There is no need to install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package yourself. <code class="docutils literal notranslate"><span class="pre">setup</span></code> builds the
-sample’s own environment: <code class="docutils literal notranslate"><span class="pre">isaaccapture[cloudxr]</span></code> — the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra is not optional here,
-since XR is the default display mode and the viewer launches the runtime itself — plus every
-other Python dependency, into <code class="docutils literal notranslate"><span class="pre">.venv/</span></code> via <code class="docutils literal notranslate"><span class="pre">uv</span></code>. It resolves a release matching the checkout’s
-major/minor version, falling back to a release candidate and then, after asking, to a source build
-of the surrounding checkout (see <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/scripts/_install_deps.sh" rel="noopener noreferrer" target="_blank">scripts/_install_deps.sh</a>; <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> and <code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code> override
-the choice). When required system packages are missing, it prints the exact <code class="docutils literal notranslate"><span class="pre">apt-get</span></code> line
-to approve — declining, or a non-interactive run, aborts.</p>
-<p>By default <code class="docutils literal notranslate"><span class="pre">setup</span></code> provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
-mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
-needs. Flags trim or extend that:</p>
-<div class="pst-scrollable-table-container"><table class="table">
-<colgroup>
-<col style="width: 22.0%" />
-<col style="width: 78.0%" />
-</colgroup>
-<thead>
-<tr class="row-odd"><th class="head"><p>Flag</p></th>
-<th class="head"><p>Effect</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--no-v4l2</span></code></p></td>
-<td><p>Skip USB / UVC webcam support (<code class="docutils literal notranslate"><span class="pre">opencv-python</span></code>).</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--no-oakd</span></code></p></td>
-<td><p>Skip OAK-D support (<code class="docutils literal notranslate"><span class="pre">depthai</span></code>).</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--with-rtp</span></code></p></td>
-<td><p>Also install the split-mode dependencies: the GStreamer system packages, PyGObject, and the
-native NVENC/NVDEC codec build. Required for <code class="docutils literal notranslate"><span class="pre">loopback</span></code> and for any config with
-<code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code>; implied by <code class="docutils literal notranslate"><span class="pre">--sender-only</span></code>. Direct mode does not need it.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--with-zed</span></code></p></td>
-<td><p>Also build + install the ZED SDK’s Python API (<code class="docutils literal notranslate"><span class="pre">pyzed</span></code>). Requires the ZED SDK on the
-machine (default <code class="docutils literal notranslate"><span class="pre">/usr/local/zed</span></code>; override with <code class="docutils literal notranslate"><span class="pre">--zed-sdk</span> <span class="pre">PATH</span></code>).</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--sender-only</span></code></p></td>
-<td><p>Split mode only — robot-side install of just the sender’s dependencies.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--jetson</span></code></p></td>
-<td><p>Enable Jetson CUDA library discovery for direct or split mode. With RTP enabled, also
-check for the matching NVRTC package. Install CUDA development components first.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--venv</span> <span class="pre">PATH</span></code></p></td>
-<td><p>Use <code class="docutils literal notranslate"><span class="pre">PATH</span></code> for the environment and link the sample’s <code class="docutils literal notranslate"><span class="pre">.venv</span></code> to it; see below.</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--wheel</span> <span class="pre">PATH</span></code></p></td>
-<td><p>Install a locally built <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel instead of resolving one from the index — for
-developing Isaac Teleop itself.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code></p></td>
-<td><p>Skip the package index and build <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> from the surrounding checkout without
-prompting — a full C++ / CUDA / Vulkan build (see
-<a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a>).</p></td>
-</tr>
-</tbody>
-</table>
-</div>
-<section id="using-an-external-virtual-environment">
-<h3><a class="toc-backref" href="#id8" role="doc-backlink">Using an external virtual environment</a><a class="headerlink" href="#using-an-external-virtual-environment" title="Link to this heading">#</a></h3>
-<p>To reuse an existing Python 3.12 environment, pass its path explicitly, from the repository root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--venv<span class="w"> </span>/absolute/path/to/venv
-</pre></div>
-</div>
-<p>Add <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> on Jetson. Setup installs dependencies into that environment and creates a
-symlink at <code class="docutils literal notranslate"><span class="pre">examples/camera_viz/.venv</span></code>. If that path already exists as a real directory,
-move it aside before using <code class="docutils literal notranslate"><span class="pre">--venv</span></code>; setup refuses to replace it. Subsequent <code class="docutils literal notranslate"><span class="pre">run</span></code> and
-<code class="docutils literal notranslate"><span class="pre">loopback</span></code> commands use this link automatically. Activating another environment, or setting
-<code class="docutils literal notranslate"><span class="pre">VIRTUAL_ENV</span></code>, does not change the wrapper’s choice.</p>
-</section>
-<section id="check-cuda-execution">
-<h3><a class="toc-backref" href="#id9" role="doc-backlink">Check CUDA execution</a><a class="headerlink" href="#check-cuda-execution" title="Link to this heading">#</a></h3>
-<p>Setup’s final check verifies imports. Before opening the viewer, run this small GPU operation
-from the repository root to also check CuPy kernel compilation and execution:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/.venv/bin/python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY'</span>
-<span class="s">import cupy as cp</span>
-
-<span class="s">values = cp.arange(4, dtype=cp.float32)</span>
-<span class="s">assert cp.asnumpy(values + 1).tolist() == [1.0, 2.0, 3.0, 4.0]</span>
-<span class="s">print("CUDA kernel check passed")</span>
-<span class="s">PY</span>
-</pre></div>
-</div>
-<p>Missing NVRTC libraries or CUDA headers here mean the CUDA installation needs attention;
-see <a class="reference internal" href="#camera-streaming-troubleshooting"><span class="std std-ref">Troubleshooting</span></a> before continuing.</p>
-</section>
+<p>Setup creates a Python 3.12 <code class="docutils literal notranslate"><span class="pre">.venv</span></code> with <code class="docutils literal notranslate"><span class="pre">isaaccapture[cloudxr]</span></code>, UVC, and OAK-D support.
+It needs network access and may prompt for sudo to install system dependencies.
+On Jetson, install the <a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">CUDA prerequisites</span></a> first and add
+<code class="docutils literal notranslate"><span class="pre">--jetson</span></code>. To reuse an environment, use <a class="reference internal" href="#camera-streaming-external-venv"><span class="std std-ref">setup –venv</span></a>.</p>
+<p>All commands below run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code>. No environment activation is needed.</p>
 </section>
 <section id="first-run-a-recording-no-camera-required">
-<span id="recorded-camera-streaming"></span><h2><a class="toc-backref" href="#id10" role="doc-backlink">First run — a recording, no camera required</a><a class="headerlink" href="#first-run-a-recording-no-camera-required" title="Link to this heading">#</a></h2>
-<p>The recorded-camera source (<code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>) replays a video file through exactly the same
-source → layer → Televiz path a live camera uses. It is the supported way to stream recorded
-camera data, it needs no extra setup, and it is the quickest end-to-end check. A test clip ships
-with the repo, and <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/configs/replay.yaml" rel="noopener noreferrer" target="_blank">configs/replay.yaml</a>
-already points at it. Fetch the clip with Git LFS if your checkout contains only its pointer:</p>
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">First run — a recording, no camera required</a><a class="headerlink" href="#first-run-a-recording-no-camera-required" title="Link to this heading">#</a></h2>
+<p>Fetch the bundled clip with Git LFS, then launch the viewer:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>lfs<span class="w"> </span>pull<span class="w"> </span>--include<span class="o">=</span><span class="s2">"examples/camera_viz/test_data/recording.mp4"</span>
+./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/replay.yaml
 </pre></div>
 </div>
-<p>Keep the default setup’s OpenCV dependency for video replay (do not use <code class="docutils literal notranslate"><span class="pre">--no-v4l2</span></code> for this
-first run). From the repository root, choose one of these launch commands:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/camera_viz
-./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/replay.yaml<span class="w">                 </span><span class="c1"># XR headset (default)</span>
-./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/replay.yaml<span class="w"> </span>--mode<span class="w"> </span>window<span class="w">   </span><span class="c1"># desktop window instead</span>
-</pre></div>
-</div>
-<p>In XR mode the viewer first brings up the CloudXR runtime (accept the EULA on first launch, or
-pass <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>). Open the printed client URL in your headset browser, accept the host’s
-certificate, and click <strong>Connect</strong>, following <a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">5. Connect an XR headset</span></a>. On Jetson Orin, select
-<strong>H.264</strong> in the client’s <strong>Video Codec</strong> setting before connecting.</p>
-<p><strong>You should see</strong> the terminal report the session and the source coming up:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">camera_viz</span><span class="p">:</span> <span class="n">source</span><span class="o">=</span><span class="n">local</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="n">xr</span><span class="p">,</span> <span class="n">xr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">shapes</span><span class="o">=</span><span class="n">quad</span><span class="p">,</span> <span class="mi">1</span> <span class="n">layer</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
-<span class="p">[</span><span class="n">video</span><span class="p">]</span> <span class="n">opening</span><span class="o">...</span>
-<span class="p">[</span><span class="n">video</span><span class="p">]</span> <span class="n">connected</span>
-<span class="p">[</span><span class="n">video</span><span class="p">]</span> <span class="n">streaming</span>
-</pre></div>
-</div>
-<p>and the clip looping on a plane in the headset once it connects — or in a desktop window
-(<code class="docutils literal notranslate"><span class="pre">mode=window,</span> <span class="pre">xr=False</span></code>) with the <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> override, which starts no runtime.</p>
+<p>The viewer starts CloudXR automatically; accept the EULA on first launch. Open the printed
+client URL in your headset browser, accept the certificate, and click <strong>Connect</strong>
+(<a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">connection instructions</span></a>).</p>
+<p>For a desktop preview instead, add <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to the run command.
+On Orin, select <strong>H.264</strong> in the client and apply the
+<a class="reference internal" href="#camera-streaming-troubleshooting"><span class="std std-ref">black-plane workaround</span></a> below.</p>
 <section id="first-session-checklist">
-<span id="camera-streaming-first-session"></span><h3><a class="toc-backref" href="#id11" role="doc-backlink">First-session checklist</a><a class="headerlink" href="#first-session-checklist" title="Link to this heading">#</a></h3>
-<p>Use the unmodified <code class="docutils literal notranslate"><span class="pre">replay.yaml</span></code> for these checks; it starts with one mono plane in <code class="docutils literal notranslate"><span class="pre">lazy</span></code>
-lock mode. For <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code>, check visibility and image quality, then stop and restart;
-head tracking, recentering, and XR controller checks require a headset.</p>
-<ol class="arabic simple">
-<li><p><strong>Confirm the plane is visible.</strong> The clip should play and loop on one plane in front of
-you. A connected client or a positive frame rate alone does not confirm that the image is
-visible. For a black plane on Orin, apply the <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> workaround in
-<a class="reference internal" href="#camera-streaming-troubleshooting"><span class="std std-ref">Troubleshooting</span></a> and restart.</p></li>
-<li><p><strong>Move your head.</strong> Make small turns and lean slightly. In the default <code class="docutils literal notranslate"><span class="pre">lazy</span></code> mode, the
-plane should stay anchored in the room for small movements while your viewpoint changes.</p></li>
-<li><p><strong>Test lazy recentering.</strong> Turn to look well away from the plane (more than 45 degrees) and
-hold that direction for about a second. The plane should move smoothly back in front of
-you. The defaults are a 0.5-second delay and a 0.3-second transition; the placement settings
-below control these values.</p></li>
-<li><p><strong>Check image quality.</strong> Watch while still and while moving your head. Look for freezing,
-flicker, torn or corrupted regions, and unexpected colors. Replay is mono, so both eyes
-should see the same source image. To separate a recording problem from the display path,
-stop the viewer and try <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">run</span> <span class="pre">configs/synthetic.yaml</span></code>: its color pattern
-should animate continuously.</p></li>
-<li><p><strong>Try the controllers, if available.</strong> Click the right stick to recenter, press <code class="docutils literal notranslate"><span class="pre">A</span></code> to
-change lock mode, and press <code class="docutils literal notranslate"><span class="pre">Y</span></code> to restore the YAML settings. Confirm the change appears
-in the view and status panel. <code class="docutils literal notranslate"><span class="pre">B</span></code> only affects stereo sources, so it has no effect on
-this mono replay. See <a class="reference internal" href="#camera-streaming-controls"><span class="std std-ref">Controller bindings</span></a> for the full bindings.</p></li>
-<li><p><strong>Stop and repeat.</strong> Press <code class="docutils literal notranslate"><span class="pre">Ctrl+C</span></code> in the viewer terminal, launch the same command again,
-and reconnect the client if needed. Confirm the plane is visible and animating again.</p></li>
-</ol>
-<p>If a check fails, use <a class="reference internal" href="#camera-streaming-troubleshooting"><span class="std std-ref">Troubleshooting</span></a> before adding a real camera or
-the split-mode network path. For a bug report, include the failing check, config, host / GPU,
-JetPack and CUDA versions where applicable, client device, and relevant logs.</p>
+<span id="camera-streaming-first-session"></span><h3>First-session checklist<a class="headerlink" href="#first-session-checklist" title="Link to this heading">#</a></h3>
+<p>With the default replay config:</p>
+<ul class="simple">
+<li><p><strong>Playback:</strong> one plane is visible and the clip loops.</p></li>
+<li><p><strong>Head movement:</strong> small turns and leaning change your viewpoint; the plane stays anchored.</p></li>
+<li><p><strong>Lazy recentering:</strong> look more than 45° away for about a second; the plane moves smoothly
+back in front of you.</p></li>
+<li><p><strong>Image quality:</strong> no freezing, flicker, torn regions, or unexpected colors, including while
+moving your head. This mono clip should show the same source image in both eyes.</p></li>
+<li><p><strong>Controllers, if available:</strong> right-stick click recenters; <code class="docutils literal notranslate"><span class="pre">A</span></code> changes lock mode;
+<code class="docutils literal notranslate"><span class="pre">Y</span></code> restores the config.</p></li>
+<li><p><strong>Restart:</strong> press <code class="docutils literal notranslate"><span class="pre">Ctrl+C</span></code>, rerun, and reconnect if needed; playback resumes.</p></li>
+</ul>
+<p>In window mode, check playback, image quality, and restart. If a check fails, see
+<a class="reference internal" href="#camera-streaming-troubleshooting"><span class="std std-ref">Troubleshooting</span></a>.</p>
 </section>
-<section id="replaying-your-own-recording">
-<h3><a class="toc-backref" href="#id12" role="doc-backlink">Replaying your own recording</a><a class="headerlink" href="#replaying-your-own-recording" title="Link to this heading">#</a></h3>
-<p>Point <code class="docutils literal notranslate"><span class="pre">path</span></code> at any file OpenCV’s FFmpeg backend reads — mp4 / mkv / webm carrying H.264,
-HEVC, AV1, and so on. The file is probed once at startup for its size and frame rate (a missing
-or absurd rate falls back to 30 fps); a missing or unreadable file is a configuration error and
-fails immediately instead of retrying like a camera would. A complete config:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-
-<span class="nt">cameras</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">replay</span>
-<span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">video</span>
-<span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">../test_data/recording.mp4</span><span class="w">   </span><span class="c1"># required; relative to this YAML's directory</span>
-<span class="w">    </span><span class="nt">loop</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                         </span><span class="c1"># false = hold the last frame at end of file</span>
-<span class="w">    </span><span class="nt">fps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">                             </span><span class="c1"># 0 = the file's native rate</span>
-<span class="w">    </span><span class="nt">stereo</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">                      </span><span class="c1"># true = split a side-by-side recording into eyes</span>
-<span class="w">    </span><span class="c1"># width/height default to the file's native size (per eye when stereo)</span>
-
-<span class="nt">display</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xr</span><span class="w">                             </span><span class="c1"># or: window</span>
-<span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">replay</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> lock_mode</span><span class="p">:</span><span class="w"> </span><span class="nv">lazy</span><span class="p p-Indicator">,</span><span class="nt"> distance</span><span class="p">:</span><span class="w"> </span><span class="nv">1.5</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</section>
+<section id="running-with-a-real-camera">
+<span id="camera-streaming-live-camera"></span><h2><a class="toc-backref" href="#id5" role="doc-backlink">Running with a real camera</a><a class="headerlink" href="#running-with-a-real-camera" title="Link to this heading">#</a></h2>
+<p>Attach the camera to the viewer host and keep <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">local</span></code>. Edit the matching config’s
+device, resolution, and frame rate, then run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml<span class="w">     </span><span class="c1"># or oakd.yaml / zed.yaml</span>
 </pre></div>
 </div>
-<p>With <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code>, <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">height</span></code>, and <code class="docutils literal notranslate"><span class="pre">fps</span></code> become required — the sender paces its
-encode loop at <code class="docutils literal notranslate"><span class="pre">fps</span></code> and the receiver sizes its decoder from the config — and <code class="docutils literal notranslate"><span class="pre">stereo</span></code> is
-rejected, since the sender needs per-eye streams. A mono recording is otherwise a fine capture
-side for <a class="reference internal" href="#split-mode"><span class="std std-ref">split mode</span></a> and for <code class="docutils literal notranslate"><span class="pre">loopback</span></code>, which exercises the whole
-encode → UDP → decode path with no camera attached.</p>
-</section>
-</section>
+<p><code class="docutils literal notranslate"><span class="pre">v4l2.yaml</span></code> defaults to a ZED Mini’s 2560×720 UVC mode. For a regular webcam, use modes reported
+by <code class="docutils literal notranslate"><span class="pre">v4l2-ctl</span> <span class="pre">--list-formats-ext</span></code>. ZED SDK capture also needs <code class="docutils literal notranslate"><span class="pre">setup</span> <span class="pre">--with-zed</span></code>.</p>
 <section id="supported-sources">
-<span id="camera-streaming-sources"></span><h2><a class="toc-backref" href="#id13" role="doc-backlink">Supported sources</a><a class="headerlink" href="#supported-sources" title="Link to this heading">#</a></h2>
-<p>The source kind is selected by the <code class="docutils literal notranslate"><span class="pre">type</span></code> field of each entry in the YAML <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list:</p>
+<span id="camera-streaming-sources"></span><h3>Supported sources<a class="headerlink" href="#supported-sources" title="Link to this heading">#</a></h3>
+<p>Set <code class="docutils literal notranslate"><span class="pre">type</span></code> in each <code class="docutils literal notranslate"><span class="pre">cameras</span></code> entry. Multiple entries produce one plane per camera.
+See <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/configs" rel="noopener noreferrer" target="_blank">configs/</a> for complete examples.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 16.0%" />
 <col style="width: 84.0%" />
 </colgroup>
 <thead>
-<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">type:</span></code></p></th>
-<th class="head"><p>Notes</p></th>
+<tr class="row-odd"><th class="head"><p>Type</p></th>
+<th class="head"><p>Source</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">v4l2</span></code></p></td>
-<td><p>USB / UVC cameras — anything <code class="docutils literal notranslate"><span class="pre">v4l2-ctl</span> <span class="pre">--list-formats-ext</span></code> reports.</p></td>
+<td><p>USB / UVC camera.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">oakd</span></code></p></td>
-<td><p>OAK-D RGB / LEFT / RIGHT; mono or <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code>. Stereo ships GRAY8 over USB to halve
-bandwidth and is broadcast to RGBA on the GPU; <code class="docutils literal notranslate"><span class="pre">stereo_rgb</span></code> keeps color.</p></td>
+<td><p>OAK-D RGB / LEFT / RIGHT; <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code> for grayscale stereo.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">zed</span></code></p></td>
-<td><p>ZED 2 / Mini / X One; mono or <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code> (per-eye SDK retrieve, zero-copy on the GPU).</p></td>
+<td><p>ZED 2 / Mini / X One through the ZED SDK; mono or stereo.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">video</span></code></p></td>
-<td><p>Recorded camera data — video-file replay (anything OpenCV’s FFmpeg backend reads). Loops
-by default; <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code> splits side-by-side recordings into eyes (viewer only). See
-<a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">First run — a recording, no camera required</span></a>.</p></td>
+<td><p><a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">Recorded video</span></a>, including side-by-side stereo.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">synthetic</span></code></p></td>
-<td><p>Debugging tool — GPU-generated test pattern, no camera or file required.</p></td>
+<td><p>Animated GPU test pattern; no camera or file needed.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 </section>
-<section id="running-with-a-real-camera">
-<span id="camera-streaming-live-camera"></span><h2><a class="toc-backref" href="#id14" role="doc-backlink">Running with a real camera</a><a class="headerlink" href="#running-with-a-real-camera" title="Link to this heading">#</a></h2>
-<p>Attach the camera to the machine that runs the viewer, keep <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">local</span></code> in the config, and
-run with the matching config. First edit its device, resolution, and frame rate to match your
-camera. In particular, <code class="docutils literal notranslate"><span class="pre">v4l2.yaml</span></code> defaults to a ZED Mini’s 2560×720 UVC mode; a regular webcam
-needs values it supports (inspect them with <code class="docutils literal notranslate"><span class="pre">v4l2-ctl</span> <span class="pre">--list-formats-ext</span></code>):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml<span class="w">     </span><span class="c1"># or oakd.yaml / zed.yaml</span>
+</section>
+<section id="replaying-your-own-recording">
+<span id="recorded-camera-streaming"></span><h2><a class="toc-backref" href="#id6" role="doc-backlink">Replaying your own recording</a><a class="headerlink" href="#replaying-your-own-recording" title="Link to this heading">#</a></h2>
+<p>Edit <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/configs/replay.yaml" rel="noopener noreferrer" target="_blank">configs/replay.yaml</a>:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">cameras</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">replay</span>
+<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">video</span>
+<span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/clip.mp4</span>
+<span class="w">    </span><span class="nt">loop</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">    </span><span class="nt">fps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">          </span><span class="c1"># use the file's frame rate</span>
+<span class="w">    </span><span class="nt">stereo</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">   </span><span class="c1"># true for side-by-side recordings in direct mode</span>
 </pre></div>
 </div>
-<p><strong>You should see</strong> the same startup lines as above with the camera’s tag (<code class="docutils literal notranslate"><span class="pre">[v4l2]</span></code>,
-<code class="docutils literal notranslate"><span class="pre">[oakd]</span></code>, <code class="docutils literal notranslate"><span class="pre">[zed]</span></code>) and the live feed. Multiple entries in the <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list render as one
-plane each.</p>
+<p>Relative paths resolve from the YAML’s directory. OpenCV’s FFmpeg backend must support the
+file’s format. Size and frame rate default to the recording’s values; <code class="docutils literal notranslate"><span class="pre">loop:</span> <span class="pre">false</span></code> holds
+the last frame. Keep setup’s OpenCV dependency for replay (<code class="docutils literal notranslate"><span class="pre">--no-v4l2</span></code> skips it).</p>
 </section>
 <section id="display-modes">
-<h2><a class="toc-backref" href="#id15" role="doc-backlink">Display modes</a><a class="headerlink" href="#display-modes" title="Link to this heading">#</a></h2>
-<p>XR is the default: each camera renders as its own plane in the headset via the active OpenXR
-runtime, and stereo sources (<code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code>) render true side-by-side stereo. Pass
-<code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> (or set <code class="docutils literal notranslate"><span class="pre">display.mode:</span> <span class="pre">window</span></code> in the YAML) to render to a desktop window
-instead — no headset or runtime needed; stereo shows the left eye.</p>
-<p>In XR, how a plane follows the operator’s head is the per-camera <code class="docutils literal notranslate"><span class="pre">lock_mode</span></code> under
-<code class="docutils literal notranslate"><span class="pre">display.placements.&lt;name&gt;</span></code>:</p>
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Display modes</a><a class="headerlink" href="#display-modes" title="Link to this heading">#</a></h2>
+<p>XR is the default. Use <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> or <code class="docutils literal notranslate"><span class="pre">display.mode:</span> <span class="pre">window</span></code> for a desktop preview;
+stereo sources show only the left eye in window mode.</p>
+<p>In XR, set <code class="docutils literal notranslate"><span class="pre">display.placements.&lt;camera-name&gt;.lock_mode</span></code>:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 16.0%" />
@@ -814,36 +596,28 @@ instead — no headset or runtime needed; stereo shows the left eye.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">world</span></code></p></td>
-<td><p>Placed once in front of you and stays put.</p></td>
+<td><p>Stays where initially placed.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">head</span></code></p></td>
-<td><p>Follows your head every frame. Head-locked content updates its pose at application
-rate, so it trails fast head motion by roughly a frame — expected for any head-locked
-OpenXR layer; prefer <code class="docutils literal notranslate"><span class="pre">lazy</span></code> unless you need a true HUD.</p></td>
+<td><p>Follows your head every frame; may trail fast motion.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gimbal</span></code></p></td>
-<td><p>Follows your position but not your rotation: the surface stays pointed where you first
-looked, walks with you, and turning your head looks around it. The natural mode for
-wide cylinder feeds (a “virtual gimbal”).</p></td>
+<td><p>Follows your position while keeping its initial heading.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">lazy</span></code></p></td>
-<td><p>World-locked, but re-snaps in front of you when you look away (default).</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">lazy</span></code> (default)</p></td>
+<td><p>Stays anchored until you look or move away, then recenters smoothly.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Lazy-mode knobs live under <code class="docutils literal notranslate"><span class="pre">placements.&lt;name&gt;</span></code>: <code class="docutils literal notranslate"><span class="pre">look_away_angle_deg</span></code>,
-<code class="docutils literal notranslate"><span class="pre">reposition_distance</span></code>, <code class="docutils literal notranslate"><span class="pre">reposition_delay_s</span></code>, <code class="docutils literal notranslate"><span class="pre">transition_duration_s</span></code>.</p>
+<p>Lazy-mode settings: <code class="docutils literal notranslate"><span class="pre">look_away_angle_deg</span></code>, <code class="docutils literal notranslate"><span class="pre">reposition_distance</span></code>, <code class="docutils literal notranslate"><span class="pre">reposition_delay_s</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">transition_duration_s</span></code> under the camera’s placement.</p>
 <section id="controller-bindings">
-<span id="camera-streaming-controls"></span><h3><a class="toc-backref" href="#id16" role="doc-backlink">Controller bindings</a><a class="headerlink" href="#controller-bindings" title="Link to this heading">#</a></h3>
-<p>In XR the controllers retune the view live, without editing the YAML and restarting. The right
-hand changes how the feed looks; the left, what surface it is mapped onto:</p>
-<figure class="align-default" id="id2">
+<span id="camera-streaming-controls"></span><h3>Controller bindings<a class="headerlink" href="#controller-bindings" title="Link to this heading">#</a></h3>
+<p>Changes apply to all cameras and appear in the terminal and headset status panels.</p>
+<figure class="align-default">
 <a class="reference internal image-reference" href="../_images/camera-viz-controls.png"><img alt="camera_viz XR controller bindings: left controller adjusts surface and shape; right controller adjusts depth and placement." src="../_images/camera-viz-controls.png" style="width: 100%;" />
 </a>
-<figcaption>
-<p><span class="caption-text">Bindings at a glance. The table below is the same thing in words.</span><a class="headerlink" href="#id2" title="Link to this image">#</a></p>
-</figcaption>
 </figure>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
@@ -857,337 +631,255 @@ hand changes how the feed looks; the left, what surface it is mapped onto:</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>Right stick ←/→</p></td>
-<td><p>Stereo plane gap — how far apart the two eyes’ planes sit
-(<code class="docutils literal notranslate"><span class="pre">placements.&lt;cam&gt;.stereo_plane_distance_cm</span></code>). Widening it pushes the scene back
-instead of packing it into the space in front of the planes. Stereo cameras only; on
-<code class="docutils literal notranslate"><span class="pre">equirect</span></code>, which has no gap to set, the same stick pans the panorama.</p></td>
+<td><p>Adjust stereo plane gap; pan the panorama on <code class="docutils literal notranslate"><span class="pre">equirect</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Right stick click</p></td>
-<td><p>Recenter on your view: an <code class="docutils literal notranslate"><span class="pre">equirect</span></code> yaws so the middle of the panorama lands dead
-ahead, and a placed surface re-snaps its anchor.</p></td>
+<td><p>Recenter the surface or panorama.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">A</span></code></p></td>
-<td><p>Cycle the lock mode: <code class="docutils literal notranslate"><span class="pre">world</span></code> → <code class="docutils literal notranslate"><span class="pre">head</span></code> → <code class="docutils literal notranslate"><span class="pre">gimbal</span></code> → <code class="docutils literal notranslate"><span class="pre">lazy</span></code>.</p></td>
+<td><p>Cycle <code class="docutils literal notranslate"><span class="pre">world</span></code> → <code class="docutils literal notranslate"><span class="pre">head</span></code> → <code class="docutils literal notranslate"><span class="pre">gimbal</span></code> → <code class="docutils literal notranslate"><span class="pre">lazy</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B</span></code></p></td>
-<td><p>Toggle mono / stereo. Stereo cameras only.</p></td>
+<td><p>Toggle mono / stereo for stereo sources.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">X</span></code></p></td>
-<td><p>Cycle the shape: <code class="docutils literal notranslate"><span class="pre">quad</span></code> → <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> → <code class="docutils literal notranslate"><span class="pre">equirect</span></code>.</p></td>
+<td><p>Cycle <code class="docutils literal notranslate"><span class="pre">quad</span></code> → <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> → <code class="docutils literal notranslate"><span class="pre">equirect</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Y</span></code></p></td>
-<td><p>Reset everything to the YAML values.</p></td>
+<td><p>Reset to YAML settings.</p></td>
 </tr>
 <tr class="row-even"><td><p>Left stick</p></td>
-<td><p>Retunes the active shape: <code class="docutils literal notranslate"><span class="pre">quad</span></code> size / vertical position, <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> arc width /
-vertical position, <code class="docutils literal notranslate"><span class="pre">equirect</span></code> horizontal / vertical span.</p></td>
+<td><p>Adjust size / vertical position; arc width for cylinders, span for panoramas.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Changes apply to every camera at once and appear both on the terminal status panel and on a
-head-locked panel in the headset that auto-hides shortly after. Neither toggle reallocates:
-<code class="docutils literal notranslate"><span class="pre">B</span></code> sends the left frame to both eyes, and <code class="docutils literal notranslate"><span class="pre">X</span></code> flips visibility between shapes built at
-startup, so the extra shapes cost VRAM (reported at startup) rather than a stall on the press.</p>
-<p>The stereo gap is bounded below <strong>divergent parallax</strong> — a gap wider than your IPD would need
-the eyes to splay outward — and the headset’s measured IPD sets that ceiling, not the config.
-The HUD suggests a gap derived from the plane distance and that IPD.</p>
-<p>Bindings, rates and limits live under <code class="docutils literal notranslate"><span class="pre">display.controls</span></code>; see the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a> for the full set.</p>
-</section>
+<p>The stereo gap is limited by the headset’s measured IPD. Configure bindings and rates under
+<code class="docutils literal notranslate"><span class="pre">display.controls</span></code>; see the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a>.</p>
 </section>
 <section id="display-surfaces">
-<h2><a class="toc-backref" href="#id17" role="doc-backlink">Display surfaces</a><a class="headerlink" href="#display-surfaces" title="Link to this heading">#</a></h2>
-<p>By default each camera renders on a flat plane, which suits normal-FOV feeds. Wide-FOV and
-panoramic sources look better on a curved surface: set <code class="docutils literal notranslate"><span class="pre">shape</span></code> per camera under
-<code class="docutils literal notranslate"><span class="pre">display.placements.&lt;name&gt;</span></code>:</p>
+<h3>Display surfaces<a class="headerlink" href="#display-surfaces" title="Link to this heading">#</a></h3>
+<p>Set <code class="docutils literal notranslate"><span class="pre">shape</span></code> under <code class="docutils literal notranslate"><span class="pre">display.placements.&lt;camera-name&gt;</span></code>:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
-<col style="width: 30.0%" />
-<col style="width: 70.0%" />
+<col style="width: 24.0%" />
+<col style="width: 76.0%" />
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"><p>Shape</p></th>
-<th class="head"><p>Behavior</p></th>
+<th class="head"><p>Use</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">quad</span></code> (default)</p></td>
-<td><p>Flat plane. All lock modes apply.</p></td>
+<td><p>Flat camera feed. Set <code class="docutils literal notranslate"><span class="pre">size:</span> <span class="pre">[width_m,</span> <span class="pre">height_m]</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cylinder</span></code></p></td>
-<td><p>Curved arc facing the operator, so the image stays at a constant viewing distance edge
-to edge. <code class="docutils literal notranslate"><span class="pre">cylinder_radius_m</span></code> (default 2.0) sets that distance, <code class="docutils literal notranslate"><span class="pre">cylinder_angle_deg</span></code>
-(default 90) the arc width. All lock modes apply (<code class="docutils literal notranslate"><span class="pre">head</span></code> = gaze-tracking curved
-visor).</p></td>
+<td><p>Wide-FOV feed. Set <code class="docutils literal notranslate"><span class="pre">cylinder_radius_m</span></code> and <code class="docutils literal notranslate"><span class="pre">cylinder_angle_deg</span></code>.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">equirect</span></code></p></td>
-<td><p>Full 360°×180° sphere around the operator, for equirectangular panorama / VR-video
-sources. The middle of the texture points along <code class="docutils literal notranslate"><span class="pre">equirect_yaw_deg</span></code> (0 = the
-direction the headset last recentered on, positive to the left), which is how a camera
-mounted facing another way gets aimed. Lock modes don’t apply — the sphere is centred
-on the operator and follows them everywhere.</p></td>
+<td><p>360°×180° panorama. Set <code class="docutils literal notranslate"><span class="pre">equirect_yaw_deg</span></code> to adjust heading; lock modes do not apply.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Curved shapes exist only in XR mode — the viewer exits with an error in window mode. Stereo
-sources render per-eye textures on the same surface, and <code class="docutils literal notranslate"><span class="pre">stereo_baseline_mm</span></code> adds a per-eye
-pose shift (no effect on the equirect sphere at its default infinite radius).</p>
-<p>Surfaces are composited by the OpenXR runtime, which keeps them sharp under head motion and lets
-CloudXR stream them efficiently (see
-<a class="reference internal" href="../getting_started/televiz.html#openxr-composition-layers"><span class="std std-ref">OpenXR composition layers</span></a>). For flat planes only,
-<code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> opts a camera back into Televiz’s built-in compositor. On Jetson Orin
-(CloudXR experimental runtime), set <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> so the plane is not left black; see
-Troubleshooting below. On the Televiz 2D API the same switch is
-<code class="docutils literal notranslate"><span class="pre">openxr_composition</span> <span class="pre">=</span> <span class="pre">False</span></code> (see <a class="reference internal" href="../getting_started/televiz.html#orin-openxr-composition"><span class="std std-ref">Jetson Orin, XR</span></a>).</p>
+<p>Curved surfaces require XR. The OpenXR runtime composites surfaces by default. Flat planes can
+use <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> instead; this is required with the experimental runtime on Orin.
+See <a class="reference internal" href="../getting_started/televiz.html#openxr-composition-layers"><span class="std std-ref">Composition model</span></a> for compositor details.</p>
 </section>
-<section id="cloudxr-runtime-flags">
-<h2><a class="toc-backref" href="#id18" role="doc-backlink">CloudXR runtime flags</a><a class="headerlink" href="#cloudxr-runtime-flags" title="Link to this heading">#</a></h2>
-<p>In XR mode the viewer attaches to the running CloudXR runtime, or starts one if none is
-serving. Useful flags:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code> — accept the CloudXR EULA non-interactively (first run only).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">--cloudxr-device-profile</span> <span class="pre">PROFILE</span></code> — <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE</span></code> (default <code class="docutils literal notranslate"><span class="pre">Quest3</span></code>).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> — disable serving CloudXR.js at
-<code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:48322/client/</span></code>. Only applies when this run starts the
-service; stop and restart the service to change hosting.</p></li>
-</ul>
-<p>When the viewer starts a CloudXR service with hosting enabled (the default;
-<code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> disables it), it prints the local <code class="docutils literal notranslate"><span class="pre">/client/</span></code> URL. To
-inspect or stop an already-running service, activate the example venv (or any
-environment with <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>) and run:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">isaaccapture</span><span class="o">.</span><span class="n">cloudxr</span><span class="o">.</span><span class="n">service</span> <span class="n">status</span>
-<span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">isaaccapture</span><span class="o">.</span><span class="n">cloudxr</span><span class="o">.</span><span class="n">service</span> <span class="n">stop</span>
+</section>
+<section id="setup-options">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Setup options</a><a class="headerlink" href="#setup-options" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 74.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Flag</p></th>
+<th class="head"><p>Effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--jetson</span></code></p></td>
+<td><p>Configure CUDA library discovery on Jetson; with RTP, also check for NVRTC.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--venv</span> <span class="pre">PATH</span></code></p></td>
+<td><p>Install into <code class="docutils literal notranslate"><span class="pre">PATH</span></code> and link the sample’s <code class="docutils literal notranslate"><span class="pre">.venv</span></code> to it.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--with-rtp</span></code></p></td>
+<td><p>Install GStreamer, PyGObject, and native codec dependencies for split mode or loopback.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--with-zed</span></code></p></td>
+<td><p>Install the ZED Python API. Requires the SDK at <code class="docutils literal notranslate"><span class="pre">/usr/local/zed</span></code> or <code class="docutils literal notranslate"><span class="pre">--zed-sdk</span> <span class="pre">PATH</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--no-v4l2</span></code> / <code class="docutils literal notranslate"><span class="pre">--no-oakd</span></code></p></td>
+<td><p>Skip OpenCV / DepthAI respectively. Video replay also needs OpenCV.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--sender-only</span></code></p></td>
+<td><p>Install only the robot sender’s dependencies; implies <code class="docutils literal notranslate"><span class="pre">--with-rtp</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--wheel</span> <span class="pre">PATH</span></code></p></td>
+<td><p>Install a locally built <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code></p></td>
+<td><p>Build from this checkout; requires the <a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">build environment</span></a>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="external-virtual-environment">
+<span id="camera-streaming-external-venv"></span><h3>External virtual environment<a class="headerlink" href="#external-virtual-environment" title="Link to this heading">#</a></h3>
+<p>To reuse an existing Python 3.12 environment:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--venv<span class="w"> </span>/absolute/path/to/venv
 </pre></div>
 </div>
-<p>Run <code class="docutils literal notranslate"><span class="pre">camera_viz.py</span> <span class="pre">--help</span></code> for the rest (install dir, env-config file, WSS proxy toggle).</p>
-<p>Runtime settings themselves are declared in the config rather than exported. The viewer ships
-defaults (pose wait off, runtime foveation on), and <code class="docutils literal notranslate"><span class="pre">display.cloudxr</span></code> overrides them per
-deployment — list only what you want to change:</p>
+<p>Setup installs dependencies there and links <code class="docutils literal notranslate"><span class="pre">.venv</span></code> to it. If <code class="docutils literal notranslate"><span class="pre">.venv</span></code> is already a real
+directory, move it aside first. The wrapper always uses <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span></code>, regardless of
+the environment activated in your shell.</p>
+</section>
+<section id="jetson-cuda-prerequisites">
+<span id="camera-streaming-jetson-cuda"></span><h3>Jetson CUDA prerequisites<a class="headerlink" href="#jetson-cuda-prerequisites" title="Link to this heading">#</a></h3>
+<p>JetPack 7.2.1 (L4T R39.2.1) needs CUDA 13.2 development components, including headers and NVRTC.
+With the matching NVIDIA package repositories configured, install them using the
+<a class="reference external" href="https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_jetpack.html#install-specific-jetpack-components" rel="noopener noreferrer" target="_blank">JetPack CUDA development package</a>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>update
+sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>nvidia-cuda-dev
+readlink<span class="w"> </span>-f<span class="w"> </span>/usr/local/cuda
+/usr/local/cuda/bin/nvcc<span class="w"> </span>--version
+</pre></div>
+</div>
+<p>On JetPack 7.2.1, verify that <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> selects CUDA 13.2. On JetPack 6.2.x, keep the
+matching CUDA 12.x toolkit. Setup selects CuPy from this path; <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> configures library
+discovery but does not install the full toolkit. See NVIDIA’s
+<a class="reference external" href="https://docs.nvidia.com/jetson/agx-orin-devkit/user-guide/latest/setup_jetpack.html" rel="noopener noreferrer" target="_blank">JetPack installation guide</a> for BSP setup.</p>
+</section>
+</section>
+<section id="cloudxr-runtime-flags">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">CloudXR runtime flags</a><a class="headerlink" href="#cloudxr-runtime-flags" title="Link to this heading">#</a></h2>
+<p>The viewer attaches to an existing CloudXR service or starts one. Common run flags:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code> — accept the EULA non-interactively.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--cloudxr-device-profile</span> <span class="pre">PROFILE</span></code> — device profile (default <code class="docutils literal notranslate"><span class="pre">Quest3</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--no-host-client</span></code> — disable the hosted client at <code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:48322/client/</span></code> when
+starting a service. Stop an existing service first to change hosting.</p></li>
+</ul>
+<p>Inspect or stop the service with the sample’s interpreter:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>status
+.venv/bin/python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>stop
+</pre></div>
+</div>
+<p>Set runtime overrides in YAML:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">cloudxr</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">NV_DEVICE_PROFILE</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apple-vision-pro</span>
-<span class="w">    </span><span class="nt">NV_ENABLE_POSE_WAIT</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">   </span><span class="c1"># null drops a viewer default</span>
+<span class="w">    </span><span class="nt">NV_ENABLE_POSE_WAIT</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">   </span><span class="c1"># remove a viewer default</span>
 </pre></div>
 </div>
-<p>The viewer writes these to a generated <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> file, which outranks the process
-environment — so a value left in your shell (for example after sourcing
-<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/run/cloudxr.env</span></code>, as <code class="docutils literal notranslate"><span class="pre">--no-launch-cloudxr-runtime</span></code> suggests) cannot silently
-override the config, and neither can it override <code class="docutils literal notranslate"><span class="pre">--cloudxr-device-profile</span></code>. Booleans are
-written in the lowercase spelling the runtime’s parser recognises; the launcher-computed keys
-(<code class="docutils literal notranslate"><span class="pre">XR_RUNTIME_JSON</span></code>, <code class="docutils literal notranslate"><span class="pre">NV_CXR_RUNTIME_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">NV_CXR_OUTPUT_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">XRT_NO_STDIN</span></code>) are
-rejected by name. Passing <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> yourself takes precedence over the generated
-file.</p>
-<p>An unknown variable name warns with a suggestion before the runtime launches, and is passed
-through regardless — the runtime has more settings than the viewer lists. To confirm what the
-runtime resolved, read the settings dump at the top of the newest
-<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code>.</p>
+<p>These settings override shell environment variables; an explicit <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code>
+takes precedence over the generated config. Resolved settings appear in
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code>. See <a class="reference internal" href="cloudxr.html"><span class="doc">CloudXR Service</span></a> and
+<code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span> <span class="pre">camera_viz.py</span> <span class="pre">--help</span></code> for more options.</p>
 </section>
 <section id="split-mode-robot-workstation-over-rtp">
-<span id="split-mode"></span><h2><a class="toc-backref" href="#id19" role="doc-backlink">Split mode — robot → workstation over RTP</a><a class="headerlink" href="#split-mode-robot-workstation-over-rtp" title="Link to this heading">#</a></h2>
-<p>Split mode runs the capture side on the robot (<code class="docutils literal notranslate"><span class="pre">camera_streamer.py</span></code>) and ships RTP H.264 to
-the viewer on the workstation (<code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code>).</p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p>Split mode is <strong>not recommended in most cases</strong>. It exists for one situation: the cameras are
-on the robot, but Isaac Teleop runs on a workstation, so the frames must be streamed to where
-Isaac Teleop is running. That costs a full extra encode/decode hop — NVENC on the robot, UDP,
-NVDEC on the workstation — so whenever a camera can attach directly to the machine running
-Isaac Teleop, run direct mode instead. Wired networks only: there is no retransmit or FEC — one lost packet corrupts one
-frame until the next IDR (default every 5 s).</p>
-</div>
-<p>In split mode every camera entry must pin <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">height</span></code>, and <code class="docutils literal notranslate"><span class="pre">fps</span></code> in the YAML — the
-receiver sizes its decoder from the config, not from the wire.</p>
-<p>The workstation needs the RTP dependencies, which <code class="docutils literal notranslate"><span class="pre">setup</span></code> does not install by default — re-run
-it with <code class="docutils literal notranslate"><span class="pre">--with-rtp</span></code> if you provisioned for direct mode first. The robot side is handled by
-<code class="docutils literal notranslate"><span class="pre">deploy</span></code>, which implies the flag.</p>
-<p>Set <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code> in the config, export the robot/streaming credentials once per shell, then
-deploy the sender and run the viewer:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">REMOTE_HOST</span><span class="o">=</span><span class="m">10</span>.0.0.5<span class="w"> </span><span class="nv">REMOTE_USER</span><span class="o">=</span>nvidia
+<span id="split-mode"></span><h2><a class="toc-backref" href="#id10" role="doc-backlink">Split mode — robot → workstation over RTP</a><a class="headerlink" href="#split-mode-robot-workstation-over-rtp" title="Link to this heading">#</a></h2>
+<p>Use split mode when cameras are attached to a robot and the viewer runs on a workstation.
+Prefer a direct connection when possible: RTP adds an encode/decode hop. Use a wired network;
+there is no retransmission or FEC, so packet loss can corrupt video until the next IDR frame
+(default interval: 5 seconds).</p>
+<p>In the YAML, set <code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code> and specify <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">height</span></code>, and <code class="docutils literal notranslate"><span class="pre">fps</span></code> for each camera.
+Then, on the workstation:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--with-rtp
+<span class="nb">export</span><span class="w"> </span><span class="nv">REMOTE_HOST</span><span class="o">=</span><span class="m">10</span>.0.0.5<span class="w"> </span><span class="nv">REMOTE_USER</span><span class="o">=</span>nvidia
 <span class="nb">export</span><span class="w"> </span><span class="nv">STREAMING_HOST</span><span class="o">=</span><span class="m">10</span>.0.0.42<span class="w">                  </span><span class="c1"># workstation IP</span>
-
-./camera_viz.sh<span class="w"> </span>deploy<span class="w"> </span>configs/v4l2.yaml<span class="w">         </span><span class="c1"># full deploy + systemd unit on the robot</span>
-./camera_viz.sh<span class="w"> </span>run<span class="w">    </span>configs/v4l2.yaml<span class="w">         </span><span class="c1"># viewer on the workstation</span>
+./camera_viz.sh<span class="w"> </span>deploy<span class="w"> </span>configs/v4l2.yaml
+./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">deploy</span></code> rsyncs the source to the robot, installs sender dependencies, renders a
-<code class="docutils literal notranslate"><span class="pre">camera-streamer.service</span></code> systemd user unit (injecting <code class="docutils literal notranslate"><span class="pre">--host</span></code> from <code class="docutils literal notranslate"><span class="pre">$STREAMING_HOST</span></code>
-without editing the YAML on disk), and enables it. Operate the running unit with
-<code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">service-{status,logs,restart}</span></code>. The sender retries forever across unplug, SDK
-errors, and network blips.</p>
+<p><code class="docutils literal notranslate"><span class="pre">deploy</span></code> installs the sender and starts a <code class="docutils literal notranslate"><span class="pre">camera-streamer</span></code> systemd user service on the
+robot. Use <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">service-{status,logs,restart}</span></code> to manage it. The workstation’s
+UDP receive ports (default 5000+) must be reachable from the robot.</p>
 <section id="loopback">
-<h3><a class="toc-backref" href="#id20" role="doc-backlink">Loopback</a><a class="headerlink" href="#loopback" title="Link to this heading">#</a></h3>
-<p>Loopback is a testing / debugging aid, not a deployment mode: <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span>
-<span class="pre">configs/v4l2.yaml</span></code> runs the sender and viewer together on <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> — the quickest way to
-smoke-test the RTP path on one machine. It also works camera-free with a mono <code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>
-entry (set <code class="docutils literal notranslate"><span class="pre">width</span></code> / <code class="docutils literal notranslate"><span class="pre">height</span></code> / <code class="docutils literal notranslate"><span class="pre">fps</span></code>).</p>
+<h3>Loopback<a class="headerlink" href="#loopback" title="Link to this heading">#</a></h3>
+<p>Test RTP on one machine with <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span> <span class="pre">configs/v4l2.yaml</span></code>. This also supports
+mono video recordings with explicit <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">height</span></code>, and <code class="docutils literal notranslate"><span class="pre">fps</span></code>; stereo video replay is
+unsupported over RTP.</p>
 </section>
 </section>
 <section id="configuration">
-<h2><a class="toc-backref" href="#id21" role="doc-backlink">Configuration</a><a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
-<p>A single YAML drives both capture and visualization. Each entry in the <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list becomes
-its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local | rtp</span>
-<span class="nt">streaming</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.1.100</span><span class="w">         </span><span class="c1"># workstation IP (overridden at deploy time)</span>
-<span class="nt">encoder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto | native | gstreamer</span>
-
-<span class="nt">cameras</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cam</span>
-<span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v4l2</span><span class="w">                </span><span class="c1"># v4l2 | oakd | zed | video | synthetic</span>
-<span class="w">    </span><span class="nt">width</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2560</span><span class="w">               </span><span class="c1"># video: optional — defaults to the file's size</span>
-<span class="w">    </span><span class="nt">height</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">720</span><span class="w">               </span><span class="c1"># (required when source: rtp)</span>
-<span class="w">    </span><span class="nt">fps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
-<span class="w">    </span><span class="nt">stereo</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">             </span><span class="c1"># zed / video / synthetic — per-eye capture + SBS in XR</span>
-<span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clip.mp4</span><span class="w">            </span><span class="c1"># video only — file to replay, relative to this YAML</span>
-<span class="w">    </span><span class="nt">loop</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                </span><span class="c1"># video only — rewind at end of file</span>
-<span class="w">    </span><span class="nt">rtp</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5000</span><span class="w">              </span><span class="c1"># left eye when stereo</span>
-<span class="w">      </span><span class="nt">port_right</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5001</span><span class="w">        </span><span class="c1"># required when stereo + source: rtp</span>
-<span class="w">      </span><span class="nt">bitrate_mbps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
-
-<span class="nt">display</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xr | window</span><span class="w">           </span><span class="c1"># default: xr</span>
-<span class="w">  </span><span class="nt">window</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">width</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">height</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<span class="w">  </span><span class="nt">xr</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">near_z</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.05</span><span class="w">              </span><span class="c1"># default</span>
-<span class="w">    </span><span class="nt">far_z</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.0</span><span class="w">              </span><span class="c1"># default</span>
-<span class="w">    </span><span class="nt">system_wait_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-1</span><span class="w">   </span><span class="c1"># default; wait forever (0 fails fast)</span>
-<span class="w">  </span><span class="nt">clear_color</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">r</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">g</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">b</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">a</span><span class="p p-Indicator">]</span>
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Configuration</a><a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
+<p>Start from a <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/configs" rel="noopener noreferrer" target="_blank">source config</a> and adjust the camera
+settings for your device. Placement keys must match the camera’s <code class="docutils literal notranslate"><span class="pre">name</span></code>:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xr</span>
 <span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">cam</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">lock_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lazy</span><span class="w">         </span><span class="c1"># world | head | lazy | gimbal</span>
+<span class="w">      </span><span class="nt">lock_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lazy</span>
 <span class="w">      </span><span class="nt">distance</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.5</span>
-<span class="w">      </span><span class="c1"># size: [w_m, h_m]</span>
-<span class="w">      </span><span class="c1"># stereo_plane_distance_cm: 0   # gap between the eyes' planes</span>
-<span class="w">      </span><span class="c1"># shape: quad           # quad | cylinder | equirect (cylinder/equirect are XR-only)</span>
-<span class="w">      </span><span class="c1"># equirect_yaw_deg: 0.0  # equirect: heading the middle of the feed points at</span>
-<span class="w">      </span><span class="c1"># compositor: openxr    # openxr (default) | televiz — quads only</span>
-<span class="w">      </span><span class="c1"># cylinder_radius_m: 2.0</span>
-<span class="w">      </span><span class="c1"># cylinder_angle_deg: 90</span>
+<span class="w">      </span><span class="nt">shape</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">quad</span>
+<span class="w">      </span><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0.56</span><span class="p p-Indicator">]</span><span class="w">       </span><span class="c1"># meters</span>
 </pre></div>
 </div>
-<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/configs" rel="noopener noreferrer" target="_blank">configs/</a> directory for a complete, commented
-YAML per source kind.</p>
+<p>Add entries to <code class="docutils literal notranslate"><span class="pre">cameras</span></code> and <code class="docutils literal notranslate"><span class="pre">display.placements</span></code> for multiple feeds. In split mode, assign
+each stream its own RTP port; stereo sources also require <code class="docutils literal notranslate"><span class="pre">rtp.port_right</span></code>.
+The <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a> documents the full schema.</p>
 </section>
 <section id="troubleshooting">
-<span id="camera-streaming-troubleshooting"></span><h2><a class="toc-backref" href="#id22" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<span id="camera-streaming-troubleshooting"></span><h2><a class="toc-backref" href="#id12" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
 <ul>
-<li><p><strong>The XR session fails to create</strong> — check <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code> and
-<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/runtime_worker_stderr.log</span></code> (<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> with
-<code class="docutils literal notranslate"><span class="pre">ISAACCAPTURE_LOGGING=off</span></code>) for the startup failure.
-<code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code>
-(-35) means the runtime is up but no headset has clicked CONNECT yet; XR mode waits
-according to <code class="docutils literal notranslate"><span class="pre">display.xr.system_wait_seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
-indefinitely; <code class="docutils literal notranslate"><span class="pre">0</span></code> fails fast; positive values wait that many seconds;
-override with <code class="docutils literal notranslate"><span class="pre">--xr-wait</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to
-render to a desktop window instead (no runtime involved).</p></li>
-<li><p><strong>No window appears over SSH</strong> — <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> needs a local display; run on the machine
-you’re sitting at, or use a video-capable remote desktop.</p></li>
-<li><p><strong>“video source: no such file”</strong> — relative <code class="docutils literal notranslate"><span class="pre">path:</span></code> values resolve against the YAML’s
-directory (<code class="docutils literal notranslate"><span class="pre">configs/</span></code>), not the directory you launched from.</p></li>
-<li><p><strong>A source fails asking for CuPy / CUDA</strong> — rerun the CUDA execution check above with the
-sample’s <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span></code>. <code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> checks the driver; its CUDA version does not
-establish that the matching toolkit, NVRTC, or headers are installed. For missing
-<code class="docutils literal notranslate"><span class="pre">libnvrtc.so</span></code>, <code class="docutils literal notranslate"><span class="pre">cuda_runtime.h</span></code>, or <code class="docutils literal notranslate"><span class="pre">cuda_fp16.h</span></code>, check the development components and
-<code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> target (<a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a> on Jetson), then rerun setup
-with <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> on Jetson. Setup selects CuPy for that toolkit’s major version.</p></li>
-<li><p><strong>Setup succeeded but another Python cannot import the dependencies</strong> — the wrapper uses
-<code class="docutils literal notranslate"><span class="pre">examples/camera_viz/.venv/bin/python</span></code> regardless of the active shell environment. Use
-that interpreter for diagnostics, or rerun <code class="docutils literal notranslate"><span class="pre">setup</span> <span class="pre">--venv</span> <span class="pre">PATH</span></code> to select your environment.</p></li>
-<li><p><strong>No video on Orin.</strong> When the CloudXR runtime runs on Jetson Orin, set
-<strong>Video Codec</strong> to <strong>H.264</strong> in the CloudXR web client. See
-<a class="reference internal" href="../getting_started/quick_start.html#connect-xr-headset"><span class="std std-ref">5. Connect an XR headset</span></a>.</p></li>
-<li><p><strong>Black camera plane on Orin</strong> — with the CloudXR experimental runtime on Orin, the default
-OpenXR compositor shows the camera plane but leaves its contents black. Under the camera’s
-<code class="docutils literal notranslate"><span class="pre">display.placements</span></code> entry, set <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> (quads only). The same feed displays
-correctly with this workaround:</p>
+<li><p><strong>XR session does not start:</strong> connect the client first. <code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code>
+(-35) means no headset is connected. The viewer waits indefinitely by default; set
+<code class="docutils literal notranslate"><span class="pre">display.xr.system_wait_seconds</span></code> or <code class="docutils literal notranslate"><span class="pre">--xr-wait</span></code> to change the timeout.
+Check <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code> and <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/runtime_worker_stderr.log</span></code>
+(<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> with <code class="docutils literal notranslate"><span class="pre">ISAACCAPTURE_LOGGING=off</span></code>).</p></li>
+<li><p><strong>No video on Orin:</strong> set the client’s <strong>Video Codec</strong> to <strong>H.264</strong>.</p></li>
+<li><p><strong>Black camera plane on Orin:</strong> set <code class="docutils literal notranslate"><span class="pre">compositor:</span> <span class="pre">televiz</span></code> under the camera’s placement
+and restart. This workaround supports quads only; for the replay config:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">cam</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">replay</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">compositor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">televiz</span>
 </pre></div>
 </div>
 </li>
-<li><p><strong>Split mode renders nothing</strong> — check the sender is up (<code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">service-status</span></code>),
-<code class="docutils literal notranslate"><span class="pre">$STREAMING_HOST</span></code> was the workstation’s IP at deploy time, and UDP ports (default 5000+)
-aren’t firewalled.</p></li>
-<li><p><strong>Not sure which side is stuck?</strong> — set <code class="docutils literal notranslate"><span class="pre">verbose:</span> <span class="pre">true</span></code> at the top of the YAML for periodic
-per-source breadcrumbs on both ends.</p></li>
+<li><p><strong>Corrupted or frozen video:</strong> stop the viewer and run
+<code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">run</span> <span class="pre">configs/synthetic.yaml</span></code> to check the display path without a camera
+or recording. Add <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to check local rendering separately from XR streaming.</p></li>
+<li><p><strong>No window over SSH:</strong> window mode needs a desktop display or video-capable remote desktop.</p></li>
+<li><p><strong>Video file fails to open:</strong> paths are relative to the YAML directory. For the bundled clip,
+run the Git LFS command in the first-run instructions.</p></li>
+<li><p><strong>Python cannot find dependencies:</strong> use <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span></code> or rerun <code class="docutils literal notranslate"><span class="pre">setup</span> <span class="pre">--venv</span> <span class="pre">PATH</span></code>.</p></li>
+<li><p><strong>Split mode has no frames:</strong> check <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">service-status</span></code>, <code class="docutils literal notranslate"><span class="pre">STREAMING_HOST</span></code>,
+and the workstation’s UDP ports. Set <code class="docutils literal notranslate"><span class="pre">verbose:</span> <span class="pre">true</span></code> in YAML for per-source logs.</p></li>
 </ul>
-</section>
-<section id="how-it-works">
-<h2><a class="toc-backref" href="#id23" role="doc-backlink">How it works</a><a class="headerlink" href="#how-it-works" title="Link to this heading">#</a></h2>
-<p>The sample is organized so that capture, transport, and visualization are cleanly separated, with
-Televiz as the compositor at the end of the chain:</p>
-<div class="code-100col highlight-text notranslate"><div class="highlight"><pre><span></span>camera_viz/
-├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
-├── camera_viz.py        — receiver / viewer (drives a Televiz VizSession)
-├── camera_streamer.py   — robot-side RTP sender (per-camera supervisor)
-├── pipeline/            — source ABC + threaded runner
-├── placements/          — XR lock-mode strategies (world / head / lazy / gimbal)
-├── sources/             — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
-├── transports/          — RTP sender + receiver (native + GStreamer)
-├── codec/               — native NVENC / NVDEC pybind module
-├── configs/             — one YAML per source kind
-├── test_data/           — sample replay clip (Git LFS)
-└── scripts/             — installer + systemd unit template
-</pre></div>
-</div>
-<ul class="simple">
-<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
-hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
-source produces GPU frames where possible — e.g. the ZED source uses <code class="docutils literal notranslate"><span class="pre">retrieve_image(MEM.GPU)</span></code> so
-BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.</p></li>
-<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
-<code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and adds one <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> per enabled camera, then submits each frame to its layer
-and calls <code class="docutils literal notranslate"><span class="pre">render()</span></code> once per frame. Stereo cameras submit both eyes.</p></li>
-<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
-an RTP H.264 sender on the robot and a receiver on the workstation, with a native NVENC/NVDEC codec
-module (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
-<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
-strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
-sets each frame.</p></li>
-</ul>
-</section>
-<section id="sharing-the-xr-session-with-teleopsession">
-<h2><a class="toc-backref" href="#id24" role="doc-backlink">Sharing the XR session with TeleopSession</a><a class="headerlink" href="#sharing-the-xr-session-with-teleopsession" title="Link to this heading">#</a></h2>
-<p>Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
-<code class="docutils literal notranslate"><span class="pre">VizSession</span></code> owns the session and hands its handles to <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> / <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code>,
-which then skip creating their own. The viewer builds the session with the trackers’ required
-extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.oxr_handles</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cfg</span><span class="o">.</span><span class="n">required_extensions</span> <span class="o">=</span> <span class="n">DeviceIOSession</span><span class="o">.</span><span class="n">get_required_extensions</span><span class="p">(</span><span class="n">trackers</span><span class="p">)</span>
-<span class="n">viz_session</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSession</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
+<section id="cupy-cuda-errors">
+<h3>CuPy / CUDA errors<a class="headerlink" href="#cupy-cuda-errors" title="Link to this heading">#</a></h3>
+<p>Setup checks imports, not GPU execution. Test a small kernel with the sample’s interpreter:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY'</span>
+<span class="s">import cupy as cp</span>
 
-<span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
-    <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
-    <span class="n">pipeline</span><span class="o">=</span><span class="n">pipeline</span><span class="p">,</span>
-    <span class="n">oxr_handles</span><span class="o">=</span><span class="n">OpenXRSessionHandles</span><span class="p">(</span><span class="o">*</span><span class="n">viz_session</span><span class="o">.</span><span class="n">get_oxr_handles</span><span class="p">()),</span>
-<span class="p">)</span>
+<span class="s">values = cp.arange(4, dtype=cp.float32)</span>
+<span class="s">assert cp.asnumpy(values + 1).tolist() == [1.0, 2.0, 3.0, 4.0]</span>
+<span class="s">print("CUDA kernel check passed")</span>
+<span class="s">PY</span>
 </pre></div>
 </div>
-<p>See the <em>Sharing the XR session</em> section of <a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Televiz</span></a> for the full pattern
-(imports, frame loop, and how the two sessions’ lifecycles relate), and
-<a class="reference internal" href="../getting_started/teleop_session.html"><span class="doc">Teleop Session</span></a> for the <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> side.</p>
+<p>Missing <code class="docutils literal notranslate"><span class="pre">libnvrtc.so</span></code>, <code class="docutils literal notranslate"><span class="pre">cuda_runtime.h</span></code>, or <code class="docutils literal notranslate"><span class="pre">cuda_fp16.h</span></code> indicates missing or mismatched
+CUDA development components. Check <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> and rerun setup (<code class="docutils literal notranslate"><span class="pre">--jetson</span></code> on Jetson).
+The CUDA version reported by <code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> describes driver support, not installed headers.
+See <a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a>.</p>
+</section>
 </section>
 <section id="next-steps">
-<h2><a class="toc-backref" href="#id25" role="doc-backlink">Next steps</a><a class="headerlink" href="#next-steps" title="Link to this heading">#</a></h2>
-<p>After the <a class="reference internal" href="#camera-streaming-first-session"><span class="std std-ref">First-session checklist</span></a> checks pass, choose the next step for your use case:</p>
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Next steps</a><a class="headerlink" href="#next-steps" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>See a live camera:</strong> follow <a class="reference internal" href="#camera-streaming-live-camera"><span class="std std-ref">Running with a real camera</span></a>, then repeat the visibility
-and image-quality checks with motion in front of the camera. With a stereo source, also
-check both eyes and the <code class="docutils literal notranslate"><span class="pre">B</span></code> mono / stereo toggle.</p></li>
-<li><p><strong>Tune the view:</strong> adjust placement, size, and lock mode using the controller bindings and
-YAML settings above. Add entries to <code class="docutils literal notranslate"><span class="pre">cameras</span></code> for multiple feeds, or use
-<a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">First run — a recording, no camera required</span></a> to replay your own recording.</p></li>
-<li><p><strong>Stream from a robot:</strong> use <a class="reference internal" href="#split-mode"><span class="std std-ref">Split mode — robot → workstation over RTP</span></a> when capture and viewing run on different
-machines, after validating direct mode locally.</p></li>
-<li><p><strong>Integrate camera views into teleoperation:</strong> follow <a class="reference internal" href="../getting_started/televiz.html#sharing-the-xr-session"><span class="std std-ref">Sharing the XR session</span></a> to share
-Televiz’s OpenXR session with <a class="reference internal" href="../getting_started/teleop_session.html"><span class="doc">Teleop Session</span></a>, and use the
-<a class="reference internal" href="retargeting/index.html"><span class="doc">retargeting interface</span></a> to map tracking inputs to robot
-actions. The camera viewer itself does not command a robot.</p></li>
+<li><p><a class="reference internal" href="#camera-streaming-live-camera"><span class="std std-ref">Connect a live camera</span></a> or
+<a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">replay your own recording</span></a>.</p></li>
+<li><p><a class="reference internal" href="#split-mode"><span class="std std-ref">Stream from a robot</span></a> when capture and viewing run on separate machines.</p></li>
+<li><p><a class="reference internal" href="../getting_started/televiz.html#sharing-the-xr-session"><span class="std std-ref">Integrate with teleoperation</span></a> by sharing Televiz’s OpenXR
+session with <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code>. Only one OpenXR session is allowed per process.</p></li>
+<li><p><a class="reference internal" href="../getting_started/televiz.html"><span class="doc">Build a custom viewer</span></a> using the Televiz API and
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a> as a reference.</p></li>
 </ul>
 </section>
 </section>
@@ -1241,38 +933,37 @@ actions. The camera viewer itself does not command a robot.</p></li>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#requirements">Requirements</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#required">Required</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-recommended-hardware">Optional, recommended hardware</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#requirements">Requirements</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup">Setup</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#first-run-a-recording-no-camera-required">First run — a recording, no camera required</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#first-session-checklist">First-session checklist</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-with-a-real-camera">Running with a real camera</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-sources">Supported sources</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#replaying-your-own-recording">Replaying your own recording</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-modes">Display modes</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#controller-bindings">Controller bindings</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#display-surfaces">Display surfaces</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-options">Setup options</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#external-virtual-environment">External virtual environment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#jetson-cuda-prerequisites">Jetson CUDA prerequisites</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup">Setup</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#using-an-external-virtual-environment">Using an external virtual environment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#check-cuda-execution">Check CUDA execution</a></li>
-</ul>
-</li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#first-run-a-recording-no-camera-required">First run — a recording, no camera required</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#first-session-checklist">First-session checklist</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#replaying-your-own-recording">Replaying your own recording</a></li>
-</ul>
-</li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-sources">Supported sources</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-with-a-real-camera">Running with a real camera</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-modes">Display modes</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#controller-bindings">Controller bindings</a></li>
-</ul>
-</li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#display-surfaces">Display surfaces</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloudxr-runtime-flags">CloudXR runtime flags</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#split-mode-robot-workstation-over-rtp">Split mode — robot → workstation over RTP</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#loopback">Loopback</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration">Configuration</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-it-works">How it works</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sharing-the-xr-session-with-teleopsession">Sharing the XR session with TeleopSession</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cupy-cuda-errors">CuPy / CUDA errors</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#next-steps">Next steps</a></li>
 </ul>
   </nav></div>
