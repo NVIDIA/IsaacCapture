@@ -7,25 +7,27 @@
 const { test, expect } = require('@playwright/test');
 
 /**
- * Client-side-only coverage for the real App.tsx (via webpack.app-mock.js, :8082) of the
- * "missing client UI state" failure modes that are detectable/reproducible from
- * App.tsx/CloudXR2DUI.tsx alone. Host-side states (stale-tab, certificate interstitial) live in
- * oob_teleop_adb.py's CDP orchestration and are covered by a separate Python test suite.
- * missing-panel lives in ControlPanelPositionTest.spec.js instead of here: it needs the actual
- * fix (head-relative reset/tracking, gmorgan/reset-panel-key), not just a reproduction of the
- * gap - a panelHiddenAtStart-only check doesn't touch the real failure (panel/handle out of
- * reach after the operator moves), so keeping it under this file's "state reproduction" framing
- * was misleading about what it covered.
+ * Client-side-only coverage for the real App.tsx (via webpack.app-mock.js, :8082) of two
+ * "missing client UI state" failure modes detectable from App.tsx/CloudXR2DUI.tsx alone:
+ * browser-launched-but-client-not-loaded, and passthrough-only. Host-side states (stale-tab,
+ * certificate interstitial) live in oob_teleop_adb.py's CDP orchestration, covered by a separate
+ * Python test suite. missing-panel is deferred: it needs the actual fix (head-relative
+ * reset/tracking, see PR #1140) before it can be tested meaningfully, not just a reproduction of
+ * the gap - a panelHiddenAtStart-only check doesn't touch the real failure (panel/handle out of
+ * reach after the operator moves). CloudXRUI.tsx's panel-visibility console logging (added here)
+ * is unused by any test in this file yet - it's the signal that deferred coverage will consume.
  */
 
 /** Waits for a console message containing `text`, polling `lines` (already being appended to by a `page.on('console')` listener). */
 async function waitForConsoleText(lines, text, timeoutMs = 15000) {
-  await expect
-    .poll(() => lines.some(l => l.includes(text)), {
-      timeout: timeoutMs,
-      message: () => `never saw "${text}"; console so far:\n${lines.join('\n')}`,
-    })
-    .toBe(true);
+  try {
+    await expect.poll(() => lines.some(l => l.includes(text)), { timeout: timeoutMs }).toBe(true);
+  } catch (error) {
+    // expect.poll's `message` option is a string, not a callback (it would otherwise print the
+    // function's source instead of evaluating it) - attach the console dump here instead, only
+    // once there's actually a failure to explain.
+    throw new Error(`never saw "${text}"; console so far:\n${lines.join('\n')}\n\n${error}`);
+  }
 }
 
 test.describe('client UI states', () => {
@@ -53,6 +55,10 @@ test.describe('client UI states', () => {
     // text is exactly 'CONNECT', with no awareness of capabilities/IWER state - so the button can
     // end up enabled even after a capability failure that IS otherwise correctly surfaced.
     await expect(page.locator('#errorMessageText')).toHaveText('Immersive mode not supported');
+    // Text content alone doesn't prove the operator can see it - showStatus() can set
+    // #errorMessageText without the box being visible if it regresses. toBeVisible() respects
+    // the actual .show CSS rule (display: none by default).
+    await expect(page.locator('#errorMessageBox')).toBeVisible();
   });
 
   test('passthrough-only: a session that enters but never streams is now detected via streamAttachTimeoutMs', async ({
@@ -98,14 +104,18 @@ test.describe('client UI states', () => {
     // isn't enabled here (no reconnectEnabled=true param), so App.tsx's onError -> showError path
     // is what surfaces it, the same as any other CloudXR error.
     //
-    // Checked via console output, not the live #errorMessageBox class/text: that box is a single
-    // shared slot (CloudXR2DUI.tsx's own showStatus() doc comment) that an unrelated capability/
-    // performance "info" notice can legitimately overwrite shortly after our error renders - the
-    // original version of this test hit exactly that race. showStatus() always mirrors its
-    // message to console[type](message) too, which console output doesn't get overwritten.
+    // Waited for via console first, not the live #errorMessageBox: that box is a single shared
+    // slot (CloudXR2DUI.tsx's showStatus() doc comment) that an unrelated capability/performance
+    // "info" notice can legitimately overwrite shortly after. showStatus() sets the DOM and
+    // mirrors to console[type](message) in the same synchronous call, so checking the DOM right
+    // after this console wait resolves - before any later notice gets a chance to run - is safe.
     await waitForConsoleText(consoleLines, 'CloudXR stream did not attach within 500ms');
     await waitForConsoleText(
       consoleLines,
+      'CloudXR session stopped: Stream did not attach within 500ms'
+    );
+    await expect(page.locator('#errorMessageBox')).toBeVisible();
+    await expect(page.locator('#errorMessageText')).toHaveText(
       'CloudXR session stopped: Stream did not attach within 500ms'
     );
   });
