@@ -10,4 +10,4 @@ requires-python = ">=3.11,<3.14"
 dev = ["pytest", "numpy", "mcap>=1.2.0", "pyyaml", "pyzmq"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["../python"]

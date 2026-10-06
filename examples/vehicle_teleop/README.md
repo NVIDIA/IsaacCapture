@@ -5,9 +5,15 @@ SPDX-License-Identifier: Apache-2.0
 
 # Vehicle Teleop Example
 
-This example sends steering wheel and pedal input through Isaac Teleop, retargets it to a vehicle command, and publishes that command over ZMQ for a Panda worker.
+This example sends steering wheel and pedal input (specifically the Logitech G923, other Logitech and similar models may still work, YMMV) through Isaac Capture, retargets it to a vehicle command, and publishes that command over ZMQ for a Panda worker.
 
 The remote side uses the native Linux steering wheel plugin and Isaac Teleop OpenXR session. The vehicle side subscribes to the command stream and writes to `PandaRunner`.
+
+![Vehicle teleoperation flow](assets/vehicle_teleop_flow.svg)
+
+| Keyboard worker demo | Steering wheel worker demo |
+| --- | --- |
+| ![Remote vehicle teleoperation using the keyboard worker](assets/remote-teleop-keyboard-worker.gif) | To be added soon... |
 
 ## Setup
 

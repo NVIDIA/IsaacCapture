@@ -5,7 +5,8 @@ include "timestamp.fbs";
 
 namespace core;
 
-// Output from a steering wheel and pedal set.
+// Output from Logitech G923 steering wheel and pedal set.
+// This schema may support other Logitech models and similar steering wheel/pedals setup.
 // Axis values are normalized joystick values in [-1, 1], and buttons are
 // stored as 0/1 bytes. Retargeters own any device-specific pedal inversion or
 // pressed-fraction conversion.
