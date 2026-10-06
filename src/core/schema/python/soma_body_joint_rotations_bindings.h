@@ -129,7 +129,8 @@ inline void bind_soma_body_joint_rotations(py::module& m)
             "rotations",
             [](py::object self)
             {
-                const auto* first = reinterpret_cast<const float*>(&first_soma_body_joint_rotations_rotation(self).rotation());
+                const auto* first =
+                    reinterpret_cast<const float*>(&first_soma_body_joint_rotations_rotation(self).rotation());
                 return strided_field_view<float>(self, first, SOMA_BODY_JOINT_STRIDE, SOMA_BODY_JOINT_COUNT, 4);
             },
             "Unit XYZW quaternions as a writable (77, 4) float32 view.")

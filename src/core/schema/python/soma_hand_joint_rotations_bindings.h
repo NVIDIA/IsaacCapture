@@ -108,8 +108,7 @@ inline void bind_soma_hand_joint_rotations(py::module& m)
                                py::return_value_policy::reference_internal)
         .def_property_readonly("global_translation", field(&SomaHandJointRotations::global_translation),
                                py::return_value_policy::reference_internal)
-        .def_property_readonly(
-            "global_translation_is_valid", field(&SomaHandJointRotations::global_translation_is_valid))
+        .def_property_readonly("global_translation_is_valid", field(&SomaHandJointRotations::global_translation_is_valid))
         .def_property_readonly("handedness", field(&SomaHandJointRotations::handedness));
 
     bind_record<SomaHandJointRotationsRecord, SomaHandJointRotations>(

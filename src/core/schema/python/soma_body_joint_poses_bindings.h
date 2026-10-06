@@ -26,8 +26,7 @@ inline const SomaBodyJointPose& first_soma_body_joint_pose(const py::object& sel
 constexpr py::ssize_t SOMA_BODY_JOINT_POSE_STRIDE = static_cast<py::ssize_t>(sizeof(SomaBodyJointPose));
 constexpr py::ssize_t SOMA_BODY_JOINT_POSE_COUNT = static_cast<py::ssize_t>(SomaBodyJoint_NUM_JOINTS);
 
-static_assert(sizeof(SomaBodyJointPoseArray) ==
-                  sizeof(SomaBodyJointPose) * static_cast<size_t>(SomaBodyJoint_NUM_JOINTS),
+static_assert(sizeof(SomaBodyJointPoseArray) == sizeof(SomaBodyJointPose) * static_cast<size_t>(SomaBodyJoint_NUM_JOINTS),
               "SomaBodyJointPoseArray.values length must equal SomaBodyJoint::NUM_JOINTS");
 
 inline void bind_soma_body_joint_poses(py::module& m)
@@ -55,8 +54,7 @@ inline void bind_soma_body_joint_poses(py::module& m)
             "positions",
             [](py::object self)
             {
-                const auto* first =
-                    reinterpret_cast<const float*>(&first_soma_body_joint_pose(self).pose().position());
+                const auto* first = reinterpret_cast<const float*>(&first_soma_body_joint_pose(self).pose().position());
                 return strided_field_view<float>(self, first, SOMA_BODY_JOINT_POSE_STRIDE, SOMA_BODY_JOINT_POSE_COUNT, 3);
             },
             "Joint positions as a writable (77, 3) float32 view in SomaBodyJoint order.")
@@ -91,8 +89,7 @@ inline void bind_soma_body_joint_poses(py::module& m)
         .def_property_readonly(
             "joint_poses", field(&SomaBodyJointPoses::joint_poses), py::return_value_policy::reference_internal);
 
-    bind_record<SomaBodyJointPosesRecord, SomaBodyJointPoses>(
-        m, "SomaBodyJointPosesRecord", "SomaBodyJointPoses");
+    bind_record<SomaBodyJointPosesRecord, SomaBodyJointPoses>(m, "SomaBodyJointPosesRecord", "SomaBodyJointPoses");
 }
 
 } // namespace core
