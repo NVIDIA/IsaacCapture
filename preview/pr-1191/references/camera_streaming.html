@@ -601,9 +601,7 @@ provides them. With the matching NVIDIA repositories configured:</p>
 sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>nvidia-cuda-dev
 </pre></div>
 </div>
-<p>Setup selects CuPy from <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, the toolkit containing <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> on <code class="docutils literal notranslate"><span class="pre">PATH</span></code>, or
-<code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code>, in that order, and verifies GPU kernel execution. <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> configures
-library discovery. A separate <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> compiler is needed for CUDA source builds, such as the native
+<p>Use the CUDA toolkit matching your JetPack. <code class="docutils literal notranslate"><span class="pre">--jetson</span></code> configures library discovery. A separate <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> compiler is needed for CUDA source builds, such as the native
 RTP codec, rather than ordinary CuPy kernel execution.</p>
 </section>
 </section>
@@ -1029,19 +1027,11 @@ you’re sitting at, or use a video-capable remote desktop.</p></li>
 directory (<code class="docutils literal notranslate"><span class="pre">configs/</span></code>), not the directory you launched from.</p></li>
 <li><p><strong>A source fails asking for CuPy / CUDA</strong> — check the matching CUDA headers, NVRTC, and
 <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> target (<a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a> on Jetson), then rerun setup.
-<code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> checks driver support, not installed headers. To rerun the kernel check
-and print CUDA diagnostics on failure, run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>scripts/check_cuda.py
+<code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> checks driver support, not installed headers. To test GPU execution,
+run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code> and expect <code class="docutils literal notranslate"><span class="pre">[1</span> <span class="pre">2</span> <span class="pre">3</span> <span class="pre">4]</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import cupy as cp; print((cp.arange(4) + 1).get())'</span>
 </pre></div>
 </div>
-</li>
-<li><p><strong>Thor: ``CUDA_ERROR_NO_BINARY_FOR_GPU``</strong> — an older NVRTC compiler can produce kernels
-incompatible with Thor. Select your JetPack’s CUDA 13.x toolkit and rerun setup. As a
-temporary workaround for CuPy kernels, try:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CUPY_COMPILE_WITH_PTX</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/synthetic.yaml
-</pre></div>
-</div>
-<p>This lets the driver compile the kernel for the GPU (<a class="reference external" href="https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx" rel="noopener noreferrer" target="_blank">CuPy PTX option</a>).</p>
 </li>
 <li><p><strong>Python cannot find dependencies</strong> — use the sample’s <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span></code>, or select an
 environment with <a class="reference internal" href="#camera-streaming-external-venv"><span class="std std-ref">setup –venv</span></a>.</p></li>

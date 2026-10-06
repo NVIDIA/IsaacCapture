@@ -143,9 +143,7 @@ provides them. With the matching NVIDIA repositories configured:
    sudo apt update
    sudo apt install nvidia-cuda-dev
 
-Setup selects CuPy from ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
-``/usr/local/cuda``, in that order, and verifies GPU kernel execution. ``--jetson`` configures
-library discovery. A separate ``nvcc`` compiler is needed for CUDA source builds, such as the native
+Use the CUDA toolkit matching your JetPack. ``--jetson`` configures library discovery. A separate ``nvcc`` compiler is needed for CUDA source builds, such as the native
 RTP codec, rather than ordinary CuPy kernel execution.
 
 .. _recorded-camera-streaming:
@@ -578,23 +576,12 @@ Troubleshooting
   directory (``configs/``), not the directory you launched from.
 - **A source fails asking for CuPy / CUDA** — check the matching CUDA headers, NVRTC, and
   ``/usr/local/cuda`` target (:ref:`camera-streaming-jetson-cuda` on Jetson), then rerun setup.
-  ``nvidia-smi`` checks driver support, not installed headers. To rerun the kernel check
-  and print CUDA diagnostics on failure, run from ``examples/camera_viz``:
+  ``nvidia-smi`` checks driver support, not installed headers. To test GPU execution,
+  run from ``examples/camera_viz`` and expect ``[1 2 3 4]``:
 
   .. code-block:: bash
 
-     .venv/bin/python scripts/check_cuda.py
-
-- **Thor: ``CUDA_ERROR_NO_BINARY_FOR_GPU``** — an older NVRTC compiler can produce kernels
-  incompatible with Thor. Select your JetPack's CUDA 13.x toolkit and rerun setup. As a
-  temporary workaround for CuPy kernels, try:
-
-  .. code-block:: bash
-
-     CUPY_COMPILE_WITH_PTX=1 ./camera_viz.sh run configs/synthetic.yaml
-
-  This lets the driver compile the kernel for the GPU (`CuPy PTX option
-  <https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx>`__).
+     .venv/bin/python -c 'import cupy as cp; print((cp.arange(4) + 1).get())'
 
 - **Python cannot find dependencies** — use the sample's ``.venv/bin/python``, or select an
   environment with :ref:`setup --venv <camera-streaming-external-venv>`.
