@@ -202,7 +202,10 @@ test.describe('control panel positioning settings', () => {
     const { consoleLines } = await connectAndCapture(page);
     expect(parseLastPanelPoseLog(consoleLines).count).toBe(1);
 
-    await page.fill('#serverIpInput', 'r');
+    // page.fill() sets the value via an 'input' event, never a real keydown - it wouldn't
+    // exercise the reset handler's INPUT/TEXTAREA guard at all. press() dispatches a real
+    // keyboard event with the input focused as event.target, which the guard actually checks.
+    await page.locator('#serverIpInput').press('r');
     await page.waitForTimeout(500);
 
     expect(parseLastPanelPoseLog(consoleLines).count).toBe(1);
