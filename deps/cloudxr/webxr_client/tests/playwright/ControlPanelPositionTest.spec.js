@@ -64,6 +64,28 @@ async function setFormValue(page, id, value) {
   );
 }
 
+/** Moves the IWER-emulated headset by a world-space delta. window.xrDevice is IWER's own
+ * global (see LoadIWER.ts) - the only way to move the emulated headset from outside the page. */
+async function moveHeadsetBy(page, dx, dy, dz) {
+  await page.evaluate(
+    ({ dx, dy, dz }) => {
+      const device = window.xrDevice;
+      if (!device) throw new Error('window.xrDevice not available - IWER not loaded?');
+      device.position.set(device.position.x + dx, device.position.y + dy, device.position.z + dz);
+    },
+    { dx, dy, dz }
+  );
+}
+
+/** Camera yaw is 0 in this mock environment (headset faces -Z, untouched), so
+ * worldPositionFromHeadOffset's yaw rotation is a no-op: world.x/z = headset.x/z + relative.x/z,
+ * and world.y is the absolute configured height (not headset-relative). See CloudXRUI.tsx. */
+function expectWorldMatchesHeadsetPlusRelative(pose) {
+  expect(pose.world.x).toBeCloseTo(pose.headset.x + pose.relative.x, 1);
+  expect(pose.world.z).toBeCloseTo(pose.headset.z + pose.relative.z, 1);
+  expect(pose.world.y).toBeCloseTo(pose.relative.y, 1);
+}
+
 async function connectAndCapture(
   page,
   { position, distance, height, angleDegrees, trackHeadset } = {}
@@ -107,6 +129,7 @@ test.describe('control panel positioning settings', () => {
     expect(pose.relative.x).toBeCloseTo(1.69, 1);
     expect(pose.relative.z).toBeCloseTo(-0.62, 1);
     expect(pose.relative.y).toBeCloseTo(1.85, 1);
+    expectWorldMatchesHeadsetPlusRelative(pose);
   });
 
   test('center position has no lateral offset', async ({ page }) => {
@@ -138,13 +161,20 @@ test.describe('control panel positioning settings', () => {
     expect(pose.relative.x).toBeCloseTo(1.77, 1);
     expect(pose.relative.z).toBeCloseTo(-1.77, 1);
     expect(pose.relative.y).toBeCloseTo(1.5, 1);
+    expectWorldMatchesHeadsetPlusRelative(pose);
   });
 
-  test('the reset key (R) logs a new pose without changing the settings', async ({ page }) => {
+  test('the reset key (R) restores the configured pose after the headset moves', async ({
+    page,
+  }) => {
     test.setTimeout(30000);
     const { consoleLines } = await connectAndCapture(page);
     const before = parseLastPanelPoseLog(consoleLines);
     expect(before.count).toBe(1);
+
+    // Move the headset first - a reset that merely re-logged the stale pose from connect,
+    // instead of recomputing relative to the *current* head position, would be caught here.
+    await moveHeadsetBy(page, 2, 0, -1.5);
 
     await page.click('body');
     await page.keyboard.press('r');
@@ -158,10 +188,13 @@ test.describe('control panel positioning settings', () => {
       .toBe(2);
 
     const after = parseLastPanelPoseLog(consoleLines);
-    // Headset hasn't moved in this mock environment, so the same settings should reproduce the
-    // same relative/world pose on the second (R-triggered) log line.
+    // The configured offset is unchanged by reset, but the headset moved, so the reset pose must
+    // be re-anchored to the new head position, not a replay of the one logged on connect.
     expect(after.relative.x).toBeCloseTo(before.relative.x, 2);
     expect(after.relative.z).toBeCloseTo(before.relative.z, 2);
+    expect(after.headset.x).toBeCloseTo(before.headset.x + 2, 1);
+    expect(after.headset.z).toBeCloseTo(before.headset.z - 1.5, 1);
+    expectWorldMatchesHeadsetPlusRelative(after);
   });
 
   test('typing "r" into a settings text input does not trigger a reset', async ({ page }) => {
@@ -182,8 +215,48 @@ test.describe('control panel positioning settings', () => {
     expect(countAfterConnect).toBe(1);
 
     // Tracking recomputes position every frame under the hood, but shouldn't log every frame -
-    // only discrete events (reset, drag release) go through the logging path.
+    // only a real reposition beyond CloudXRUI's TRACKING_LOG_EPSILON_M does (see below).
     await page.waitForTimeout(3000);
     expect(parseLastPanelPoseLog(consoleLines).count).toBe(countAfterConnect);
+  });
+
+  test('Track Headset mode follows the headset when it moves', async ({ page }) => {
+    test.setTimeout(30000);
+    const { consoleLines } = await connectAndCapture(page, { trackHeadset: true });
+    const before = parseLastPanelPoseLog(consoleLines);
+    expect(before.count).toBe(1);
+
+    await moveHeadsetBy(page, 1.5, 0, -1);
+
+    await expect
+      .poll(() => parseLastPanelPoseLog(consoleLines).count, {
+        timeout: 5000,
+        message: () =>
+          `headset move never produced a new pose log; console so far:\n${consoleLines.join('\n')}`,
+      })
+      .toBeGreaterThan(before.count);
+
+    const after = parseLastPanelPoseLog(consoleLines);
+    // The configured offset is unchanged - tracking just re-anchors it to the new head pose,
+    // same relationship a reset keeps (world = headset + relative).
+    expect(after.relative.x).toBeCloseTo(before.relative.x, 2);
+    expect(after.relative.z).toBeCloseTo(before.relative.z, 2);
+    expect(after.headset.x).toBeCloseTo(before.headset.x + 1.5, 1);
+    expect(after.headset.z).toBeCloseTo(before.headset.z - 1, 1);
+    expectWorldMatchesHeadsetPlusRelative(after);
+  });
+
+  test('panel does not follow the headset when Track Headset is off', async ({ page }) => {
+    test.setTimeout(30000);
+    const { consoleLines } = await connectAndCapture(page);
+    const before = parseLastPanelPoseLog(consoleLines);
+    expect(before.count).toBe(1);
+
+    await moveHeadsetBy(page, 1.5, 0, -1);
+    await page.waitForTimeout(1000);
+
+    // Without Track Headset, nothing recomputes the panel's position on a per-frame basis, so
+    // a headset move alone produces no new pose log.
+    expect(parseLastPanelPoseLog(consoleLines).count).toBe(before.count);
   });
 });
