@@ -257,6 +257,8 @@ void OpenXRSession::create_instance(const std::string& app_name, const std::vect
             all_extensions.push_back(extension);
         }
     };
+
+    // Add headless and overlay extensions automatically.
     add_extension("XR_MND_headless");
     add_extension("XR_EXTX_overlay");
     for (const auto& extension : XrTimeConverter::get_required_extensions())
