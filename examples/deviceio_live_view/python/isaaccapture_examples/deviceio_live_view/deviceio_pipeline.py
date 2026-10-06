@@ -17,7 +17,7 @@ def build_all_human_pipeline(
     soma_data_root=None,
     *,
     body_schema=None,
-    soma_collection_id="soma_demo",
+    soma_body_collection_id="soma_body_demo",
     soma_body_representation="joint-rotations",
     body: BodyViewPipeline | None = None,
     hands: HandViewPipeline | None = None,
@@ -28,7 +28,7 @@ def build_all_human_pipeline(
     selected_body = body or create_body_view_pipeline(
         soma_data_root,
         body_schema=body_schema,
-        soma_collection_id=soma_collection_id,
+        soma_body_collection_id=soma_body_collection_id,
         soma_body_representation=soma_body_representation,
     )
     selected_hands = hands or create_hand_view_pipeline()

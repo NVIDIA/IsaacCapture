@@ -51,7 +51,7 @@ def create_body_view_pipeline(
     soma_data_root: Path | None = None,
     *,
     body_schema: BodySchema | str | None = None,
-    soma_collection_id: str = "soma_demo",
+    soma_body_collection_id: str = "soma_body_demo",
     soma_body_representation: SomaBodyRepresentation
     | str = SomaBodyRepresentation.JOINT_ROTATIONS,
 ) -> BodyViewPipeline:
@@ -65,5 +65,5 @@ def create_body_view_pipeline(
 
     assert soma_data_root is not None
     return create_soma_body_pipeline(
-        soma_data_root, soma_collection_id, soma_body_representation
+        soma_data_root, soma_body_collection_id, soma_body_representation
     )

@@ -12,14 +12,14 @@ testing SOMA consumers. It is not a vendor plugin or vendor network protocol.
 The Python process converts the bundled motion into the pinned SOMA-X v0.3.1
 pose contract and writes framed FlatBuffers to the native `soma_body_pusher`.
 It can publish joint rotations for downstream FK or pre-evaluated joint poses.
-The native process validates the selected payload and publishes the `soma_demo`
-tensor collection.
+The native process validates the selected payload and publishes the
+`soma_body_demo` tensor collection.
 
 ```text
 SOMA-X example_animation.npy
     -> Python SOMA body encoder
     -> soma_body_pusher
-    -> SchemaPusher collection soma_demo
+    -> SchemaPusher collection soma_body_demo
 ```
 
 Install the example and build the native pusher:

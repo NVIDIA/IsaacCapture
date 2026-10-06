@@ -138,7 +138,7 @@ def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit
     body = create_body_view_pipeline(
         tmp_path,
         body_schema=BodySchema.SOMA if explicit else None,
-        soma_collection_id="vendor_body",
+        soma_body_collection_id="vendor_body",
     )
     pipeline = build_all_human_pipeline(body=body)
     sources = {source.name: source for source in pipeline.get_leaf_nodes()}
@@ -157,7 +157,7 @@ def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
     body = create_body_view_pipeline(
         tmp_path,
         body_schema=BodySchema.SOMA,
-        soma_collection_id="vendor_body",
+        soma_body_collection_id="vendor_body",
         soma_body_representation=SomaBodyRepresentation.JOINT_POSES,
     )
     pipeline = build_all_human_pipeline(body=body)
@@ -314,10 +314,10 @@ def test_viewer_uses_selected_native_body_layout_and_hides_missing_devices():
 @pytest.mark.parametrize(
     "schema,use_assets,expected,collection",
     [
-        (None, False, BodySchema.FULL_BODY_POSE, "soma_demo"),
-        (None, True, BodySchema.SOMA, "soma_demo"),
+        (None, False, BodySchema.FULL_BODY_POSE, "soma_body_demo"),
+        (None, True, BodySchema.SOMA, "soma_body_demo"),
         ("soma", True, BodySchema.SOMA, "vendor_body"),
-        ("full-body-pose", True, BodySchema.FULL_BODY_POSE, "soma_demo"),
+        ("full-body-pose", True, BodySchema.FULL_BODY_POSE, "soma_body_demo"),
     ],
 )
 def test_live_cli_selects_source_and_launches_runtime(
@@ -347,12 +347,12 @@ def test_live_cli_selects_source_and_launches_runtime(
         args += ["--body-schema", schema]
     if use_assets:
         args += ["--soma-data-root", str(tmp_path)]
-    args += ["--soma-collection-id", collection]
+    args += ["--soma-body-collection-id", collection]
     assert live_deviceio.main(args) == 0
     select.assert_called_once_with(
         tmp_path if use_assets else None,
         body_schema=expected,
-        soma_collection_id=collection,
+        soma_body_collection_id=collection,
         soma_body_representation="joint-rotations",
     )
     select_hands.assert_called_once_with(
@@ -378,7 +378,7 @@ def test_live_cli_selects_source_and_launches_runtime(
                 "soma",
                 "--soma-data-root",
                 "/unused",
-                "--soma-collection-id",
+                "--soma-body-collection-id",
                 "",
             ],
             "collection_id must not be empty",

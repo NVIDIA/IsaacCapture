@@ -55,9 +55,9 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--soma-data-root", type=Path, help="SOMA POC assets directory")
     parser.add_argument(
-        "--soma-collection-id",
-        default="soma_demo",
-        help="SOMA publisher's tensor collection ID",
+        "--soma-body-collection-id",
+        default="soma_body_demo",
+        help="SOMA body publisher's tensor collection ID",
     )
     parser.add_argument(
         "--soma-body-representation",
@@ -95,7 +95,7 @@ def main(argv: list[str]) -> int:
         body = create_body_view_pipeline(
             args.soma_data_root,
             body_schema=body_schema,
-            soma_collection_id=args.soma_collection_id,
+            soma_body_collection_id=args.soma_body_collection_id,
             soma_body_representation=args.soma_body_representation,
         )
         hands = create_hand_view_pipeline(

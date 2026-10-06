@@ -55,8 +55,8 @@ also selects SOMA; an explicit schema always takes precedence. Switch sources by
 restarting the viewer with the other option. Hands, head, and controllers remain
 unchanged.
 
-The SOMA viewer reads the `soma_demo` collection by default. Use
-`--soma-collection-id <id>` to match another publisher's collection.
+The SOMA viewer reads the `soma_body_demo` collection by default. Use
+`--soma-body-collection-id <id>` to match another publisher's collection.
 Joint rotations are the default SOMA profile. Pass
 `--soma-body-representation joint-poses` when the publisher sends evaluated
 joint poses instead. The publisher and viewer options must match.

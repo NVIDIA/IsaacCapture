@@ -125,7 +125,7 @@ int main(int argc, char** argv)
                     session = std::make_unique<core::OpenXRSession>(
                         "SomaBodyDemoPublisher", core::SchemaPusher::get_required_extensions(), false);
                     pusher = std::make_unique<core::SchemaPusher>(
-                        session->get_handles(), core::SchemaPusherConfig{ .collection_id = "soma_demo",
+                        session->get_handles(), core::SchemaPusherConfig{ .collection_id = "soma_body_demo",
                                                                           .max_flatbuffer_size = max_flatbuffer_size,
                                                                           .tensor_identifier = tensor_identifier,
                                                                           .localized_name = "SOMA Body Demo" });
