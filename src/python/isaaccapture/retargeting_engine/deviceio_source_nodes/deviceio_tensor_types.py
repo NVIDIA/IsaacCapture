@@ -22,10 +22,10 @@ from isaaccapture.schema import (
     KeyboardOutput,
     JointStateOutput,
     FullBodyPose,
-    SomaBodyJointPosesV0,
-    SomaBodyJointRotationsV0,
-    SomaHandJointPosesV0,
-    SomaHandJointRotationsV0,
+    SomaBodyJointPoses,
+    SomaBodyJointRotations,
+    SomaHandJointPoses,
+    SomaHandJointRotations,
     MessageChannelMessagesTracked,
 )
 
@@ -119,28 +119,28 @@ class FullBodyPoseTrackedType(_PayloadTensorType):
     _payload_cls = FullBodyPose
 
 
-class SomaBodyJointRotationsV0TrackedType(_PayloadTensorType):
-    """SomaBodyJointRotationsV0 payload from a generated SOMA body tracker."""
+class SomaBodyJointRotationsTrackedType(_PayloadTensorType):
+    """SomaBodyJointRotations payload from a generated SOMA body tracker."""
 
-    _payload_cls = SomaBodyJointRotationsV0
-
-
-class SomaBodyJointPosesV0TrackedType(_PayloadTensorType):
-    """SomaBodyJointPosesV0 payload from a generated SOMA body tracker."""
-
-    _payload_cls = SomaBodyJointPosesV0
+    _payload_cls = SomaBodyJointRotations
 
 
-class SomaHandJointRotationsV0TrackedType(_PayloadTensorType):
-    """SomaHandJointRotationsV0 payload from a generated SOMA hand tracker."""
+class SomaBodyJointPosesTrackedType(_PayloadTensorType):
+    """SomaBodyJointPoses payload from a generated SOMA body tracker."""
 
-    _payload_cls = SomaHandJointRotationsV0
+    _payload_cls = SomaBodyJointPoses
 
 
-class SomaHandJointPosesV0TrackedType(_PayloadTensorType):
-    """SomaHandJointPosesV0 payload from a generated SOMA hand tracker."""
+class SomaHandJointRotationsTrackedType(_PayloadTensorType):
+    """SomaHandJointRotations payload from a generated SOMA hand tracker."""
 
-    _payload_cls = SomaHandJointPosesV0
+    _payload_cls = SomaHandJointRotations
+
+
+class SomaHandJointPosesTrackedType(_PayloadTensorType):
+    """SomaHandJointPoses payload from a generated SOMA hand tracker."""
+
+    _payload_cls = SomaHandJointPoses
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -243,35 +243,35 @@ def DeviceIOFullBodyPoseTracked() -> TensorGroupType:
     )
 
 
-def DeviceIOSomaBodyJointRotationsV0Tracked() -> TensorGroupType:
-    """SOMA V0 body controls, or None when the tracker is inactive."""
+def DeviceIOSomaBodyJointRotationsTracked() -> TensorGroupType:
+    """SOMA body controls, or None when the tracker is inactive."""
     return TensorGroupType(
-        "deviceio_soma_body_joint_rotations_v0",
-        [SomaBodyJointRotationsV0TrackedType("soma_body_tracked")],
+        "deviceio_soma_body_joint_rotations",
+        [SomaBodyJointRotationsTrackedType("soma_body_tracked")],
     )
 
 
-def DeviceIOSomaBodyJointPosesV0Tracked() -> TensorGroupType:
-    """Evaluated SOMA V0 body poses, or None when the tracker is inactive."""
+def DeviceIOSomaBodyJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA body poses, or None when the tracker is inactive."""
     return TensorGroupType(
-        "deviceio_soma_body_joint_poses_v0",
-        [SomaBodyJointPosesV0TrackedType("soma_body_tracked")],
+        "deviceio_soma_body_joint_poses",
+        [SomaBodyJointPosesTrackedType("soma_body_tracked")],
     )
 
 
-def DeviceIOSomaHandJointRotationsV0Tracked() -> TensorGroupType:
-    """SOMA V0 hand controls, or None when the tracker is inactive."""
+def DeviceIOSomaHandJointRotationsTracked() -> TensorGroupType:
+    """SOMA hand controls, or None when the tracker is inactive."""
     return TensorGroupType(
-        "deviceio_soma_hand_joint_rotations_v0",
-        [SomaHandJointRotationsV0TrackedType("soma_hand_tracked")],
+        "deviceio_soma_hand_joint_rotations",
+        [SomaHandJointRotationsTrackedType("soma_hand_tracked")],
     )
 
 
-def DeviceIOSomaHandJointPosesV0Tracked() -> TensorGroupType:
-    """Evaluated SOMA V0 hand poses, or None when the tracker is inactive."""
+def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA hand poses, or None when the tracker is inactive."""
     return TensorGroupType(
-        "deviceio_soma_hand_joint_poses_v0",
-        [SomaHandJointPosesV0TrackedType("soma_hand_tracked")],
+        "deviceio_soma_hand_joint_poses",
+        [SomaHandJointPosesTrackedType("soma_hand_tracked")],
     )
 
 

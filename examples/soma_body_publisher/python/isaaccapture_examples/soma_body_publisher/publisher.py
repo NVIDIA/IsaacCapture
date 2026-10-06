@@ -17,11 +17,11 @@ import numpy as np
 
 from isaaccapture.schema import (
     Point,
-    SomaBodyJointPoseArrayV0,
-    SomaBodyJointPosesV0,
-    SomaBodyJointRotationArrayV0,
-    SomaBodyJointV0,
-    SomaBodyJointRotationsV0,
+    SomaBodyJointPoseArray,
+    SomaBodyJointPoses,
+    SomaBodyJointRotationArray,
+    SomaBodyJoint,
+    SomaBodyJointRotations,
 )
 
 logger = logging.getLogger("isaaccapture.examples.soma_body_publisher")
@@ -32,8 +32,6 @@ def create_layer(data_root: Path):
     import soma
     import torch
 
-    if soma.__version__ != "0.3.1":
-        raise RuntimeError(f"The POC requires SOMA-X 0.3.1, got {soma.__version__}")
     layer = soma.SOMALayer(
         data_root=str(data_root),
         identity_model_type="soma",
@@ -46,12 +44,12 @@ def create_layer(data_root: Path):
     expected = [
         name.replace("_", "")
         for name, joint in sorted(
-            SomaBodyJointV0.__members__.items(), key=lambda item: int(item[1])
+            SomaBodyJoint.__members__.items(), key=lambda item: int(item[1])
         )
         if name != "NUM_JOINTS"
     ]
     if [name.upper() for name in layer.public_joint_names] != ["ROOT", *expected]:
-        raise ValueError("SOMA layer joint order differs from the V0 FBS")
+        raise ValueError("SOMA layer joint order differs from the FBS")
     with torch.no_grad():
         layer.prepare_identity(
             torch.zeros((1, layer.identity_model.num_identity_coeffs))
@@ -86,10 +84,10 @@ def demo_controls(path: Path, layer):
 
 
 def soma_joint_rotations(quaternions, translation):
-    joints = SomaBodyJointRotationArrayV0()
+    joints = SomaBodyJointRotationArray()
     joints.rotations[:] = quaternions
     joints.is_valid[:] = 1
-    return SomaBodyJointRotationsV0(joints, Point(*translation), True)
+    return SomaBodyJointRotations(joints, Point(*translation), True)
 
 
 def evaluate_demo_controls(layer, rotations, translations):
@@ -110,11 +108,11 @@ def evaluate_demo_controls(layer, rotations, translations):
 
 
 def soma_joint_poses(positions, orientations):
-    joints = SomaBodyJointPoseArrayV0()
+    joints = SomaBodyJointPoseArray()
     joints.positions[:] = positions
     joints.orientations[:] = orientations
     joints.is_valid[:] = 1
-    return SomaBodyJointPosesV0(joints)
+    return SomaBodyJointPoses(joints)
 
 
 def main(argv: list[str]) -> int:

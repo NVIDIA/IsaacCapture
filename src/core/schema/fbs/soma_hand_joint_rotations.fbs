@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 include "point.fbs";
-include "soma_common_v0.fbs";
+include "soma_common.fbs";
 include "timestamp.fbs";
 
 namespace core;
 
 // SOMAHandLayer's 25-entry public pose input order. These are the wrist and the
 // 24 finger joints that form a strict subset of the SOMA-X body skeleton.
-enum SomaHandJointV0 : uint8 {
+enum SomaHandJoint : uint8 {
     WRIST = 0,
     THUMB1 = 1,
     THUMB2 = 2,
@@ -39,12 +39,12 @@ enum SomaHandJointV0 : uint8 {
     NUM_JOINTS = 25,
 }
 
-// Fixed-size SOMA hand joint-rotation array v0 in SomaHandJointV0 order.
-struct SomaHandJointRotationArrayV0 {
-    values: [SomaJointRotationV0:25];
+// Fixed-size SOMA hand joint-rotation array in SomaHandJoint order.
+struct SomaHandJointRotationArray {
+    values: [SomaJointRotation:25];
 }
 
-// SOMA hand joint-rotation transport schema v0.
+// SOMA hand joint-rotation transport schema.
 //
 // Defined and verified against SOMA-X v0.3.1 and its v0.3 pose interface,
 // with reference_pose=None, absolute_pose=False, and its public joint order.
@@ -53,19 +53,19 @@ struct SomaHandJointRotationArrayV0 {
 // joint-local relative to that fixed reference pose. Rotations are unit XYZW
 // quaternions. Global translation is meters in a right-handed reference frame
 // with +Y up and +Z forward.
-table SomaHandJointRotationsV0 {
-    joint_rotations: SomaHandJointRotationArrayV0 (id: 0);
+table SomaHandJointRotations {
+    joint_rotations: SomaHandJointRotationArray (id: 0);
 
     // Translation applied to Wrist in the reference frame. Ignore this value
     // when global_translation_is_valid is false.
     global_translation: Point (id: 1);
     global_translation_is_valid: bool (id: 2);
-    handedness: SomaHandednessV0 = UNSPECIFIED (id: 3);
+    handedness: SomaHandedness = UNSPECIFIED (id: 3);
 }
 
-table SomaHandJointRotationsV0Record {
-    data: SomaHandJointRotationsV0 (id: 0);
+table SomaHandJointRotationsRecord {
+    data: SomaHandJointRotations (id: 0);
     timestamp: DeviceDataTimestamp (id: 1);
 }
 
-root_type SomaHandJointRotationsV0Record;
+root_type SomaHandJointRotationsRecord;

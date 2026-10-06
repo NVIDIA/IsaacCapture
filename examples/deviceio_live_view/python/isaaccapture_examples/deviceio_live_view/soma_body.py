@@ -10,7 +10,7 @@ from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     SomaBodySource,
 )
 from isaaccapture.retargeting_engine.tensor_types import SomaBodyInputIndex
-from isaaccapture.schema import SomaBodyJointV0
+from isaaccapture.schema import SomaBodyJoint
 
 from .body_pipeline import BodyViewLayout, BodyViewPipeline
 
@@ -19,8 +19,6 @@ def create_layer(data_root: Path):
     import soma
     import torch
 
-    if soma.__version__ != "0.3.1":
-        raise RuntimeError(f"The POC requires SOMA-X 0.3.1, got {soma.__version__}")
     layer = soma.SOMALayer(
         data_root=str(data_root),
         identity_model_type="soma",
@@ -33,12 +31,12 @@ def create_layer(data_root: Path):
     expected = [
         name.replace("_", "")
         for name, joint in sorted(
-            SomaBodyJointV0.__members__.items(), key=lambda item: int(item[1])
+            SomaBodyJoint.__members__.items(), key=lambda item: int(item[1])
         )
         if name != "NUM_JOINTS"
     ]
     if [name.upper() for name in layer.public_joint_names] != ["ROOT", *expected]:
-        raise ValueError("SOMA layer joint order differs from the V0 FBS")
+        raise ValueError("SOMA layer joint order differs from the FBS")
     with torch.no_grad():
         layer.prepare_identity(
             torch.zeros((1, layer.identity_model.num_identity_coeffs))

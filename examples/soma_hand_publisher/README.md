@@ -48,7 +48,7 @@ uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
 Joint rotations are the default. To publish evaluated joint poses, add
 `--hand-representation joint-poses` to the publisher and
 `--soma-hand-representation joint-poses` to the viewer. The two modes publish
-`soma_hand_joint_rotations_v0` and `soma_hand_joint_poses_v0`, respectively.
+`soma_hand_joint_rotations` and `soma_hand_joint_poses`, respectively.
 
 The assets must include `SOMAHand.npz`, `example_animation.npy`, and the neutral
 SOMA identity assets from the v0.3.1 asset release. Add `--validate-only` to

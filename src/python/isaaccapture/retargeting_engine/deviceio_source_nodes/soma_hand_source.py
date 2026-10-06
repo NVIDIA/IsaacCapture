@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from isaaccapture.deviceio_trackers import (
-    SomaHandJointPosesV0Tracker,
-    SomaHandJointRotationsV0Tracker,
+    SomaHandJointPosesTracker,
+    SomaHandJointRotationsTracker,
 )
-from isaaccapture.schema import SomaHandednessV0
+from isaaccapture.schema import SomaHandedness
 
 from .deviceio_tensor_types import (
-    DeviceIOSomaHandJointPosesV0Tracked,
-    DeviceIOSomaHandJointRotationsV0Tracked,
+    DeviceIOSomaHandJointPosesTracked,
+    DeviceIOSomaHandJointRotationsTracked,
 )
 from .interface import IDeviceIOSource
 from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
@@ -35,7 +35,7 @@ class SomaHandRepresentation(str, Enum):
 
 
 class SomaHandSource(IDeviceIOSource):
-    """Normalize one SOMA V0 hand collection into evaluated joint poses."""
+    """Normalize one SOMA hand collection into evaluated joint poses."""
 
     HAND = "soma_hand"
 
@@ -43,7 +43,7 @@ class SomaHandSource(IDeviceIOSource):
         self,
         name: str,
         collection_id: str,
-        handedness: SomaHandednessV0,
+        handedness: SomaHandedness,
         layer: Any | None = None,
         *,
         representation: SomaHandRepresentation
@@ -51,18 +51,18 @@ class SomaHandSource(IDeviceIOSource):
     ) -> None:
         if not collection_id:
             raise ValueError("SOMA hand collection_id must not be empty")
-        if handedness not in (SomaHandednessV0.LEFT, SomaHandednessV0.RIGHT):
+        if handedness not in (SomaHandedness.LEFT, SomaHandedness.RIGHT):
             raise ValueError("SOMA hand source requires LEFT or RIGHT handedness")
         self.handedness = handedness
         self.representation = SomaHandRepresentation(representation)
         if self.representation is SomaHandRepresentation.JOINT_ROTATIONS:
             if layer is None:
                 raise ValueError("joint-rotations requires a prepared SOMA hand layer")
-            self._tracker = SomaHandJointRotationsV0Tracker(collection_id)
-            self._input_type = DeviceIOSomaHandJointRotationsV0Tracked()
+            self._tracker = SomaHandJointRotationsTracker(collection_id)
+            self._input_type = DeviceIOSomaHandJointRotationsTracked()
         else:
-            self._tracker = SomaHandJointPosesV0Tracker(collection_id)
-            self._input_type = DeviceIOSomaHandJointPosesV0Tracked()
+            self._tracker = SomaHandJointPosesTracker(collection_id)
+            self._input_type = DeviceIOSomaHandJointPosesTracked()
         self._evaluator = _SomaHandEvaluator(layer) if layer is not None else None
         super().__init__(name)
 

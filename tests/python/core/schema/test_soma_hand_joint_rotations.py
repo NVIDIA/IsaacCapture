@@ -10,16 +10,16 @@ from isaaccapture.schema import (
     DeviceDataTimestamp,
     Point,
     Quaternion,
-    SomaHandednessV0,
-    SomaHandJointRotationArrayV0,
-    SomaHandJointRotationsV0,
-    SomaHandJointRotationsV0Record,
-    SomaHandJointV0,
-    SomaJointRotationV0,
+    SomaHandedness,
+    SomaHandJointRotationArray,
+    SomaHandJointRotations,
+    SomaHandJointRotationsRecord,
+    SomaHandJoint,
+    SomaJointRotation,
 )
 
 
-def test_soma_hand_v0_joint_order():
+def test_soma_hand_joint_rotations_joint_order():
     expected = [
         "WRIST",
         "THUMB1",
@@ -48,13 +48,13 @@ def test_soma_hand_v0_joint_order():
         "PINKY_END",
     ]
 
-    assert len(expected) == int(SomaHandJointV0.NUM_JOINTS) == 25
+    assert len(expected) == int(SomaHandJoint.NUM_JOINTS) == 25
     for index, name in enumerate(expected):
-        assert int(getattr(SomaHandJointV0, name)) == index
+        assert int(getattr(SomaHandJoint, name)) == index
 
 
-def test_soma_hand_v0_joint_rotation():
-    rotation = SomaJointRotationV0(Quaternion(0.0, 0.0, 0.6, 0.8), True)
+def test_soma_hand_joint_rotations_joint_rotation():
+    rotation = SomaJointRotation(Quaternion(0.0, 0.0, 0.6, 0.8), True)
 
     assert rotation.rotation.x == 0.0
     assert rotation.rotation.y == 0.0
@@ -63,8 +63,8 @@ def test_soma_hand_v0_joint_rotation():
     assert rotation.is_valid is True
 
 
-def test_soma_hand_v0_rotation_views_alias_storage():
-    rotations = SomaHandJointRotationArrayV0()
+def test_soma_hand_joint_rotations_rotation_views_alias_storage():
+    rotations = SomaHandJointRotationArray()
 
     assert rotations.rotations.shape == (25, 4)
     assert rotations.rotations.dtype == np.float32
@@ -72,28 +72,28 @@ def test_soma_hand_v0_rotation_views_alias_storage():
     assert rotations.is_valid.dtype == np.uint8
     assert not rotations.rotations.flags.owndata
 
-    rotations.rotations[SomaHandJointV0.INDEX_END] = [0.0, 0.0, 0.6, 0.8]
-    rotations.is_valid[SomaHandJointV0.INDEX_END] = 1
+    rotations.rotations[SomaHandJoint.INDEX_END] = [0.0, 0.0, 0.6, 0.8]
+    rotations.is_valid[SomaHandJoint.INDEX_END] = 1
 
-    index_end = rotations.values(int(SomaHandJointV0.INDEX_END))
+    index_end = rotations.values(int(SomaHandJoint.INDEX_END))
     assert index_end.rotation.z == pytest.approx(0.6)
     assert index_end.rotation.w == pytest.approx(0.8)
     assert index_end.is_valid is True
 
 
-def test_soma_hand_v0_rotation_index_check():
+def test_soma_hand_joint_rotations_rotation_index_check():
     with pytest.raises(IndexError):
-        SomaHandJointRotationArrayV0().values(25)
+        SomaHandJointRotationArray().values(25)
 
 
-def test_soma_hand_v0_pose_construction_and_lifetime():
-    rotations = SomaHandJointRotationArrayV0()
+def test_soma_hand_joint_rotations_pose_construction_and_lifetime():
+    rotations = SomaHandJointRotationArray()
     rotations.rotations[:] = [0.0, 0.0, 0.0, 1.0]
-    rotations.rotations[SomaHandJointV0.PINKY_END] = [0.0, 0.0, 0.6, 0.8]
+    rotations.rotations[SomaHandJoint.PINKY_END] = [0.0, 0.0, 0.6, 0.8]
     rotations.is_valid[:] = 1
 
-    pose = SomaHandJointRotationsV0(
-        rotations, Point(1.0, 2.0, 3.0), True, SomaHandednessV0.RIGHT
+    pose = SomaHandJointRotations(
+        rotations, Point(1.0, 2.0, 3.0), True, SomaHandedness.RIGHT
     )
     quaternion_rotations = pose.joint_rotations.rotations
     del pose
@@ -102,54 +102,54 @@ def test_soma_hand_v0_pose_construction_and_lifetime():
     assert quaternion_rotations[24, 3] == pytest.approx(0.8)
 
 
-def test_soma_hand_v0_pose_defaults_and_global_translation():
-    pose = SomaHandJointRotationsV0()
+def test_soma_hand_joint_rotations_pose_defaults_and_global_translation():
+    pose = SomaHandJointRotations()
 
     assert pose.joint_rotations is not None
     assert pose.global_translation.x == 0.0
     assert pose.global_translation_is_valid is False
-    assert pose.handedness == SomaHandednessV0.UNSPECIFIED
+    assert pose.handedness == SomaHandedness.UNSPECIFIED
 
-    right = SomaHandJointRotationsV0(
+    right = SomaHandJointRotations(
         global_translation=Point(1.0, 2.0, 3.0),
         global_translation_is_valid=True,
-        handedness=SomaHandednessV0.RIGHT,
+        handedness=SomaHandedness.RIGHT,
     )
     assert right.global_translation.y == pytest.approx(2.0)
     assert right.global_translation_is_valid is True
-    assert right.handedness == SomaHandednessV0.RIGHT
+    assert right.handedness == SomaHandedness.RIGHT
 
 
-def test_soma_hand_v0_pose_record():
-    record = SomaHandJointRotationsV0Record(
-        SomaHandJointRotationsV0(handedness=SomaHandednessV0.LEFT),
+def test_soma_hand_joint_rotations_pose_record():
+    record = SomaHandJointRotationsRecord(
+        SomaHandJointRotations(handedness=SomaHandedness.LEFT),
         DeviceDataTimestamp(100, 200, 300),
     )
 
     assert record.data is not None
-    assert record.data.handedness == SomaHandednessV0.LEFT
+    assert record.data.handedness == SomaHandedness.LEFT
     assert record.timestamp.sample_time_local_common_clock == 200
 
 
 @pytest.mark.parametrize("sign", [-1.0, 1.0])
 @pytest.mark.parametrize("translation_is_valid", [False, True])
-@pytest.mark.parametrize("handedness", [SomaHandednessV0.LEFT, SomaHandednessV0.RIGHT])
-def test_soma_hand_v0_record_preserves_quaternion_layout(
+@pytest.mark.parametrize("handedness", [SomaHandedness.LEFT, SomaHandedness.RIGHT])
+def test_soma_hand_joint_rotations_record_preserves_quaternion_layout(
     sign, translation_is_valid, handedness
 ):
     quaternion = np.array([1.0, -2.0, 3.0, -4.0], dtype=np.float32)
     quaternion *= sign / np.linalg.norm(quaternion)
-    rotations = SomaHandJointRotationArrayV0()
-    rotations.rotations[SomaHandJointV0.WRIST] = quaternion
-    rotations.rotations[SomaHandJointV0.PINKY_END] = -quaternion
-    rotations.is_valid[SomaHandJointV0.WRIST] = 1
-    rotations.is_valid[SomaHandJointV0.PINKY_END] = 1
+    rotations = SomaHandJointRotationArray()
+    rotations.rotations[SomaHandJoint.WRIST] = quaternion
+    rotations.rotations[SomaHandJoint.PINKY_END] = -quaternion
+    rotations.is_valid[SomaHandJoint.WRIST] = 1
+    rotations.is_valid[SomaHandJoint.PINKY_END] = 1
     expected_rotations = rotations.rotations.copy()
     expected_validity = rotations.is_valid.copy()
-    pose = SomaHandJointRotationsV0(
+    pose = SomaHandJointRotations(
         rotations, Point(1.0, -2.0, 3.0), translation_is_valid, handedness
     )
-    record = SomaHandJointRotationsV0Record(pose, DeviceDataTimestamp(100, 200, 300))
+    record = SomaHandJointRotationsRecord(pose, DeviceDataTimestamp(100, 200, 300))
 
     rotations.rotations[:] = 0.0
     rotations.is_valid[:] = 0
@@ -161,7 +161,7 @@ def test_soma_hand_v0_record_preserves_quaternion_layout(
     data = record.data
     np.testing.assert_array_equal(data.joint_rotations.rotations, expected_rotations)
     np.testing.assert_array_equal(data.joint_rotations.is_valid, expected_validity)
-    wrist = data.joint_rotations.values(int(SomaHandJointV0.WRIST)).rotation
+    wrist = data.joint_rotations.values(int(SomaHandJoint.WRIST)).rotation
     np.testing.assert_array_equal([wrist.x, wrist.y, wrist.z, wrist.w], quaternion)
     assert data.global_translation.x == pytest.approx(1.0)
     assert data.global_translation.y == pytest.approx(-2.0)

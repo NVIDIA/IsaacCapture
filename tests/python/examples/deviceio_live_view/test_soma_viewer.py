@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from isaaccapture.deviceio_trackers import (
-    SomaBodyJointPosesV0Tracker,
-    SomaBodyJointRotationsV0Tracker,
-    SomaHandJointPosesV0Tracker,
-    SomaHandJointRotationsV0Tracker,
+    SomaBodyJointPosesTracker,
+    SomaBodyJointRotationsTracker,
+    SomaHandJointPosesTracker,
+    SomaHandJointRotationsTracker,
 )
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     FullBodySource,
@@ -29,15 +29,15 @@ from isaaccapture.retargeting_engine.tensor_types import (
 )
 from isaaccapture.schema import (
     Point,
-    SomaBodyJointPoseArrayV0,
-    SomaBodyJointPosesV0,
-    SomaBodyJointRotationArrayV0,
-    SomaBodyJointRotationsV0,
-    SomaHandednessV0,
-    SomaHandJointPoseArrayV0,
-    SomaHandJointPosesV0,
-    SomaHandJointRotationArrayV0,
-    SomaHandJointRotationsV0,
+    SomaBodyJointPoseArray,
+    SomaBodyJointPoses,
+    SomaBodyJointRotationArray,
+    SomaBodyJointRotations,
+    SomaHandedness,
+    SomaHandJointPoseArray,
+    SomaHandJointPoses,
+    SomaHandJointRotationArray,
+    SomaHandJointRotations,
 )
 from isaaccapture_examples.deviceio_live_view import live_deviceio, soma_body
 from isaaccapture_examples.deviceio_live_view.body_pipeline import (
@@ -74,33 +74,33 @@ def fake_layer():
 
 
 def soma_joint_rotations(quaternions, translation):
-    joints = SomaBodyJointRotationArrayV0()
+    joints = SomaBodyJointRotationArray()
     joints.rotations[:] = quaternions
     joints.is_valid[:] = 1
-    return SomaBodyJointRotationsV0(joints, Point(*translation), True)
+    return SomaBodyJointRotations(joints, Point(*translation), True)
 
 
 def soma_joint_poses(positions, orientations):
-    joints = SomaBodyJointPoseArrayV0()
+    joints = SomaBodyJointPoseArray()
     joints.positions[:] = positions
     joints.orientations[:] = orientations
     joints.is_valid[:] = 1
-    return SomaBodyJointPosesV0(joints)
+    return SomaBodyJointPoses(joints)
 
 
 def soma_hand_joint_poses(positions, orientations, handedness):
-    joints = SomaHandJointPoseArrayV0()
+    joints = SomaHandJointPoseArray()
     joints.positions[:] = positions
     joints.orientations[:] = orientations
     joints.is_valid[:] = 1
-    return SomaHandJointPosesV0(joints, handedness)
+    return SomaHandJointPoses(joints, handedness)
 
 
 def soma_hand_joint_rotations(rotations, translation, handedness):
-    joints = SomaHandJointRotationArrayV0()
+    joints = SomaHandJointRotationArray()
     joints.rotations[:] = rotations
     joints.is_valid[:] = 1
-    return SomaHandJointRotationsV0(joints, Point(*translation), True, handedness)
+    return SomaHandJointRotations(joints, Point(*translation), True, handedness)
 
 
 def fake_viz(
@@ -131,9 +131,9 @@ def test_default_pipeline_keeps_full_body_source():
 @pytest.mark.parametrize("explicit", [False, True])
 def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit):
     monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
-    tracker_factory = MagicMock(wraps=SomaBodyJointRotationsV0Tracker)
+    tracker_factory = MagicMock(wraps=SomaBodyJointRotationsTracker)
     monkeypatch.setattr(
-        soma_body_source, "SomaBodyJointRotationsV0Tracker", tracker_factory
+        soma_body_source, "SomaBodyJointRotationsTracker", tracker_factory
     )
     body = create_body_view_pipeline(
         tmp_path,
@@ -144,7 +144,7 @@ def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit
     sources = {source.name: source for source in pipeline.get_leaf_nodes()}
     assert set(sources) == {"hands", "head", "controllers", "body"}
     assert type(sources["body"]) is SomaBodySource
-    assert isinstance(sources["body"].get_tracker(), SomaBodyJointRotationsV0Tracker)
+    assert isinstance(sources["body"].get_tracker(), SomaBodyJointRotationsTracker)
     tracker_factory.assert_called_once_with("vendor_body")
     assert len(body.layout.joint_names) == 77
     assert len(body.layout.bones) == 76
@@ -152,10 +152,8 @@ def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit
 
 def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
     monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
-    tracker_factory = MagicMock(wraps=SomaBodyJointPosesV0Tracker)
-    monkeypatch.setattr(
-        soma_body_source, "SomaBodyJointPosesV0Tracker", tracker_factory
-    )
+    tracker_factory = MagicMock(wraps=SomaBodyJointPosesTracker)
+    monkeypatch.setattr(soma_body_source, "SomaBodyJointPosesTracker", tracker_factory)
     body = create_body_view_pipeline(
         tmp_path,
         body_schema=BodySchema.SOMA,
@@ -164,7 +162,7 @@ def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
     )
     pipeline = build_all_human_pipeline(body=body)
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
-    assert isinstance(source.get_tracker(), SomaBodyJointPosesV0Tracker)
+    assert isinstance(source.get_tracker(), SomaBodyJointPosesTracker)
     tracker_factory.assert_called_once_with("vendor_body")
 
 
@@ -187,7 +185,7 @@ def test_soma_joint_pose_hands_replace_only_openxr_hands():
     }
     assert isinstance(sources["hand_left"], SomaHandSource)
     assert isinstance(sources["hand_right"], SomaHandSource)
-    assert isinstance(sources["hand_left"].get_tracker(), SomaHandJointPosesV0Tracker)
+    assert isinstance(sources["hand_left"].get_tracker(), SomaHandJointPosesTracker)
     assert hands.layout is SOMA_HAND_LAYOUT
 
 
@@ -203,7 +201,7 @@ def test_soma_hand_pose_reaches_native_25_joint_renderer():
     positions = np.arange(75, dtype=np.float32).reshape(25, 3) / 100
     orientations = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
     sources["hand_left"]._tracker.get_data.return_value = soma_hand_joint_poses(
-        positions, orientations, SomaHandednessV0.LEFT
+        positions, orientations, SomaHandedness.LEFT
     )
     sources["hand_right"]._tracker.get_data.return_value = None
 
@@ -449,11 +447,11 @@ def test_native_soma_hand_rotations_reach_renderer(soma_assets):
 
     identity = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
     for name, handedness in (
-        ("hand_left", SomaHandednessV0.LEFT),
-        ("hand_right", SomaHandednessV0.RIGHT),
+        ("hand_left", SomaHandedness.LEFT),
+        ("hand_right", SomaHandedness.RIGHT),
     ):
         source = sources[name]
-        assert isinstance(source.get_tracker(), SomaHandJointRotationsV0Tracker)
+        assert isinstance(source.get_tracker(), SomaHandJointRotationsTracker)
         source._tracker = MagicMock()
         source._tracker.get_data.return_value = soma_hand_joint_rotations(
             identity, [0, 0, 0], handedness

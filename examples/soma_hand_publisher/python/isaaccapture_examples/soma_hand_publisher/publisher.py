@@ -17,11 +17,11 @@ import numpy as np
 
 from isaaccapture.schema import (
     Point,
-    SomaHandednessV0,
-    SomaHandJointPoseArrayV0,
-    SomaHandJointPosesV0,
-    SomaHandJointRotationArrayV0,
-    SomaHandJointRotationsV0,
+    SomaHandedness,
+    SomaHandJointPoseArray,
+    SomaHandJointPoses,
+    SomaHandJointRotationArray,
+    SomaHandJointRotations,
 )
 
 logger = logging.getLogger("isaaccapture.examples.soma_hand_publisher")
@@ -32,8 +32,6 @@ def create_layers(data_root: Path):
     import soma
     import torch
 
-    if soma.__version__ != "0.3.1":
-        raise RuntimeError(f"The POC requires SOMA-X 0.3.1, got {soma.__version__}")
     body = soma.SOMALayer(
         data_root=str(data_root),
         identity_model_type="soma",
@@ -135,18 +133,18 @@ def demo_hand_frames(path: Path, body, hands):
 
 
 def soma_joint_rotations(rotations, translation, handedness):
-    joints = SomaHandJointRotationArrayV0()
+    joints = SomaHandJointRotationArray()
     joints.rotations[:] = rotations
     joints.is_valid[:] = 1
-    return SomaHandJointRotationsV0(joints, Point(*translation), True, handedness)
+    return SomaHandJointRotations(joints, Point(*translation), True, handedness)
 
 
 def soma_joint_poses(positions, orientations, handedness):
-    joints = SomaHandJointPoseArrayV0()
+    joints = SomaHandJointPoseArray()
     joints.positions[:] = positions
     joints.orientations[:] = orientations
     joints.is_valid[:] = 1
-    return SomaHandJointPosesV0(joints, handedness)
+    return SomaHandJointPoses(joints, handedness)
 
 
 def _payload(frame, index: int, representation: str, handedness):
@@ -205,13 +203,13 @@ def main(argv: list[str]) -> int:
                         frames["left"],
                         index,
                         args.hand_representation,
-                        SomaHandednessV0.LEFT,
+                        SomaHandedness.LEFT,
                     )
                     right = _payload(
                         frames["right"],
                         index,
                         args.hand_representation,
-                        SomaHandednessV0.RIGHT,
+                        SomaHandedness.RIGHT,
                     )
                     process.stdin.write(
                         struct.pack(

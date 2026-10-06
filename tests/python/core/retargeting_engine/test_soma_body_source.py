@@ -7,13 +7,13 @@ import numpy as np
 import pytest
 
 from isaaccapture.deviceio_trackers import (
-    SomaBodyJointPosesV0Tracker,
-    SomaBodyJointRotationsV0Tracker,
+    SomaBodyJointPosesTracker,
+    SomaBodyJointRotationsTracker,
 )
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     DeviceIOFullBodyPoseTracked,
-    DeviceIOSomaBodyJointPosesV0Tracked,
-    DeviceIOSomaBodyJointRotationsV0Tracked,
+    DeviceIOSomaBodyJointPosesTracked,
+    DeviceIOSomaBodyJointRotationsTracked,
     SomaBodyRepresentation,
     SomaBodySource,
 )
@@ -24,19 +24,19 @@ from isaaccapture.schema import (
     BodyJoints,
     FullBodyPose,
     Point,
-    SomaBodyJointPoseArrayV0,
-    SomaBodyJointPosesV0,
-    SomaBodyJointRotationArrayV0,
-    SomaBodyJointRotationsV0,
+    SomaBodyJointPoseArray,
+    SomaBodyJointPoses,
+    SomaBodyJointRotationArray,
+    SomaBodyJointRotations,
 )
 from isaaccapture.teleop_session_manager.helpers import _get_trackers_from_pipeline
 
 
 def pose():
-    joints = SomaBodyJointRotationArrayV0()
+    joints = SomaBodyJointRotationArray()
     joints.rotations[:] = (0, 0, 0, 1)
     joints.is_valid[:] = 1
-    return SomaBodyJointRotationsV0(joints, Point(1, 2, 3), True)
+    return SomaBodyJointRotations(joints, Point(1, 2, 3), True)
 
 
 def fake_layer():
@@ -51,11 +51,11 @@ def source():
 
 
 def evaluated_pose():
-    joints = SomaBodyJointPoseArrayV0()
+    joints = SomaBodyJointPoseArray()
     joints.positions[:] = np.arange(231, dtype=np.float32).reshape(77, 3)
     joints.orientations[:] = np.tile([0, 0, 0, 1], (77, 1))
     joints.is_valid[:] = 1
-    return SomaBodyJointPosesV0(joints)
+    return SomaBodyJointPoses(joints)
 
 
 def payload_group(group_type, data):
@@ -66,7 +66,7 @@ def payload_group(group_type, data):
 
 def test_tracker_discovery_and_specs():
     soma_source = source()
-    assert isinstance(soma_source.get_tracker(), SomaBodyJointRotationsV0Tracker)
+    assert isinstance(soma_source.get_tracker(), SomaBodyJointRotationsTracker)
     assert soma_source.get_vendor() is None
     assert _get_trackers_from_pipeline(soma_source) == [soma_source.get_tracker()]
     assert list(soma_source.input_spec()) == ["deviceio_soma_body"]
@@ -119,7 +119,7 @@ def test_joint_pose_source_maps_received_payload_without_fk():
         "vendor.soma",
         representation=SomaBodyRepresentation.JOINT_POSES,
     )
-    assert isinstance(soma_source.get_tracker(), SomaBodyJointPosesV0Tracker)
+    assert isinstance(soma_source.get_tracker(), SomaBodyJointPosesTracker)
     raw = evaluated_pose()
     assert soma_source._evaluator is None
     inputs = payload_group(soma_source.input_spec()["deviceio_soma_body"], raw)
@@ -164,18 +164,18 @@ def test_absent_sample_clears_reused_output():
 
 
 def test_soma_and_fullbody_payloads_are_distinct():
-    soma = DeviceIOSomaBodyJointRotationsV0Tracked()
-    soma_poses = DeviceIOSomaBodyJointPosesV0Tracked()
+    soma = DeviceIOSomaBodyJointRotationsTracked()
+    soma_poses = DeviceIOSomaBodyJointPosesTracked()
     fullbody = DeviceIOFullBodyPoseTracked()
     with pytest.raises(ValueError, match="type mismatch"):
         soma.check_compatibility(fullbody)
-    with pytest.raises(TypeError, match="SomaBodyJointRotationsV0"):
+    with pytest.raises(TypeError, match="SomaBodyJointRotations"):
         payload_group(soma, FullBodyPose(BodyJoints(), False))
     with pytest.raises(TypeError, match="FullBodyPose"):
         payload_group(fullbody, pose())
     with pytest.raises(ValueError, match="type mismatch"):
         soma.check_compatibility(soma_poses)
-    with pytest.raises(TypeError, match="SomaBodyJointPosesV0"):
+    with pytest.raises(TypeError, match="SomaBodyJointPoses"):
         payload_group(soma_poses, pose())
 
 

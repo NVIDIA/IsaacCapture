@@ -10,7 +10,7 @@ from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     SomaHandSource,
 )
 from isaaccapture.retargeting_engine.tensor_types import SomaHandInputIndex
-from isaaccapture.schema import SomaHandednessV0, SomaHandJointV0
+from isaaccapture.schema import SomaHandedness, SomaHandJoint
 
 from .hand_pipeline import HandViewLayout, HandViewPipeline
 
@@ -46,7 +46,7 @@ SOMA_HAND_LAYOUT = HandViewLayout(
     joint_names=tuple(
         name
         for name, joint in sorted(
-            SomaHandJointV0.__members__.items(), key=lambda item: int(item[1])
+            SomaHandJoint.__members__.items(), key=lambda item: int(item[1])
         )
         if name != "NUM_JOINTS"
     ),
@@ -60,8 +60,6 @@ def create_layer(data_root: Path, hand_type: str):
     import soma
     import torch
 
-    if soma.__version__ != "0.3.1":
-        raise RuntimeError(f"The POC requires SOMA-X 0.3.1, got {soma.__version__}")
     layer = soma.SOMAHandLayer(
         data_root=str(data_root),
         hand_type=hand_type,
@@ -79,7 +77,7 @@ def create_layer(data_root: Path, hand_type: str):
     ]
     actual[0] = "WRIST"
     if actual != [name.upper() for name in expected]:
-        raise ValueError("SOMA hand layer joint order differs from the V0 FBS")
+        raise ValueError("SOMA hand layer joint order differs from the FBS")
     with torch.no_grad():
         layer.prepare_identity(
             torch.zeros((1, layer.identity_model.num_identity_coeffs))
@@ -100,14 +98,14 @@ def create_soma_hand_pipeline(
     left = SomaHandSource(
         "hand_left",
         left_collection_id,
-        SomaHandednessV0.LEFT,
+        SomaHandedness.LEFT,
         layers[0],
         representation=representation,
     )
     right = SomaHandSource(
         "hand_right",
         right_collection_id,
-        SomaHandednessV0.RIGHT,
+        SomaHandedness.RIGHT,
         layers[1],
         representation=representation,
     )

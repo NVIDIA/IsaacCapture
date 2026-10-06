@@ -5,8 +5,8 @@
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <pusherio/schema_pusher.hpp>
-#include <schema/soma_hand_joint_poses_v0_generated.h>
-#include <schema/soma_hand_v0_generated.h>
+#include <schema/soma_hand_joint_poses_generated.h>
+#include <schema/soma_hand_joint_rotations_generated.h>
 
 #include <array>
 #include <cstdint>
@@ -103,7 +103,7 @@ int main(int argc, char** argv)
         const auto arguments = parse_arguments(argc, argv);
         const bool joint_poses = arguments.representation == HandRepresentation::JointPoses;
         const size_t max_flatbuffer_size = joint_poses ? 2048 : 1024;
-        const char* tensor_identifier = joint_poses ? "soma_hand_joint_poses_v0" : "soma_hand_joint_rotations_v0";
+        const char* tensor_identifier = joint_poses ? "soma_hand_joint_poses" : "soma_hand_joint_rotations";
         std::unique_ptr<core::OpenXRSession> session;
         std::unique_ptr<core::SchemaPusher> left_pusher;
         std::unique_ptr<core::SchemaPusher> right_pusher;
@@ -127,19 +127,19 @@ int main(int argc, char** argv)
                 throw std::invalid_argument("Truncated SOMA hand demo payload");
             }
 
-            core::SomaHandednessV0 left_handedness;
-            core::SomaHandednessV0 right_handedness;
+            core::SomaHandedness left_handedness;
+            core::SomaHandedness right_handedness;
             if (joint_poses)
             {
-                left_handedness = verify<core::SomaHandJointPosesV0>(left_bytes)->handedness();
-                right_handedness = verify<core::SomaHandJointPosesV0>(right_bytes)->handedness();
+                left_handedness = verify<core::SomaHandJointPoses>(left_bytes)->handedness();
+                right_handedness = verify<core::SomaHandJointPoses>(right_bytes)->handedness();
             }
             else
             {
-                left_handedness = verify<core::SomaHandJointRotationsV0>(left_bytes)->handedness();
-                right_handedness = verify<core::SomaHandJointRotationsV0>(right_bytes)->handedness();
+                left_handedness = verify<core::SomaHandJointRotations>(left_bytes)->handedness();
+                right_handedness = verify<core::SomaHandJointRotations>(right_bytes)->handedness();
             }
-            if (left_handedness != core::SomaHandednessV0_LEFT || right_handedness != core::SomaHandednessV0_RIGHT)
+            if (left_handedness != core::SomaHandedness_LEFT || right_handedness != core::SomaHandedness_RIGHT)
             {
                 throw std::invalid_argument("SOMA hand demo payload handedness does not match its collection");
             }

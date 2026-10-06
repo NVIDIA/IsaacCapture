@@ -85,28 +85,28 @@ from ._schema import (
     FullBodyPose,
     FullBodyPoseRecord,
     # Shared SOMA types.
-    SomaHandednessV0,
-    SomaJointRotationV0,
-    # SOMA body joint-rotation v0 types.
-    SomaBodyJointV0,
-    SomaBodyJointRotationArrayV0,
-    SomaBodyJointRotationsV0,
-    SomaBodyJointRotationsV0Record,
-    # SOMA evaluated body joint-pose v0 types.
-    SomaBodyJointPoseV0,
-    SomaBodyJointPoseArrayV0,
-    SomaBodyJointPosesV0,
-    SomaBodyJointPosesV0Record,
-    # SOMA hand joint-rotation v0 types.
-    SomaHandJointV0,
-    SomaHandJointRotationArrayV0,
-    SomaHandJointRotationsV0,
-    SomaHandJointRotationsV0Record,
-    # SOMA evaluated hand joint-pose v0 types.
-    SomaHandJointPoseV0,
-    SomaHandJointPoseArrayV0,
-    SomaHandJointPosesV0,
-    SomaHandJointPosesV0Record,
+    SomaHandedness,
+    SomaJointRotation,
+    # SOMA body joint-rotation types.
+    SomaBodyJoint,
+    SomaBodyJointRotationArray,
+    SomaBodyJointRotations,
+    SomaBodyJointRotationsRecord,
+    # SOMA evaluated body joint-pose types.
+    SomaBodyJointPose,
+    SomaBodyJointPoseArray,
+    SomaBodyJointPoses,
+    SomaBodyJointPosesRecord,
+    # SOMA hand joint-rotation types.
+    SomaHandJoint,
+    SomaHandJointRotationArray,
+    SomaHandJointRotations,
+    SomaHandJointRotationsRecord,
+    # SOMA evaluated hand joint-pose types.
+    SomaHandJointPose,
+    SomaHandJointPoseArray,
+    SomaHandJointPoses,
+    SomaHandJointPosesRecord,
 )
 
 # Deprecated aliases, resolved lazily via __getattr__ so accessing them emits a
@@ -213,26 +213,26 @@ __all__ = [
     "FullBodyPose",
     "FullBodyPoseRecord",
     # Shared SOMA types.
-    "SomaHandednessV0",
-    "SomaJointRotationV0",
-    # SOMA body joint-rotation v0 types.
-    "SomaBodyJointV0",
-    "SomaBodyJointRotationArrayV0",
-    "SomaBodyJointRotationsV0",
-    "SomaBodyJointRotationsV0Record",
-    # SOMA evaluated body joint-pose v0 types.
-    "SomaBodyJointPoseV0",
-    "SomaBodyJointPoseArrayV0",
-    "SomaBodyJointPosesV0",
-    "SomaBodyJointPosesV0Record",
-    # SOMA hand joint-rotation v0 types.
-    "SomaHandJointV0",
-    "SomaHandJointRotationArrayV0",
-    "SomaHandJointRotationsV0",
-    "SomaHandJointRotationsV0Record",
-    # SOMA evaluated hand joint-pose v0 types.
-    "SomaHandJointPoseV0",
-    "SomaHandJointPoseArrayV0",
-    "SomaHandJointPosesV0",
-    "SomaHandJointPosesV0Record",
+    "SomaHandedness",
+    "SomaJointRotation",
+    # SOMA body joint-rotation types.
+    "SomaBodyJoint",
+    "SomaBodyJointRotationArray",
+    "SomaBodyJointRotations",
+    "SomaBodyJointRotationsRecord",
+    # SOMA evaluated body joint-pose types.
+    "SomaBodyJointPose",
+    "SomaBodyJointPoseArray",
+    "SomaBodyJointPoses",
+    "SomaBodyJointPosesRecord",
+    # SOMA hand joint-rotation types.
+    "SomaHandJoint",
+    "SomaHandJointRotationArray",
+    "SomaHandJointRotations",
+    "SomaHandJointRotationsRecord",
+    # SOMA evaluated hand joint-pose types.
+    "SomaHandJointPose",
+    "SomaHandJointPoseArray",
+    "SomaHandJointPoses",
+    "SomaHandJointPosesRecord",
 ]

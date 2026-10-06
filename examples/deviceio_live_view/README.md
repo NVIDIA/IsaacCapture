@@ -27,9 +27,9 @@ in SOMA's native public order. It uses a neutral identity, not subject
 calibration. Separate hand tracking is unchanged.
 
 ```text
-SomaBodyJointRotationsV0 -> tracker -> upstream FK --+
+SomaBodyJointRotations -> tracker -> upstream FK --+
                                                     +-> SomaBodyInput -> viewer
-SomaBodyJointPosesV0 ----> tracker -> direct map ----+
+SomaBodyJointPoses ----> tracker -> direct map ----+
 ```
 
 Use SOMA-X 0.3.1 and its neutral identity assets. For an uninstalled source
@@ -62,8 +62,8 @@ Joint rotations are the default SOMA profile. Pass
 joint poses instead. The publisher and viewer options must match.
 
 `SomaBodySource` follows the normal DeviceIO source contract: the session discovers
-the generated tracker selected for `SomaBodyJointRotationsV0` or
-`SomaBodyJointPosesV0`. The raw tracker remains the transport and recording
+the generated tracker selected for `SomaBodyJointRotations` or
+`SomaBodyJointPoses`. The raw tracker remains the transport and recording
 boundary. The source evaluates rotations once per graph step against its
 caller-supplied SOMA identity; evaluated poses map directly. Both modes emit
 the same global positions, orientations, and validity as `SomaBodyInput`. The
@@ -87,9 +87,9 @@ OpenXR `HandPose` remains the default hand input. Select independent left and
 right SOMA hand collections with `--hand-schema soma`:
 
 ```text
-SomaHandJointRotationsV0 -> tracker -> upstream FK --+
+SomaHandJointRotations -> tracker -> upstream FK --+
                                                         +-> SomaHandInput -> viewer
-SomaHandJointPosesV0 ----> tracker -> direct map -------+
+SomaHandJointPoses ----> tracker -> direct map -------+
 ```
 
 ```bash

@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 include "point.fbs";
-include "soma_body_common_v0.fbs";
-include "soma_common_v0.fbs";
+include "soma_body_common.fbs";
+include "soma_common.fbs";
 include "timestamp.fbs";
 
 namespace core;
 
-// Fixed-size SOMA body joint-rotation array v0 in SomaBodyJointV0 order.
-struct SomaBodyJointRotationArrayV0 {
-    values: [SomaJointRotationV0:77];
+// Fixed-size SOMA body joint-rotation array in SomaBodyJoint order.
+struct SomaBodyJointRotationArray {
+    values: [SomaJointRotation:77];
 }
 
-// SOMA full-body joint-rotation transport schema v0.
+// SOMA full-body joint-rotation transport schema.
 //
 // Defined and verified against SOMA-X v0.3.1 and its v0.3 pose interface,
 // with reference_pose=None, absolute_pose=False, and its public joint order.
@@ -23,8 +23,8 @@ struct SomaBodyJointRotationArrayV0 {
 // root transform must be composed into Hips before publishing. Rotations are
 // unit XYZW quaternions. Global translation is meters in a right-handed
 // reference frame with +Y up and +Z forward.
-table SomaBodyJointRotationsV0 {
-    joint_rotations: SomaBodyJointRotationArrayV0 (id: 0);
+table SomaBodyJointRotations {
+    joint_rotations: SomaBodyJointRotationArray (id: 0);
 
     // Translation applied to Hips in the reference frame. Ignore this value
     // when global_translation_is_valid is false.
@@ -32,9 +32,9 @@ table SomaBodyJointRotationsV0 {
     global_translation_is_valid: bool (id: 2);
 }
 
-table SomaBodyJointRotationsV0Record {
-    data: SomaBodyJointRotationsV0 (id: 0);
+table SomaBodyJointRotationsRecord {
+    data: SomaBodyJointRotations (id: 0);
     timestamp: DeviceDataTimestamp (id: 1);
 }
 
-root_type SomaBodyJointRotationsV0Record;
+root_type SomaBodyJointRotationsRecord;

@@ -5,8 +5,8 @@
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <pusherio/schema_pusher.hpp>
-#include <schema/soma_body_joint_poses_v0_generated.h>
-#include <schema/soma_body_v0_generated.h>
+#include <schema/soma_body_joint_poses_generated.h>
+#include <schema/soma_body_joint_rotations_generated.h>
 
 #include <array>
 #include <cstdint>
@@ -92,7 +92,7 @@ int main(int argc, char** argv)
         const auto arguments = parse_arguments(argc, argv);
         const bool joint_poses = arguments.representation == BodyRepresentation::JointPoses;
         const size_t max_flatbuffer_size = joint_poses ? 4096 : 2048;
-        const char* tensor_identifier = joint_poses ? "soma_body_joint_poses_v0" : "soma_body_joint_rotations_v0";
+        const char* tensor_identifier = joint_poses ? "soma_body_joint_poses" : "soma_body_joint_rotations";
         std::unique_ptr<core::OpenXRSession> session;
         std::unique_ptr<core::SchemaPusher> pusher;
         size_t frames = 0;
@@ -112,8 +112,8 @@ int main(int argc, char** argv)
                 throw std::invalid_argument("Truncated SOMA body demo payload");
             }
             flatbuffers::Verifier verifier(bytes.data(), bytes.size());
-            const bool valid = joint_poses ? verifier.VerifyBuffer<core::SomaBodyJointPosesV0>(nullptr) :
-                                             verifier.VerifyBuffer<core::SomaBodyJointRotationsV0>(nullptr);
+            const bool valid = joint_poses ? verifier.VerifyBuffer<core::SomaBodyJointPoses>(nullptr) :
+                                             verifier.VerifyBuffer<core::SomaBodyJointRotations>(nullptr);
             if (!valid)
             {
                 throw std::invalid_argument("Invalid SOMA body FlatBuffer");

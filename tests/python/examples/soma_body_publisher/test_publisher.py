@@ -13,8 +13,8 @@ from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
 )
 from isaaccapture.schema import (
     DeviceDataTimestamp,
-    SomaBodyJointPosesV0Record,
-    SomaBodyJointRotationsV0Record,
+    SomaBodyJointPosesRecord,
+    SomaBodyJointRotationsRecord,
 )
 from isaaccapture_examples.soma_body_publisher import publisher
 from isaaccapture_examples.soma_body_publisher.publisher import (
@@ -29,7 +29,7 @@ from isaaccapture_examples.soma_body_publisher.publisher import (
 def test_nested_soma_serialization_uses_payload_root():
     q = np.tile([0.0, 0.0, 0.0, 1.0], (77, 1))
     pose = soma_joint_rotations(q, [1, 2, 3])
-    record = SomaBodyJointRotationsV0Record(pose, DeviceDataTimestamp(10, 20, 30))
+    record = SomaBodyJointRotationsRecord(pose, DeviceDataTimestamp(10, 20, 30))
     assert record.data.to_bytes() == pose.to_bytes()
     assert record.to_bytes() != pose.to_bytes()
 
@@ -37,7 +37,7 @@ def test_nested_soma_serialization_uses_payload_root():
         np.zeros((77, 3), dtype=np.float32),
         np.tile([0.0, 0.0, 0.0, 1.0], (77, 1)),
     )
-    evaluated_record = SomaBodyJointPosesV0Record(
+    evaluated_record = SomaBodyJointPosesRecord(
         evaluated, DeviceDataTimestamp(10, 20, 30)
     )
     assert evaluated_record.data.to_bytes() == evaluated.to_bytes()
@@ -131,7 +131,7 @@ def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
             apply_correctives=False,
         )
     payload = soma_joint_rotations(q[0], t[0])
-    record = SomaBodyJointRotationsV0Record(payload, DeviceDataTimestamp(10, 20, 30))
+    record = SomaBodyJointRotationsRecord(payload, DeviceDataTimestamp(10, 20, 30))
     positions, orientations, valid = evaluator.evaluate(record.data)
     np.testing.assert_allclose(positions, expected["joints"][0].numpy(), atol=1e-4)
     expected_orientations = matrix_to_quaternion_xyzw(

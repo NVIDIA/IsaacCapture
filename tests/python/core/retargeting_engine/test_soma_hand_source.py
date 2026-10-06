@@ -7,12 +7,12 @@ import numpy as np
 import pytest
 
 from isaaccapture.deviceio_trackers import (
-    SomaHandJointPosesV0Tracker,
-    SomaHandJointRotationsV0Tracker,
+    SomaHandJointPosesTracker,
+    SomaHandJointRotationsTracker,
 )
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
-    DeviceIOSomaHandJointPosesV0Tracked,
-    DeviceIOSomaHandJointRotationsV0Tracked,
+    DeviceIOSomaHandJointPosesTracked,
+    DeviceIOSomaHandJointRotationsTracked,
     SomaHandRepresentation,
     SomaHandSource,
 )
@@ -20,11 +20,11 @@ from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
 from isaaccapture.retargeting_engine.tensor_types import SomaHandInputIndex
 from isaaccapture.schema import (
     Point,
-    SomaHandednessV0,
-    SomaHandJointPoseArrayV0,
-    SomaHandJointPosesV0,
-    SomaHandJointRotationArrayV0,
-    SomaHandJointRotationsV0,
+    SomaHandedness,
+    SomaHandJointPoseArray,
+    SomaHandJointPoses,
+    SomaHandJointRotationArray,
+    SomaHandJointRotations,
 )
 
 
@@ -35,19 +35,19 @@ def fake_layer():
     return layer
 
 
-def rotations(handedness=SomaHandednessV0.LEFT):
-    joints = SomaHandJointRotationArrayV0()
+def rotations(handedness=SomaHandedness.LEFT):
+    joints = SomaHandJointRotationArray()
     joints.rotations[:] = (0, 0, 0, 1)
     joints.is_valid[:] = 1
-    return SomaHandJointRotationsV0(joints, Point(1, 2, 3), True, handedness)
+    return SomaHandJointRotations(joints, Point(1, 2, 3), True, handedness)
 
 
-def poses(handedness=SomaHandednessV0.LEFT):
-    joints = SomaHandJointPoseArrayV0()
+def poses(handedness=SomaHandedness.LEFT):
+    joints = SomaHandJointPoseArray()
     joints.positions[:] = np.arange(75, dtype=np.float32).reshape(25, 3)
     joints.orientations[:] = np.tile([0, 0, 0, 1], (25, 1))
     joints.is_valid[:] = 1
-    return SomaHandJointPosesV0(joints, handedness)
+    return SomaHandJointPoses(joints, handedness)
 
 
 def payload_group(group_type, data):
@@ -57,8 +57,8 @@ def payload_group(group_type, data):
 
 
 def test_rotation_source_evaluates_received_payload():
-    source = SomaHandSource("left", "vendor.left", SomaHandednessV0.LEFT, fake_layer())
-    assert isinstance(source.get_tracker(), SomaHandJointRotationsV0Tracker)
+    source = SomaHandSource("left", "vendor.left", SomaHandedness.LEFT, fake_layer())
+    assert isinstance(source.get_tracker(), SomaHandJointRotationsTracker)
     raw = rotations()
     expected = (
         np.ones((25, 3), dtype=np.float32),
@@ -86,10 +86,10 @@ def test_joint_pose_source_maps_without_fk():
     source = SomaHandSource(
         "left",
         "vendor.left",
-        SomaHandednessV0.LEFT,
+        SomaHandedness.LEFT,
         representation=SomaHandRepresentation.JOINT_POSES,
     )
-    assert isinstance(source.get_tracker(), SomaHandJointPosesV0Tracker)
+    assert isinstance(source.get_tracker(), SomaHandJointPosesTracker)
     raw = poses()
     inputs = payload_group(source.input_spec()["deviceio_soma_hand"], raw)
 
@@ -108,32 +108,32 @@ def test_payload_handedness_must_match_collection():
     source = SomaHandSource(
         "left",
         "vendor.left",
-        SomaHandednessV0.LEFT,
+        SomaHandedness.LEFT,
         representation=SomaHandRepresentation.JOINT_POSES,
     )
     inputs = payload_group(
-        source.input_spec()["deviceio_soma_hand"], poses(SomaHandednessV0.RIGHT)
+        source.input_spec()["deviceio_soma_hand"], poses(SomaHandedness.RIGHT)
     )
     with pytest.raises(ValueError, match="handedness"):
         source({"deviceio_soma_hand": inputs})
 
 
 def test_hand_transport_profiles_are_distinct():
-    rotation_type = DeviceIOSomaHandJointRotationsV0Tracked()
-    pose_type = DeviceIOSomaHandJointPosesV0Tracked()
+    rotation_type = DeviceIOSomaHandJointRotationsTracked()
+    pose_type = DeviceIOSomaHandJointPosesTracked()
     with pytest.raises(ValueError, match="type mismatch"):
         rotation_type.check_compatibility(pose_type)
-    with pytest.raises(TypeError, match="SomaHandJointPosesV0"):
+    with pytest.raises(TypeError, match="SomaHandJointPoses"):
         payload_group(pose_type, rotations())
 
 
 def test_rotation_source_requires_layer_and_valid_side():
     with pytest.raises(ValueError, match="prepared SOMA hand layer"):
-        SomaHandSource("left", "vendor.left", SomaHandednessV0.LEFT)
+        SomaHandSource("left", "vendor.left", SomaHandedness.LEFT)
     with pytest.raises(ValueError, match="LEFT or RIGHT"):
         SomaHandSource(
             "left",
             "vendor.left",
-            SomaHandednessV0.UNSPECIFIED,
+            SomaHandedness.UNSPECIFIED,
             fake_layer(),
         )

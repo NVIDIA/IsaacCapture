@@ -9,13 +9,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from isaaccapture.deviceio_trackers import (
-    SomaBodyJointPosesV0Tracker,
-    SomaBodyJointRotationsV0Tracker,
+    SomaBodyJointPosesTracker,
+    SomaBodyJointRotationsTracker,
 )
 
 from .deviceio_tensor_types import (
-    DeviceIOSomaBodyJointPosesV0Tracked,
-    DeviceIOSomaBodyJointRotationsV0Tracked,
+    DeviceIOSomaBodyJointPosesTracked,
+    DeviceIOSomaBodyJointRotationsTracked,
 )
 from .interface import IDeviceIOSource
 from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
@@ -34,7 +34,7 @@ class SomaBodyRepresentation(str, Enum):
 
 
 class SomaBodySource(IDeviceIOSource):
-    """Normalize either SOMA V0 wire profile into evaluated joint poses.
+    """Normalize either SOMA wire profile into evaluated joint poses.
 
     The generated tracker remains the raw transport and recording boundary. The
     rotation profile runs FK once per graph step. The evaluated-pose profile maps
@@ -58,11 +58,11 @@ class SomaBodySource(IDeviceIOSource):
         if self.representation is SomaBodyRepresentation.JOINT_ROTATIONS:
             if layer is None:
                 raise ValueError("joint-rotations requires a prepared SOMA layer")
-            self._tracker = SomaBodyJointRotationsV0Tracker(collection_id)
-            self._input_type = DeviceIOSomaBodyJointRotationsV0Tracked()
+            self._tracker = SomaBodyJointRotationsTracker(collection_id)
+            self._input_type = DeviceIOSomaBodyJointRotationsTracked()
         else:
-            self._tracker = SomaBodyJointPosesV0Tracker(collection_id)
-            self._input_type = DeviceIOSomaBodyJointPosesV0Tracked()
+            self._tracker = SomaBodyJointPosesTracker(collection_id)
+            self._input_type = DeviceIOSomaBodyJointPosesTracked()
         self._evaluator = _SomaBodyEvaluator(layer) if layer is not None else None
         self.joint_names = self._evaluator.joint_names if self._evaluator else ()
         self.bones = self._evaluator.bones if self._evaluator else ()
