@@ -47,13 +47,9 @@ def _gpu_and_cupy_available() -> bool:
     return True
 
 
-@pytest.fixture(scope="module", autouse=True)
-def require_rendering_environment(request):
-    if not _gpu_and_cupy_available():
-        reason = "no Vulkan/CUDA GPU or cupy missing"
-        if request.config.getoption("--require-gpu"):
-            pytest.fail(reason)
-        pytest.skip(reason)
+pytestmark = pytest.mark.skipif(
+    not _gpu_and_cupy_available(), reason="no Vulkan/CUDA GPU or cupy missing"
+)
 
 
 # Bounded wait helper so a stuck producer fails fast instead of hanging CI.
