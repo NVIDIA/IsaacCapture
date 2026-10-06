@@ -752,6 +752,18 @@ status file. The <code class="docutils literal notranslate"><span class="pre">se
 session’s headset selection, and <code class="docutils literal notranslate"><span class="pre">ignoredSerials</span></code> lists other observed ADB
 devices (up to eight display-safe serials). Selection is scoped to the current
 service session; a previous status file never pins a new session.</p>
+<p>If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
+service publishes a terminal snapshot with <code class="docutils literal notranslate"><span class="pre">health=fatal</span></code> and <code class="docutils literal notranslate"><span class="pre">state=FATAL</span></code>,
+clears readiness and streaming flags, and stops the runtime. Unlike a normal
+shutdown, it retains <code class="docutils literal notranslate"><span class="pre">oob_status.json</span></code> so <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">status</span></code> can show the
+failure reason after the runtime stops. Foreground <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">run</span></code> prints one
+actionable <code class="docutils literal notranslate"><span class="pre">OOB</span> <span class="pre">stopped</span></code> message and exits nonzero. The per-session WSS
+log contains the worker traceback, or a clear message if the worker returned
+without an exception. This also applies in hub-only mode. A blocked status
+writer does not keep the runtime alive after a fatal worker exit. A writer
+stall can delay the status file update; the in-memory fatal snapshot remains
+available while the service process is running. An intentional shutdown does
+not create a fatal snapshot.</p>
 <div class="pst-scrollable-table-container"><table class="table" id="id1">
 <caption><span class="caption-text">Metrics reported per cadence (CloudXR.js 6.3.0)</span><a class="headerlink" href="#id1" title="Link to this table">#</a></caption>
 <colgroup>
@@ -1345,7 +1357,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 03, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 06, 2026.
       <br/>
     
   </p>

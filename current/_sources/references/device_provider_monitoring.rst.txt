@@ -147,8 +147,8 @@ OpenXR ownership
 ----------------
 
 For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-availability. Runtime or session loss fails the provider; form-factor
-unavailability disconnects the headset while leaving the runtime provider
+tracking. Runtime or session loss fails the provider; sustained loss of active
+head tracking disconnects the headset while leaving the runtime provider
 available.
 
 For externally supplied ``oxr_handles``, Isaac Teleop does not consume the
