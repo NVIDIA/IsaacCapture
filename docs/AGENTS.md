@@ -97,12 +97,3 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
-
-## Scope of documentation revisions
-
-When asked to shorten additions, edit only the branch's additions. Preserve the
-existing reference content, examples, and structure. Propose broader cleanup
-separately; do not apply it without agreement. Keep new prerequisites and checks concise.
-
-Distinguish runtime dependencies from source-build tools. Make installation steps
-conditional when existing environments may already satisfy the requirements.
