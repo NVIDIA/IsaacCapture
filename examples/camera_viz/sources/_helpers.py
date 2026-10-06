@@ -164,8 +164,8 @@ class PolledSource(FrameSource):
             import cupy as cp
         except ImportError as e:
             raise RuntimeError(
-                f"{self._kind} source requires CuPy. Run `camera_viz.sh setup` "
-                "to install the package matching your CUDA toolkit."
+                f"{self._kind} source requires CuPy (cupy-cuda12x). "
+                "Install via `uv pip install cupy-cuda12x`."
             ) from e
 
         self._cp = cp

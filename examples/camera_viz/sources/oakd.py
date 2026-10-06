@@ -136,8 +136,7 @@ class _OakdDevice:
         except ImportError as e:
             raise RuntimeError(
                 "OakdSource requires CuPy + depthai. "
-                "Run `camera_viz.sh setup` to install the camera dependencies "
-                "and CuPy matching your CUDA toolkit."
+                "Install via `uv pip install cupy-cuda12x depthai`."
             ) from e
 
         self._device_id = device_id

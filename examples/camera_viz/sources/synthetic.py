@@ -38,8 +38,8 @@ class SyntheticSource(FrameSource):
             import cupy as cp
         except ImportError as e:
             raise RuntimeError(
-                "SyntheticSource requires CuPy. Run `camera_viz.sh setup` "
-                "to install the package matching your CUDA toolkit."
+                "SyntheticSource requires CuPy (cupy-cuda12x). Install via "
+                "`uv pip install cupy-cuda12x` or skip this source."
             ) from e
 
         self._cp = cp
@@ -57,7 +57,6 @@ class SyntheticSource(FrameSource):
         self._publish_idx: int = -1  # -1 = nothing published yet
         self._consumed_idx: int = -2  # track what `latest()` last returned
         self._lock = threading.Lock()
-        self._error: Optional[BaseException] = None
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -71,10 +70,6 @@ class SyntheticSource(FrameSource):
         if self._thread is not None:
             return
         self._stop.clear()
-        with self._lock:
-            self._error = None
-            self._publish_idx = -1
-            self._consumed_idx = -2
         self._t0_ns = time.monotonic_ns()
         self._thread = threading.Thread(
             target=self._produce_loop, name=f"synth_{self._spec.name}", daemon=False
@@ -89,11 +84,6 @@ class SyntheticSource(FrameSource):
 
     def latest(self) -> Optional[Frame]:
         with self._lock:
-            if self._error is not None:
-                raise RuntimeError(
-                    f"Source {self._spec.name!r} failed: {self._error}. "
-                    "Run camera_viz.sh setup to check the CUDA environment."
-                ) from self._error
             if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
                 return None
             idx = self._publish_idx
@@ -106,14 +96,6 @@ class SyntheticSource(FrameSource):
         )
 
     def _produce_loop(self) -> None:
-        try:
-            self._produce_frames()
-        except BaseException as exc:
-            # latest() forwards the producer failure to VizRunner.wait().
-            with self._lock:
-                self._error = exc
-
-    def _produce_frames(self) -> None:
         cp = self._cp
         h, w = self._spec.height, self._spec.width
         # Pin this producer thread to the GPU the pre-allocated buffers
@@ -179,8 +161,8 @@ class SyntheticStereoSource(FrameSource):
             import cupy as cp
         except ImportError as e:
             raise RuntimeError(
-                "SyntheticStereoSource requires CuPy. Run `camera_viz.sh setup` "
-                "to install the package matching your CUDA toolkit."
+                "SyntheticStereoSource requires CuPy (cupy-cuda12x). Install via "
+                "`uv pip install cupy-cuda12x` or skip this source."
             ) from e
 
         self._cp = cp
@@ -198,7 +180,6 @@ class SyntheticStereoSource(FrameSource):
         self._publish_idx: int = -1
         self._consumed_idx: int = -2
         self._lock = threading.Lock()
-        self._error: Optional[BaseException] = None
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -212,10 +193,6 @@ class SyntheticStereoSource(FrameSource):
         if self._thread is not None:
             return
         self._stop.clear()
-        with self._lock:
-            self._error = None
-            self._publish_idx = -1
-            self._consumed_idx = -2
         self._t0_ns = time.monotonic_ns()
         self._thread = threading.Thread(
             target=self._produce_loop,
@@ -232,11 +209,6 @@ class SyntheticStereoSource(FrameSource):
 
     def latest(self) -> Optional[Frame]:
         with self._lock:
-            if self._error is not None:
-                raise RuntimeError(
-                    f"Source {self._spec.name!r} failed: {self._error}. "
-                    "Run camera_viz.sh setup to check the CUDA environment."
-                ) from self._error
             if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
                 return None
             idx = self._publish_idx
@@ -250,14 +222,6 @@ class SyntheticStereoSource(FrameSource):
         )
 
     def _produce_loop(self) -> None:
-        try:
-            self._produce_frames()
-        except BaseException as exc:
-            # latest() forwards the producer failure to VizRunner.wait().
-            with self._lock:
-                self._error = exc
-
-    def _produce_frames(self) -> None:
         cp = self._cp
         h, w = self._spec.height, self._spec.width
         with cp.cuda.Device(int(self._left[0].device.id)):

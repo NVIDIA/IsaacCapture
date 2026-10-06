@@ -142,8 +142,8 @@ class _ZedCamera:
         except ImportError as e:
             raise RuntimeError(
                 "ZedSource requires CuPy + pyzed. "
-                "Run `camera_viz.sh setup --with-zed` with the ZED SDK installed "
-                "to install pyzed and CuPy matching your CUDA toolkit."
+                "Install via `uv pip install cupy-cuda12x` and follow the ZED "
+                "SDK's Python install instructions for pyzed."
             ) from e
 
         self._resolution_name = _resolution_for_dims(width, height)

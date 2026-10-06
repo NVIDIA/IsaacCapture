@@ -47,8 +47,6 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   multiline layout.
 - Format changed Python tests before staging; if pre-commit rewrites a file,
   restage the result and rerun the full hook set.
-- Use raw strings for intentional regexes in `pytest.raises(match=...)`; escape
-  literal punctuation such as version-number dots (Ruff RUF043).
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
 - Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or

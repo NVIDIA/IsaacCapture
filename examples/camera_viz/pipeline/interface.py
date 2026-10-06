@@ -61,8 +61,7 @@ class FrameSource(ABC):
     def latest(self) -> Optional[Frame]:
         """Return the freshest frame, or None if no new frame since the
         last call. Must be non-blocking — the render loop polls this
-        every frame and skips submission on None. Raise on a fatal
-        producer failure so the runner can stop and report it."""
+        every frame and skips submission on None."""
 
     @abstractmethod
     def stop(self) -> None: ...

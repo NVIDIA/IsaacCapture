@@ -16,11 +16,3 @@ if str(_tests_python) not in sys.path:
 from repo_paths import repo_root  # noqa: E402
 
 sys.path.insert(0, str(repo_root() / "examples" / "camera_viz"))
-
-
-def pytest_addoption(parser):
-    parser.addoption(
-        "--require-gpu",
-        action="store_true",
-        help="Fail camera rendering tests if CUDA/CuPy/Vulkan is unavailable",
-    )
