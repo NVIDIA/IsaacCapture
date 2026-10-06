@@ -35,8 +35,7 @@ publisher in another terminal:
 ```bash
 uv run --no-sync python -m isaaccapture_examples.deviceio_live_view \
   --accept-eula \
-  --hand-schema soma \
-  --soma-data-root /path/to/SOMA-X-v0.3.1-assets
+  --hand-schema soma
 
 source ~/.cloudxr/run/cloudxr.env
 uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \

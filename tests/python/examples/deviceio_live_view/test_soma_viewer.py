@@ -128,16 +128,14 @@ def test_default_pipeline_keeps_full_body_source():
     }
 
 
-@pytest.mark.parametrize("explicit", [False, True])
-def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit):
-    monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
+def test_soma_pipeline_replaces_only_body_source(monkeypatch):
+    monkeypatch.setattr(soma_body, "create_layer", fake_layer)
     tracker_factory = MagicMock(wraps=SomaBodyJointRotationsTracker)
     monkeypatch.setattr(
         soma_body_source, "SomaBodyJointRotationsTracker", tracker_factory
     )
     body = create_body_view_pipeline(
-        tmp_path,
-        body_schema=BodySchema.SOMA if explicit else None,
+        body_schema=BodySchema.SOMA,
         soma_body_collection_id="vendor_body",
     )
     pipeline = build_all_human_pipeline(body=body)
@@ -150,12 +148,12 @@ def test_soma_pipeline_replaces_only_body_source(monkeypatch, tmp_path, explicit
     assert len(body.layout.bones) == 76
 
 
-def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
-    monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
+def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch):
+    create = MagicMock(side_effect=AssertionError("joint poses must not load SOMA"))
+    monkeypatch.setattr(soma_body, "create_layer", create)
     tracker_factory = MagicMock(wraps=SomaBodyJointPosesTracker)
     monkeypatch.setattr(soma_body_source, "SomaBodyJointPosesTracker", tracker_factory)
     body = create_body_view_pipeline(
-        tmp_path,
         body_schema=BodySchema.SOMA,
         soma_body_collection_id="vendor_body",
         soma_body_representation=SomaBodyRepresentation.JOINT_POSES,
@@ -164,6 +162,7 @@ def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
     assert isinstance(source.get_tracker(), SomaBodyJointPosesTracker)
     tracker_factory.assert_called_once_with("vendor_body")
+    create.assert_not_called()
 
 
 def test_soma_joint_pose_hands_replace_only_openxr_hands():
@@ -224,19 +223,19 @@ def test_soma_hand_pose_reaches_native_25_joint_renderer():
     assert len(viz.hand_left.bones.points) == len(SOMA_HAND_LAYOUT.bones)
 
 
-def test_explicit_full_body_selection_does_not_load_soma(monkeypatch, tmp_path):
+def test_explicit_full_body_selection_does_not_load_soma(monkeypatch):
     create = MagicMock(side_effect=AssertionError("SOMA must remain optional"))
     monkeypatch.setattr(soma_body, "create_layer", create)
-    body = create_body_view_pipeline(tmp_path, body_schema=BodySchema.FULL_BODY_POSE)
+    body = create_body_view_pipeline(body_schema=BodySchema.FULL_BODY_POSE)
     pipeline = build_all_human_pipeline(body=body)
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
     assert type(source) is FullBodySource
     create.assert_not_called()
 
 
-def test_soma_evaluation_runs_once_per_step_downstream(monkeypatch, tmp_path):
-    monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
-    body = create_body_view_pipeline(tmp_path)
+def test_soma_evaluation_runs_once_per_step_downstream(monkeypatch):
+    monkeypatch.setattr(soma_body, "create_layer", fake_layer)
+    body = create_body_view_pipeline(body_schema=BodySchema.SOMA)
     selector = body.output
     pipeline = build_all_human_pipeline(body=body)
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
@@ -312,16 +311,15 @@ def test_viewer_uses_selected_native_body_layout_and_hides_missing_devices():
 
 
 @pytest.mark.parametrize(
-    "schema,use_assets,expected,collection",
+    "schema,expected,collection",
     [
-        (None, False, BodySchema.FULL_BODY_POSE, "soma_body_demo"),
-        (None, True, BodySchema.SOMA, "soma_body_demo"),
-        ("soma", True, BodySchema.SOMA, "vendor_body"),
-        ("full-body-pose", True, BodySchema.FULL_BODY_POSE, "soma_body_demo"),
+        (None, BodySchema.FULL_BODY_POSE, "soma_body_demo"),
+        ("soma", BodySchema.SOMA, "vendor_body"),
+        ("full-body-pose", BodySchema.FULL_BODY_POSE, "soma_body_demo"),
     ],
 )
 def test_live_cli_selects_source_and_launches_runtime(
-    monkeypatch, tmp_path, schema, use_assets, expected, collection
+    monkeypatch, schema, expected, collection
 ):
     body = create_body_view_pipeline()
     hands = create_hand_view_pipeline()
@@ -345,18 +343,14 @@ def test_live_cli_selects_source_and_launches_runtime(
     args = ["viewer"]
     if schema is not None:
         args += ["--body-schema", schema]
-    if use_assets:
-        args += ["--soma-data-root", str(tmp_path)]
     args += ["--soma-body-collection-id", collection]
     assert live_deviceio.main(args) == 0
     select.assert_called_once_with(
-        tmp_path if use_assets else None,
         body_schema=expected,
         soma_body_collection_id=collection,
         soma_body_representation="joint-rotations",
     )
     select_hands.assert_called_once_with(
-        tmp_path if use_assets else None,
         hand_schema="openxr-hand-pose",
         soma_left_collection_id="soma_hand_left_demo",
         soma_right_collection_id="soma_hand_right_demo",
@@ -370,14 +364,12 @@ def test_live_cli_selects_source_and_launches_runtime(
 @pytest.mark.parametrize(
     "args,message",
     [
-        (["--body-schema", "soma"], "requires --soma-data-root"),
         (["--body-schema", "unknown"], "invalid choice"),
+        (["--soma-data-root", "/unused"], "unrecognized arguments"),
         (
             [
                 "--body-schema",
                 "soma",
-                "--soma-data-root",
-                "/unused",
                 "--soma-body-collection-id",
                 "",
             ],
@@ -386,7 +378,7 @@ def test_live_cli_selects_source_and_launches_runtime(
     ],
 )
 def test_bad_body_selection_fails_before_launch(monkeypatch, capsys, args, message):
-    monkeypatch.setattr(soma_body, "create_layer", lambda _: fake_layer())
+    monkeypatch.setattr(soma_body, "create_layer", fake_layer)
     launch = MagicMock()
     monkeypatch.setattr(live_deviceio.CloudXRLauncher, "launch_context", launch)
     server = MagicMock()
@@ -399,8 +391,10 @@ def test_bad_body_selection_fails_before_launch(monkeypatch, capsys, args, messa
     server.assert_not_called()
 
 
-def test_native_soma_pose_reaches_renderer(soma_assets):
-    body = create_body_view_pipeline(soma_assets)
+def test_native_soma_pose_reaches_renderer(monkeypatch, soma_assets):
+    create_layer = soma_body.create_layer
+    monkeypatch.setattr(soma_body, "create_layer", lambda: create_layer(soma_assets))
+    body = create_body_view_pipeline(body_schema=BodySchema.SOMA)
     pipeline = build_all_human_pipeline(body=body)
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
     source._tracker = MagicMock()
@@ -433,8 +427,16 @@ def test_native_soma_pose_reaches_renderer(soma_assets):
     assert 0 < active["body_joints"] < 77
 
 
-def test_native_soma_hand_rotations_reach_renderer(soma_assets):
-    hands = create_hand_view_pipeline(soma_assets, hand_schema=HandSchema.SOMA)
+def test_native_soma_hand_rotations_reach_renderer(monkeypatch, soma_assets):
+    from isaaccapture_examples.deviceio_live_view import soma_hand
+
+    create_layer = soma_hand.create_layer
+    monkeypatch.setattr(
+        soma_hand,
+        "create_layer",
+        lambda side: create_layer(side, soma_assets),
+    )
+    hands = create_hand_view_pipeline(hand_schema=HandSchema.SOMA)
     pipeline = build_all_human_pipeline(hands=hands)
     sources = {source.name: source for source in pipeline.get_leaf_nodes()}
     inputs = {}
@@ -466,18 +468,17 @@ def test_native_soma_hand_rotations_reach_renderer(soma_assets):
     assert viz.hand_right.points.points.shape == (25, 3)
 
 
-def test_evaluated_soma_pose_reaches_renderer_without_fk(soma_assets):
+def test_evaluated_soma_pose_reaches_renderer_without_fk(monkeypatch):
+    create = MagicMock(side_effect=AssertionError("joint poses must not load SOMA"))
+    monkeypatch.setattr(soma_body, "create_layer", create)
     body = create_body_view_pipeline(
-        soma_assets,
         body_schema=BodySchema.SOMA,
         soma_body_representation=SomaBodyRepresentation.JOINT_POSES,
     )
     pipeline = build_all_human_pipeline(body=body)
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
     source._tracker = MagicMock()
-    source._evaluator.evaluate = MagicMock(
-        side_effect=AssertionError("joint poses must bypass FK")
-    )
+    assert source._evaluator is None
     inputs = {}
     for node in pipeline.get_leaf_nodes():
         inputs[node.name] = {}
@@ -493,4 +494,4 @@ def test_evaluated_soma_pose_reaches_renderer_without_fk(soma_assets):
     viz = fake_viz(body.layout)
     assert viz.update(pipeline.execute_pipeline(inputs))["body_joints"] == 77
     np.testing.assert_array_equal(viz.body.points.points, positions)
-    source._evaluator.evaluate.assert_not_called()
+    create.assert_not_called()

@@ -5,7 +5,6 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     SomaHandRepresentation,
@@ -36,7 +35,6 @@ class HandViewPipeline:
 
 
 def create_hand_view_pipeline(
-    soma_data_root: Path | None = None,
     *,
     hand_schema: HandSchema | str = HandSchema.OPENXR_HAND_POSE,
     soma_left_collection_id: str = "soma_hand_left_demo",
@@ -51,17 +49,9 @@ def create_hand_view_pipeline(
         return create_openxr_hand_pipeline()
 
     representation = SomaHandRepresentation(soma_hand_representation)
-    if (
-        representation is SomaHandRepresentation.JOINT_ROTATIONS
-        and soma_data_root is None
-    ):
-        raise ValueError(
-            "--hand-schema soma with joint-rotations requires --soma-data-root"
-        )
     from .soma_hand import create_soma_hand_pipeline
 
     return create_soma_hand_pipeline(
-        soma_data_root,
         soma_left_collection_id,
         soma_right_collection_id,
         representation,

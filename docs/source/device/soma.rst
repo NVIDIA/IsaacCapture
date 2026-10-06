@@ -85,10 +85,10 @@ build their native pushers:
      --target isaacteleop_python soma_body_pusher soma_hand_pusher \
      -j4
 
-The example packages install ``py-soma-x==0.3.1``. Obtain the matching SOMA-X
-assets and use their directory as ``/path/to/SOMA-X/assets`` in the commands
-below. The body example requires ``example_animation.npy`` and the neutral
-identity assets. The hand example also requires ``SOMAHand.npz``.
+The example packages install ``py-soma-x==0.3.1``. SOMA-X resolves the model
+assets needed by rotation consumers. The demo publishers additionally require a
+matching SOMA-X asset directory containing ``example_animation.npy``. The hand
+publisher also requires ``SOMAHand.npz``.
 
 Run the body example
 --------------------
@@ -101,8 +101,7 @@ URL. Open that URL before starting the publisher. On a remote host, replace
 
    uv run --no-sync python -m isaaccapture_examples.deviceio_live_view \
      --accept-eula \
-     --body-schema soma \
-     --soma-data-root /path/to/SOMA-X/assets
+     --body-schema soma
 
 In another terminal, load the runtime environment and start the body
 publisher:
@@ -128,8 +127,7 @@ Start the viewer with SOMA hands:
 
    uv run --no-sync python -m isaaccapture_examples.deviceio_live_view \
      --accept-eula \
-     --hand-schema soma \
-     --soma-data-root /path/to/SOMA-X/assets
+     --hand-schema soma
 
 In another terminal, load the runtime environment and start the hand
 publisher:
@@ -191,7 +189,7 @@ the serialization source:
 - :code-file:`src/core/schema/fbs/soma_hand_joint_poses.fbs`
 
 The FlatBuffer transport and generated trackers do not depend on SOMA-X or
-PyTorch. A rotation consumer needs SOMA-X and prepared identity assets to
+PyTorch. A rotation consumer uses SOMA-X and its resolved neutral identity to
 evaluate forward kinematics. A joint-pose consumer does not need SOMA-X for
 per-frame evaluation.
 
@@ -225,8 +223,8 @@ The viewer receives no skeleton
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Confirm that the publisher and viewer use the same representation and
-collection names. Also confirm that the asset directory matches SOMA-X v0.3.1
-and contains the files required by the selected example.
+collection names. For a demo publisher, also confirm that its asset directory
+matches SOMA-X v0.3.1 and contains the required animation and model files.
 
 See also
 --------

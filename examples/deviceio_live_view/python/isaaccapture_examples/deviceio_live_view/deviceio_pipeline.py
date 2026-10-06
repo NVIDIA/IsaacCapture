@@ -14,7 +14,6 @@ from .hand_pipeline import HandViewPipeline, create_hand_view_pipeline
 
 
 def build_all_human_pipeline(
-    soma_data_root=None,
     *,
     body_schema=None,
     soma_body_collection_id="soma_body_demo",
@@ -26,7 +25,6 @@ def build_all_human_pipeline(
     head = HeadSource(name="head")
     controllers = ControllersSource(name="controllers")
     selected_body = body or create_body_view_pipeline(
-        soma_data_root,
         body_schema=body_schema,
         soma_body_collection_id=soma_body_collection_id,
         soma_body_representation=soma_body_representation,

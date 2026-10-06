@@ -20,7 +20,6 @@ Press Ctrl+C to stop.
 
 import argparse
 import time
-from pathlib import Path
 
 import viser
 
@@ -51,9 +50,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--body-schema",
         choices=[schema.value for schema in BodySchema],
-        help="Input body schema (default: full-body-pose, or soma when assets are supplied)",
+        help="Input body schema (default: full-body-pose)",
     )
-    parser.add_argument("--soma-data-root", type=Path, help="SOMA POC assets directory")
     parser.add_argument(
         "--soma-body-collection-id",
         default="soma_body_demo",
@@ -91,15 +89,13 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     try:
-        body_schema = resolve_body_schema(args.body_schema, args.soma_data_root)
+        body_schema = resolve_body_schema(args.body_schema)
         body = create_body_view_pipeline(
-            args.soma_data_root,
             body_schema=body_schema,
             soma_body_collection_id=args.soma_body_collection_id,
             soma_body_representation=args.soma_body_representation,
         )
         hands = create_hand_view_pipeline(
-            args.soma_data_root,
             hand_schema=args.hand_schema,
             soma_left_collection_id=args.soma_left_hand_collection_id,
             soma_right_collection_id=args.soma_right_hand_collection_id,

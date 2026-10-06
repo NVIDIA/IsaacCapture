@@ -56,10 +56,12 @@ SOMA_HAND_LAYOUT = HandViewLayout(
 )
 
 
-def create_layer(data_root: Path, hand_type: str):
+def create_layer(hand_type: str, data_root: Path | None = None):
     import soma
     import torch
 
+    if data_root is None:
+        data_root = soma.get_assets_dir()
     layer = soma.SOMAHandLayer(
         data_root=str(data_root),
         hand_type=hand_type,
@@ -86,15 +88,13 @@ def create_layer(data_root: Path, hand_type: str):
 
 
 def create_soma_hand_pipeline(
-    data_root: Path | None,
     left_collection_id: str,
     right_collection_id: str,
     representation: SomaHandRepresentation,
 ) -> HandViewPipeline:
     layers = (None, None)
     if representation is SomaHandRepresentation.JOINT_ROTATIONS:
-        assert data_root is not None
-        layers = (create_layer(data_root, "left"), create_layer(data_root, "right"))
+        layers = (create_layer("left"), create_layer("right"))
     left = SomaHandSource(
         "hand_left",
         left_collection_id,

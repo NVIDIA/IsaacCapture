@@ -32,16 +32,14 @@ SomaBodyJointRotations -> tracker -> upstream FK --+
 SomaBodyJointPoses ----> tracker -> direct map ----+
 ```
 
-Use SOMA-X 0.3.1 and its neutral identity assets. For an uninstalled source
-build, set `PYTHONPATH` to the built IsaacCapture package and this example's
-`python/` directory.
+Use SOMA-X 0.3.1. For an uninstalled source build, set `PYTHONPATH` to the built
+IsaacCapture package and this example's `python/` directory.
 
 ```bash
 uv pip install -e ./examples/deviceio_live_view
 
 uv run --no-sync python -m isaaccapture_examples.deviceio_live_view --accept-eula \
-  --body-schema soma \
-  --soma-data-root /path/to/SOMA-X/assets
+  --body-schema soma
 ```
 
 Use the independent [SOMA body publisher](../soma_body_publisher/README.md) to
@@ -49,11 +47,8 @@ send the bundled motion, or connect another publisher using the checked-in SOMA
 body schema.
 
 Select the body input at launch with `--body-schema full-body-pose` (the default)
-or `--body-schema soma`. SOMA requires `--soma-data-root` for downstream FK.
-For compatibility with earlier commands, supplying assets without `--body-schema`
-also selects SOMA; an explicit schema always takes precedence. Switch sources by
-restarting the viewer with the other option. Hands, head, and controllers remain
-unchanged.
+or `--body-schema soma`. Switch sources by restarting the viewer with the other
+option. Hands, head, and controllers remain unchanged.
 
 The SOMA viewer reads the `soma_body_demo` collection by default. Use
 `--soma-body-collection-id <id>` to match another publisher's collection.
@@ -64,11 +59,11 @@ joint poses instead. The publisher and viewer options must match.
 `SomaBodySource` follows the normal DeviceIO source contract: the session discovers
 the generated tracker selected for `SomaBodyJointRotations` or
 `SomaBodyJointPoses`. The raw tracker remains the transport and recording
-boundary. The source evaluates rotations once per graph step against its
-caller-supplied SOMA identity; evaluated poses map directly. Both modes emit
+boundary. The source evaluates rotations once per graph step against the neutral
+SOMA identity resolved by SOMA-X; evaluated poses map directly. Both modes emit
 the same global positions, orientations, and validity as `SomaBodyInput`. The
-viewer uses the joint names and hierarchy reported by the pinned SOMA layer. It
-does not convert SOMA into `FullBodyPose`.
+viewer uses the pinned SOMA joint names and hierarchy. It does not convert SOMA
+into `FullBodyPose`.
 
 SOMA-X and PyTorch are source-evaluation dependencies, not tracker or transport
 dependencies.
@@ -94,13 +89,12 @@ SomaHandJointPoses ----> tracker -> direct map -------+
 
 ```bash
 uv run --no-sync python -m isaaccapture_examples.deviceio_live_view --accept-eula \
-  --hand-schema soma \
-  --soma-data-root /path/to/SOMA-X-v0.3.1-assets
+  --hand-schema soma
 ```
 
-The rotation profile requires the v0.3.1 `SOMAHand.npz` asset and uses the
-neutral hand identity for FK. Use `--soma-hand-representation joint-poses` for
-evaluated poses, which do not require SOMA-X during per-frame source evaluation.
+The rotation profile uses the neutral hand identity that SOMA-X resolves for FK.
+Use `--soma-hand-representation joint-poses` for evaluated poses, which do not
+require SOMA-X during per-frame source evaluation.
 The default collections are `soma_hand_left_demo` and
 `soma_hand_right_demo`; override them with
 `--soma-left-hand-collection-id` and `--soma-right-hand-collection-id`.
