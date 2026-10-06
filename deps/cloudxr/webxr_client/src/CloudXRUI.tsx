@@ -103,8 +103,9 @@ interface CloudXRUIProps {
   /** Same layout constants used to compute `position` above. */
   controlPanelLayout?: ControlPanelLayoutOptions;
   /** When true, the panel continuously follows the headset every frame (resetPanelRelativeToHead
-   * re-runs each frame instead of once) instead of staying at a fixed room position. Dragging is
-   * disabled while this is on - see the Handle's `bind` prop below. */
+   * re-runs each frame instead of once) instead of staying at a fixed room position. Dragging
+   * still works while this is on - see handleApply, which converts the dragged world position
+   * back into a head-relative offset instead of a fixed one. */
   trackHeadset?: boolean;
   /** Computed signal for render FPS text - updates without React re-render */
   renderFpsText?: ReadonlySignal<string>;
@@ -218,6 +219,13 @@ function SystemNoticeBanner({
 // Reusable objects for face-camera rotation (avoid allocations in render loop)
 const cameraPositionHelper = new Vector3();
 const uiPositionHelper = new Vector3();
+
+// Reusable objects for the head-relative yaw math shared by worldPositionFromHeadOffset and
+// handleApply below (avoid per-frame allocations while trackHeadset or a drag is active).
+const headYawForwardHelper = new Vector3();
+const headYawQuatHelper = new Quaternion();
+const headYawHorizontalHelper = new Vector3();
+const headOffsetWorldHelper = new Vector3();
 
 // Handle hover colors (module-level to avoid per-render allocations)
 const HANDLE_COLOR_DEFAULT = new Color('#666666');
@@ -373,13 +381,20 @@ export default function CloudXR3DUI({
    * only place that's guaranteed fresh; a plain useEffect keyed on isXRMode can fire before the
    * first tracked frame lands, reading a stale/default transform instead.
    */
+  /** Writes into the shared headOffsetWorldHelper - callers must finish using the returned
+   * reference before the next call (true for every caller here: all synchronous, single-frame
+   * use). */
   const worldPositionFromHeadOffset = useCallback((cam: Camera, offset: Vector3): Vector3 => {
-    const forward = WORLD_FORWARD.clone().applyQuaternion(cam.quaternion);
+    const forward = headYawForwardHelper.copy(WORLD_FORWARD).applyQuaternion(cam.quaternion);
     forward.y = 0;
     forward.normalize();
-    const yawQuat = new Quaternion().setFromUnitVectors(WORLD_FORWARD, forward);
-    const horizontal = new Vector3(offset.x, 0, offset.z).applyQuaternion(yawQuat);
-    return new Vector3(cam.position.x + horizontal.x, offset.y, cam.position.z + horizontal.z);
+    const yawQuat = headYawQuatHelper.setFromUnitVectors(WORLD_FORWARD, forward);
+    const horizontal = headYawHorizontalHelper.set(offset.x, 0, offset.z).applyQuaternion(yawQuat);
+    return headOffsetWorldHelper.set(
+      cam.position.x + horizontal.x,
+      offset.y,
+      cam.position.z + horizontal.z
+    );
   }, []);
 
   /**
@@ -419,17 +434,20 @@ export default function CloudXR3DUI({
   );
 
   /**
-   * Un-hides the panel, resets headOffsetRef back to the config-derived default (discarding any
-   * drag-derived offset - a reset should mean "back to the configured position", not "keep
-   * whatever I last dragged to"), and repositions it via worldPositionFromHeadOffset. There is no
-   * way to detect a panel that's hidden or dragged out of reach (see CloudXR2DUI's
-   * panelHiddenAtStart docs) - the drag handle needed to recover it can itself be unreachable -
-   * so this offers a fix instead: the operator (or the host, via oob_teleop_adb.py's
-   * _cdp_send_reset_panel_key synthesizing RESET_PANEL_KEY over CDP) can always bring the panel
-   * back regardless of where it ended up.
+   * Resets headOffsetRef back to the config-derived default (discarding any drag-derived
+   * offset - a reset should mean "back to the configured position", not "keep whatever I last
+   * dragged to"), and repositions it via worldPositionFromHeadOffset.
+   *
+   * *unhide* defaults to true: an explicit reset (R key, or the host's CDP
+   * _cdp_send_reset_panel_key) is the fix for a panel hidden or dragged out of reach (see
+   * CloudXR2DUI's panelHiddenAtStart docs) - the drag handle needed to recover it can itself be
+   * unreachable - so the operator or host can always bring it back regardless of where it ended
+   * up. The one caller that passes false is the initial-placement path in the useFrame block
+   * below: it must still compute the config-derived position (so a later un-hide lands
+   * correctly), but it must not override panelHiddenAtStart on the very frame that just set it.
    */
   const resetPanelRelativeToHead = useCallback(
-    (cam: Camera) => {
+    (cam: Camera, unhide: boolean = true) => {
       if (!groupRef.current) {
         return;
       }
@@ -439,7 +457,9 @@ export default function CloudXR3DUI({
       );
       headOffsetRef.current.set(localX, panelHeight, localZ);
       applyPanelPosition(cam, headOffsetRef.current);
-      setPanelHidden(false);
+      if (unhide) {
+        setPanelHidden(false);
+      }
     },
     [controlPanelPosition, controlPanelLayout, applyPanelPosition]
   );
@@ -469,15 +489,16 @@ export default function CloudXR3DUI({
       if (!trackHeadset) {
         return;
       }
-      const forward = WORLD_FORWARD.clone().applyQuaternion(camera.quaternion);
+      // Shares worldPositionFromHeadOffset's scratch objects - safe because both this and that
+      // function fully overwrite them (via .copy()/.set()) before reading, every call, so
+      // there's never a stale value left over from the other.
+      const forward = headYawForwardHelper.copy(WORLD_FORWARD).applyQuaternion(camera.quaternion);
       forward.y = 0;
       forward.normalize();
-      const yawQuat = new Quaternion().setFromUnitVectors(WORLD_FORWARD, forward);
-      const worldDelta = new Vector3(
-        target.position.x - camera.position.x,
-        0,
-        target.position.z - camera.position.z
-      ).applyQuaternion(yawQuat.clone().invert());
+      const yawQuat = headYawQuatHelper.setFromUnitVectors(WORLD_FORWARD, forward);
+      const worldDelta = headYawHorizontalHelper
+        .set(target.position.x - camera.position.x, 0, target.position.z - camera.position.z)
+        .applyQuaternion(yawQuat.invert());
       headOffsetRef.current.set(worldDelta.x, target.position.y, worldDelta.z);
       if (state.last) {
         // Re-applies the same position target already holds (from state.current.position above)
@@ -528,9 +549,11 @@ export default function CloudXR3DUI({
       return;
     }
     // First real XR frame since session start (see resetPanelRelativeToHead's doc comment for
-    // why it must happen here, not in the isXRMode effect that set the flag).
+    // why it must happen here, not in the isXRMode effect that set the flag). unhide=false:
+    // the isXRMode effect above just set panelHidden from panelHiddenAtStart - preserve that
+    // choice instead of forcing the panel visible on its very first frame.
     if (needsInitialPlacement.current) {
-      resetPanelRelativeToHead(state.camera);
+      resetPanelRelativeToHead(state.camera, false);
       needsInitialPlacement.current = false;
     } else if (trackHeadset) {
       // Continuous version of the same reset: every frame instead of once, using whatever

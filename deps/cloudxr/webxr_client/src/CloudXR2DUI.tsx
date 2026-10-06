@@ -424,9 +424,7 @@ export class CloudXR2DUI {
       const raw = seeds.get(field.key);
       if (raw === undefined) continue;
       const el = document.getElementById(field.elementId) as
-        | HTMLInputElement
-        | HTMLSelectElement
-        | null;
+        HTMLInputElement | HTMLSelectElement | null;
       if (!el) continue;
       if (field.kind === 'checked') {
         (el as HTMLInputElement).checked = raw === 'true';
@@ -1114,7 +1112,12 @@ export class CloudXR2DUI {
       ),
       controlPanelDistance: (() => {
         const v = parseFloat(this.controlPanelDistanceInput.value);
-        return Number.isFinite(v) ? v : this.getDefaultConfiguration().controlPanelDistance;
+        // Zero or negative places the panel at or behind the viewer (see
+        // worldPositionFromHeadOffset in CloudXRUI.tsx) - reject those like an invalid
+        // (non-finite) value, not just NaN/Infinity.
+        return Number.isFinite(v) && v > 0
+          ? v
+          : this.getDefaultConfiguration().controlPanelDistance;
       })(),
       controlPanelHeight: (() => {
         const v = parseFloat(this.controlPanelHeightInput.value);

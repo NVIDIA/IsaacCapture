@@ -67,7 +67,8 @@ export interface ReactUIConfig {
   /** Angle in degrees for left/right positions from center. Overrides the default in ControlPanelLayoutOptions. */
   controlPanelAngleDegrees?: number;
   /** When true, the control panel continuously follows the headset instead of staying at a
-   * fixed room position; dragging is disabled while this is on. */
+   * fixed room position. Dragging still works while this is on - it updates the tracked
+   * head-relative offset instead of a fixed room position. */
   controlPanelTrackHeadset?: boolean;
   /** When true, the control panel is hidden at immersive XR enter (small “show control panel” control only). */
   panelHiddenAtStart?: boolean;
