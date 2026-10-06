@@ -371,3 +371,20 @@ with TeleopSession(config) as session:
 ```
 
 `viz_session.get_oxr_handles()` returns `(instance, session, space, proc_addr)` as raw `uint64`s, or `None` outside `kXr`.
+
+## Validate a Jetson installation
+
+On each supported Thor and Orin JetPack image, run setup in a fresh environment.
+Setup must pass its CuPy kernel check using the image's matching CUDA toolkit.
+Then run from the repository root:
+
+```bash
+uv pip install --python examples/camera_viz/.venv/bin/python pytest
+examples/camera_viz/.venv/bin/python -m pytest --require-gpu -v \
+  tests/python/examples/camera_viz/test_synthetic_offscreen.py
+```
+
+This requires mono and stereo sources to publish frames and render non-black output;
+missing GPU support fails instead of skipping. Follow with the
+[recording walkthrough](https://nvidia.github.io/IsaacCapture/main/references/camera_streaming.html#recorded-camera-streaming)
+and an XR headset check.
