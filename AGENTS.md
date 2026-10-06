@@ -205,6 +205,9 @@ pre-commit install --hook-type commit-msg
 
 ## Remote pushes
 
+- When moving a focused fix from a release branch onto `main`, identify its
+  original base and replay only the fix commits. Do not carry release-only CI
+  changes or duplicate upstream features into the new branch.
 - Before pushing, compare every URL from
   `git remote get-url --push --all <remote>` with the user-specified owner and
   repository. Do not infer the destination from the account, remote alias, or
@@ -222,6 +225,9 @@ pre-commit install --hook-type commit-msg
   SKIP=check-copyright-year pre-commit run --all-files
   ```
 
+- Finish a rebase before the full hook run. While rebase metadata exists,
+  `check-merge-conflict` can mistake an RST heading underline (`=======`) for
+  an unresolved conflict.
 - **`--all-files` means all *tracked* files.** pre-commit enumerates through
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.
