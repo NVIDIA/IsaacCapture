@@ -16,64 +16,19 @@
  */
 
 /**
- * StreamAttachTimeoutTest - minimal harness mounting the real CloudXRComponent against
- * MockCloudXR (same pattern as CloudXRComponentTest.tsx - see that file's header for the
- * general approach), focused on CloudXRComponent.tsx's three connection-phase deadlines:
+ * StreamAttachTimeoutTest - mounts the real CloudXRComponent against MockCloudXR (see
+ * CloudXRComponentTest.tsx's header for the general approach) to exercise its three
+ * connection-phase deadlines back-to-back in one continuous 4-attempt retry sequence:
+ * streamAttachTimeoutMs (attempt 1: stream never attaches), warmupBeginTimeoutMs (attempt 2:
+ * attaches but no warm-up log ever arrives), warmupEndTimeoutMs (attempt 3: warm-up begins but
+ * never completes), then a normal attempt 4 proving none of the timers fire once attach and
+ * warm-up genuinely succeed. Each attempt drives MockCloudXR via setWarmupTotalFrames() +
+ * videoFrameReceived() (test-driven, no background clock) on a schedule relative to Connected.
  *
- *   - streamAttachTimeoutMs: a session that enters XR and calls connect() but whose stream
- *     never attaches (onStreamStarted never fires).
- *   - warmupBeginTimeoutMs: a session that attaches (onStreamStarted fires) but produces no
- *     decoder warm-up log at all (see armWarmupBeginTimer).
- *   - warmupEndTimeoutMs: warm-up that began (at least one warm-up log arrived) but never
- *     completed (see armWarmupEndTimer). Both warmup timeouts cover windows disjoint from
- *     streamAttachTimeoutMs and from each other - see CloudXRComponent.tsx's doc comments.
- *
- * Since MockCloudXR.videoFrameReceived() is purely test-driven now (no background clock - see
- * that method's doc comment), each attempt below configures setWarmupTotalFrames() and then
- * calls videoFrameReceived() (no frameId - relying on the mock's internal warm-up counter, not
- * the real RTP-ID protocol, since this test only cares about timing, not frame identification)
- * some number of times, scheduled relative to the moment the session reaches Connected (driven
- * from onStatusChange).
- *
- * Exercised in one continuous 4-attempt run (isolation for each of the three timeouts, and
- * combination in that all three operate correctly back-to-back within the same reconnect
- * sequence without interfering with each other):
- *
- *   1. connectWait(1250), 0 calls - 1.25s, over the 1s (1x) attach budget. The attach timer
- *      fires first, synthesizes a recoverable error, and the existing bounded-retry path
- *      (PR #1122) schedules a retry. Isolates streamAttachTimeoutMs: warm-up never starts.
- *   2. connectWait(100), 0 calls - attaches easily within the 2s (2x, doubled) attach budget,
- *      but no video frame ever arrives, so no warm-up log ever fires. warmupBeginTimeoutMs
- *      (fixed, does not grow per attempt) fires and triggers a second retry. Isolates
- *      warmupBeginTimeoutMs, and proves it fires independently of the (already-cleared) attach
- *      timer.
- *   3. connectWait(100), setWarmupTotalFrames(null) (never completes), 1 call - warm-up
- *      *begins* (armWarmupBeginTimer clears, armWarmupEndTimer takes over) but never completes,
- *      so the fixed-length warmupEndTimeoutMs fires and triggers a third retry. Isolates
- *      warmupEndTimeoutMs.
- *   4. connectWait(100), setWarmupTotalFrames(2), 3 calls - attaches and warms up fast, well
- *      under any of the three budgets (the 3rd call is what flips warmupComplete once
- *      warmupFramesSeen reaches 2 - see MockCloudXR.videoFrameReceived's doc comment). Proves a
- *      normal attempt is unaffected by any timer once attach and warm-up genuinely succeed.
- *
- * All attempts also call setWarmupFirstStatusFrame(1): without it, the mock's default threshold
- * (10) means a single warm-up frame (attempt 3) would never log at all, so CloudXRComponent
- * would never see it and armWarmupBeginTimer would never clear.
- *
- * The wait sequence in runTest() below mirrors the same three-phase progression the component
- * itself goes through: wait for the session to reach Connected (the first status message
- * confirming attach), then for warm-up to begin (first onWarmupStatus event), then for it to
- * finish (an onWarmupStatus event with completed: true).
- *
- * This also explicitly asserts a real, important diagnostic behavior: streaming/render metrics
- * (StreamingFramerate/StreamingFrameCount, the MetricsCadence.PerFrame batch) do NOT update
- * during decoder warm-up frames in the real SDK - they only update on a real, pose-correlated
- * frame, so a frozen StreamingFrameCount while the session otherwise reads Connected is exactly
- * what a stuck warm-up looks like from the outside. MockCloudXR.render() reproduces this (its
- * onMetrics(PerFrame) call is unreachable while !warmupComplete - see that method's doc
- * comment); attempt 3 below (warm-up begun but stalled) is what exercises it:
- * onStreamingPerformanceMetrics must not fire at all during that window, and must fire once
- * attempt 4 actually completes warm-up.
+ * Also asserts a real diagnostic signal: streaming/render metrics (MetricsCadence.PerFrame)
+ * must not fire during a stalled warm-up (attempt 3) and must fire once warm-up completes
+ * (attempt 4) - a frozen frame count while the session reads Connected is what a stuck warm-up
+ * looks like from the outside, and MockCloudXR.render() reproduces that.
  *
  * Click the button (or press "S") to run it.
  */

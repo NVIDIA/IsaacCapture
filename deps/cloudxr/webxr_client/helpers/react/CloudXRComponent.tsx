@@ -303,6 +303,26 @@ export default function CloudXRComponent({
   const streamAttachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warmupBeginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warmupEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Clears the attach and both warm-up watchdogs - the three fire a synthetic error if left
+   * pending past an attempt that's already been handled some other way (success, a real error,
+   * or the WebXR session itself ending). Does not touch reconnectTimerRef: callers that also
+   * need to cancel a pending retry do so separately, since not all of them do. */
+  const clearStartupTimers = useCallback(() => {
+    if (streamAttachTimerRef.current !== null) {
+      clearTimeout(streamAttachTimerRef.current);
+      streamAttachTimerRef.current = null;
+    }
+    if (warmupBeginTimerRef.current !== null) {
+      clearTimeout(warmupBeginTimerRef.current);
+      warmupBeginTimerRef.current = null;
+    }
+    if (warmupEndTimerRef.current !== null) {
+      clearTimeout(warmupEndTimerRef.current);
+      warmupEndTimerRef.current = null;
+    }
+  }, []);
+
   // False from session creation until a real onStreamStarted fires; lets the effect below tell
   // "still waiting to attach" apart from "already connected" when it re-registers mid-connection
   // (see the config-change re-arm logic further down).
@@ -368,18 +388,21 @@ export default function CloudXRComponent({
    */
   const armWarmupBeginTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
+      // Same overflow guard as armStreamAttachTimer: an uncapped delay above setTimeout's
+      // ~24.8-day int32 limit wraps and fires near-immediately instead of waiting.
+      const timeoutMs = Math.min(warmupBeginBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
       warmupBeginTimerRef.current = setTimeout(() => {
         warmupBeginTimerRef.current = null;
-        console.warn(`CloudXR decoder warm-up did not begin within ${warmupBeginBaseTimeoutMs}ms`);
+        console.warn(`CloudXR decoder warm-up did not begin within ${timeoutMs}ms`);
         try {
           cxrSession.disconnect();
         } catch {
           // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
         }
         cloudXRDelegatesRef.current?.onStreamStopped?.({
-          message: `Decoder warm-up did not begin within ${warmupBeginBaseTimeoutMs}ms`,
+          message: `Decoder warm-up did not begin within ${timeoutMs}ms`,
         } as CloudXR.StreamingError);
-      }, warmupBeginBaseTimeoutMs);
+      }, timeoutMs);
     },
     [warmupBeginBaseTimeoutMs]
   );
@@ -394,18 +417,19 @@ export default function CloudXRComponent({
    */
   const armWarmupEndTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
+      const timeoutMs = Math.min(warmupEndBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
       warmupEndTimerRef.current = setTimeout(() => {
         warmupEndTimerRef.current = null;
-        console.warn(`CloudXR decoder warm-up did not complete within ${warmupEndBaseTimeoutMs}ms`);
+        console.warn(`CloudXR decoder warm-up did not complete within ${timeoutMs}ms`);
         try {
           cxrSession.disconnect();
         } catch {
           // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
         }
         cloudXRDelegatesRef.current?.onStreamStopped?.({
-          message: `Decoder warm-up did not complete within ${warmupEndBaseTimeoutMs}ms`,
+          message: `Decoder warm-up did not complete within ${timeoutMs}ms`,
         } as CloudXR.StreamingError);
-      }, warmupEndBaseTimeoutMs);
+      }, timeoutMs);
     },
     [warmupEndBaseTimeoutMs]
   );
@@ -665,9 +689,10 @@ export default function CloudXRComponent({
               trackedGL.restore();
             },
             onStreamStarted: () => {
-              // A successful (re)connect clears the counter, so an unrelated later failure
-              // gets its own full budget of attempts rather than inheriting this one's count.
-              reconnectAttemptRef.current = 0;
+              // Does NOT reset reconnectAttemptRef - an attach alone isn't a "successful
+              // reconnect" (warm-up can still stall indefinitely before any usable video
+              // arrives). See onMetrics' PerRender branch below, which is where the budget
+              // actually resets, once there's real video to show for it.
               hasStreamStartedRef.current = true;
               if (streamAttachTimerRef.current !== null) {
                 clearTimeout(streamAttachTimerRef.current);
@@ -689,18 +714,7 @@ export default function CloudXRComponent({
               // dispatch through this same delegate) means we're no longer "waiting to attach" or
               // "warming up" - clear any pending timer so it can't fire again after this attempt
               // has already been handled.
-              if (streamAttachTimerRef.current !== null) {
-                clearTimeout(streamAttachTimerRef.current);
-                streamAttachTimerRef.current = null;
-              }
-              if (warmupBeginTimerRef.current !== null) {
-                clearTimeout(warmupBeginTimerRef.current);
-                warmupBeginTimerRef.current = null;
-              }
-              if (warmupEndTimerRef.current !== null) {
-                clearTimeout(warmupEndTimerRef.current);
-                warmupEndTimerRef.current = null;
-              }
+              clearStartupTimers();
               if (error) {
                 // Display user-friendly error message with error code if available
                 const errorMsg = error.code
@@ -748,24 +762,44 @@ export default function CloudXRComponent({
               // Every cadence delivers a *partial* record: only the metrics sampled on this
               // tick are present. Forward just those keys and let the consumer merge, so an
               // absent metric is never reported downstream as a zero.
-              if (onRenderPerformanceMetrics && cadence === CloudXR.MetricsCadence.PerRender) {
-                const update: RenderMetricsUpdate = {};
+              if (cadence === CloudXR.MetricsCadence.PerRender) {
                 const renderFps = metrics[CloudXR.MetricsName.RenderFramerate];
                 if (renderFps !== undefined) {
-                  update.framerate = renderFpsTrackerRef.current.add(renderFps);
+                  // A render tick carrying an actual framerate means real, pose-backed video is
+                  // being decoded - an independent "the stream is genuinely healthy" signal that
+                  // doesn't depend on the SDK's warm-up log text (see WARMUP_COMPLETE_LOG_PATTERN's
+                  // doc comment: a stream that starts warmed up, with zero warm-up frames, never
+                  // emits that log at all). Cancel both warm-up watchdogs and give this attempt
+                  // the full retry budget back - matching onStreamStarted's old (and wrong)
+                  // on-attach reset, but only once there's real video to show for it.
+                  if (warmupBeginTimerRef.current !== null) {
+                    clearTimeout(warmupBeginTimerRef.current);
+                    warmupBeginTimerRef.current = null;
+                  }
+                  if (warmupEndTimerRef.current !== null) {
+                    clearTimeout(warmupEndTimerRef.current);
+                    warmupEndTimerRef.current = null;
+                  }
+                  reconnectAttemptRef.current = 0;
                 }
-                const poseSendFps = metrics[CloudXR.MetricsName.PoseSendFramerate];
-                if (poseSendFps !== undefined) {
-                  update.sendFramerate = poseSendFpsTrackerRef.current.add(poseSendFps);
-                }
-                const xrPoseAgeMs = metrics[CloudXR.MetricsName.LatencyXrPoseAgeMs];
-                if (xrPoseAgeMs !== undefined) {
-                  update.xrPoseAgeMs = xrPoseAgeMs;
-                }
-                // The send-begin and render-begin paths each emit their own PerRender tick,
-                // so skip ticks that carried none of the keys we track.
-                if (Object.keys(update).length > 0) {
-                  onRenderPerformanceMetrics(update);
+                if (onRenderPerformanceMetrics) {
+                  const update: RenderMetricsUpdate = {};
+                  if (renderFps !== undefined) {
+                    update.framerate = renderFpsTrackerRef.current.add(renderFps);
+                  }
+                  const poseSendFps = metrics[CloudXR.MetricsName.PoseSendFramerate];
+                  if (poseSendFps !== undefined) {
+                    update.sendFramerate = poseSendFpsTrackerRef.current.add(poseSendFps);
+                  }
+                  const xrPoseAgeMs = metrics[CloudXR.MetricsName.LatencyXrPoseAgeMs];
+                  if (xrPoseAgeMs !== undefined) {
+                    update.xrPoseAgeMs = xrPoseAgeMs;
+                  }
+                  // The send-begin and render-begin paths each emit their own PerRender tick,
+                  // so skip ticks that carried none of the keys we track.
+                  if (Object.keys(update).length > 0) {
+                    onRenderPerformanceMetrics(update);
+                  }
                 }
               }
 
@@ -912,18 +946,7 @@ export default function CloudXRComponent({
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
-        if (streamAttachTimerRef.current !== null) {
-          clearTimeout(streamAttachTimerRef.current);
-          streamAttachTimerRef.current = null;
-        }
-        if (warmupBeginTimerRef.current !== null) {
-          clearTimeout(warmupBeginTimerRef.current);
-          warmupBeginTimerRef.current = null;
-        }
-        if (warmupEndTimerRef.current !== null) {
-          clearTimeout(warmupEndTimerRef.current);
-          warmupEndTimerRef.current = null;
-        }
+        clearStartupTimers();
         if (cxrSessionRef.current) {
           cxrSessionRef.current.disconnect();
           cxrSessionRef.current = null;
@@ -948,18 +971,7 @@ export default function CloudXRComponent({
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
-        if (streamAttachTimerRef.current !== null) {
-          clearTimeout(streamAttachTimerRef.current);
-          streamAttachTimerRef.current = null;
-        }
-        if (warmupBeginTimerRef.current !== null) {
-          clearTimeout(warmupBeginTimerRef.current);
-          warmupBeginTimerRef.current = null;
-        }
-        if (warmupEndTimerRef.current !== null) {
-          clearTimeout(warmupEndTimerRef.current);
-          warmupEndTimerRef.current = null;
-        }
+        clearStartupTimers();
       };
     }
   }, [threeRenderer, config]); // Re-register handlers when renderer or config changes
