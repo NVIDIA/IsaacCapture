@@ -97,3 +97,9 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## Developer-facing guides
+
+Lead with concise prerequisites, a runnable example, and observable success checks.
+Keep optional setup and diagnostics outside the first-run path. Link to existing
+reference material instead of repeating implementation details.
