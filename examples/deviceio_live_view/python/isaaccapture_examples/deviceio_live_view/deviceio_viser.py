@@ -6,13 +6,12 @@
 Viz classes: ``HandViz``, ``ControllerViz``, ``BodyViz``, ``HeadViz``,
 ``HumanDeviceIOViz``.
 
-Rendering helpers: ``HAND_BONES``, ``BODY_BONES``, ``controller_state``.
+Rendering helpers: ``BODY_BONES``, ``controller_state``.
 """
 
 import numpy as np
 import viser
 
-from isaaccapture.retargeting_engine.tensor_types import HandInputIndex
 from isaaccapture.retargeting_engine.tensor_types.indices import (
     ControllerInputIndex,
     HeadInputIndex,
@@ -20,6 +19,8 @@ from isaaccapture.retargeting_engine.tensor_types.indices import (
 
 from .body_pipeline import BodyViewLayout
 from .full_body_pose import FULL_BODY_POSE_BONES, FULL_BODY_POSE_LAYOUT
+from .hand_pipeline import HandViewLayout
+from .openxr_hand_pose import OPENXR_HAND_LAYOUT
 
 BODY_JOINT_NAMES = list(FULL_BODY_POSE_LAYOUT.joint_names)
 BODY_BONES = FULL_BODY_POSE_BONES
@@ -102,50 +103,6 @@ def setup_scene(server) -> GroundGrid:
     return GroundGrid(server, grid)
 
 
-# OpenXR hand-joint connectivity (parent → child) for skeleton rendering.
-# Indices follow XR_HAND_JOINT_*_EXT: 0=PALM, 1=WRIST, thumb has 4 joints
-# (no intermediate), the other 4 fingers have 5 joints each — 26 total.
-HAND_BONES: tuple[tuple[int, int], ...] = (
-    # Thumb
-    (1, 2),
-    (2, 3),
-    (3, 4),
-    (4, 5),
-    # Index
-    (1, 6),
-    (6, 7),
-    (7, 8),
-    (8, 9),
-    (9, 10),
-    # Middle
-    (1, 11),
-    (11, 12),
-    (12, 13),
-    (13, 14),
-    (14, 15),
-    # Ring
-    (1, 16),
-    (16, 17),
-    (17, 18),
-    (18, 19),
-    (19, 20),
-    # Little
-    (1, 21),
-    (21, 22),
-    (22, 23),
-    (23, 24),
-    (24, 25),
-)
-
-
-def _bone_segments(positions: np.ndarray) -> np.ndarray:
-    """Return (N, 2, 3) segment array for the parent→child hand bones."""
-    return np.stack(
-        [np.stack([positions[a], positions[b]], axis=0) for a, b in HAND_BONES],
-        axis=0,
-    ).astype(np.float32)
-
-
 def _valid_bone_segments(
     positions: np.ndarray,
     valid: np.ndarray,
@@ -218,34 +175,36 @@ class HandViz:
         server: viser.ViserServer,
         name: str,
         color: tuple[float, float, float],
+        layout: HandViewLayout,
     ):
+        self.layout = layout
         self.color = np.array(color, dtype=np.float32)
-        zero_pts = np.zeros((26, 3), dtype=np.float32)
-        zero_segs = np.zeros((len(HAND_BONES), 2, 3), dtype=np.float32)
+        zero_pts = np.zeros((len(layout.joint_names), 3), dtype=np.float32)
+        zero_segs = np.zeros((0, 2, 3), dtype=np.float32)
 
         self.points = server.scene.add_point_cloud(
             name=f"/{name}/joints",
             points=zero_pts,
-            colors=np.tile(self.color, (26, 1)),
+            colors=np.tile(self.color, (len(layout.joint_names), 1)),
             point_size=0.008,
         )
         self.bones = server.scene.add_line_segments(
             name=f"/{name}/bones",
             points=zero_segs,
-            colors=np.tile(self.color, (len(HAND_BONES), 2, 1)),
+            colors=np.zeros((0, 2, 3), dtype=np.float32),
             line_width=2.0,
         )
 
-    def update(self, positions: np.ndarray, valid: bool) -> None:
-        if valid:
-            self.points.points = positions.astype(np.float32)
-            self.points.colors = np.tile(self.color, (positions.shape[0], 1))
-            self.bones.points = _bone_segments(positions)
-        else:
-            zero_pts = np.zeros_like(positions, dtype=np.float32)
-            self.points.points = zero_pts
-            self.points.colors = np.tile(INVALID_COLOR, (positions.shape[0], 1))
-            self.bones.points = np.zeros((len(HAND_BONES), 2, 3), dtype=np.float32)
+    def update(self, positions: np.ndarray, valid: np.ndarray) -> None:
+        positions = positions.astype(np.float32)
+        valid_bool = valid.astype(bool)
+        self.points.points = positions
+        colors = np.tile(self.color, (positions.shape[0], 1))
+        colors[~valid_bool] = INVALID_COLOR
+        self.points.colors = colors
+        segments = _valid_bone_segments(positions, valid_bool, self.layout.bones)
+        self.bones.points = segments
+        self.bones.colors = np.tile(self.color, (segments.shape[0], 2, 1))
 
 
 class ControllerViz:
@@ -464,11 +423,13 @@ class HumanDeviceIOViz:
         server: viser.ViserServer,
         ground: GroundGrid | None = None,
         body_layout: BodyViewLayout = FULL_BODY_POSE_LAYOUT,
+        hand_layout: HandViewLayout = OPENXR_HAND_LAYOUT,
     ):
         self._ground = ground
         self._body_layout = body_layout
-        self.hand_left = HandViz(server, "hand_left", LEFT_COLOR)
-        self.hand_right = HandViz(server, "hand_right", RIGHT_COLOR)
+        self._hand_layout = hand_layout
+        self.hand_left = HandViz(server, "hand_left", LEFT_COLOR, hand_layout)
+        self.hand_right = HandViz(server, "hand_right", RIGHT_COLOR, hand_layout)
         self.head = HeadViz(server)
         self.controller_left = ControllerViz(server, "controller_left", LEFT_COLOR)
         self.controller_right = ControllerViz(server, "controller_right", RIGHT_COLOR)
@@ -480,10 +441,17 @@ class HumanDeviceIOViz:
             viz.bones.visible = False
             return False
 
-        positions = np.asarray(hand[HandInputIndex.JOINT_POSITIONS], dtype=np.float32)
+        positions = np.asarray(
+            hand[self._hand_layout.positions_index], dtype=np.float32
+        )
+        valid = np.asarray(hand[self._hand_layout.valid_index], dtype=np.uint8)
+        if not np.any(valid):
+            viz.points.visible = False
+            viz.bones.visible = False
+            return False
         viz.points.visible = True
         viz.bones.visible = True
-        viz.update(positions, valid=True)
+        viz.update(positions, valid)
         return True
 
     def _update_controller_if_active(self, viz: ControllerViz, controller) -> bool:

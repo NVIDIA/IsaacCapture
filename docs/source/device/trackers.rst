@@ -26,6 +26,8 @@ reading it from OpenXR tensor collections via the
 - :code-file:`Se3Tracker <src/core/deviceio_trackers/trackers.toml>` -- generic SE3 (6-DoF) pose sources (tracker pucks, mocap rigid bodies, logical trackers) (generated)
 - :code-file:`SomaBodyJointRotationsV0Tracker <src/core/deviceio_trackers/trackers.toml>` -- SOMA v0 body joint rotations with 77 controls (generated)
 - :code-file:`SomaBodyJointPosesV0Tracker <src/core/deviceio_trackers/trackers.toml>` -- evaluated SOMA v0 body poses for 77 joints (generated)
+- :code-file:`SomaHandJointRotationsV0Tracker <src/core/deviceio_trackers/trackers.toml>` -- SOMA v0 hand joint rotations with 25 controls (generated)
+- :code-file:`SomaHandJointPosesV0Tracker <src/core/deviceio_trackers/trackers.toml>` -- evaluated SOMA v0 hand poses for 25 joints (generated)
 
 All trackers follow the same lifecycle:
 
@@ -334,6 +336,46 @@ body-schema selection. It does not map SOMA into ``FullBodyPose``.
   - :code-file:`tests/cpp/core/schema/test_soma_body_joint_poses_v0.cpp`
   - :code-file:`tests/python/core/schema/test_soma_body_v0.py`
   - :code-file:`tests/python/core/retargeting_engine/test_soma_body_source.py`
+
+SomaHandJointRotationsV0Tracker and SomaHandJointPosesV0Tracker
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reads either of the two SOMA hand transport profiles defined and verified against SOMA-X v0.3.1.
+``SomaHandJointRotationsV0`` contains 25 unit XYZW quaternions in ``SomaHandJointV0`` order. Wrist
+is the global rotation; the remaining rotations are joint-local relative to the fixed v0.3.1
+reference contract. ``global_translation`` is applied to Wrist and uses the same units and
+reference-frame convention as ``SomaBodyJointRotationsV0``.
+
+When a producer has already evaluated forward kinematics, it can instead publish
+``SomaHandJointPosesV0``. That profile carries a global position, orientation, and validity for each
+of the same 25 joints and requires no downstream FK. Create one tracker per hand collection; each
+payload identifies its side through ``handedness``. As with the body contract, a vendor adapter
+converts its device-native hand data before calling ``SchemaPusher``.
+
+For a retargeting graph, ``SomaHandSource`` selects the rotation tracker by default and emits an
+evaluated ``SomaHandInput``. Pass ``representation="joint-poses"`` to select the evaluated-pose
+tracker. A rotation source requires a prepared SOMA hand layer; an evaluated-pose source does not.
+The DeviceIO live-view example selects body and hand inputs independently and creates one source for
+each hand.
+
+- Schemas: :code-file:`src/core/schema/fbs/soma_common_v0.fbs`, :code-file:`src/core/schema/fbs/soma_hand_v0.fbs`, :code-file:`src/core/schema/fbs/soma_hand_joint_poses_v0.fbs`
+- Manifest: :code-file:`src/core/deviceio_trackers/trackers.toml` (``soma_hand_joint_rotations_v0`` and ``soma_hand_joint_poses_v0``)
+- Rotation C++ header: ``#include <deviceio_trackers/soma_hand_joint_rotations_v0_tracker.hpp>``
+- Rotation Python import: ``from isaaccapture.deviceio_trackers import SomaHandJointRotationsV0Tracker``
+- Evaluated-pose C++ header: ``#include <deviceio_trackers/soma_hand_joint_poses_v0_tracker.hpp>``
+- Evaluated-pose Python import: ``from isaaccapture.deviceio_trackers import SomaHandJointPosesV0Tracker``
+- Graph source: :code-file:`src/python/isaaccapture/retargeting_engine/deviceio_source_nodes/soma_hand_source.py`
+- Live-view example: :code-file:`examples/deviceio_live_view/README.md`
+- Demo publisher: :code-file:`examples/soma_hand_publisher/README.md`
+- Rotation record channels: ``soma_hand_joint_rotations_v0``, ``soma_hand_joint_rotations_v0_tracked`` | MCAP schema: ``core.SomaHandJointRotationsV0Record``
+- Evaluated-pose record channels: ``soma_hand_joint_poses_v0``, ``soma_hand_joint_poses_v0_tracked`` | MCAP schema: ``core.SomaHandJointPosesV0Record``
+- Tests:
+
+  - :code-file:`tests/cpp/core/schema/test_soma_hand_v0.cpp`
+  - :code-file:`tests/cpp/core/schema/test_soma_hand_joint_poses_v0.cpp`
+  - :code-file:`tests/python/core/schema/test_soma_hand_v0.py`
+  - :code-file:`tests/python/core/schema/test_soma_hand_joint_poses_v0.py`
+  - :code-file:`tests/python/core/retargeting_engine/test_soma_hand_source.py`
 
 FrameMetadataTrackerOak
 ~~~~~~~~~~~~~~~~~~~~~~~

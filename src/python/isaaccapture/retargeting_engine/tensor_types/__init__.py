@@ -9,6 +9,7 @@ from .scalar_types import FloatType, IntType, BoolType
 from .ndarray_types import NDArrayType, DLDeviceType, DLDataType
 from .standard_types import (
     HandInput,
+    SomaHandInput,
     HeadInput,
     ControllerInput,
     FullBodyInput,
@@ -16,6 +17,7 @@ from .standard_types import (
     TransformMatrix,
     Generic3AxisPedalInput,
     NUM_HAND_JOINTS,
+    NUM_SOMA_HAND_JOINTS,
     NUM_BODY_JOINTS,
     NUM_SOMA_BODY_JOINTS,
     RobotHandJoints,
@@ -32,6 +34,7 @@ from .tactile_types import (
 )
 from .indices import (
     HandInputIndex,
+    SomaHandInputIndex,
     HeadInputIndex,
     ControllerInputIndex,
     Generic3AxisPedalInputIndex,
@@ -53,6 +56,7 @@ __all__ = [
     "DLDataType",
     # Standard types
     "HandInput",
+    "SomaHandInput",
     "HeadInput",
     "ControllerInput",
     "FullBodyInput",
@@ -60,6 +64,7 @@ __all__ = [
     "TransformMatrix",
     "Generic3AxisPedalInput",
     "NUM_HAND_JOINTS",
+    "NUM_SOMA_HAND_JOINTS",
     "NUM_BODY_JOINTS",
     "NUM_SOMA_BODY_JOINTS",
     "RobotHandJoints",
@@ -74,6 +79,7 @@ __all__ = [
     "NUM_END_EFFECTOR_FORCE_AXES",
     # Indices
     "HandInputIndex",
+    "SomaHandInputIndex",
     "HeadInputIndex",
     "ControllerInputIndex",
     "Generic3AxisPedalInputIndex",

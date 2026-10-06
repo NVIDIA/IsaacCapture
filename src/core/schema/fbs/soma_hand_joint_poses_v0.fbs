@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "pose.fbs";
+include "soma_common_v0.fbs";
+include "soma_hand_v0.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+struct SomaHandJointPoseV0 {
+    pose: Pose;
+    is_valid: bool;
+}
+
+// Fixed-size evaluated SOMA hand joint-pose array in SomaHandJointV0 order.
+struct SomaHandJointPoseArrayV0 {
+    values: [SomaHandJointPoseV0:25];
+}
+
+// Evaluated SOMA hand joint-pose transport schema v0.
+//
+// Defined and verified against SOMA-X v0.3.1 and its v0.3 pose interface.
+// Every position and orientation is global within the payload reference frame.
+// Positions are meters in a right-handed frame with +Y up and +Z forward.
+// Orientations are unit XYZW quaternions.
+table SomaHandJointPosesV0 {
+    joint_poses: SomaHandJointPoseArrayV0 (id: 0);
+    handedness: SomaHandednessV0 = UNSPECIFIED (id: 1);
+}
+
+table SomaHandJointPosesV0Record {
+    data: SomaHandJointPosesV0 (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SomaHandJointPosesV0Record;

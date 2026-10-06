@@ -29,11 +29,15 @@ from isaaccapture.teleop_session_manager import (
     TeleopSession,
     TeleopSessionConfig,
 )
-from isaaccapture.retargeting_engine.deviceio_source_nodes import SomaBodyRepresentation
+from isaaccapture.retargeting_engine.deviceio_source_nodes import (
+    SomaBodyRepresentation,
+    SomaHandRepresentation,
+)
 
 from .body_pipeline import BodySchema, create_body_view_pipeline, resolve_body_schema
 from .deviceio_pipeline import build_all_human_pipeline
 from .deviceio_viser import HumanDeviceIOViz, setup_scene
+from .hand_pipeline import HandSchema, create_hand_view_pipeline
 
 
 def main(argv: list[str]) -> int:
@@ -61,6 +65,28 @@ def main(argv: list[str]) -> int:
         default=SomaBodyRepresentation.JOINT_ROTATIONS.value,
         help="SOMA FlatBuffer profile consumed by the viewer",
     )
+    parser.add_argument(
+        "--hand-schema",
+        choices=[schema.value for schema in HandSchema],
+        default=HandSchema.OPENXR_HAND_POSE.value,
+        help="Input hand schema (default: openxr-hand-pose)",
+    )
+    parser.add_argument(
+        "--soma-left-hand-collection-id",
+        default="soma_hand_left_demo",
+        help="Left SOMA hand publisher's tensor collection ID",
+    )
+    parser.add_argument(
+        "--soma-right-hand-collection-id",
+        default="soma_hand_right_demo",
+        help="Right SOMA hand publisher's tensor collection ID",
+    )
+    parser.add_argument(
+        "--soma-hand-representation",
+        choices=[representation.value for representation in SomaHandRepresentation],
+        default=SomaHandRepresentation.JOINT_ROTATIONS.value,
+        help="SOMA hand FlatBuffer profile consumed by the viewer",
+    )
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args(argv[1:])
 
@@ -72,7 +98,14 @@ def main(argv: list[str]) -> int:
             soma_collection_id=args.soma_collection_id,
             soma_body_representation=args.soma_body_representation,
         )
-        pipeline = build_all_human_pipeline(body=body)
+        hands = create_hand_view_pipeline(
+            args.soma_data_root,
+            hand_schema=args.hand_schema,
+            soma_left_collection_id=args.soma_left_hand_collection_id,
+            soma_right_collection_id=args.soma_right_hand_collection_id,
+            soma_hand_representation=args.soma_hand_representation,
+        )
+        pipeline = build_all_human_pipeline(body=body, hands=hands)
     except ValueError as error:
         parser.error(str(error))
 
@@ -89,12 +122,13 @@ def main(argv: list[str]) -> int:
         print("[live] waiting for headset connection… (Ctrl+C to stop)")
 
         with TeleopSession(config) as session:
-            viz = HumanDeviceIOViz(server, ground, body.layout)
+            viz = HumanDeviceIOViz(server, ground, body.layout, hands.layout)
             print(
                 f"[live] viser listening on {args.host}:{args.port} "
                 f"(http://localhost:{args.port})"
             )
             print(f"[live] body schema: {body_schema.value}")
+            print(f"[live] hand schema: {args.hand_schema}")
             try:
                 while True:
                     result = session.step()

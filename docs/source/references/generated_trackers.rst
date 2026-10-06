@@ -95,6 +95,12 @@ Generated today
    * - ``soma_body_joint_poses_v0``
      - ``SomaBodyJointPosesV0Tracker``
      - Evaluated SOMA v0 positions and orientations for the same 77 public joints
+   * - ``soma_hand_joint_rotations_v0``
+     - ``SomaHandJointRotationsV0Tracker``
+     - SOMA v0 hand joint rotations with 25 controls; defined against SOMA-X v0.3.1
+   * - ``soma_hand_joint_poses_v0``
+     - ``SomaHandJointPosesV0Tracker``
+     - Evaluated SOMA v0 positions and orientations for the same 25 joints
    * - ``oglo_tactile``
      - ``OgloTactileTracker``
      - MCAP channels are ``oglo``/``oglo_tracked``, so ``channel`` is overridden

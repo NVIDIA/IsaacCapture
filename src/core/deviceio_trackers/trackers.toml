@@ -45,6 +45,22 @@ traits = "SomaBodyJointPosesV0RecordingTraits"
 max_flatbuffer_size = 4096
 
 [[tracker]]
+name = "soma_hand_joint_rotations_v0"
+table = "SomaHandJointRotationsV0"
+schema = "soma_hand_v0"
+class = "SomaHandJointRotationsV0Tracker"
+traits = "SomaHandJointRotationsV0RecordingTraits"
+max_flatbuffer_size = 1024
+
+[[tracker]]
+name = "soma_hand_joint_poses_v0"
+table = "SomaHandJointPosesV0"
+schema = "soma_hand_joint_poses_v0"
+class = "SomaHandJointPosesV0Tracker"
+traits = "SomaHandJointPosesV0RecordingTraits"
+max_flatbuffer_size = 2048
+
+[[tracker]]
 name = "oglo_tactile"
 table = "OgloGloveSample"
 channel = "oglo"

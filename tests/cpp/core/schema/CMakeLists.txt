@@ -18,6 +18,8 @@ add_executable(schema_tests
   test_serialized.cpp
   test_soma_body_v0.cpp
   test_soma_body_joint_poses_v0.cpp
+  test_soma_hand_v0.cpp
+  test_soma_hand_joint_poses_v0.cpp
   test_schema_conform.cpp
 )
 target_link_libraries(schema_tests PRIVATE

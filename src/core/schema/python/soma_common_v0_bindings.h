@@ -13,6 +13,11 @@ namespace core
 
 inline void bind_soma_common_v0(py::module& m)
 {
+    py::enum_<SomaHandednessV0>(m, "SomaHandednessV0")
+        .value("UNSPECIFIED", SomaHandednessV0_UNSPECIFIED)
+        .value("LEFT", SomaHandednessV0_LEFT)
+        .value("RIGHT", SomaHandednessV0_RIGHT);
+
     py::class_<SomaJointRotationV0>(m, "SomaJointRotationV0")
         .def(py::init<>())
         .def(py::init<const Quaternion&, bool>(), py::arg("rotation"), py::arg("is_valid") = false)

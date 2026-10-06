@@ -17,6 +17,7 @@ from .ndarray_types import NDArrayType, DLDataType
 
 # Constants
 NUM_HAND_JOINTS = 26  # XR_HAND_JOINT_COUNT_EXT from OpenXR
+NUM_SOMA_HAND_JOINTS = 25  # SOMAHandLayer wrist plus 24 finger joints
 NUM_BODY_JOINTS = 24  # XR_BODY_JOINT_COUNT_BD from XR_BD_body_tracking
 NUM_SOMA_BODY_JOINTS = 77  # Public SOMA joints, excluding virtual Root
 
@@ -81,6 +82,33 @@ def HandInput() -> TensorGroupType:
                 shape=(NUM_HAND_JOINTS,),
                 dtype=DLDataType.UINT,
                 dtype_bits=8,  # bool represented as uint8
+            ),
+        ],
+    )
+
+
+def SomaHandInput() -> TensorGroupType:
+    """Evaluated global poses for the 25 SOMA hand joints."""
+    return TensorGroupType(
+        "soma_hand",
+        [
+            NDArrayType(
+                "soma_hand_joint_positions",
+                shape=(NUM_SOMA_HAND_JOINTS, 3),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_hand_joint_orientations",
+                shape=(NUM_SOMA_HAND_JOINTS, 4),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_hand_joint_valid",
+                shape=(NUM_SOMA_HAND_JOINTS,),
+                dtype=DLDataType.UINT,
+                dtype_bits=8,
             ),
         ],
     )

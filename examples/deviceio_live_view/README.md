@@ -77,8 +77,38 @@ Missing data hides the body. For joint rotations, invalid translation invalidate
 the complete skeleton. An invalid joint control also invalidates its descendants
 because their global poses depend on that ancestor. Evaluated joint poses carry
 independent per-joint validity. Other valid branches remain visible.
-Independent hands, subject calibration, a `FullBodyPose` compatibility
-retargeter, and recording/replay examples are outside this live-view POC.
+Body and hand sources are selected independently. Subject calibration, body-hand
+fusion, a `FullBodyPose` compatibility retargeter, and recording/replay examples
+are outside this live-view POC.
+
+## SOMA hand POC
+
+OpenXR `HandPose` remains the default hand input. Select independent left and
+right SOMA hand collections with `--hand-schema soma`:
+
+```text
+SomaHandJointRotationsV0 -> tracker -> upstream FK --+
+                                                        +-> SomaHandInput -> viewer
+SomaHandJointPosesV0 ----> tracker -> direct map -------+
+```
+
+```bash
+uv run --no-sync python -m isaaccapture_examples.deviceio_live_view --accept-eula \
+  --hand-schema soma \
+  --soma-data-root /path/to/SOMA-X-v0.3.1-assets
+```
+
+The rotation profile requires the v0.3.1 `SOMAHand.npz` asset and uses the
+neutral hand identity for FK. Use `--soma-hand-representation joint-poses` for
+evaluated poses, which do not require SOMA-X during per-frame source evaluation.
+The default collections are `soma_hand_left_demo` and
+`soma_hand_right_demo`; override them with
+`--soma-left-hand-collection-id` and `--soma-right-hand-collection-id`.
+
+The independent [SOMA hand publisher](../soma_hand_publisher/README.md) sends
+both hands from the bundled animation. The viewer renders the 25-joint SOMA
+topology directly. It does not merge these streams with the hand joints embedded
+in a SOMA body payload.
 
 The focused tests cover upstream FK agreement, body-source selection, native
 SOMA topology, and the shared renderer. Real-asset checks are optional:

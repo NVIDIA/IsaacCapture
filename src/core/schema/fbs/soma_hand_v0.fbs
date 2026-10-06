@@ -1,0 +1,71 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "point.fbs";
+include "soma_common_v0.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+// SOMAHandLayer's 25-entry public pose input order. These are the wrist and the
+// 24 finger joints that form a strict subset of the SOMA-X body skeleton.
+enum SomaHandJointV0 : uint8 {
+    WRIST = 0,
+    THUMB1 = 1,
+    THUMB2 = 2,
+    THUMB3 = 3,
+    THUMB_END = 4,
+    INDEX1 = 5,
+    INDEX2 = 6,
+    INDEX3 = 7,
+    INDEX4 = 8,
+    INDEX_END = 9,
+    MIDDLE1 = 10,
+    MIDDLE2 = 11,
+    MIDDLE3 = 12,
+    MIDDLE4 = 13,
+    MIDDLE_END = 14,
+    RING1 = 15,
+    RING2 = 16,
+    RING3 = 17,
+    RING4 = 18,
+    RING_END = 19,
+    PINKY1 = 20,
+    PINKY2 = 21,
+    PINKY3 = 22,
+    PINKY4 = 23,
+    PINKY_END = 24,
+
+    NUM_JOINTS = 25,
+}
+
+// Fixed-size SOMA hand joint-rotation array v0 in SomaHandJointV0 order.
+struct SomaHandJointRotationArrayV0 {
+    values: [SomaJointRotationV0:25];
+}
+
+// SOMA hand joint-rotation transport schema v0.
+//
+// Defined and verified against SOMA-X v0.3.1 and its v0.3 pose interface,
+// with reference_pose=None, absolute_pose=False, and its public joint order.
+// Producers must convert historical, custom, or vendor-native references before
+// publishing. Wrist is global in the reference frame; finger rotations are
+// joint-local relative to that fixed reference pose. Rotations are unit XYZW
+// quaternions. Global translation is meters in a right-handed reference frame
+// with +Y up and +Z forward.
+table SomaHandJointRotationsV0 {
+    joint_rotations: SomaHandJointRotationArrayV0 (id: 0);
+
+    // Translation applied to Wrist in the reference frame. Ignore this value
+    // when global_translation_is_valid is false.
+    global_translation: Point (id: 1);
+    global_translation_is_valid: bool (id: 2);
+    handedness: SomaHandednessV0 = UNSPECIFIED (id: 3);
+}
+
+table SomaHandJointRotationsV0Record {
+    data: SomaHandJointRotationsV0 (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SomaHandJointRotationsV0Record;

@@ -5,14 +5,12 @@
 
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     ControllersSource,
-    HandsSource,
     HeadSource,
 )
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 
 from .body_pipeline import BodyViewPipeline, create_body_view_pipeline
-
-HANDS_CHANNEL = "hands"
+from .hand_pipeline import HandViewPipeline, create_hand_view_pipeline
 
 
 def build_all_human_pipeline(
@@ -22,9 +20,9 @@ def build_all_human_pipeline(
     soma_collection_id="soma_demo",
     soma_body_representation="joint-rotations",
     body: BodyViewPipeline | None = None,
+    hands: HandViewPipeline | None = None,
 ):
     """Wire every human-related DeviceIO source into one pipeline."""
-    hands = HandsSource(name=HANDS_CHANNEL)
     head = HeadSource(name="head")
     controllers = ControllersSource(name="controllers")
     selected_body = body or create_body_view_pipeline(
@@ -33,10 +31,11 @@ def build_all_human_pipeline(
         soma_collection_id=soma_collection_id,
         soma_body_representation=soma_body_representation,
     )
+    selected_hands = hands or create_hand_view_pipeline()
     return OutputCombiner(
         {
-            "hand_left": hands.output(HandsSource.LEFT),
-            "hand_right": hands.output(HandsSource.RIGHT),
+            "hand_left": selected_hands.left,
+            "hand_right": selected_hands.right,
             "head": head.output("head"),
             "controller_left": controllers.output(ControllersSource.LEFT),
             "controller_right": controllers.output(ControllersSource.RIGHT),

@@ -8,11 +8,15 @@ import pytest
 from isaaccapture.deviceio_trackers import (
     SomaBodyJointPosesV0Tracker,
     SomaBodyJointRotationsV0Tracker,
+    SomaHandJointPosesV0Tracker,
+    SomaHandJointRotationsV0Tracker,
 )
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     FullBodySource,
     SomaBodyRepresentation,
     SomaBodySource,
+    SomaHandRepresentation,
+    SomaHandSource,
 )
 from isaaccapture.retargeting_engine.deviceio_source_nodes import soma_body_source
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
@@ -29,6 +33,11 @@ from isaaccapture.schema import (
     SomaBodyJointPosesV0,
     SomaBodyJointRotationArrayV0,
     SomaBodyJointRotationsV0,
+    SomaHandednessV0,
+    SomaHandJointPoseArrayV0,
+    SomaHandJointPosesV0,
+    SomaHandJointRotationArrayV0,
+    SomaHandJointRotationsV0,
 )
 from isaaccapture_examples.deviceio_live_view import live_deviceio, soma_body
 from isaaccapture_examples.deviceio_live_view.body_pipeline import (
@@ -46,6 +55,15 @@ from isaaccapture_examples.deviceio_live_view.deviceio_viser import (
 from isaaccapture_examples.deviceio_live_view.full_body_pose import (
     FULL_BODY_POSE_LAYOUT,
 )
+from isaaccapture_examples.deviceio_live_view.hand_pipeline import (
+    HandSchema,
+    HandViewLayout,
+    create_hand_view_pipeline,
+)
+from isaaccapture_examples.deviceio_live_view.openxr_hand_pose import (
+    OPENXR_HAND_LAYOUT,
+)
+from isaaccapture_examples.deviceio_live_view.soma_hand import SOMA_HAND_LAYOUT
 
 
 def fake_layer():
@@ -70,11 +88,29 @@ def soma_joint_poses(positions, orientations):
     return SomaBodyJointPosesV0(joints)
 
 
-def fake_viz(layout: BodyViewLayout = FULL_BODY_POSE_LAYOUT):
+def soma_hand_joint_poses(positions, orientations, handedness):
+    joints = SomaHandJointPoseArrayV0()
+    joints.positions[:] = positions
+    joints.orientations[:] = orientations
+    joints.is_valid[:] = 1
+    return SomaHandJointPosesV0(joints, handedness)
+
+
+def soma_hand_joint_rotations(rotations, translation, handedness):
+    joints = SomaHandJointRotationArrayV0()
+    joints.rotations[:] = rotations
+    joints.is_valid[:] = 1
+    return SomaHandJointRotationsV0(joints, Point(*translation), True, handedness)
+
+
+def fake_viz(
+    layout: BodyViewLayout = FULL_BODY_POSE_LAYOUT,
+    hand_layout: HandViewLayout = OPENXR_HAND_LAYOUT,
+):
     server = MagicMock()
     for name in ("add_point_cloud", "add_line_segments", "add_frame"):
         getattr(server.scene, name).side_effect = lambda **kwargs: MagicMock(**kwargs)
-    return HumanDeviceIOViz(server, MagicMock(), layout)
+    return HumanDeviceIOViz(server, MagicMock(), layout, hand_layout)
 
 
 def test_default_pipeline_keeps_full_body_source():
@@ -130,6 +166,64 @@ def test_soma_joint_pose_pipeline_selects_direct_tracker(monkeypatch, tmp_path):
     source = next(node for node in pipeline.get_leaf_nodes() if node.name == "body")
     assert isinstance(source.get_tracker(), SomaBodyJointPosesV0Tracker)
     tracker_factory.assert_called_once_with("vendor_body")
+
+
+def test_soma_joint_pose_hands_replace_only_openxr_hands():
+    hands = create_hand_view_pipeline(
+        hand_schema=HandSchema.SOMA,
+        soma_left_collection_id="vendor.left",
+        soma_right_collection_id="vendor.right",
+        soma_hand_representation=SomaHandRepresentation.JOINT_POSES,
+    )
+    pipeline = build_all_human_pipeline(hands=hands)
+    sources = {source.name: source for source in pipeline.get_leaf_nodes()}
+
+    assert set(sources) == {
+        "hand_left",
+        "hand_right",
+        "head",
+        "controllers",
+        "body",
+    }
+    assert isinstance(sources["hand_left"], SomaHandSource)
+    assert isinstance(sources["hand_right"], SomaHandSource)
+    assert isinstance(sources["hand_left"].get_tracker(), SomaHandJointPosesV0Tracker)
+    assert hands.layout is SOMA_HAND_LAYOUT
+
+
+def test_soma_hand_pose_reaches_native_25_joint_renderer():
+    hands = create_hand_view_pipeline(
+        hand_schema=HandSchema.SOMA,
+        soma_hand_representation=SomaHandRepresentation.JOINT_POSES,
+    )
+    pipeline = build_all_human_pipeline(hands=hands)
+    sources = {source.name: source for source in pipeline.get_leaf_nodes()}
+    for source in (sources["hand_left"], sources["hand_right"]):
+        source._tracker = MagicMock()
+    positions = np.arange(75, dtype=np.float32).reshape(25, 3) / 100
+    orientations = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
+    sources["hand_left"]._tracker.get_data.return_value = soma_hand_joint_poses(
+        positions, orientations, SomaHandednessV0.LEFT
+    )
+    sources["hand_right"]._tracker.get_data.return_value = None
+
+    inputs = {}
+    for source in pipeline.get_leaf_nodes():
+        inputs[source.name] = {}
+        for key, kind in source.input_spec().items():
+            group = TensorGroup(kind)
+            group[0] = None
+            inputs[source.name][key] = group
+    inputs["hand_left"] = sources["hand_left"].poll_tracker(object())
+    inputs["hand_right"] = sources["hand_right"].poll_tracker(object())
+    result = pipeline.execute_pipeline(inputs)
+    viz = fake_viz(hand_layout=hands.layout)
+    active = viz.update(result)
+
+    assert active["hand_left"]
+    assert not active["hand_right"]
+    np.testing.assert_array_equal(viz.hand_left.points.points, positions)
+    assert len(viz.hand_left.bones.points) == len(SOMA_HAND_LAYOUT.bones)
 
 
 def test_explicit_full_body_selection_does_not_load_soma(monkeypatch, tmp_path):
@@ -232,8 +326,11 @@ def test_live_cli_selects_source_and_launches_runtime(
     monkeypatch, tmp_path, schema, use_assets, expected, collection
 ):
     body = create_body_view_pipeline()
+    hands = create_hand_view_pipeline()
     select = MagicMock(return_value=body)
     monkeypatch.setattr(live_deviceio, "create_body_view_pipeline", select)
+    select_hands = MagicMock(return_value=hands)
+    monkeypatch.setattr(live_deviceio, "create_hand_view_pipeline", select_hands)
     pipeline = build_all_human_pipeline()
     build = MagicMock(return_value=pipeline)
     monkeypatch.setattr(live_deviceio, "build_all_human_pipeline", build)
@@ -260,7 +357,14 @@ def test_live_cli_selects_source_and_launches_runtime(
         soma_collection_id=collection,
         soma_body_representation="joint-rotations",
     )
-    build.assert_called_once_with(body=body)
+    select_hands.assert_called_once_with(
+        tmp_path if use_assets else None,
+        hand_schema="openxr-hand-pose",
+        soma_left_collection_id="soma_hand_left_demo",
+        soma_right_collection_id="soma_hand_right_demo",
+        soma_hand_representation="joint-rotations",
+    )
+    build.assert_called_once_with(body=body, hands=hands)
     launch.assert_called_once()
     assert create_session.call_args.args[0].pipeline is pipeline
 
@@ -329,6 +433,39 @@ def test_native_soma_pose_reaches_renderer(soma_assets):
     active = viz.update(pipeline.execute_pipeline(inputs))
     assert active["body_active"]
     assert 0 < active["body_joints"] < 77
+
+
+def test_native_soma_hand_rotations_reach_renderer(soma_assets):
+    hands = create_hand_view_pipeline(soma_assets, hand_schema=HandSchema.SOMA)
+    pipeline = build_all_human_pipeline(hands=hands)
+    sources = {source.name: source for source in pipeline.get_leaf_nodes()}
+    inputs = {}
+    for node in pipeline.get_leaf_nodes():
+        inputs[node.name] = {}
+        for key, kind in node.input_spec().items():
+            group = TensorGroup(kind)
+            group[0] = None
+            inputs[node.name][key] = group
+
+    identity = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
+    for name, handedness in (
+        ("hand_left", SomaHandednessV0.LEFT),
+        ("hand_right", SomaHandednessV0.RIGHT),
+    ):
+        source = sources[name]
+        assert isinstance(source.get_tracker(), SomaHandJointRotationsV0Tracker)
+        source._tracker = MagicMock()
+        source._tracker.get_data.return_value = soma_hand_joint_rotations(
+            identity, [0, 0, 0], handedness
+        )
+        inputs[name] = source.poll_tracker(object())
+
+    viz = fake_viz(hand_layout=hands.layout)
+    active = viz.update(pipeline.execute_pipeline(inputs))
+    assert active["hand_left"]
+    assert active["hand_right"]
+    assert viz.hand_left.points.points.shape == (25, 3)
+    assert viz.hand_right.points.points.shape == (25, 3)
 
 
 def test_evaluated_soma_pose_reaches_renderer_without_fk(soma_assets):

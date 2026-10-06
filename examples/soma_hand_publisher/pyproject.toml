@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-soma-hand-publisher"
+version = "0.0.0"
+description = "Isaac Teleop SOMA hand demo publisher"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "isaaccapture",
+    "numpy>=1.23.0",
+    "py-soma-x==0.3.1",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/soma_hand_publisher"]
+sources = ["python"]
+
+[tool.uv.sources]
+isaaccapture = { path = "../..", editable = true }

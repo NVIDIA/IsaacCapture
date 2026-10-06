@@ -26,6 +26,7 @@ from .key_event_testing import FakeKeyEventSource
 from .joint_state_source import JointStateSource
 from .full_body_source import FullBodySource
 from .soma_body_source import SomaBodyRepresentation, SomaBodySource
+from .soma_hand_source import SomaHandRepresentation, SomaHandSource
 from .message_channel_source import MessageChannelSource
 from .message_channel_sink import MessageChannelSink
 from .message_channel_config import (
@@ -44,6 +45,8 @@ from .deviceio_tensor_types import (
     FullBodyPoseTrackedType,
     SomaBodyJointRotationsV0TrackedType,
     SomaBodyJointPosesV0TrackedType,
+    SomaHandJointRotationsV0TrackedType,
+    SomaHandJointPosesV0TrackedType,
     DeviceIOHeadPoseTracked,
     DeviceIOHandPoseTracked,
     DeviceIOControllerSnapshotTracked,
@@ -53,6 +56,8 @@ from .deviceio_tensor_types import (
     DeviceIOFullBodyPoseTracked,
     DeviceIOSomaBodyJointRotationsV0Tracked,
     DeviceIOSomaBodyJointPosesV0Tracked,
+    DeviceIOSomaHandJointRotationsV0Tracked,
+    DeviceIOSomaHandJointPosesV0Tracked,
     MessageChannelMessagesTrackedType,
     MessageChannelConnectionStatus,
     MessageChannelStatusType,
@@ -81,6 +86,8 @@ __all__ = [
     "FullBodySource",
     "SomaBodySource",
     "SomaBodyRepresentation",
+    "SomaHandSource",
+    "SomaHandRepresentation",
     "MessageChannelSource",
     "MessageChannelSink",
     "MessageChannelConfig",
@@ -96,6 +103,8 @@ __all__ = [
     "FullBodyPoseTrackedType",
     "SomaBodyJointRotationsV0TrackedType",
     "SomaBodyJointPosesV0TrackedType",
+    "SomaHandJointRotationsV0TrackedType",
+    "SomaHandJointPosesV0TrackedType",
     "MessageChannelMessagesTrackedType",
     "MessageChannelConnectionStatus",
     "MessageChannelStatusType",
@@ -108,6 +117,8 @@ __all__ = [
     "DeviceIOFullBodyPoseTracked",
     "DeviceIOSomaBodyJointRotationsV0Tracked",
     "DeviceIOSomaBodyJointPosesV0Tracked",
+    "DeviceIOSomaHandJointRotationsV0Tracked",
+    "DeviceIOSomaHandJointPosesV0Tracked",
     "DeviceIOMessageChannelMessagesTracked",
     "MessageChannelMessagesTrackedGroup",
     "MessageChannelStatusGroup",
