@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from .soma_body_evaluator import _numpy
+from .soma_body_evaluator import _dense_joint_rotations, _numpy
 
 
 class _SomaHandEvaluator:
@@ -45,15 +45,7 @@ class _SomaHandEvaluator:
     def _pose_inputs(
         data: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-        joint_rotations = data.joint_rotations
-        if joint_rotations is None:
-            control_valid = np.zeros(25, dtype=bool)
-            rotations = np.zeros((25, 4), dtype=np.float32)
-            rotations[:, 3] = 1.0
-        else:
-            control_valid = np.asarray(joint_rotations.is_valid, dtype=bool)
-            rotations = np.asarray(joint_rotations.rotations, dtype=np.float32).copy()
-            rotations[~control_valid] = (0.0, 0.0, 0.0, 1.0)
+        rotations, control_valid = _dense_joint_rotations(data.joint_rotations, 25)
 
         translation = data.global_translation
         translation_valid = (

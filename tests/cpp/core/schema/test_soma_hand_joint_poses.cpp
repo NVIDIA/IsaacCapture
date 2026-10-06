@@ -6,7 +6,7 @@
 #include <flatbuffers/flatbuffers.h>
 #include <schema/soma_hand_joint_poses_generated.h>
 
-#include <memory>
+#include <type_traits>
 
 namespace
 {
@@ -22,16 +22,14 @@ static_assert(core::SomaHandJointPoses::VT_JOINT_POSES == vt(0));
 static_assert(core::SomaHandJointPoses::VT_HANDEDNESS == vt(1));
 static_assert(core::SomaHandJointPosesRecord::VT_DATA == vt(0));
 static_assert(core::SomaHandJointPosesRecord::VT_TIMESTAMP == vt(1));
-static_assert(sizeof(core::SomaHandJointPoseArray) == 25 * sizeof(core::SomaHandJointPose));
+static_assert(std::is_trivially_copyable_v<core::SomaHandJointPose>);
+static_assert(sizeof(core::SomaHandJointPose) == 32);
 
-TEST_CASE("SOMA hand joint poses round trip through FlatBuffers", "[soma_hand_joint_poses][flatbuffers]")
+TEST_CASE("SOMA hand joint poses round trip as a sparse keyed vector", "[soma_hand_joint_poses][flatbuffers]")
 {
     core::SomaHandJointPosesT pose;
-    pose.joint_poses = std::make_shared<core::SomaHandJointPoseArray>();
-    pose.joint_poses->mutable_values()->Mutate(
-        core::SomaHandJoint_INDEX_END,
-        core::SomaHandJointPose(
-            core::Pose(core::Point(1.0f, 2.0f, 3.0f), core::Quaternion(0.0f, 0.0f, 0.6f, 0.8f)), true));
+    pose.joint_poses.emplace_back(core::SomaHandJoint_INDEX_END,
+                                  core::Pose(core::Point(1.0f, 2.0f, 3.0f), core::Quaternion(0.0f, 0.0f, 0.6f, 0.8f)));
     pose.handedness = core::SomaHandedness_LEFT;
 
     flatbuffers::FlatBufferBuilder builder;
@@ -41,9 +39,12 @@ TEST_CASE("SOMA hand joint poses round trip through FlatBuffers", "[soma_hand_jo
 
     const auto* decoded = flatbuffers::GetRoot<core::SomaHandJointPoses>(builder.GetBufferPointer());
     REQUIRE(decoded->joint_poses() != nullptr);
-    const auto* index_end = (*decoded->joint_poses()->values())[core::SomaHandJoint_INDEX_END];
+    REQUIRE(decoded->joint_poses()->size() == 1);
+    const auto* index_end = decoded->joint_poses()->LookupByKey(core::SomaHandJoint_INDEX_END);
+    REQUIRE(index_end != nullptr);
+    CHECK(index_end->joint() == core::SomaHandJoint_INDEX_END);
     CHECK(index_end->pose().position().x() == Catch::Approx(1.0f));
     CHECK(index_end->pose().orientation().w() == Catch::Approx(0.8f));
-    CHECK(index_end->is_valid());
+    CHECK(decoded->joint_poses()->LookupByKey(core::SomaHandJoint_WRIST) == nullptr);
     CHECK(decoded->handedness() == core::SomaHandedness_LEFT);
 }

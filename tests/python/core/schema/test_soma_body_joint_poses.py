@@ -1,51 +1,60 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import numpy as np
 import pytest
 
 from isaaccapture.schema import (
     DeviceDataTimestamp,
-    SomaBodyJointPoseArray,
+    Point,
+    Pose,
+    Quaternion,
+    SomaBodyJoint,
+    SomaBodyJointPose,
     SomaBodyJointPoses,
     SomaBodyJointPosesRecord,
-    SomaBodyJoint,
 )
 
 
-def test_soma_body_joint_pose_views_alias_storage():
-    joints = SomaBodyJointPoseArray()
-    positions = np.arange(231, dtype=np.float32).reshape(77, 3)
-    orientations = np.tile([0.0, 0.0, 0.0, 1.0], (77, 1))
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[int(SomaBodyJoint.HEAD)] = 1
+def test_soma_body_joint_poses_are_keyed_and_sparse():
+    payload = SomaBodyJointPoses(
+        [
+            SomaBodyJointPose(
+                SomaBodyJoint.HEAD,
+                Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ]
+    )
 
-    np.testing.assert_array_equal(joints.positions, positions)
-    np.testing.assert_array_equal(joints.orientations, orientations)
-    head = joints.values(int(SomaBodyJoint.HEAD))
-    assert head.pose.position.x == positions[int(SomaBodyJoint.HEAD), 0]
-    assert head.pose.orientation.w == 1.0
-    assert head.is_valid
+    assert len(payload.joint_poses) == 1
+    assert payload.joint_poses[0].joint == SomaBodyJoint.HEAD
+    assert payload.lookup(SomaBodyJoint.HEAD).pose.position.y == pytest.approx(2.0)
+    assert payload.lookup(SomaBodyJoint.HIPS) is None
 
 
-def test_soma_body_joint_pose_index_check():
-    with pytest.raises(IndexError):
-        SomaBodyJointPoseArray().values(77)
+def test_soma_body_joint_poses_sort_and_reject_duplicates():
+    hips = SomaBodyJointPose(SomaBodyJoint.HIPS, Pose())
+    head = SomaBodyJointPose(SomaBodyJoint.HEAD, Pose())
+    payload = SomaBodyJointPoses([head, hips])
+
+    assert [entry.joint for entry in payload.joint_poses] == [
+        SomaBodyJoint.HIPS,
+        SomaBodyJoint.HEAD,
+    ]
+    with pytest.raises(ValueError, match="duplicate SomaBodyJoint HEAD"):
+        SomaBodyJointPoses([head, head])
 
 
 def test_soma_body_joint_poses_record_round_trip():
-    joints = SomaBodyJointPoseArray()
-    joints.positions[int(SomaBodyJoint.HIPS)] = [1.0, 2.0, 3.0]
-    joints.orientations[:, 3] = 1.0
-    joints.is_valid[:] = 1
-    pose = SomaBodyJointPoses(joints)
-    record = SomaBodyJointPosesRecord(pose, DeviceDataTimestamp(10, 20, 30))
-
-    np.testing.assert_array_equal(record.data.joint_poses.positions, joints.positions)
-    np.testing.assert_array_equal(
-        record.data.joint_poses.orientations, joints.orientations
+    payload = SomaBodyJointPoses(
+        [
+            SomaBodyJointPose(
+                SomaBodyJoint.RIGHT_TOE_END,
+                Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ]
     )
-    np.testing.assert_array_equal(record.data.joint_poses.is_valid, joints.is_valid)
-    assert record.data.to_bytes() == pose.to_bytes()
+    record = SomaBodyJointPosesRecord(payload, DeviceDataTimestamp(10, 20, 30))
+
+    assert record.data.lookup(SomaBodyJoint.RIGHT_TOE_END).pose.position.z == 3.0
+    assert record.data.to_bytes() == payload.to_bytes()
     assert record.timestamp.available_time_local_common_clock == 10

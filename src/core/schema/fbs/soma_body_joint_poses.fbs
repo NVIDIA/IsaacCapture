@@ -8,13 +8,8 @@ include "timestamp.fbs";
 namespace core;
 
 struct SomaBodyJointPose {
+    joint: SomaBodyJoint (key);
     pose: Pose;
-    is_valid: bool;
-}
-
-// Fixed-size evaluated SOMA body joint-pose array in SomaBodyJoint order.
-struct SomaBodyJointPoseArray {
-    values: [SomaBodyJointPose:77];
 }
 
 // Evaluated SOMA full-body joint-pose transport schema.
@@ -24,7 +19,10 @@ struct SomaBodyJointPoseArray {
 // Positions are meters in a right-handed frame with +Y up and +Z forward.
 // Orientations are unit XYZW quaternions. The virtual Root is omitted.
 table SomaBodyJointPoses {
-    joint_poses: SomaBodyJointPoseArray (id: 0);
+    // Complete current-pose snapshot, sorted ascending and unique by joint.
+    // Use CreateVectorOfSortedStructs when building the vector directly.
+    // A joint absent from this vector is not provided by the producer.
+    joint_poses: [SomaBodyJointPose] (id: 0);
 }
 
 table SomaBodyJointPosesRecord {

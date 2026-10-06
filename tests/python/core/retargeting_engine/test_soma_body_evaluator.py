@@ -4,10 +4,13 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
+    _dense_joint_rotations,
     _SomaBodyEvaluator,
 )
+from isaaccapture.schema import Quaternion, SomaBodyJoint, SomaBodyJointRotation
 
 
 def evaluator_with_two_branches() -> _SomaBodyEvaluator:
@@ -62,10 +65,10 @@ def test_evaluator_defaults_omitted_rotations_to_invalid_identity():
 def test_evaluator_marks_omitted_translation_invalid():
     rotations = np.tile([0.0, 0.0, 0.0, 1.0], (77, 1))
     data = MagicMock(
-        joint_rotations=MagicMock(
-            rotations=rotations,
-            is_valid=np.ones(77, dtype=np.uint8),
-        ),
+        joint_rotations=[
+            SomaBodyJointRotation(SomaBodyJoint(index), Quaternion(*rotation))
+            for index, rotation in enumerate(rotations)
+        ],
         global_translation=None,
         global_translation_is_valid=True,
     )
@@ -83,3 +86,13 @@ def test_evaluator_marks_omitted_translation_invalid():
         ._joint_validity(control_valid, translation_valid)
         .any()
     )
+
+
+def test_dense_adapter_rejects_unsorted_or_duplicate_joint_identifiers():
+    hips = SomaBodyJointRotation(SomaBodyJoint.HIPS, Quaternion(0.0, 0.0, 0.0, 1.0))
+    head = SomaBodyJointRotation(SomaBodyJoint.HEAD, Quaternion(0.0, 0.0, 0.0, 1.0))
+
+    with pytest.raises(ValueError, match="sorted and unique"):
+        _dense_joint_rotations([head, hips], 77)
+    with pytest.raises(ValueError, match="sorted and unique"):
+        _dense_joint_rotations([head, head], 77)

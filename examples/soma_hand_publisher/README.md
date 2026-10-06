@@ -15,6 +15,9 @@ native process validates each payload and publishes independent
 `soma_hand_left_demo` and `soma_hand_right_demo` collections on one OpenXR
 session.
 
+Each payload uses explicitly keyed SOMA joints. The bundled motion provides all
+25 joints per hand; a partial producer can omit joints it does not provide.
+
 ```text
 SOMA-X example_animation.npy
     -> left/right SOMAHandLayer controls and evaluated poses

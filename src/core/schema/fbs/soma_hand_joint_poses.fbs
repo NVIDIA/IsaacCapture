@@ -9,13 +9,8 @@ include "timestamp.fbs";
 namespace core;
 
 struct SomaHandJointPose {
+    joint: SomaHandJoint (key);
     pose: Pose;
-    is_valid: bool;
-}
-
-// Fixed-size evaluated SOMA hand joint-pose array in SomaHandJoint order.
-struct SomaHandJointPoseArray {
-    values: [SomaHandJointPose:25];
 }
 
 // Evaluated SOMA hand joint-pose transport schema.
@@ -25,7 +20,10 @@ struct SomaHandJointPoseArray {
 // Positions are meters in a right-handed frame with +Y up and +Z forward.
 // Orientations are unit XYZW quaternions.
 table SomaHandJointPoses {
-    joint_poses: SomaHandJointPoseArray (id: 0);
+    // Complete current-pose snapshot, sorted ascending and unique by joint.
+    // Use CreateVectorOfSortedStructs when building the vector directly.
+    // A joint absent from this vector is not provided by the producer.
+    joint_poses: [SomaHandJointPose] (id: 0);
     handedness: SomaHandedness = UNSPECIFIED (id: 1);
 }
 

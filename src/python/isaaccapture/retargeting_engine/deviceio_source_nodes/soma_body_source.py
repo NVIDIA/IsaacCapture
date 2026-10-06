@@ -6,7 +6,6 @@
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 
 from isaaccapture.deviceio_trackers import (
     SomaBodyJointPosesTracker,
@@ -22,7 +21,7 @@ from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
 from ..interface.tensor_group import TensorGroup
 from ..interface.tensor_group_type import OptionalType
 from ..tensor_types import SomaBodyInput, SomaBodyInputIndex
-from ..utilities.soma_body_evaluator import _SomaBodyEvaluator
+from ..utilities.soma_body_evaluator import _dense_joint_poses, _SomaBodyEvaluator
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio import ITracker
@@ -92,15 +91,8 @@ class SomaBodySource(IDeviceIOSource):
         if self.representation is SomaBodyRepresentation.JOINT_ROTATIONS:
             assert self._evaluator is not None
             positions, orientations, valid = self._evaluator.evaluate(data)
-        elif data.joint_poses is None:
-            positions = np.zeros((77, 3), dtype=np.float32)
-            orientations = np.zeros((77, 4), dtype=np.float32)
-            orientations[:, 3] = 1.0
-            valid = np.zeros(77, dtype=np.uint8)
         else:
-            positions = np.asarray(data.joint_poses.positions, dtype=np.float32)
-            orientations = np.asarray(data.joint_poses.orientations, dtype=np.float32)
-            valid = np.asarray(data.joint_poses.is_valid, dtype=np.uint8)
+            positions, orientations, valid = _dense_joint_poses(data.joint_poses, 77)
         group[SomaBodyInputIndex.JOINT_POSITIONS] = positions
         group[SomaBodyInputIndex.JOINT_ORIENTATIONS] = orientations
         group[SomaBodyInputIndex.JOINT_VALID] = valid

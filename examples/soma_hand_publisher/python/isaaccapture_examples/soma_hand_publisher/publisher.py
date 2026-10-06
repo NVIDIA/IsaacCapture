@@ -17,14 +17,25 @@ import numpy as np
 
 from isaaccapture.schema import (
     Point,
+    Pose,
+    Quaternion,
     SomaHandedness,
-    SomaHandJointPoseArray,
+    SomaHandJoint,
+    SomaHandJointPose,
     SomaHandJointPoses,
-    SomaHandJointRotationArray,
+    SomaHandJointRotation,
     SomaHandJointRotations,
 )
 
 logger = logging.getLogger("isaaccapture.examples.soma_hand_publisher")
+
+HAND_JOINTS = tuple(
+    joint
+    for name, joint in sorted(
+        SomaHandJoint.__members__.items(), key=lambda item: int(item[1])
+    )
+    if name != "NUM_JOINTS"
+)
 
 
 def create_layers(data_root: Path):
@@ -133,17 +144,20 @@ def demo_hand_frames(path: Path, body, hands):
 
 
 def soma_joint_rotations(rotations, translation, handedness):
-    joints = SomaHandJointRotationArray()
-    joints.rotations[:] = rotations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaHandJointRotation(joint, Quaternion(*rotation))
+        for joint, rotation in zip(HAND_JOINTS, rotations, strict=True)
+    ]
     return SomaHandJointRotations(joints, Point(*translation), True, handedness)
 
 
 def soma_joint_poses(positions, orientations, handedness):
-    joints = SomaHandJointPoseArray()
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaHandJointPose(joint, Pose(Point(*position), Quaternion(*orientation)))
+        for joint, position, orientation in zip(
+            HAND_JOINTS, positions, orientations, strict=True
+        )
+    ]
     return SomaHandJointPoses(joints, handedness)
 
 

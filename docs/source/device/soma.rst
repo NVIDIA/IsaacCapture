@@ -52,9 +52,9 @@ Use the representation closest to the producer's native data.
        identity.
    * - ``joint-poses``
      - ``SomaBodyJointPoses`` and ``SomaHandJointPoses``
-     - Publishes global position, orientation, and validity for every joint.
-       The consumer maps these poses directly and does not run per-frame
-       forward kinematics.
+     - Publishes global position and orientation for each provided joint. The
+       consumer maps these poses directly and does not run per-frame forward
+       kinematics.
 
 ``joint-rotations`` most directly matches the SOMA-X pose-control interface.
 ``joint-poses`` is an Isaac Teleop transport profile for producers that already
@@ -65,6 +65,12 @@ use a right-handed reference frame with positive Y up and positive Z forward.
 The publisher must convert its native skeleton and reference frame before
 serialization. See :ref:`tracker-reference` for the complete field and
 validity contracts.
+
+Body and hand joint values are sorted, unique keyed vectors. Every entry carries
+an explicit ``SomaBodyJoint`` or ``SomaHandJoint`` identifier. A missing joint is
+unavailable for that frame; producers do not serialize placeholder values for
+joints they cannot provide. Consumers expand the keyed values into SOMA-X's
+canonical dense order when invoking its body or hand helpers.
 
 Build the examples
 ------------------

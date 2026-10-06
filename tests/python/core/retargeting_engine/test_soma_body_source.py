@@ -24,18 +24,22 @@ from isaaccapture.schema import (
     BodyJoints,
     FullBodyPose,
     Point,
-    SomaBodyJointPoseArray,
+    Pose,
+    Quaternion,
+    SomaBodyJoint,
+    SomaBodyJointPose,
     SomaBodyJointPoses,
-    SomaBodyJointRotationArray,
+    SomaBodyJointRotation,
     SomaBodyJointRotations,
 )
 from isaaccapture.teleop_session_manager.helpers import _get_trackers_from_pipeline
 
 
 def pose():
-    joints = SomaBodyJointRotationArray()
-    joints.rotations[:] = (0, 0, 0, 1)
-    joints.is_valid[:] = 1
+    joints = [
+        SomaBodyJointRotation(SomaBodyJoint(index), Quaternion(0, 0, 0, 1))
+        for index in range(77)
+    ]
     return SomaBodyJointRotations(joints, Point(1, 2, 3), True)
 
 
@@ -51,10 +55,14 @@ def source():
 
 
 def evaluated_pose():
-    joints = SomaBodyJointPoseArray()
-    joints.positions[:] = np.arange(231, dtype=np.float32).reshape(77, 3)
-    joints.orientations[:] = np.tile([0, 0, 0, 1], (77, 1))
-    joints.is_valid[:] = 1
+    positions = np.arange(231, dtype=np.float32).reshape(77, 3)
+    joints = [
+        SomaBodyJointPose(
+            SomaBodyJoint(index),
+            Pose(Point(*position), Quaternion(0, 0, 0, 1)),
+        )
+        for index, position in enumerate(positions)
+    ]
     return SomaBodyJointPoses(joints)
 
 
@@ -126,16 +134,17 @@ def test_joint_pose_source_maps_received_payload_without_fk():
 
     evaluated = soma_source({"deviceio_soma_body": inputs})[SomaBodySource.BODY]
 
-    np.testing.assert_array_equal(
-        evaluated[SomaBodyInputIndex.JOINT_POSITIONS], raw.joint_poses.positions
+    positions = np.array(
+        [
+            [entry.pose.position.x, entry.pose.position.y, entry.pose.position.z]
+            for entry in raw.joint_poses
+        ],
+        dtype=np.float32,
     )
     np.testing.assert_array_equal(
-        evaluated[SomaBodyInputIndex.JOINT_ORIENTATIONS],
-        raw.joint_poses.orientations,
+        evaluated[SomaBodyInputIndex.JOINT_POSITIONS], positions
     )
-    np.testing.assert_array_equal(
-        evaluated[SomaBodyInputIndex.JOINT_VALID], raw.joint_poses.is_valid
-    )
+    assert evaluated[SomaBodyInputIndex.JOINT_VALID].all()
 
 
 def test_absent_sample_clears_reused_output():

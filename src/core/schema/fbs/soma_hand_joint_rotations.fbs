@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 include "point.fbs";
+include "quaternion.fbs";
 include "soma_common.fbs";
 include "timestamp.fbs";
 
@@ -39,9 +40,10 @@ enum SomaHandJoint : uint8 {
     NUM_JOINTS = 25,
 }
 
-// Fixed-size SOMA hand joint-rotation array in SomaHandJoint order.
-struct SomaHandJointRotationArray {
-    values: [SomaJointRotation:25];
+// One explicitly identified SOMA hand rotation.
+struct SomaHandJointRotation {
+    joint: SomaHandJoint (key);
+    rotation: Quaternion;
 }
 
 // SOMA hand joint-rotation transport schema.
@@ -54,7 +56,10 @@ struct SomaHandJointRotationArray {
 // quaternions. Global translation is meters in a right-handed reference frame
 // with +Y up and +Z forward.
 table SomaHandJointRotations {
-    joint_rotations: SomaHandJointRotationArray (id: 0);
+    // Complete current-pose snapshot, sorted ascending and unique by joint.
+    // Use CreateVectorOfSortedStructs when building the vector directly.
+    // A joint absent from this vector is not provided by the producer.
+    joint_rotations: [SomaHandJointRotation] (id: 0);
 
     // Translation applied to Wrist in the reference frame. Ignore this value
     // when global_translation_is_valid is false.

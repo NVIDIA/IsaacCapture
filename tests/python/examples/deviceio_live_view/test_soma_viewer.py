@@ -29,14 +29,18 @@ from isaaccapture.retargeting_engine.tensor_types import (
 )
 from isaaccapture.schema import (
     Point,
-    SomaBodyJointPoseArray,
+    Pose,
+    Quaternion,
+    SomaBodyJoint,
+    SomaBodyJointPose,
     SomaBodyJointPoses,
-    SomaBodyJointRotationArray,
+    SomaBodyJointRotation,
     SomaBodyJointRotations,
     SomaHandedness,
-    SomaHandJointPoseArray,
+    SomaHandJoint,
+    SomaHandJointPose,
     SomaHandJointPoses,
-    SomaHandJointRotationArray,
+    SomaHandJointRotation,
     SomaHandJointRotations,
 )
 from isaaccapture_examples.deviceio_live_view import live_deviceio, soma_body
@@ -73,33 +77,46 @@ def fake_layer():
     return layer
 
 
-def soma_joint_rotations(quaternions, translation):
-    joints = SomaBodyJointRotationArray()
-    joints.rotations[:] = quaternions
-    joints.is_valid[:] = 1
+def soma_joint_rotations(quaternions, translation, omitted=()):
+    joints = [
+        SomaBodyJointRotation(SomaBodyJoint(index), Quaternion(*quaternion))
+        for index, quaternion in enumerate(quaternions)
+        if index not in omitted
+    ]
     return SomaBodyJointRotations(joints, Point(*translation), True)
 
 
 def soma_joint_poses(positions, orientations):
-    joints = SomaBodyJointPoseArray()
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaBodyJointPose(
+            SomaBodyJoint(index),
+            Pose(Point(*position), Quaternion(*orientation)),
+        )
+        for index, (position, orientation) in enumerate(
+            zip(positions, orientations, strict=True)
+        )
+    ]
     return SomaBodyJointPoses(joints)
 
 
 def soma_hand_joint_poses(positions, orientations, handedness):
-    joints = SomaHandJointPoseArray()
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaHandJointPose(
+            SomaHandJoint(index),
+            Pose(Point(*position), Quaternion(*orientation)),
+        )
+        for index, (position, orientation) in enumerate(
+            zip(positions, orientations, strict=True)
+        )
+    ]
     return SomaHandJointPoses(joints, handedness)
 
 
 def soma_hand_joint_rotations(rotations, translation, handedness):
-    joints = SomaHandJointRotationArray()
-    joints.rotations[:] = rotations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaHandJointRotation(SomaHandJoint(index), Quaternion(*rotation))
+        for index, rotation in enumerate(rotations)
+    ]
     return SomaHandJointRotations(joints, Point(*translation), True, handedness)
 
 
@@ -418,8 +435,9 @@ def test_native_soma_pose_reaches_renderer(monkeypatch, soma_assets):
     inputs[source.name] = source.poll_tracker(object())
     assert not viz.update(pipeline.execute_pipeline(inputs))["body_active"]
 
-    invalid = soma_joint_rotations(np.tile([0, 0, 0, 1], (77, 1)), [0, 0, 0])
-    invalid.joint_rotations.is_valid[10] = 0
+    invalid = soma_joint_rotations(
+        np.tile([0, 0, 0, 1], (77, 1)), [0, 0, 0], omitted={10}
+    )
     source._tracker.get_data.return_value = invalid
     inputs[source.name] = source.poll_tracker(object())
     active = viz.update(pipeline.execute_pipeline(inputs))

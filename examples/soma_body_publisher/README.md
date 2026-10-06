@@ -15,6 +15,9 @@ It can publish joint rotations for downstream FK or pre-evaluated joint poses.
 The native process validates the selected payload and publishes the
 `soma_body_demo` tensor collection.
 
+Each payload uses explicitly keyed SOMA joints. The bundled motion provides all
+77 joints; a partial producer can omit joints it does not provide.
+
 ```text
 SOMA-X example_animation.npy
     -> Python SOMA body encoder

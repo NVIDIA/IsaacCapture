@@ -19,6 +19,53 @@ def _numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _dense_joint_rotations(
+    entries: Any, joint_count: int
+) -> tuple[np.ndarray, np.ndarray]:
+    rotations = np.zeros((joint_count, 4), dtype=np.float32)
+    rotations[:, 3] = 1.0
+    provided = np.zeros(joint_count, dtype=bool)
+    previous = -1
+    for entry in entries or ():
+        joint = int(entry.joint)
+        if joint < 0 or joint >= joint_count:
+            raise ValueError(f"SOMA joint index {joint} is out of range")
+        if joint <= previous:
+            raise ValueError("SOMA joint entries must be sorted and unique")
+        rotation = entry.rotation
+        rotations[joint] = (rotation.x, rotation.y, rotation.z, rotation.w)
+        provided[joint] = True
+        previous = joint
+    return rotations, provided
+
+
+def _dense_joint_poses(
+    entries: Any, joint_count: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    positions = np.zeros((joint_count, 3), dtype=np.float32)
+    orientations = np.zeros((joint_count, 4), dtype=np.float32)
+    orientations[:, 3] = 1.0
+    provided = np.zeros(joint_count, dtype=np.uint8)
+    previous = -1
+    for entry in entries or ():
+        joint = int(entry.joint)
+        if joint < 0 or joint >= joint_count:
+            raise ValueError(f"SOMA joint index {joint} is out of range")
+        if joint <= previous:
+            raise ValueError("SOMA joint entries must be sorted and unique")
+        pose = entry.pose
+        positions[joint] = (pose.position.x, pose.position.y, pose.position.z)
+        orientations[joint] = (
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        )
+        provided[joint] = 1
+        previous = joint
+    return positions, orientations, provided
+
+
 class _SomaBodyEvaluator:
     """Run upstream SOMA FK and expose all public transported joints."""
 
@@ -57,17 +104,7 @@ class _SomaBodyEvaluator:
     def _pose_inputs(
         data: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-        # Nested FlatBuffer structs are optional on the wire even though the
-        # Python constructor supplies defaults. Keep vendor omissions safe.
-        joint_rotations = data.joint_rotations
-        if joint_rotations is None:
-            control_valid = np.zeros(77, dtype=bool)
-            rotations = np.zeros((77, 4), dtype=np.float32)
-            rotations[:, 3] = 1.0
-        else:
-            control_valid = np.asarray(joint_rotations.is_valid, dtype=bool)
-            rotations = np.asarray(joint_rotations.rotations, dtype=np.float32).copy()
-            rotations[~control_valid] = (0.0, 0.0, 0.0, 1.0)
+        rotations, control_valid = _dense_joint_rotations(data.joint_rotations, 77)
 
         translation = data.global_translation
         translation_valid = (

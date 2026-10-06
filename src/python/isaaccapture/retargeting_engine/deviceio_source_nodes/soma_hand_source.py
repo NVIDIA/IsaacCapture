@@ -6,7 +6,6 @@
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 
 from isaaccapture.deviceio_trackers import (
     SomaHandJointPosesTracker,
@@ -24,6 +23,7 @@ from ..interface.tensor_group import TensorGroup
 from ..interface.tensor_group_type import OptionalType
 from ..tensor_types import SomaHandInput, SomaHandInputIndex
 from ..utilities.soma_hand_evaluator import _SomaHandEvaluator
+from ..utilities.soma_body_evaluator import _dense_joint_poses
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio import ITracker
@@ -95,15 +95,8 @@ class SomaHandSource(IDeviceIOSource):
         if self.representation is SomaHandRepresentation.JOINT_ROTATIONS:
             assert self._evaluator is not None
             positions, orientations, valid = self._evaluator.evaluate(data)
-        elif data.joint_poses is None:
-            positions = np.zeros((25, 3), dtype=np.float32)
-            orientations = np.zeros((25, 4), dtype=np.float32)
-            orientations[:, 3] = 1.0
-            valid = np.zeros(25, dtype=np.uint8)
         else:
-            positions = np.asarray(data.joint_poses.positions, dtype=np.float32)
-            orientations = np.asarray(data.joint_poses.orientations, dtype=np.float32)
-            valid = np.asarray(data.joint_poses.is_valid, dtype=np.uint8)
+            positions, orientations, valid = _dense_joint_poses(data.joint_poses, 25)
         group[SomaHandInputIndex.JOINT_POSITIONS] = positions
         group[SomaHandInputIndex.JOINT_ORIENTATIONS] = orientations
         group[SomaHandInputIndex.JOINT_VALID] = valid

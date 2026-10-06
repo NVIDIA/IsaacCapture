@@ -17,14 +17,24 @@ import numpy as np
 
 from isaaccapture.schema import (
     Point,
-    SomaBodyJointPoseArray,
+    Pose,
+    Quaternion,
+    SomaBodyJointPose,
     SomaBodyJointPoses,
-    SomaBodyJointRotationArray,
     SomaBodyJoint,
+    SomaBodyJointRotation,
     SomaBodyJointRotations,
 )
 
 logger = logging.getLogger("isaaccapture.examples.soma_body_publisher")
+
+BODY_JOINTS = tuple(
+    joint
+    for name, joint in sorted(
+        SomaBodyJoint.__members__.items(), key=lambda item: int(item[1])
+    )
+    if name != "NUM_JOINTS"
+)
 
 
 def create_layer(data_root: Path):
@@ -84,9 +94,10 @@ def demo_controls(path: Path, layer):
 
 
 def soma_joint_rotations(quaternions, translation):
-    joints = SomaBodyJointRotationArray()
-    joints.rotations[:] = quaternions
-    joints.is_valid[:] = 1
+    joints = [
+        SomaBodyJointRotation(joint, Quaternion(*quaternion))
+        for joint, quaternion in zip(BODY_JOINTS, quaternions, strict=True)
+    ]
     return SomaBodyJointRotations(joints, Point(*translation), True)
 
 
@@ -108,10 +119,15 @@ def evaluate_demo_controls(layer, rotations, translations):
 
 
 def soma_joint_poses(positions, orientations):
-    joints = SomaBodyJointPoseArray()
-    joints.positions[:] = positions
-    joints.orientations[:] = orientations
-    joints.is_valid[:] = 1
+    joints = [
+        SomaBodyJointPose(
+            joint,
+            Pose(Point(*position), Quaternion(*orientation)),
+        )
+        for joint, position, orientation in zip(
+            BODY_JOINTS, positions, orientations, strict=True
+        )
+    ]
     return SomaBodyJointPoses(joints)
 
 

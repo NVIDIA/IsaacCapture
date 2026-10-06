@@ -86,25 +86,22 @@ from ._schema import (
     FullBodyPoseRecord,
     # Shared SOMA types.
     SomaHandedness,
-    SomaJointRotation,
     # SOMA body joint-rotation types.
     SomaBodyJoint,
-    SomaBodyJointRotationArray,
+    SomaBodyJointRotation,
     SomaBodyJointRotations,
     SomaBodyJointRotationsRecord,
     # SOMA evaluated body joint-pose types.
     SomaBodyJointPose,
-    SomaBodyJointPoseArray,
     SomaBodyJointPoses,
     SomaBodyJointPosesRecord,
     # SOMA hand joint-rotation types.
     SomaHandJoint,
-    SomaHandJointRotationArray,
+    SomaHandJointRotation,
     SomaHandJointRotations,
     SomaHandJointRotationsRecord,
     # SOMA evaluated hand joint-pose types.
     SomaHandJointPose,
-    SomaHandJointPoseArray,
     SomaHandJointPoses,
     SomaHandJointPosesRecord,
 )
@@ -214,25 +211,22 @@ __all__ = [
     "FullBodyPoseRecord",
     # Shared SOMA types.
     "SomaHandedness",
-    "SomaJointRotation",
     # SOMA body joint-rotation types.
     "SomaBodyJoint",
-    "SomaBodyJointRotationArray",
+    "SomaBodyJointRotation",
     "SomaBodyJointRotations",
     "SomaBodyJointRotationsRecord",
     # SOMA evaluated body joint-pose types.
     "SomaBodyJointPose",
-    "SomaBodyJointPoseArray",
     "SomaBodyJointPoses",
     "SomaBodyJointPosesRecord",
     # SOMA hand joint-rotation types.
     "SomaHandJoint",
-    "SomaHandJointRotationArray",
+    "SomaHandJointRotation",
     "SomaHandJointRotations",
     "SomaHandJointRotationsRecord",
     # SOMA evaluated hand joint-pose types.
     "SomaHandJointPose",
-    "SomaHandJointPoseArray",
     "SomaHandJointPoses",
     "SomaHandJointPosesRecord",
 ]

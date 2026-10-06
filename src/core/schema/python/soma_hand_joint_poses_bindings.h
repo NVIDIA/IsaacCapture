@@ -3,92 +3,82 @@
 
 #pragma once
 
-#include "schema_array_views.h"
 #include "schema_serialized.h"
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <schema/soma_hand_joint_poses_generated.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 namespace py = pybind11;
 
 namespace core
 {
 
-inline const SomaHandJointPose& first_soma_hand_joint_pose(const py::object& self)
-{
-    return *(*self.cast<const SomaHandJointPoseArray&>().values())[0];
-}
-
-constexpr py::ssize_t SOMA_HAND_JOINT_POSE_STRIDE = static_cast<py::ssize_t>(sizeof(SomaHandJointPose));
-constexpr py::ssize_t SOMA_HAND_JOINT_POSE_COUNT = static_cast<py::ssize_t>(SomaHandJoint_NUM_JOINTS);
-
-static_assert(sizeof(SomaHandJointPoseArray) == sizeof(SomaHandJointPose) * static_cast<size_t>(SomaHandJoint_NUM_JOINTS),
-              "SomaHandJointPoseArray.values length must equal SomaHandJoint::NUM_JOINTS");
-
 inline void bind_soma_hand_joint_poses(py::module& m)
 {
-    py::class_<SomaHandJointPose>(m, "SomaHandJointPose")
-        .def(py::init<>())
-        .def(py::init<const Pose&, bool>(), py::arg("pose"), py::arg("is_valid") = false)
+    py::class_<SomaHandJointPose>(m, "SomaHandJointPose", "One keyed evaluated SOMA hand pose.")
+        .def(py::init<SomaHandJoint, const Pose&>(), py::arg("joint"), py::arg("pose"))
+        .def_property_readonly("joint", &SomaHandJointPose::joint)
         .def_property_readonly("pose", &SomaHandJointPose::pose, py::return_value_policy::reference_internal)
-        .def_property_readonly("is_valid", &SomaHandJointPose::is_valid);
-
-    py::class_<SomaHandJointPoseArray>(m, "SomaHandJointPoseArray")
-        .def(py::init<>())
-        .def(
-            "values",
-            [](const SomaHandJointPoseArray& self, size_t index) -> const SomaHandJointPose*
-            {
-                if (index >= static_cast<size_t>(SomaHandJoint_NUM_JOINTS))
-                {
-                    throw py::index_error("SomaHandJointPoseArray index out of range");
-                }
-                return (*self.values())[index];
-            },
-            py::arg("index"), py::return_value_policy::reference_internal)
-        .def_property_readonly(
-            "positions",
-            [](py::object self)
-            {
-                const auto* first = reinterpret_cast<const float*>(&first_soma_hand_joint_pose(self).pose().position());
-                return strided_field_view<float>(self, first, SOMA_HAND_JOINT_POSE_STRIDE, SOMA_HAND_JOINT_POSE_COUNT, 3);
-            },
-            "Joint positions as a writable (25, 3) float32 view in SomaHandJoint order.")
-        .def_property_readonly(
-            "orientations",
-            [](py::object self)
-            {
-                const auto* first =
-                    reinterpret_cast<const float*>(&first_soma_hand_joint_pose(self).pose().orientation());
-                return strided_field_view<float>(self, first, SOMA_HAND_JOINT_POSE_STRIDE, SOMA_HAND_JOINT_POSE_COUNT, 4);
-            },
-            "Unit XYZW quaternions as a writable (25, 4) float32 view.")
-        .def_property_readonly(
-            "is_valid",
-            [offset = FBS_FIELD_OFFSET(SomaHandJointPose, is_valid)](py::object self)
-            {
-                const auto* first = fbs_field_address<uint8_t>(first_soma_hand_joint_pose(self), offset);
-                return strided_field_view<uint8_t>(
-                    self, first, SOMA_HAND_JOINT_POSE_STRIDE, SOMA_HAND_JOINT_POSE_COUNT, 0);
-            },
-            "Per-joint validity as a writable (25,) uint8 view.");
+        .def("__repr__", [](const SomaHandJointPose& self)
+             { return "SomaHandJointPose(joint=" + std::string(EnumNameSomaHandJoint(self.joint())) + ")"; });
 
     serialized_class<SomaHandJointPoses>(m, "SomaHandJointPoses", "Encoded evaluated SOMA hand poses.")
         .def(py::init(
-                 [](const SomaHandJointPoseArray& joint_poses, SomaHandedness handedness)
+                 [](std::vector<SomaHandJointPose> joint_poses, SomaHandedness handedness)
                  {
+                     std::sort(joint_poses.begin(), joint_poses.end(),
+                               [](const auto& a, const auto& b) { return a.joint() < b.joint(); });
+                     const auto invalid =
+                         std::find_if(joint_poses.begin(), joint_poses.end(),
+                                      [](const auto& entry) { return entry.joint() >= SomaHandJoint_NUM_JOINTS; });
+                     if (invalid != joint_poses.end())
+                     {
+                         throw py::value_error("joint_poses: NUM_JOINTS is not a joint");
+                     }
+                     const auto duplicate =
+                         std::adjacent_find(joint_poses.begin(), joint_poses.end(),
+                                            [](const auto& a, const auto& b) { return a.joint() == b.joint(); });
+                     if (duplicate != joint_poses.end())
+                     {
+                         throw py::value_error("joint_poses: duplicate SomaHandJoint " +
+                                               std::string(EnumNameSomaHandJoint(duplicate->joint())));
+                     }
                      SomaHandJointPosesT native;
-                     native.joint_poses = std::make_shared<SomaHandJointPoseArray>(joint_poses);
+                     native.joint_poses = std::move(joint_poses);
                      native.handedness = handedness;
                      return pack<SomaHandJointPoses>(native);
                  }),
-             py::arg("joint_poses") = SomaHandJointPoseArray(), py::arg("handedness") = SomaHandedness_UNSPECIFIED)
-        .def_property_readonly(
-            "joint_poses", field(&SomaHandJointPoses::joint_poses), py::return_value_policy::reference_internal)
+             py::arg("joint_poses") = std::vector<SomaHandJointPose>{},
+             py::arg("handedness") = SomaHandedness_UNSPECIFIED)
+        .def_property_readonly("joint_poses",
+                               [](const Serialized<SomaHandJointPoses>& self)
+                               {
+                                   std::vector<SomaHandJointPose> out;
+                                   const auto* entries = self->joint_poses();
+                                   if (entries != nullptr)
+                                   {
+                                       out.reserve(entries->size());
+                                       for (const auto* entry : *entries)
+                                       {
+                                           out.push_back(*entry);
+                                       }
+                                   }
+                                   return out;
+                               })
+        .def(
+            "lookup",
+            [](const Serialized<SomaHandJointPoses>& self, SomaHandJoint joint) -> py::object
+            {
+                const auto* entries = self->joint_poses();
+                const auto* found = entries != nullptr ? entries->LookupByKey(joint) : nullptr;
+                return found != nullptr ? py::cast(*found) : py::none();
+            },
+            py::arg("joint"), "Return one provided joint pose, or None when absent.")
         .def_property_readonly("handedness", field(&SomaHandJointPoses::handedness));
 
     bind_record<SomaHandJointPosesRecord, SomaHandJointPoses>(m, "SomaHandJointPosesRecord", "SomaHandJointPoses");

@@ -6,6 +6,10 @@ import subprocess
 
 import numpy as np
 
+from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
+    _dense_joint_poses,
+    _dense_joint_rotations,
+)
 from isaaccapture.retargeting_engine.utilities.soma_hand_evaluator import (
     _SomaHandEvaluator,
 )
@@ -22,12 +26,18 @@ def test_hand_payload_constructors_preserve_side_and_arrays():
     rotations = np.tile([0.0, 0.0, 0.0, 1.0], (25, 1))
     rotation_payload = soma_joint_rotations(rotations, [1, 2, 3], SomaHandedness.LEFT)
     assert rotation_payload.handedness == SomaHandedness.LEFT
-    np.testing.assert_array_equal(rotation_payload.joint_rotations.rotations, rotations)
+    dense_rotations, rotation_valid = _dense_joint_rotations(
+        rotation_payload.joint_rotations, 25
+    )
+    np.testing.assert_array_equal(dense_rotations, rotations)
+    assert rotation_valid.all()
 
     positions = np.arange(75, dtype=np.float32).reshape(25, 3)
     pose_payload = soma_joint_poses(positions, rotations, SomaHandedness.RIGHT)
     assert pose_payload.handedness == SomaHandedness.RIGHT
-    np.testing.assert_array_equal(pose_payload.joint_poses.positions, positions)
+    dense_positions, _, pose_valid = _dense_joint_poses(pose_payload.joint_poses, 25)
+    np.testing.assert_array_equal(dense_positions, positions)
+    assert pose_valid.all()
 
 
 def test_pusher_rejects_collection_handedness_mismatch(request):
@@ -68,9 +78,11 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets, request):
         evaluated = soma_joint_poses(
             frame["positions"][0], frame["orientations"][0], handedness
         )
-        np.testing.assert_allclose(
-            evaluated.joint_poses.positions, positions, atol=1e-5
+        evaluated_positions, _, evaluated_valid = _dense_joint_poses(
+            evaluated.joint_poses, 25
         )
+        np.testing.assert_allclose(evaluated_positions, positions, atol=1e-5)
+        assert evaluated_valid.all()
 
     executable = request.config.getoption("--soma-hand-pusher")
     if executable is None:

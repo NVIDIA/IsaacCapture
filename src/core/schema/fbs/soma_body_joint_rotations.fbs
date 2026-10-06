@@ -3,14 +3,15 @@
 
 include "point.fbs";
 include "soma_body_common.fbs";
-include "soma_common.fbs";
+include "quaternion.fbs";
 include "timestamp.fbs";
 
 namespace core;
 
-// Fixed-size SOMA body joint-rotation array in SomaBodyJoint order.
-struct SomaBodyJointRotationArray {
-    values: [SomaJointRotation:77];
+// One explicitly identified SOMA body rotation.
+struct SomaBodyJointRotation {
+    joint: SomaBodyJoint (key);
+    rotation: Quaternion;
 }
 
 // SOMA full-body joint-rotation transport schema.
@@ -24,7 +25,10 @@ struct SomaBodyJointRotationArray {
 // unit XYZW quaternions. Global translation is meters in a right-handed
 // reference frame with +Y up and +Z forward.
 table SomaBodyJointRotations {
-    joint_rotations: SomaBodyJointRotationArray (id: 0);
+    // Complete current-pose snapshot, sorted ascending and unique by joint.
+    // Use CreateVectorOfSortedStructs when building the vector directly.
+    // A joint absent from this vector is not provided by the producer.
+    joint_rotations: [SomaBodyJointRotation] (id: 0);
 
     // Translation applied to Hips in the reference frame. Ignore this value
     // when global_translation_is_valid is false.

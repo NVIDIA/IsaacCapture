@@ -18,11 +18,6 @@ inline void bind_soma_common(py::module& m)
         .value("LEFT", SomaHandedness_LEFT)
         .value("RIGHT", SomaHandedness_RIGHT);
 
-    py::class_<SomaJointRotation>(m, "SomaJointRotation")
-        .def(py::init<>())
-        .def(py::init<const Quaternion&, bool>(), py::arg("rotation"), py::arg("is_valid") = false)
-        .def_property_readonly("rotation", &SomaJointRotation::rotation, py::return_value_policy::reference_internal)
-        .def_property_readonly("is_valid", &SomaJointRotation::is_valid);
 }
 
 } // namespace core

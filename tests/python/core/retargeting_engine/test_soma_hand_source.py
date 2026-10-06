@@ -20,10 +20,13 @@ from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
 from isaaccapture.retargeting_engine.tensor_types import SomaHandInputIndex
 from isaaccapture.schema import (
     Point,
+    Pose,
+    Quaternion,
     SomaHandedness,
-    SomaHandJointPoseArray,
+    SomaHandJoint,
+    SomaHandJointPose,
     SomaHandJointPoses,
-    SomaHandJointRotationArray,
+    SomaHandJointRotation,
     SomaHandJointRotations,
 )
 
@@ -36,17 +39,22 @@ def fake_layer():
 
 
 def rotations(handedness=SomaHandedness.LEFT):
-    joints = SomaHandJointRotationArray()
-    joints.rotations[:] = (0, 0, 0, 1)
-    joints.is_valid[:] = 1
+    joints = [
+        SomaHandJointRotation(SomaHandJoint(index), Quaternion(0, 0, 0, 1))
+        for index in range(25)
+    ]
     return SomaHandJointRotations(joints, Point(1, 2, 3), True, handedness)
 
 
 def poses(handedness=SomaHandedness.LEFT):
-    joints = SomaHandJointPoseArray()
-    joints.positions[:] = np.arange(75, dtype=np.float32).reshape(25, 3)
-    joints.orientations[:] = np.tile([0, 0, 0, 1], (25, 1))
-    joints.is_valid[:] = 1
+    positions = np.arange(75, dtype=np.float32).reshape(25, 3)
+    joints = [
+        SomaHandJointPose(
+            SomaHandJoint(index),
+            Pose(Point(*position), Quaternion(0, 0, 0, 1)),
+        )
+        for index, position in enumerate(positions)
+    ]
     return SomaHandJointPoses(joints, handedness)
 
 
@@ -96,12 +104,17 @@ def test_joint_pose_source_maps_without_fk():
     evaluated = source({"deviceio_soma_hand": inputs})[SomaHandSource.HAND]
 
     assert source._evaluator is None
-    np.testing.assert_array_equal(
-        evaluated[SomaHandInputIndex.JOINT_POSITIONS], raw.joint_poses.positions
+    expected_positions = np.array(
+        [
+            [entry.pose.position.x, entry.pose.position.y, entry.pose.position.z]
+            for entry in raw.joint_poses
+        ],
+        dtype=np.float32,
     )
     np.testing.assert_array_equal(
-        evaluated[SomaHandInputIndex.JOINT_VALID], raw.joint_poses.is_valid
+        evaluated[SomaHandInputIndex.JOINT_POSITIONS], expected_positions
     )
+    assert evaluated[SomaHandInputIndex.JOINT_VALID].all()
 
 
 def test_payload_handedness_must_match_collection():

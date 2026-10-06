@@ -1,54 +1,65 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import gc
-
-import numpy as np
 import pytest
 
 from isaaccapture.schema import (
     DeviceDataTimestamp,
+    Point,
+    Pose,
+    Quaternion,
     SomaHandedness,
-    SomaHandJointPoseArray,
+    SomaHandJoint,
+    SomaHandJointPose,
     SomaHandJointPoses,
     SomaHandJointPosesRecord,
-    SomaHandJoint,
 )
 
 
-def test_soma_hand_joint_pose_views_alias_storage():
-    poses = SomaHandJointPoseArray()
+def test_soma_hand_joint_poses_are_keyed_and_sparse():
+    payload = SomaHandJointPoses(
+        [
+            SomaHandJointPose(
+                SomaHandJoint.INDEX_END,
+                Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ],
+        SomaHandedness.LEFT,
+    )
 
-    assert poses.positions.shape == (25, 3)
-    assert poses.orientations.shape == (25, 4)
-    assert poses.is_valid.shape == (25,)
-    assert poses.positions.dtype == np.float32
-    assert poses.orientations.dtype == np.float32
-    assert poses.is_valid.dtype == np.uint8
-
-    poses.positions[SomaHandJoint.INDEX_END] = [1.0, 2.0, 3.0]
-    poses.orientations[SomaHandJoint.INDEX_END] = [0.0, 0.0, 0.6, 0.8]
-    poses.is_valid[SomaHandJoint.INDEX_END] = 1
-
-    index_end = poses.values(int(SomaHandJoint.INDEX_END))
-    assert index_end.pose.position.y == pytest.approx(2.0)
-    assert index_end.pose.orientation.w == pytest.approx(0.8)
-    assert index_end.is_valid is True
+    assert len(payload.joint_poses) == 1
+    assert payload.lookup(SomaHandJoint.INDEX_END).pose.position.y == pytest.approx(2.0)
+    assert payload.lookup(SomaHandJoint.WRIST) is None
+    assert payload.handedness == SomaHandedness.LEFT
 
 
-def test_soma_hand_joint_poses_record_lifetime():
-    poses = SomaHandJointPoseArray()
-    poses.positions[:] = np.arange(75, dtype=np.float32).reshape(25, 3)
-    poses.orientations[:, 3] = 1.0
-    poses.is_valid[:] = 1
-    payload = SomaHandJointPoses(poses, SomaHandedness.RIGHT)
-    record = SomaHandJointPosesRecord(payload, DeviceDataTimestamp(100, 200, 300))
+def test_soma_hand_joint_poses_sort_and_reject_duplicates():
+    wrist = SomaHandJointPose(SomaHandJoint.WRIST, Pose())
+    pinky = SomaHandJointPose(SomaHandJoint.PINKY_END, Pose())
+    payload = SomaHandJointPoses([pinky, wrist])
 
-    poses.positions[:] = 0.0
-    payload.joint_poses.positions[:] = 0.0
-    del poses, payload
-    gc.collect()
+    assert [entry.joint for entry in payload.joint_poses] == [
+        SomaHandJoint.WRIST,
+        SomaHandJoint.PINKY_END,
+    ]
+    with pytest.raises(ValueError, match="duplicate SomaHandJoint WRIST"):
+        SomaHandJointPoses([wrist, wrist])
 
+
+def test_soma_hand_joint_poses_record_round_trip():
+    payload = SomaHandJointPoses(
+        [
+            SomaHandJointPose(
+                SomaHandJoint.PINKY_END,
+                Pose(Point(72.0, 73.0, 74.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            )
+        ],
+        SomaHandedness.RIGHT,
+    )
+    record = SomaHandJointPosesRecord(payload, DeviceDataTimestamp(10, 20, 30))
+
+    assert record.data.lookup(SomaHandJoint.PINKY_END).pose.position.z == pytest.approx(
+        74.0
+    )
     assert record.data.handedness == SomaHandedness.RIGHT
-    assert record.data.joint_poses.positions[24, 2] == pytest.approx(74.0)
-    assert record.timestamp.sample_time_raw_device_clock == 300
+    assert record.timestamp.available_time_local_common_clock == 10

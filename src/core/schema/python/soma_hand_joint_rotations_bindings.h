@@ -3,32 +3,20 @@
 
 #pragma once
 
-#include "schema_array_views.h"
 #include "schema_serialized.h"
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <schema/soma_hand_joint_rotations_generated.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 namespace py = pybind11;
 
 namespace core
 {
-
-inline const SomaJointRotation& first_soma_hand_rotation(const py::object& self)
-{
-    return *(*self.cast<const SomaHandJointRotationArray&>().values())[0];
-}
-
-constexpr py::ssize_t SOMA_HAND_JOINT_STRIDE = static_cast<py::ssize_t>(sizeof(SomaJointRotation));
-constexpr py::ssize_t SOMA_HAND_JOINT_COUNT = static_cast<py::ssize_t>(SomaHandJoint_NUM_JOINTS);
-
-static_assert(sizeof(SomaHandJointRotationArray) ==
-                  sizeof(SomaJointRotation) * static_cast<size_t>(SomaHandJoint_NUM_JOINTS),
-              "SomaHandJointRotationArray.values length must equal SomaHandJoint::NUM_JOINTS");
 
 inline void bind_soma_hand_joint_rotations(py::module& m)
 {
@@ -60,52 +48,68 @@ inline void bind_soma_hand_joint_rotations(py::module& m)
         .value("PINKY_END", SomaHandJoint_PINKY_END)
         .value("NUM_JOINTS", SomaHandJoint_NUM_JOINTS);
 
-    py::class_<SomaHandJointRotationArray>(m, "SomaHandJointRotationArray")
-        .def(py::init<>())
-        .def(
-            "values",
-            [](const SomaHandJointRotationArray& self, size_t index) -> const SomaJointRotation*
-            {
-                if (index >= static_cast<size_t>(SomaHandJoint_NUM_JOINTS))
-                {
-                    throw py::index_error("SomaHandJointRotationArray index out of range");
-                }
-                return (*self.values())[index];
-            },
-            py::arg("index"), py::return_value_policy::reference_internal)
-        .def_property_readonly(
-            "rotations",
-            [](py::object self)
-            {
-                const auto* first = reinterpret_cast<const float*>(&first_soma_hand_rotation(self).rotation());
-                return strided_field_view<float>(self, first, SOMA_HAND_JOINT_STRIDE, SOMA_HAND_JOINT_COUNT, 4);
-            },
-            "Unit XYZW quaternions as a writable (25, 4) float32 view.")
-        .def_property_readonly(
-            "is_valid",
-            [offset = FBS_FIELD_OFFSET(SomaJointRotation, is_valid)](py::object self)
-            {
-                const auto* first = fbs_field_address<uint8_t>(first_soma_hand_rotation(self), offset);
-                return strided_field_view<uint8_t>(self, first, SOMA_HAND_JOINT_STRIDE, SOMA_HAND_JOINT_COUNT, 0);
-            },
-            "Per-joint validity as a writable (25,) uint8 view.");
+    py::class_<SomaHandJointRotation>(m, "SomaHandJointRotation", "One keyed SOMA hand rotation.")
+        .def(py::init<SomaHandJoint, const Quaternion&>(), py::arg("joint"), py::arg("rotation"))
+        .def_property_readonly("joint", &SomaHandJointRotation::joint)
+        .def_property_readonly("rotation", &SomaHandJointRotation::rotation, py::return_value_policy::reference_internal)
+        .def("__repr__", [](const SomaHandJointRotation& self)
+             { return "SomaHandJointRotation(joint=" + std::string(EnumNameSomaHandJoint(self.joint())) + ")"; });
 
     serialized_class<SomaHandJointRotations>(m, "SomaHandJointRotations", "Encoded SOMA hand joint rotations.")
         .def(py::init(
-                 [](const SomaHandJointRotationArray& joint_rotations, const Point& global_translation,
+                 [](std::vector<SomaHandJointRotation> joint_rotations, const Point& global_translation,
                     bool global_translation_is_valid, SomaHandedness handedness)
                  {
+                     std::sort(joint_rotations.begin(), joint_rotations.end(),
+                               [](const auto& a, const auto& b) { return a.joint() < b.joint(); });
+                     const auto invalid =
+                         std::find_if(joint_rotations.begin(), joint_rotations.end(),
+                                      [](const auto& entry) { return entry.joint() >= SomaHandJoint_NUM_JOINTS; });
+                     if (invalid != joint_rotations.end())
+                     {
+                         throw py::value_error("joint_rotations: NUM_JOINTS is not a joint");
+                     }
+                     const auto duplicate =
+                         std::adjacent_find(joint_rotations.begin(), joint_rotations.end(),
+                                            [](const auto& a, const auto& b) { return a.joint() == b.joint(); });
+                     if (duplicate != joint_rotations.end())
+                     {
+                         throw py::value_error("joint_rotations: duplicate SomaHandJoint " +
+                                               std::string(EnumNameSomaHandJoint(duplicate->joint())));
+                     }
                      SomaHandJointRotationsT native;
-                     native.joint_rotations = std::make_shared<SomaHandJointRotationArray>(joint_rotations);
+                     native.joint_rotations = std::move(joint_rotations);
                      native.global_translation = std::make_shared<Point>(global_translation);
                      native.global_translation_is_valid = global_translation_is_valid;
                      native.handedness = handedness;
                      return pack<SomaHandJointRotations>(native);
                  }),
-             py::arg("joint_rotations") = SomaHandJointRotationArray(), py::arg("global_translation") = Point(),
+             py::arg("joint_rotations") = std::vector<SomaHandJointRotation>{}, py::arg("global_translation") = Point(),
              py::arg("global_translation_is_valid") = false, py::arg("handedness") = SomaHandedness_UNSPECIFIED)
-        .def_property_readonly("joint_rotations", field(&SomaHandJointRotations::joint_rotations),
-                               py::return_value_policy::reference_internal)
+        .def_property_readonly("joint_rotations",
+                               [](const Serialized<SomaHandJointRotations>& self)
+                               {
+                                   std::vector<SomaHandJointRotation> out;
+                                   const auto* entries = self->joint_rotations();
+                                   if (entries != nullptr)
+                                   {
+                                       out.reserve(entries->size());
+                                       for (const auto* entry : *entries)
+                                       {
+                                           out.push_back(*entry);
+                                       }
+                                   }
+                                   return out;
+                               })
+        .def(
+            "lookup",
+            [](const Serialized<SomaHandJointRotations>& self, SomaHandJoint joint) -> py::object
+            {
+                const auto* entries = self->joint_rotations();
+                const auto* found = entries != nullptr ? entries->LookupByKey(joint) : nullptr;
+                return found != nullptr ? py::cast(*found) : py::none();
+            },
+            py::arg("joint"), "Return one provided joint rotation, or None when absent.")
         .def_property_readonly("global_translation", field(&SomaHandJointRotations::global_translation),
                                py::return_value_policy::reference_internal)
         .def_property_readonly("global_translation_is_valid", field(&SomaHandJointRotations::global_translation_is_valid))

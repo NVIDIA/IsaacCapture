@@ -4,7 +4,7 @@
 namespace core;
 
 // User-facing SOMA-X body pose order. The public skeleton has 78 joints, but its
-// virtual Root is always identity and is not part of transported body arrays.
+// virtual Root is always identity and is not transported.
 // Hips is index 0, matching SOMALayer's 77-entry public pose input.
 enum SomaBodyJoint : uint8 {
     HIPS = 0,

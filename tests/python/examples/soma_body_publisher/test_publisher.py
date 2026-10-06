@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
+    _dense_joint_poses,
     _SomaBodyEvaluator,
 )
 from isaaccapture.schema import (
@@ -150,13 +151,13 @@ def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
     evaluated_payload = soma_joint_poses(
         evaluated_positions[0], evaluated_orientations[0]
     )
-    np.testing.assert_allclose(
-        evaluated_payload.joint_poses.positions, positions, atol=1e-4
+    sparse_positions, sparse_orientations, sparse_valid = _dense_joint_poses(
+        evaluated_payload.joint_poses, 77
     )
+    np.testing.assert_allclose(sparse_positions, positions, atol=1e-4)
+    assert sparse_valid.all()
     torch.testing.assert_close(
-        quaternion_xyzw_to_matrix(
-            torch.from_numpy(evaluated_payload.joint_poses.orientations.copy())
-        ),
+        quaternion_xyzw_to_matrix(torch.from_numpy(sparse_orientations)),
         actual_rotations,
         atol=1e-4,
         rtol=1e-4,
@@ -168,7 +169,7 @@ def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
     executable = request.config.getoption("--soma-pusher")
     if executable is not None:
         packets = []
-        for frame, (rotations, translation) in enumerate(zip(q, t)):
+        for frame, (rotations, translation) in enumerate(zip(q, t, strict=True)):
             encoded = soma_joint_rotations(rotations, translation).to_bytes()
             packets.append(struct.pack("<IQ", len(encoded), frame) + encoded)
         result = subprocess.run(
@@ -181,7 +182,7 @@ def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
 
         pose_packets = []
         for frame, (frame_positions, frame_orientations) in enumerate(
-            zip(evaluated_positions, evaluated_orientations)
+            zip(evaluated_positions, evaluated_orientations, strict=True)
         ):
             encoded = soma_joint_poses(frame_positions, frame_orientations).to_bytes()
             pose_packets.append(struct.pack("<IQ", len(encoded), frame) + encoded)
