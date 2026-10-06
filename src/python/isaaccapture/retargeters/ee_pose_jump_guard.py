@@ -253,6 +253,8 @@ class EePoseJumpGuard(BaseRetargeter):
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
         """Emit an accepted pose unchanged or hold the frozen accepted reference."""
         now_ns = int(context.graph_time.real_time_ns)
+        if context.execution_events.reset:
+            self._clear()
 
         sample_dt_s, effective_dt_s = _frame_dts(
             self._last_compute_time_ns,

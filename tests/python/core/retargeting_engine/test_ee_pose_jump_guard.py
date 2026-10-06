@@ -49,13 +49,14 @@ def _build_io(guard):
 
 def _context(
     *,
+    reset: bool = False,
     state: ExecutionState = ExecutionState.RUNNING,
     time_ns: int = 0,
 ) -> ComputeContext:
     return ComputeContext(
         graph_time=GraphTime(sim_time_ns=time_ns, real_time_ns=time_ns),
         execution_events=ExecutionEvents(
-            reset=False,
+            reset=reset,
             execution_state=state,
         ),
     )
@@ -350,6 +351,49 @@ class TestEePoseJumpGuard:
         assert status["trigger_step_m"] == 0.0
         assert status["max_held_distance_m"] == 0.0
         assert status["hold_frame_count"] == 0
+
+    def test_running_reset_relatches_current_pose(self):
+        guard = self._guard()
+        inputs, outputs = _build_io(guard)
+        _set_pose(guard, inputs, [0.0, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context())
+        _set_pose(guard, inputs, [0.61, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context(time_ns=10_000_000))
+        assert _status(outputs)["state"] == int(EePoseJumpGuardState.HOLDING)
+
+        guard.compute(
+            inputs,
+            outputs,
+            _context(reset=True, time_ns=20_000_000),
+        )
+
+        np.testing.assert_allclose(_pose(outputs)[:3], [0.61, 0.0, 0.0], atol=1e-6)
+        status = _status(outputs)
+        assert status["state"] == int(EePoseJumpGuardState.TRACKING)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.LATCHED)
+
+    def test_paused_reset_remains_disarmed(self):
+        guard = self._guard()
+        inputs, outputs = _build_io(guard)
+        _set_pose(guard, inputs, [0.0, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context())
+        _set_pose(guard, inputs, [0.61, 0.0, 0.0])
+        guard.compute(inputs, outputs, _context(time_ns=10_000_000))
+
+        guard.compute(
+            inputs,
+            outputs,
+            _context(
+                reset=True,
+                state=ExecutionState.PAUSED,
+                time_ns=20_000_000,
+            ),
+        )
+
+        np.testing.assert_allclose(_pose(outputs)[:3], [0.61, 0.0, 0.0], atol=1e-6)
+        status = _status(outputs)
+        assert status["state"] == int(EePoseJumpGuardState.DISARMED)
+        assert status["disposition"] == int(EePoseJumpGuardDisposition.PASSED)
 
     @pytest.mark.parametrize(
         "state",
