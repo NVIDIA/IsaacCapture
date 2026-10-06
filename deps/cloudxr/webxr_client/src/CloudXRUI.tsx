@@ -74,6 +74,10 @@ const WORLD_UP = new Vector3(0, 1, 0);
 // Synthesized via CDP by oob_teleop_adb.py's _cdp_send_reset_panel_key - keep in sync.
 const RESET_PANEL_KEY = 'r'; // compared against event.key.toLowerCase()
 
+// Minimum panel movement (metres) before continuous head-tracking emits another pose log line -
+// large enough to skip per-frame jitter, small enough that a real reposition is still caught.
+const TRACKING_LOG_EPSILON_M = 0.02;
+
 /** Display size for the Performance metrics slot (width and height passed to PerformanceCanvasImage and its container). */
 const METRIC_SLOT_WIDTH = 512;
 /** Tracks PerformanceCanvasImage's 1024x760 canvas: the session-quality card plus four metric cards. */
@@ -381,26 +385,37 @@ export default function CloudXR3DUI({
   /**
    * The one place *offset* actually gets applied to groupRef.position from a head-relative
    * offset (a discrete event - reset, or a drag's final release - never the continuous
-   * per-frame tracking in useFrame below, which calls worldPositionFromHeadOffset directly and
-   * silently to avoid spamming the console every frame). Logs all three poses in a single line
-   * so a test can assert the panel actually lands near the headset instead of at a fixed world
-   * coordinate - see the console lines, not the scene graph, since there's no other way to
-   * observe a Three.js object's world position from outside the page.
+   * per-frame tracking in useFrame below, which logs on its own, throttled by movement rather
+   * than every frame - see lastLoggedWorldRef). Logs all three poses in a single line so a test
+   * (or an operator diagnosing tracking drift) can confirm the panel actually lands near the
+   * headset instead of at a fixed world coordinate - see the console lines, not the scene graph,
+   * since there's no other way to observe a Three.js object's world position from outside the
+   * page.
    */
+  const logPanelPose = useCallback((cam: Camera, offset: Vector3, target: Vector3) => {
+    console.debug(
+      `[CloudXRUI] headset=(${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)}) ` +
+        `relative=(${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)}) ` +
+        `world=(${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
+    );
+  }, []);
+
+  /** Last world position a pose log line was emitted for - shared between applyPanelPosition's
+   * discrete-event logging and the continuous-tracking logging in useFrame below, so the two
+   * never double-log the same position. */
+  const lastLoggedWorldRef = useRef<Vector3 | null>(null);
+
   const applyPanelPosition = useCallback(
     (cam: Camera, offset: Vector3): Vector3 => {
       const target = worldPositionFromHeadOffset(cam, offset);
       if (groupRef.current) {
         groupRef.current.position.copy(target);
       }
-      console.debug(
-        `[CloudXRUI] headset=(${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)}) ` +
-          `relative=(${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)}) ` +
-          `world=(${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`
-      );
+      logPanelPose(cam, offset, target);
+      lastLoggedWorldRef.current = target.clone();
       return target;
     },
-    [worldPositionFromHeadOffset]
+    [worldPositionFromHeadOffset, logPanelPose]
   );
 
   /**
@@ -521,15 +536,24 @@ export default function CloudXR3DUI({
       // Continuous version of the same reset: every frame instead of once, using whatever
       // headOffsetRef currently holds (the config default, or wherever the operator is currently
       // dragging to - see handleApply, which updates it every frame too, not just on release),
-      // and without the un-hide/logging side effects (calling resetPanelRelativeToHead here would
-      // force the panel visible every frame, defeating the hide-panel button, and would spam the
-      // console). Runs even mid-drag: Handle's own apply already ran this frame (priority -1,
-      // before this useFrame) and updated headOffsetRef from the same camera pose this frame
-      // will use, so recomputing world position from it here reproduces what Handle just set
-      // instead of fighting it.
-      groupRef.current.position.copy(
-        worldPositionFromHeadOffset(state.camera, headOffsetRef.current)
-      );
+      // and without the un-hide side effect (calling resetPanelRelativeToHead here would force
+      // the panel visible every frame, defeating the hide-panel button). Runs even mid-drag:
+      // Handle's own apply already ran this frame (priority -1, before this useFrame) and updated
+      // headOffsetRef from the same camera pose this frame will use, so recomputing world
+      // position from it here reproduces what Handle just set instead of fighting it.
+      const target = worldPositionFromHeadOffset(state.camera, headOffsetRef.current);
+      groupRef.current.position.copy(target);
+      // Logging every frame would spam the console, but logging nothing makes continuous
+      // tracking unobservable from outside the page (no other way to read a Three.js object's
+      // world position - see applyPanelPosition's doc comment). Log only once the panel has
+      // actually moved a visible amount since the last log line, discrete or continuous.
+      if (
+        !lastLoggedWorldRef.current ||
+        lastLoggedWorldRef.current.distanceTo(target) > TRACKING_LOG_EPSILON_M
+      ) {
+        logPanelPose(state.camera, headOffsetRef.current, target);
+        lastLoggedWorldRef.current = target.clone();
+      }
     }
     state.camera.getWorldPosition(cameraPositionHelper);
     groupRef.current.getWorldPosition(uiPositionHelper);
