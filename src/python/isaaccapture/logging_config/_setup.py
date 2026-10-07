@@ -5,10 +5,8 @@
 
 from __future__ import annotations
 
-import logging
-
 from . import _console, _file, _forwarding, _native_fd
-from ._core import ROOT_LOGGER_NAME, logging_enabled
+from ._core import logging_enabled, root_logger
 
 _installed = False
 
@@ -37,7 +35,7 @@ def install() -> None:
         _file.ensure_handler()
     except OSError as exc:
         # File failure must not break ``import isaaccapture``.
-        logging.getLogger(ROOT_LOGGER_NAME).warning(
+        root_logger.warning(
             "File logging disabled: %s. Records will reach the console only. "
             "Set ISAACCAPTURE_LOG_DIR to a directory you can write.",
             exc,
@@ -52,4 +50,4 @@ def install() -> None:
 def set_propagate_to_root(enabled: bool) -> None:
     """Disable root propagation when host handlers would duplicate output."""
     if logging_enabled():
-        logging.getLogger(ROOT_LOGGER_NAME).propagate = bool(enabled)
+        root_logger.propagate = bool(enabled)

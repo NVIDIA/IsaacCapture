@@ -99,12 +99,18 @@ class TestConsoleLevel:
         assert _console.ensure_handler().level == logging.DEBUG
         assert os.environ["ISAACCAPTURE_LOG_LEVEL"] == "debug"
 
-        logging_config.set_console_level(_core.TRACE)
+        logging_config.set_console_level("TRACE")
+        assert _console.ensure_handler().level == _core.TRACE
         assert os.environ["ISAACCAPTURE_LOG_LEVEL"] == "trace"
 
-    def test_publishes_a_number_for_a_level_with_no_name(self):
-        logging_config.set_console_level(23)
-        assert os.environ["ISAACCAPTURE_LOG_LEVEL"] == "23"
+    # spdlog's "warn" spelling is deliberately not a level name here.
+    @pytest.mark.parametrize("level", ["loud", "warn"])
+    def test_an_invalid_level_is_logged_and_keeps_the_threshold(self, level, caplog):
+        handler = _console.ensure_handler()
+        before = (handler.level, os.environ.get("ISAACCAPTURE_LOG_LEVEL"))
+        logging_config.set_console_level(level)
+        assert (handler.level, os.environ.get("ISAACCAPTURE_LOG_LEVEL")) == before
+        assert [entry.levelno for entry in caplog.records] == [logging.ERROR]
 
 
 class _Tty(io.StringIO):
@@ -175,10 +181,13 @@ class TestLoggerColours:
     @pytest.mark.parametrize(
         "colour", ["red", "\033]0;title\007", "\033[36m\n", "", "\033[2J"]
     )
-    def test_rejects_anything_that_is_not_purely_sgr(self, colour):
+    def test_anything_that_is_not_purely_sgr_is_logged_and_skipped(
+        self, colour, caplog
+    ):
         # A registered value is written to the terminal verbatim.
-        with pytest.raises(ValueError):
-            logging_config.set_logger_colors({"isaaccapture.core.Probe": colour})
+        logging_config.set_logger_colors({"isaaccapture.core.Probe": colour})
+        assert "isaaccapture.core.Probe" not in _console._logger_colors
+        assert [entry.levelno for entry in caplog.records] == [logging.ERROR]
 
     def test_none_drops_a_colour(self):
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})

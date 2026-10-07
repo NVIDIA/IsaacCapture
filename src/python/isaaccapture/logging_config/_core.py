@@ -13,7 +13,7 @@ from pathlib import Path
 # Guard POSIX-only APIs because Windows builds import this module.
 _POSIX = os.name == "posix"
 
-ROOT_LOGGER_NAME = "isaaccapture"
+root_logger = logging.getLogger("isaaccapture")
 
 
 def logging_enabled() -> bool:

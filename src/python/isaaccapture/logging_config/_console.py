@@ -15,11 +15,11 @@ from ._core import (
     _LEVEL_NAME_BY_VALUE,
     DATE_FORMAT,
     LINE_FORMAT,
-    ROOT_LOGGER_NAME,
     TRACE,
     env_console_level,
     logging_enabled,
     resolve_level,
+    root_logger,
 )
 
 
@@ -124,27 +124,34 @@ def ensure_handler() -> logging.StreamHandler:
         if not logging_enabled():
             _handler = handler
             return _handler
-        root = logging.getLogger(ROOT_LOGGER_NAME)
-        root.setLevel(
+        root_logger.setLevel(
             TRACE
         )  # handlers filter; the logger itself must stay maximally permissive
         if _forwarding.socket_path() is None:
-            root.addHandler(handler)
+            root_logger.addHandler(handler)
         _handler = handler
         return _handler
 
 
-def set_console_level(level: int | str) -> None:
-    """Set the console threshold and mirror raw output only at ``TRACE``."""
+def set_console_level(level: str) -> None:
+    """Set the console threshold by level name and mirror raw output only at ``TRACE``.
+
+    *level* is trace, debug, info, warning, error or critical, in any case; any
+    other name is logged as an error and the current threshold is kept.
+    """
+    if level.lower() not in _LEVEL_NAME_BY_VALUE.values():
+        root_logger.error(
+            "Unknown console level %r, expected one of %s; keeping the current one.",
+            level,
+            sorted(_LEVEL_NAME_BY_VALUE.values()),
+        )
+        return
     resolved = resolve_level(level)
     handler = ensure_handler()
     handler.setLevel(resolved)
     _native_fd.follow_console_level(resolved)
     # C++ processes that fall back to local sinks read their threshold here.
-    name = _LEVEL_NAME_BY_VALUE.get(resolved)
-    os.environ["ISAACCAPTURE_LOG_LEVEL"] = (
-        name if name is not None else str(int(resolved))
-    )
+    os.environ["ISAACCAPTURE_LOG_LEVEL"] = _LEVEL_NAME_BY_VALUE[resolved]
 
 
 def set_console_filter(pattern: str | None, target: str = "both") -> None:
@@ -164,8 +171,7 @@ def set_console_filter(pattern: str | None, target: str = "both") -> None:
 def set_logger_colors(colors: dict[str, str | None]) -> None:
     """Set terminal-only SGR emphasis by exact logger name; ``None`` removes it.
 
-    Raises:
-        ValueError: if a value is not composed solely of SGR escapes.
+    A value that is not purely SGR escapes is logged as an error and skipped.
     """
     ensure_handler()
     for name, color in colors.items():
@@ -173,8 +179,11 @@ def set_logger_colors(colors: dict[str, str | None]) -> None:
             _logger_colors.pop(name, None)
             continue
         if not _SGR_ESCAPE.fullmatch(color):
-            raise ValueError(
-                f"Colour for logger {name!r} must be one or more SGR escapes, such as "
-                f"'\\033[36m' or '\\033[38;2;255;136;0m', got {color!r}"
+            root_logger.error(
+                "Colour for logger %r must be one or more SGR escapes, such as "
+                "'\\033[36m' or '\\033[38;2;255;136;0m', got %r; ignoring it.",
+                name,
+                color,
             )
+            continue
         _logger_colors[name] = color
