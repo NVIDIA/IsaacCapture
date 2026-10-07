@@ -129,6 +129,8 @@ export function PerformanceCanvasImage({
 }: PerformanceCanvasImageProps) {
   /** Ref for the uikit Image; we set .texture.value on it to use our CanvasTexture. */
   const imageRef = useRef<VanillaImage | null>(null);
+  /** Last image instance that owned our texture; React clears imageRef before effect cleanup. */
+  const boundImageRef = useRef<VanillaImage | null>(null);
   /** Offscreen canvas we draw into each frame. */
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Cached 2D context for the canvas (avoids getContext('2d') every frame). */
@@ -146,7 +148,10 @@ export function PerformanceCanvasImage({
     tex.matrixAutoUpdate = false;
     textureRef.current = tex;
     return () => {
-      if (imageRef.current?.texture.value === tex) imageRef.current.texture.value = undefined;
+      if (boundImageRef.current?.texture.value === tex) {
+        boundImageRef.current.texture.value = undefined;
+      }
+      boundImageRef.current = null;
       tex.dispose();
       textureRef.current = null;
       canvasRef.current = null;
@@ -165,6 +170,7 @@ export function PerformanceCanvasImage({
     if (imageRef.current && imageRef.current.texture.value !== texture) {
       imageRef.current.texture.value = texture;
     }
+    if (imageRef.current) boundImageRef.current = imageRef.current;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const {
