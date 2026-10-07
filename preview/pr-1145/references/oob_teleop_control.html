@@ -985,9 +985,12 @@ early enough to leave one retry interval for a bounded fallback.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
 <td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">10</span></code>).
-The WebXR client’s stream reconnect loop is always on; the OOB lifecycle
-waits for this client-owned loop before taking over. The value is also
-included in the generated headset URL.</p></td>
+The WebXR client’s stream reconnect loop is opt-in — off unless an
+explicit <code class="docutils literal notranslate"><span class="pre">reconnectEnabled=true</span></code> URL param or the 2D debug UI’s
+checkbox turns it on — and OOB has no way to know which, so the host
+always waits out this budget before taking over, whether or not the
+client is actually retrying. The value is also included in the
+generated headset URL.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
 <td><p>Non-negative delay between browser-local attempts in milliseconds
