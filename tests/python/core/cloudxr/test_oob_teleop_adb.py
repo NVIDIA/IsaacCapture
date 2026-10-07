@@ -40,7 +40,6 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
 
 def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None:
     for name in (
-        "TELEOP_CLIENT_RECONNECT_ENABLED",
         "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
         "TELEOP_CLIENT_RECONNECT_DELAY_MS",
     ):
@@ -51,7 +50,7 @@ def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None
         web_client_base="https://localhost:8080",
     )
     query = parse_qs(urlparse(url).query)
-    assert query["reconnectEnabled"] == ["true"]
+    assert "reconnectEnabled" not in query
     assert query["reconnectMaxAttempts"] == ["10"]
     assert query["reconnectDelayMs"] == ["3000"]
 
@@ -543,6 +542,32 @@ def test_build_teleop_url_host_client_uses_resolved_proxy_host_and_port(
     assert "serverIP=proxy.example.test" in url
     assert "10.0.0.2" not in url
     assert "port=49322" in url
+
+
+def test_build_teleop_url_forwards_reliability_config_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TELEOP_CLIENT_* reconnect/warm-up env vars reach the bookmark URL end to end.
+
+    client_ui_fields_from_env() is a generic dict merge (build_teleop_url ->
+    build_headset_bookmark_url), so this exercises the whole launch-path chain rather than
+    just the two boundary functions in test_oob_teleop_env.py.
+    """
+    from cloudxr_py_test_ns.oob_teleop_adb import build_teleop_url
+
+    monkeypatch.delenv("TELEOP_WEB_CLIENT_BASE", raising=False)
+    monkeypatch.setenv("PROXY_PORT", "48322")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "2500")
+    monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "90000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "8000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "20000")
+    url = build_teleop_url(resolved_port=49322, usb_local=True)
+    assert "reconnectMaxAttempts=5" in url
+    assert "reconnectDelayMs=2500" in url
+    assert "streamAttachTimeoutMs=90000" in url
+    assert "warmupBeginTimeoutMs=8000" in url
+    assert "warmupEndTimeoutMs=20000" in url
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb.adb_device_state", return_value="device")

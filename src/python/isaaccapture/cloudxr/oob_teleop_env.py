@@ -33,24 +33,16 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
 
-CLIENT_RECONNECT_DEFAULT_ENABLED = True
+# OOB's own retry (relaunching the tab) is unconditional. The browser's own in-component
+# reconnect loop is a separate, client-owned concern: OOB never sets reconnectEnabled in the
+# generated URL at all (enabling it is left to the client's own default or a URL param the
+# user types directly), so there is deliberately no default-enabled constant here either.
 CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS = 10
 CLIENT_RECONNECT_DEFAULT_DELAY_MS = 3000
 
 
 def client_reconnect_config_from_env() -> dict:
     """Return validated WebXR retry settings shared by the URL and host lifecycle."""
-
-    def boolean(name: str, default: bool) -> bool:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        value = raw.strip().lower()
-        if value in {"1", "true", "yes", "on"}:
-            return True
-        if value in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"{name} must be a boolean")
 
     def nonnegative_int(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -63,9 +55,6 @@ def client_reconnect_config_from_env() -> dict:
         return value
 
     return {
-        "reconnectEnabled": boolean(
-            "TELEOP_CLIENT_RECONNECT_ENABLED", CLIENT_RECONNECT_DEFAULT_ENABLED
-        ),
         "reconnectMaxAttempts": nonnegative_int(
             "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
             CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS,
@@ -94,7 +83,6 @@ def resolve_oob_recovery_config():
     return RecoveryConfig(
         timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
         interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
-        client_reconnect_enabled=reconnect["reconnectEnabled"],
         client_reconnect_max_attempts=reconnect["reconnectMaxAttempts"],
         client_reconnect_delay_ms=reconnect["reconnectDelayMs"],
     )
@@ -411,8 +399,12 @@ def default_initial_stream_config(resolved_proxy_port: int) -> dict:
 def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
-    Keys match query params the WebXR client reads on page load, including
-    codec, panel visibility, and bounded stream-reconnect policy.
+    Keys match query params the WebXR client reads on page load
+    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
+    Deliberately excludes ``reconnectEnabled`` - OOB never sets it; the client's
+    own reconnect loop is opt-in via a URL param the user supplies directly.
     """
     out: dict = {}
     out.update(client_reconnect_config_from_env())
@@ -424,6 +416,21 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    # reconnectMaxAttempts/reconnectDelayMs are already set above by
+    # client_reconnect_config_from_env(), which validates them and raises on bad input - do not
+    # re-parse them here with this loop's silent-skip-on-ValueError semantics.
+    for env_name, key in (
+        ("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "streamAttachTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "warmupBeginTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "warmupEndTimeoutMs"),
+    ):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            out[key] = int(raw)
+        except ValueError:
+            continue
     return out
 
 
@@ -460,10 +467,12 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart`` — are plain form
-    overrides the client honours either way, so the headset still lands with
-    the right streaming target pre-filled.  Callers must not disable OOB while
-    the control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``reconnectEnabled``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
+    ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
+    the client honours either way, so the headset still lands with the right
+    streaming target pre-filled.  Callers must not disable OOB while the
+    control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
     CloudXR streaming backend rather than refused.
 
     A HashRouter fragment is appended at the end when ``TELEOP_CLIENT_ROUTE``
@@ -491,9 +500,17 @@ def build_headset_bookmark_url(
     v = cfg.get("reconnectEnabled")
     if isinstance(v, bool):
         params["reconnectEnabled"] = "true" if v else "false"
-    for key in ("reconnectMaxAttempts", "reconnectDelayMs"):
+    for key in (
+        "reconnectMaxAttempts",
+        "reconnectDelayMs",
+        "streamAttachTimeoutMs",
+        "warmupBeginTimeoutMs",
+        "warmupEndTimeoutMs",
+    ):
         v = cfg.get(key)
-        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        if isinstance(v, bool):
+            continue  # bool is an int subclass; exclude it from the numeric fields above.
+        if isinstance(v, int):
             params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
