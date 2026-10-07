@@ -127,7 +127,7 @@ export function PerformanceCanvasImage({
   poseToRenderText,
   sessionQuality,
 }: PerformanceCanvasImageProps) {
-  /** Ref for the uikit Image; we set .texture.value on it to use our CanvasTexture. */
+  /** VanillaImage is UIKit's backing image; its writable texture signal accepts our CanvasTexture. */
   const imageRef = useRef<VanillaImage | null>(null);
   /** Last image instance that owned our texture; React clears imageRef before effect cleanup. */
   const boundImageRef = useRef<VanillaImage | null>(null);
@@ -167,10 +167,12 @@ export function PerformanceCanvasImage({
     if (!canvas || !texture || !ctx) return;
     // UIKit's asynchronous src loader can clear a texture assigned once in an
     // effect. Restore it when that happens, including after remounts.
-    if (imageRef.current && imageRef.current.texture.value !== texture) {
-      imageRef.current.texture.value = texture;
+    if (imageRef.current) {
+      if (imageRef.current.texture.value !== texture) {
+        imageRef.current.texture.value = texture;
+      }
+      boundImageRef.current = imageRef.current;
     }
-    if (imageRef.current) boundImageRef.current = imageRef.current;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const {
