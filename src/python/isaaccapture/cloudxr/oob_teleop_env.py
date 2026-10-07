@@ -18,6 +18,7 @@ from urllib.error import URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
+from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
@@ -545,14 +546,13 @@ def resolve_lan_host_for_oob() -> str:
 def oob_progress(stage: str, msg: str) -> None:
     """One-line progress update for ``--setup-oob`` / ``--usb-local`` steps.
 
-    Goes to stderr in dim cyan so the operator can see *where* the launcher
-    is in its sequence of steps without these lines competing with the
-    success banner (stdout) or error prints (red).
-
-    This stays a print so progress remains visible when the console log level
-    is set to warning.
+    Logged at INFO as ``[<stage>] <msg>``; printed to stderr instead when
+    ``ISAACCAPTURE_LOGGING=off``, where no handler of ours would show it.
     """
-    print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
+    if logging_enabled():
+        log.info("[%s] %s", stage, msg)
+    else:
+        print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
 
 def print_oob_hub_startup_banner(

@@ -19,6 +19,7 @@ from . import oob_teleop_adb as adb
 from .oob_teleop_env import (
     USB_TURN_CREDENTIAL,
     USB_TURN_USER,
+    oob_progress,
     redact_control_token,
     usb_backend_port,
 )
@@ -149,6 +150,9 @@ class OobLifecycle:
         self._last_ignored_warning: tuple | None = None
         self._last_reason = ""
         self._last_health: str | None = None
+        # Whether the operator was told the headset streams now, and ever did.
+        self._streaming = False
+        self._streamed = False
         self._prerequisite_signature: tuple | None = None
         self.snapshot: dict = {}
 
@@ -173,6 +177,22 @@ class OobLifecycle:
             self._restart_episode()
         self._last_health = health
         reason = re.sub(r"https?://\S+", "<URL>", redact_control_token(reason))[:300]
+        # The operator sees the headset connect once ACTIVE confirms the stream, and
+        # disconnect only once the stream itself is gone: stale metrics alone drop
+        # health below ACTIVE while the browser still reports streaming. Other
+        # transitions stay on this module's logger below.
+        stage = "usb-local" if self.usb_local else "setup-oob"
+        if health == "active" and not self._streaming:
+            oob_progress(
+                stage,
+                "headset reconnected; streaming resumed"
+                if self._streamed
+                else "headset connected; streaming",
+            )
+            self._streaming = self._streamed = True
+        elif self._streaming and not flags.get("streaming"):
+            oob_progress(stage, f"headset disconnected: {reason}")
+            self._streaming = False
         snapshot = {
             "schemaVersion": 1,
             "generation": self.generation,
@@ -339,6 +359,27 @@ class OobLifecycle:
                 log.debug(
                     "Owned ADB mapping cleanup failed: %s", command, exc_info=True
                 )
+
+    async def _close_teleop_tab(self) -> None:
+        """Close the headset's teleop tab on shutdown so it leaves the CloudXR session.
+
+        Without this the page treats the vanished server as a dropped stream and keeps
+        retrying inside the XR session.
+        """
+        if not self.selected:
+            return
+        try:
+            closed = await asyncio.shield(
+                asyncio.to_thread(adb._close_stale_teleop_tabs)
+            )
+        except Exception:
+            log.debug("Teleop tab close on shutdown failed", exc_info=True)
+            return
+        if closed:
+            oob_progress(
+                "usb-local" if self.usb_local else "setup-oob",
+                f"closed {closed} teleop tab(s) on the headset; session ended",
+            )
 
     async def _shielded_cleanup(self) -> None:
         task = asyncio.create_task(self._cleanup_owned_rules())
@@ -1233,6 +1274,7 @@ class OobLifecycle:
                 await self.sleep(self.config.interval_sec)
         finally:
             await self._stop_monitor()
+            await self._close_teleop_tab()
             await self._shielded_cleanup()
             if self.coturn is not None:
                 await asyncio.to_thread(adb.stop_coturn, self.coturn)

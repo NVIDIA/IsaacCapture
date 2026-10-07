@@ -25,11 +25,13 @@ def restore_console():
     """This process shares the one handler under test with every other test."""
     handler = _console.ensure_handler()
     level = handler.level
+    colors = dict(_console._logger_colors)
     published = os.environ.get("ISAACCAPTURE_LOG_LEVEL")
     yield
     logging_config.set_console_filter(None)
     handler.setLevel(level)
     _console._logger_colors.clear()
+    _console._logger_colors.update(colors)
     if published is None:
         os.environ.pop("ISAACCAPTURE_LOG_LEVEL", None)
     else:
@@ -147,6 +149,10 @@ class TestColourFormatter:
     def test_a_logger_colour_on_an_uncoloured_level_resets_after_the_name(self):
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})
         assert f"[\033[36misaaccapture.core.Probe{_RESET}]" in render(_Tty())
+
+    def test_oob_progress_logger_is_cyan_by_default(self):
+        name = "isaaccapture.cloudxr.oob_teleop_env"
+        assert f"[\033[36m{name}{_RESET}]" in render(_Tty(), name=name)
 
     def test_the_record_is_handed_back_unmodified(self):
         # The file handler shares the record and must stay escape-free.

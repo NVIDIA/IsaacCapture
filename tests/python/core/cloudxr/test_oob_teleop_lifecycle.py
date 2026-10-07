@@ -452,6 +452,37 @@ async def test_ignored_serial_display_is_bounded_and_safe(monkeypatch):
     assert "\n" not in status["selectedSerial"]
 
 
+async def test_stale_metrics_do_not_announce_a_headset_disconnect(monkeypatch):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    confirmed = "Stream and fresh metrics confirmed"
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+    # Metrics went stale while the browser still reports streaming.
+    stale = "Browser ready; waiting for stream or fresh metrics"
+    await lifecycle._publish("browser_ready", "ACTIVE", stale, streaming=True)
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+    # The stream itself stopped.
+    retrying = "Browser is retrying the stream"
+    await lifecycle._publish("browser_ready", "ACTIVE", retrying, streaming=False)
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+
+    assert announced == [
+        "headset connected; streaming",
+        f"headset disconnected: {retrying}",
+        "headset reconnected; streaming resumed",
+    ]
+
+
 async def test_cleanup_commands_stay_on_selected_serial_when_it_is_absent(monkeypatch):
     monkeypatch.setenv("ANDROID_SERIAL", "original")
     hub = FakeHub()
@@ -1347,7 +1378,8 @@ async def test_quick_cable_flap_repairs_transport_without_browser_automation():
     assert lifecycle.browser_client == "surviving-page"
     automate.assert_not_called()
     run_oob_connect.assert_not_called()
-    close_tabs.assert_not_called()
+    # The repair closes no tab; the one call is run()'s shutdown close.
+    close_tabs.assert_called_once_with()
     navigate.assert_not_called()
 
 
