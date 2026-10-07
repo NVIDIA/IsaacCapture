@@ -553,8 +553,18 @@ export default function CloudXR3DUI({
     // the isXRMode effect above just set panelHidden from panelHiddenAtStart - preserve that
     // choice instead of forcing the panel visible on its very first frame.
     if (needsInitialPlacement.current) {
-      resetPanelRelativeToHead(state.camera, false);
-      needsInitialPlacement.current = false;
+      // WebXR explicitly permits getViewerPose() to return null on the first frame(s) while
+      // tracking initializes (https://www.w3.org/TR/webxr/#dom-xrframe-getviewerpose) - three.js
+      // still invokes this callback regardless, leaving state.camera at its stale/default
+      // transform. Placing the panel from that and clearing the flag would be permanent (nothing
+      // else re-triggers initial placement), so wait for a frame with a real pose instead.
+      const xrFrame = state.gl.xr.getFrame() as XRFrame | null;
+      const referenceSpace = state.gl.xr.getReferenceSpace();
+      const viewerPose = xrFrame && referenceSpace ? xrFrame.getViewerPose(referenceSpace) : null;
+      if (viewerPose) {
+        resetPanelRelativeToHead(state.camera, false);
+        needsInitialPlacement.current = false;
+      }
     } else if (trackHeadset) {
       // Continuous version of the same reset: every frame instead of once, using whatever
       // headOffsetRef currently holds (the config default, or wherever the operator is currently
