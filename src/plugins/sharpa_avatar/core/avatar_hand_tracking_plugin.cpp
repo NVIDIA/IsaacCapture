@@ -428,11 +428,8 @@ void AvatarTracker::refresh_data()
         {
             continue;
         }
-        if (!state.device->get_device_info().online)
-        {
-            state.reset();
-            continue;
-        }
+        // Liveness comes from fetched data, not get_device_info().online: the SDK
+        // leaves that flag false on a glove first discovered offline and powered on later.
 
         const bool expects_data = m_config.human || m_config.raw || m_config.robot;
         // fetch_data() keeps returning a silent glove's last sample, so only a newer
