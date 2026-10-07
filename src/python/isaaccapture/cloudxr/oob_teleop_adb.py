@@ -339,7 +339,7 @@ def headset_wakefulness() -> str:
     return m.group(1) if m else ""
 
 
-def assert_headset_awake(*, timeout: float = 15.0) -> None:
+def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) -> None:
     """Warn-and-wait when the headset is asleep before launching OOB automation.
 
     Quest / PICO devices sleep when the proximity sensor is uncovered
@@ -350,7 +350,8 @@ def assert_headset_awake(*, timeout: float = 15.0) -> None:
     Sends ``KEYCODE_WAKEUP`` once and then polls ``mWakefulness`` for up to
     ``timeout`` seconds.  Returns silently once the device is ``Awake``.
     Otherwise logs a warning and returns — downstream automation may still
-    succeed if ``am start`` wakes the device.
+    succeed if ``am start`` wakes the device. When ``require_awake`` is set,
+    raise instead; pre-browser USB transfer must have an observed Awake state.
     """
     wake = headset_wakefulness()
     if wake == "Awake":
@@ -383,10 +384,13 @@ def assert_headset_awake(*, timeout: float = 15.0) -> None:
             return
 
     log.warning(
-        "Headset still appears asleep after %.0fs (wakefulness=%s); continuing anyway.",
+        "Headset still appears asleep after %.0fs (wakefulness=%s); %s.",
         timeout,
         wake or "?",
+        "aborting USB transfer" if require_awake else "continuing anyway",
     )
+    if require_awake:
+        raise OobAdbError("Headset wakefulness was not confirmed as Awake")
 
 
 def adb_device_state() -> str:

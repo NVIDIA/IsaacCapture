@@ -9,13 +9,16 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import socket
 import time
+from pathlib import Path
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from dataclasses import dataclass
 
 from . import oob_teleop_adb as adb
+from . import usb_health
 from .oob_teleop_env import (
     USB_TURN_CREDENTIAL,
     USB_TURN_USER,
@@ -91,6 +94,9 @@ class OobLifecycle:
         sleep: Callable[[float], object] = asyncio.sleep,
         metrics_stale_sec: float = 5.0,
         host_listener_probe: Callable[[int], bool] = _host_listener_ready,
+        usb_health_logs_dir: Path | None = None,
+        web_client_static_dir: Path | None = None,
+        usb_health_policy: str = "warn",
     ) -> None:
         # Immutable topology and injected collaborators.
         self.hub = hub
@@ -104,6 +110,21 @@ class OobLifecycle:
         self.sleep = sleep
         self.metrics_stale_sec = metrics_stale_sec
         self.host_listener_probe = host_listener_probe
+        self.usb_health_logs_dir = usb_health_logs_dir
+        self.web_client_static_dir = web_client_static_dir
+        if usb_health_policy not in {"off", "warn", "block"}:
+            raise ValueError("usb_health_policy must be off, warn, or block")
+        self.usb_health_policy = usb_health_policy
+        self._usb_health_report: usb_health.UsbHealthReport | None = None
+        self._usb_health_session = secrets.token_hex(16)
+        self._usb_report_serial: str | None = None
+        self._usb_wait_signature: tuple[str, str] | None = None
+        self._usb_link_history: list[dict] = []
+        self._usb_transfer_history: list[dict] = []
+        self._usb_transfer_stale = False
+        self._usb_wake_confirmed: bool | None = None
+        self._usb_link: dict | None = None
+        self._usb_transfer: dict | None = None
 
         # Headset selection remains pinned after the first successful choice.
         self.selected = os.environ.get("ANDROID_SERIAL", "").strip() or None
@@ -205,6 +226,31 @@ class OobLifecycle:
             "connectDispatched": self.connect_dispatched,
             "streaming": False,
             "clientMetricsFresh": False,
+            "usbHealthReport": (
+                self._usb_health_report.path.name if self._usb_health_report else None
+            ),
+            "usbNegotiatedSpeedMbps": (
+                self._usb_link.get("negotiatedSpeedMbps") if self._usb_link else None
+            ),
+            "usbTransferMbps": (
+                self._usb_transfer.get("hostToHeadsetMbps")
+                if self._usb_transfer and not self._usb_transfer_stale
+                else None
+            ),
+            "usbLinkOutcome": self._link_outcome(),
+            "usbTransferOutcome": (
+                "stale"
+                if self._usb_transfer_stale
+                else self._usb_transfer.get("outcome")
+                if self._usb_transfer
+                else None
+            ),
+            "usbTransferMethod": (
+                self._usb_transfer.get("method")
+                if self._usb_transfer and not self._usb_transfer_stale
+                else None
+            ),
+            "usbWakeConfirmed": self._usb_wake_confirmed,
             **flags,
         }
         self.snapshot = snapshot
@@ -242,6 +288,26 @@ class OobLifecycle:
 
     async def _remember_transport_loss(self) -> None:
         """Drop transport-owned state while preserving the prior browser intent."""
+        if self._usb_wake_confirmed is not None:
+            self._usb_wake_confirmed = None
+            if self._usb_health_report is not None:
+                previous = self._usb_health_report.payload.get("wakeCheck")
+                history = list(self._usb_health_report.payload.get("wakeHistory", []))
+                if previous is not None:
+                    history.append(dict(previous))
+                self._persist_usb_health(
+                    wakeHistory=history[-20:],
+                    wakeCheck={
+                        "confirmedAwake": None,
+                        "outcome": "unknown_after_transport_loss",
+                    },
+                    decision={
+                        "overallOutcome": "incomplete",
+                        "browserLaunchAllowed": None,
+                        "shortMessage": "USB transport lost; current wakefulness is unknown.",
+                    },
+                )
+                self._record_usb_event("USB_WAKE_INVALIDATED")
         if not self._transport_lost:
             self._restore_existing_browser = bool(
                 self.browser_ready
@@ -442,6 +508,324 @@ class OobLifecycle:
                     "Browser cache cleanup unavailable; continuing", exc_info=True
                 )
             self._cache_cleared = True
+
+    def _ensure_usb_report(self) -> None:
+        if (
+            not self.usb_local
+            or self.usb_health_policy == "off"
+            or self.usb_health_logs_dir is None
+        ):
+            return
+        try:
+            if self._usb_health_report is None:
+                self._usb_health_report = usb_health.UsbHealthReport(
+                    self.usb_health_logs_dir,
+                    self._usb_health_session,
+                    self.generation,
+                    None,
+                    self.usb_health_policy,
+                )
+                self._usb_health_report.event("WAITING_FOR_ADB")
+            if self.selected and self.selected != self._usb_report_serial:
+                self._usb_health_report.set_device(self.selected)
+                self._usb_report_serial = self.selected
+        except OSError:
+            log.warning(
+                "USB health report could not be created or updated", exc_info=True
+            )
+
+    def _record_usb_wait(self, state: str, code: str) -> None:
+        self._ensure_usb_report()
+        signature = (state, code)
+        if self._usb_health_report is None or signature == self._usb_wait_signature:
+            return
+        self._usb_wait_signature = signature
+        self._record_usb_event(state)
+        errors = self._usb_health_report.payload["errors"]
+        errors.append({"state": state, "code": code, "at": time.time()})
+        self._persist_usb_health(
+            errors=errors[-20:],
+            decision={
+                "overallOutcome": "incomplete",
+                "browserLaunchAllowed": bool(
+                    self.browser_ready or self.connect_dispatched
+                ),
+                "shortMessage": f"USB-local startup waiting at {state}.",
+            },
+        )
+
+    def _link_outcome(self) -> str | None:
+        if self._usb_link is None:
+            return None
+        speed = self._usb_link.get("negotiatedSpeedMbps")
+        return "unknown" if speed is None else "pass" if speed >= 5000 else "slow_link"
+
+    async def _check_usb_link(self, *, passive: bool = False) -> None:
+        """Record Linux USB topology for the selected ADB transport."""
+        assert self.selected is not None
+        started = self.clock()
+        await self._publish(
+            "degraded",
+            "CHECKING_USB_LINK",
+            "Refreshing negotiated USB link after reconnect"
+            if passive
+            else "Inspecting negotiated USB link",
+            adbReady=True,
+            networkPresent=True,
+        )
+        self._ensure_usb_report()
+        self._record_usb_event(
+            "REFRESHING_USB_LINK" if passive else "CHECKING_USB_LINK"
+        )
+        try:
+            listing = await asyncio.to_thread(
+                adb._adb_run,
+                ["adb", "devices", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            )
+            if listing.returncode:
+                raise adb.OobAdbError("ADB device listing failed")
+            self._usb_link = await asyncio.to_thread(
+                usb_health.inspect_link, self.selected, listing.stdout or ""
+            )
+        except (OSError, TimeoutError, adb.OobAdbError) as exc:
+            self._usb_link = {
+                "probeSucceeded": False,
+                "negotiatedSpeedMbps": None,
+                "isBetterPortAvailable": None,
+                "errors": [str(exc)[:160]],
+            }
+        self._usb_link["observedAt"] = time.time()
+        self._usb_link["probeDurationMs"] = round((self.clock() - started) * 1000, 2)
+        self._usb_link["passiveRefresh"] = passive
+        self._usb_link_history.append(dict(self._usb_link))
+        self._usb_link_history = self._usb_link_history[-32:]
+        self._usb_wait_signature = None
+        speed = self._usb_link.get("negotiatedSpeedMbps")
+        outcome = self._link_outcome()
+        if passive and self._usb_transfer is not None and not self._usb_transfer_stale:
+            self._usb_transfer_history.append(dict(self._usb_transfer))
+            self._usb_transfer_history = self._usb_transfer_history[-20:]
+            self._usb_transfer_stale = True
+        self._persist_usb_health(
+            topology=self._usb_link,
+            linkHistory=self._usb_link_history,
+            transferHistory=self._usb_transfer_history,
+            transferTest=(
+                {
+                    "attempted": False,
+                    "completed": False,
+                    "outcome": "pending_retest",
+                    "method": None,
+                    "hostToHeadsetMbps": None,
+                    "headsetToHostMbps": None,
+                    "staleAfterReconnect": True,
+                }
+                if self._usb_transfer_stale and self._usb_transfer is not None
+                else self._usb_transfer
+            ),
+            linkProbe={
+                "probeSucceeded": self._usb_link.get("probeSucceeded", False),
+                "negotiatedSpeedMbps": speed,
+                "isBetterPortAvailable": self._usb_link.get("isBetterPortAvailable"),
+                "outcome": outcome,
+                "shortMessage": (
+                    f"USB link negotiated at {speed:g} Mb/s."
+                    if speed is not None
+                    else "Negotiated USB link could not be determined."
+                ),
+            },
+            **(
+                {
+                    "decision": {
+                        "overallOutcome": (
+                            "incomplete" if outcome == "pass" else "degraded"
+                        ),
+                        "browserLaunchAllowed": None,
+                        "existingBrowserPreserved": True,
+                        "transferRetestDeferred": True,
+                        "shortMessage": "USB link refreshed; active transfer pending retest.",
+                    }
+                }
+                if passive
+                else {}
+            ),
+        )
+        self._record_usb_event("USB_LINK_COMPLETE")
+        # The state published before inspection still contains the old speed
+        # during reconnect; publish again with the refreshed link evidence.
+        await self._publish(
+            "degraded",
+            "USB_LINK_CHECKED",
+            (
+                f"USB link negotiated at {speed:g} Mb/s"
+                if speed is not None
+                else "USB link speed unavailable"
+            ),
+            adbReady=True,
+            networkPresent=True,
+        )
+        log.log(
+            logging.WARNING if outcome != "pass" else logging.INFO,
+            "USB-local negotiated link: %s Mb/s; faster root available: %s; report: %s",
+            self._usb_link.get("negotiatedSpeedMbps"),
+            self._usb_link.get("isBetterPortAvailable"),
+            self._usb_health_report.path if self._usb_health_report else "unavailable",
+        )
+
+    async def _check_usb_transfer(self) -> None:
+        """Use the existing static listener and verified reverse before browser launch."""
+        assert self.selected is not None
+        if self._usb_wake_confirmed is not True:
+            self._persist_usb_health(
+                transferTest={
+                    "attempted": False,
+                    "completed": False,
+                    "outcome": "not_started_headset_not_awake",
+                    "requestedMeasurementDurationMs": 3000,
+                    "hostToHeadsetMbps": None,
+                }
+            )
+            self._record_usb_wait("WAITING_FOR_AWAKE", "awake_not_confirmed")
+            raise adb.OobAdbError("USB transfer requires confirmed Awake wakefulness")
+        await self._publish(
+            "degraded",
+            "CHECKING_USB_TRANSFER",
+            "Measuring three-second pre-browser host-to-headset transfer",
+            adbReady=True,
+            networkPresent=True,
+            reverseRulesVerified=True,
+        )
+        self._record_usb_event("CHECKING_USB_TRANSFER")
+        try:
+            if self.web_client_static_dir is None:
+                raise OSError("Static web client directory is unavailable")
+            size = (self.web_client_static_dir / "bundle.js").stat().st_size
+            self._usb_transfer = await usb_health.measure_transfer(
+                self.selected, self.resolved_port, size
+            )
+        except asyncio.CancelledError:
+            self._usb_transfer = {
+                "attempted": True,
+                "completed": False,
+                "outcome": "cancelled",
+                "requestedMeasurementDurationMs": 3000,
+                "errors": ["USB health measurement cancelled"],
+            }
+            self._persist_usb_health(transferTest=self._usb_transfer)
+            raise
+        except (OSError, TimeoutError) as exc:
+            self._usb_transfer = {
+                "attempted": True,
+                "completed": False,
+                "outcome": "unsupported",
+                "requestedMeasurementDurationMs": 3000,
+                "errors": [str(exc)[:160]],
+            }
+        self._usb_transfer_stale = False
+        self._persist_usb_health(transferTest=self._usb_transfer)
+        self._record_usb_event("USB_TRANSFER_COMPLETE")
+        log.log(
+            logging.WARNING
+            if not self._usb_transfer.get("completed")
+            else logging.INFO,
+            "USB-local pre-browser host-to-headset application goodput: %s Mb/s (%s)",
+            self._usb_transfer.get("hostToHeadsetMbps"),
+            self._usb_transfer.get("pathCoverage"),
+        )
+
+    async def _confirm_usb_awake(self) -> None:
+        """Require a fresh Awake observation immediately before active transfer."""
+        self._usb_wake_confirmed = False
+        started = self.clock()
+        await self._publish(
+            "degraded",
+            "CHECKING_USB_WAKE",
+            "Confirming selected headset is awake before USB transfer",
+            adbReady=True,
+            networkPresent=True,
+            reverseRulesVerified=True,
+        )
+        self._record_usb_event("CHECKING_USB_WAKE")
+        try:
+            # Device preparation's soft wake helper may return while still asleep.
+            # Require mWakefulness=Awake after reverse setup and before transfer.
+            await asyncio.to_thread(
+                adb.assert_headset_awake, timeout=10.0, require_awake=True
+            )
+        except (Exception, asyncio.CancelledError):
+            self._persist_usb_health(
+                wakeCheck={
+                    "confirmedAwake": False,
+                    "source": "adb-shell-dumpsys-power",
+                    "durationMs": round((self.clock() - started) * 1000, 2),
+                },
+                transferTest={
+                    "attempted": False,
+                    "completed": False,
+                    "outcome": "not_started_headset_not_awake",
+                    "requestedMeasurementDurationMs": 3000,
+                    "hostToHeadsetMbps": None,
+                },
+            )
+            self._record_usb_wait("WAITING_FOR_AWAKE", "awake_not_confirmed")
+            raise
+        self._usb_wake_confirmed = True
+        self._persist_usb_health(
+            wakeCheck={
+                "confirmedAwake": True,
+                "source": "adb-shell-dumpsys-power",
+                "durationMs": round((self.clock() - started) * 1000, 2),
+            }
+        )
+        self._record_usb_event("USB_WAKE_CONFIRMED")
+
+    def _persist_usb_health(self, **sections) -> None:
+        if self._usb_health_report is None:
+            return
+        try:
+            self._usb_health_report.update(**sections)
+        except OSError:
+            log.warning("USB health report update failed", exc_info=True)
+
+    def _record_usb_event(self, state: str) -> None:
+        if self._usb_health_report is None:
+            return
+        try:
+            self._usb_health_report.event(state)
+        except OSError:
+            log.warning("USB health report event update failed", exc_info=True)
+
+    def _usb_launch_allowed(self) -> bool:
+        speed = self._usb_link.get("negotiatedSpeedMbps") if self._usb_link else None
+        transfer_ok = bool(self._usb_transfer and self._usb_transfer.get("completed"))
+        degraded = speed is None or speed < 5000 or not transfer_ok
+        allowed = self.usb_health_policy != "block" or not degraded
+        if degraded:
+            log.warning(
+                "USB-local health is degraded: link=%s, transfer=%s; continuing=%s",
+                self._link_outcome(),
+                self._usb_transfer.get("outcome") if self._usb_transfer else None,
+                allowed,
+            )
+        self._persist_usb_health(
+            decision={
+                "overallOutcome": "degraded" if degraded else "pass",
+                "browserLaunchAllowed": allowed,
+                "shortMessage": (
+                    "USB health checks are degraded"
+                    if degraded
+                    else "USB health checks passed"
+                ),
+            }
+        )
+        self._record_usb_event(
+            "USB_HEALTH_COMPLETE" if allowed else "USB_HEALTH_BLOCKED"
+        )
+        return allowed
 
     async def _automate(self) -> None:
         await self._stop_monitor()
@@ -945,6 +1329,7 @@ class OobLifecycle:
         """
         token = adb.SELECTED_ADB_SERIAL.set(self.selected) if self.selected else None
         try:
+            self._ensure_usb_report()
             if not self.snapshot:
                 await self._publish(
                     "starting", "WAITING_FOR_ADB", "Waiting for headset"
@@ -956,6 +1341,7 @@ class OobLifecycle:
                 if self.selected is None and len(ready) == 1:
                     self.selected = ready[0]
                     token = adb.SELECTED_ADB_SERIAL.set(self.selected)
+                    self._ensure_usb_report()
                 self.ignored_serials = (
                     tuple(
                         sorted(
@@ -1018,6 +1404,18 @@ class OobLifecycle:
                         reason = "Headset offline; reconnect the USB cable"
                     else:
                         reason = devices.diagnostic or "Waiting for selected headset"
+                    wait_code = (
+                        "ambiguous_devices"
+                        if self.selected is None and len(ready) > 1
+                        else "unauthorized"
+                        if selected_state == "unauthorized"
+                        else "offline"
+                        if selected_state == "offline"
+                        else "selected_missing"
+                        if self.selected
+                        else "no_ready_device"
+                    )
+                    self._record_usb_wait("WAITING_FOR_ADB", wait_code)
                     await self._enter_transport_recovery(
                         reason,
                         "WAITING_FOR_ADB",
@@ -1038,6 +1436,7 @@ class OobLifecycle:
                     self._restart_episode()
                     self.last_network_state = network.state
                 if network.state is adb.HeadsetNetworkState.ADB_UNAVAILABLE:
+                    self._record_usb_wait("WAITING_FOR_ADB", "adb_unavailable")
                     await self._enter_transport_recovery(
                         "ADB unavailable: " + network.diagnostic,
                         "WAITING_FOR_ADB",
@@ -1054,6 +1453,7 @@ class OobLifecycle:
                 ):
                     # Preserve the page while the headset network returns;
                     # transport repair runs before any browser fallback.
+                    self._record_usb_wait("WAITING_FOR_NETWORK", "network_absent")
                     await self._enter_transport_recovery(
                         "Headset has no non-loopback network",
                         "PREPARING_DEVICE",
@@ -1130,6 +1530,10 @@ class OobLifecycle:
                             await asyncio.to_thread(
                                 adb.assert_headset_awake, timeout=10.0
                             )
+                            if self.usb_health_policy != "off":
+                                # A surviving page gets passive link evidence; a new
+                                # three-second transfer would disturb its recovery.
+                                await self._check_usb_link(passive=True)
                             await self._rebuild_usb()
                             self._repair_started_at = time.time()
                             self._client_grace_deadline = (
@@ -1155,6 +1559,7 @@ class OobLifecycle:
                     and not self.browser_ready
                     and not self.connect_dispatched
                 ):
+                    self._record_usb_wait("WAITING_FOR_ADB", "recovery_deadline")
                     await self._publish(
                         "degraded",
                         "WAITING_FOR_ADB",
@@ -1186,9 +1591,48 @@ class OobLifecycle:
                             self.episode_start + self.config.timeout_sec - self.clock()
                         )
                         async with asyncio.timeout(max(0.001, remaining)):
-                            await self._prepare_device()
+                            self._record_usb_event("PREPARING_DEVICE")
                             if self.usb_local:
-                                await self._rebuild_usb()
+                                self._usb_wake_confirmed = False
+                            try:
+                                await self._prepare_device()
+                            except (Exception, asyncio.CancelledError) as exc:
+                                self._record_usb_wait(
+                                    "PREPARING_DEVICE", type(exc).__name__
+                                )
+                                raise
+                            if self.usb_local:
+                                if self.usb_health_policy != "off":
+                                    await self._check_usb_link()
+                                try:
+                                    await self._rebuild_usb()
+                                except (Exception, asyncio.CancelledError) as exc:
+                                    self._persist_usb_health(
+                                        errors=[
+                                            f"USB reverse setup failed: {type(exc).__name__}"
+                                        ],
+                                        decision={
+                                            "overallOutcome": "incomplete",
+                                            "browserLaunchAllowed": False,
+                                        },
+                                    )
+                                    raise
+                                if self.usb_health_policy != "off":
+                                    # _automate opens the browser; qualify the existing
+                                    # HTTPS reverse path before changing headset UI state.
+                                    await self._confirm_usb_awake()
+                                    await self._check_usb_transfer()
+                                    if not self._usb_launch_allowed():
+                                        await self._publish(
+                                            "degraded",
+                                            "USB_HEALTH_BLOCKED",
+                                            "USB-local health policy blocked browser launch",
+                                            adbReady=True,
+                                            networkPresent=True,
+                                            reverseRulesVerified=True,
+                                        )
+                                        await self.sleep(self.config.interval_sec)
+                                        continue
                             await self._automate()
                 except _TransportDisrupted as exc:
                     # Enumeration can miss a quick cable flap. Reverse/TURN
@@ -1232,6 +1676,12 @@ class OobLifecycle:
                     )
                 await self.sleep(self.config.interval_sec)
         finally:
+            if (
+                self._usb_health_report is not None
+                and self._usb_health_report.payload["decision"]["overallOutcome"]
+                == "pending"
+            ):
+                self._record_usb_wait("STOPPED", "stopped_before_checks")
             await self._stop_monitor()
             await self._shielded_cleanup()
             if self.coturn is not None:

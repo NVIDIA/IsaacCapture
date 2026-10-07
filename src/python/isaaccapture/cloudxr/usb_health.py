@@ -1,0 +1,429 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Pre-browser USB-local topology, transfer, and private report helpers."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import re
+import secrets
+import shlex
+import stat
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+USB_NODE = re.compile(r"^\d+-\d+(?:\.\d+)*$")
+PCI_NODE = re.compile(r"^\d{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
+BYTE_LINE = re.compile(r"^B:(\d+)$")
+TIME_LINE = re.compile(r"^T:(\d+):(\d+)$")
+SCHEMA = "isaac-capture.usb-health/v1"
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()[:160]
+    except (OSError, UnicodeError):
+        return None
+
+
+def _number(path: Path) -> float | None:
+    try:
+        return float(_read(path))
+    except (TypeError, ValueError):
+        return None
+
+
+def _pci(path: Path) -> str | None:
+    return next(
+        (p.name for p in path.resolve().parents if PCI_NODE.fullmatch(p.name)), None
+    )
+
+
+def _node(path: Path) -> dict:
+    return {
+        "node": path.name,
+        "speedMbps": _number(path / "speed"),
+        "usbVersion": _read(path / "version"),
+        "vendorId": _read(path / "idVendor"),
+        "productId": _read(path / "idProduct"),
+        "manufacturer": _read(path / "manufacturer"),
+        "product": _read(path / "product"),
+        "authorized": _read(path / "authorized"),
+        "maxPower": _read(path / "bMaxPower"),
+    }
+
+
+def inspect_link(
+    serial: str, listing: str, root: Path = Path("/sys/bus/usb/devices")
+) -> dict:
+    """Correlate the already-selected ADB transport with Linux's negotiated link."""
+    result = {
+        "probeSucceeded": False,
+        "negotiatedSpeedMbps": None,
+        "isBetterPortAvailable": None,
+        "betterPortCandidates": [],
+        "parentChain": [],
+        "errors": [],
+    }
+    fields = next(
+        (line.split() for line in listing.splitlines() if line.split()[:1] == [serial]),
+        None,
+    )
+    if not fields or len(fields) < 2 or fields[1] != "device":
+        result["errors"].append("Selected ADB device is absent or not ready")
+        return result
+    props = dict(part.split(":", 1) for part in fields[2:] if ":" in part)
+    result["adbState"] = fields[1]
+    result["model"] = props.get("model", "")[:80]
+    result["product"] = props.get("product", "")[:80]
+    usb_path = props.get("usb")
+    device = root / usb_path if usb_path and USB_NODE.fullmatch(usb_path) else None
+    if device is None or not device.exists():
+        # The descriptor fallback covers ADB versions that omit usb:<path>.
+        matches = [
+            entry.parent
+            for entry in root.glob("*/serial")
+            if USB_NODE.fullmatch(entry.parent.name) and _read(entry) == serial
+        ]
+        if len(matches) != 1:
+            result["errors"].append(
+                "ADB transport could not be uniquely mapped to sysfs"
+            )
+            return result
+        device = matches[0]
+    speed = _number(device / "speed")
+    if speed is None:
+        result["errors"].append("Negotiated speed is unavailable in sysfs")
+        return result
+    chain = [
+        _node(node)
+        for node in (device.resolve(), *device.resolve().parents)
+        if USB_NODE.fullmatch(node.name) or re.fullmatch(r"usb\d+", node.name)
+    ]
+    controller = _pci(device)
+    root_hub = next(
+        (node["node"] for node in chain if node["node"].startswith("usb")), None
+    )
+    candidates = [
+        _node(other)
+        for other in sorted(root.glob("usb*"))
+        if re.fullmatch(r"usb\d+", other.name)
+        and other.name != root_hub
+        and controller is not None
+        and _pci(other) == controller
+        and (_number(other / "speed") or 0) > speed
+    ]
+    result.update(
+        probeSucceeded=True,
+        negotiatedSpeedMbps=speed,
+        speedClass="usb3" if speed >= 5000 else "usb2_or_lower",
+        isBetterPortAvailable=bool(candidates) if controller else None,
+        betterPortCandidates=candidates,
+        betterPortInference="same-controller faster root hub; physical connector unverified",
+        deviceNode=device.name,
+        busNumber=_read(device / "busnum"),
+        deviceNumber=_read(device / "devnum"),
+        controller=controller,
+        parentChain=chain,
+        power={
+            "advertisedMaxPower": _read(device / "bMaxPower"),
+            "runtimeStatus": _read(device / "power/runtime_status"),
+            "control": _read(device / "power/control"),
+        },
+    )
+    return result
+
+
+async def _adb_shell(serial: str, script: str, timeout: float) -> tuple[int, str]:
+    child = await asyncio.create_subprocess_exec(
+        "adb",
+        "-s",
+        serial,
+        "shell",
+        "-T",
+        "sh -c " + shlex.quote(script),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        output, _ = await asyncio.wait_for(child.communicate(), timeout)
+        return child.returncode, output[:16384].decode("ascii", "replace")
+    except (asyncio.CancelledError, TimeoutError):
+        child.terminate()
+        try:
+            await asyncio.wait_for(child.communicate(), 0.5)
+        except TimeoutError:
+            child.kill()
+            await child.communicate()
+        raise
+
+
+async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
+    """Measure three seconds over the existing HTTPS listener and reverse rule."""
+    started = time.monotonic()
+    result = {
+        "attempted": True,
+        "completed": False,
+        "requestedMeasurementDurationMs": 3000,
+        "effectiveMeasurementDurationMs": None,
+        "hostToHeadsetMbps": None,
+        "headsetToHostMbps": None,
+        "completedBytes": 0,
+        "completedRequests": 0,
+        "method": None,
+        "pathCoverage": None,
+        "directionCoverage": "host_to_headset",
+        "browserRequired": False,
+        "newListenerCreated": False,
+        "newReverseRuleCreated": False,
+        "childCleanup": {"reaped": True},
+        "errors": [],
+    }
+    try:
+        code, capabilities = await _adb_shell(
+            serial,
+            "command -v curl; command -v timeout; date +%s%N; command -v cat",
+            2,
+        )
+        lines = capabilities.splitlines()
+        curl_ready = code == 0 and any("curl" in line for line in lines)
+        timer_ready = any(re.fullmatch(r"\d{16,20}", line) for line in lines)
+        timeout_ready = any("timeout" in line for line in lines)
+        result["prerequisites"] = {
+            "deviceCurl": curl_ready,
+            "deviceTimeout": timeout_ready,
+            "nanosecondDate": timer_ready,
+            "bundleSizeBytes": asset_size,
+            "existingProxyReverseVerified": True,
+        }
+        if curl_ready and timeout_ready and timer_ready and asset_size >= 262144:
+            result["method"] = "device_curl_static_asset_loop"
+            result["pathCoverage"] = "https_static_over_adb_reverse"
+            # Each B line is printed only after curl exits successfully; a truncated
+            # final response contributes zero bytes.
+            script = (
+                "start=$(date +%s%N); "
+                "timeout 3 sh -c 'while :; do "
+                'n=$(curl -fksS --max-time 2 -o /dev/null -w "%{size_download}" '
+                f"https://127.0.0.1:{port}/client/bundle.js); "
+                'rc=$?; if test "$rc" = 0; then printf "B:%s\\n" "$n"; fi; '
+                'done\'; end=$(date +%s%N); printf \'T:%s:%s\\n\' "$start" "$end"'
+            )
+            code, output = await _adb_shell(serial, script, 5)
+            byte_counts = [
+                int(match.group(1))
+                for line in output.splitlines()
+                if (match := BYTE_LINE.fullmatch(line))
+            ]
+            timing = next(
+                (
+                    match
+                    for line in output.splitlines()
+                    if (match := TIME_LINE.fullmatch(line))
+                ),
+                None,
+            )
+            if timing is None:
+                raise ValueError("Device did not return measurement timing")
+            duration = (int(timing.group(2)) - int(timing.group(1))) / 1e6
+            result["effectiveMeasurementDurationMs"] = round(duration, 2)
+            result["timingValid"] = 2950 <= duration <= 3250
+            result["completedBytes"] = sum(byte_counts)
+            result["completedRequests"] = len(byte_counts)
+            result["partialTailExcluded"] = True
+            if (
+                code != 0
+                or not result["timingValid"]
+                or not byte_counts
+                or any(count != asset_size for count in byte_counts)
+            ):
+                raise ValueError("Device transfer window was invalid")
+            result["hostToHeadsetMbps"] = round(
+                sum(byte_counts) * 8000 / duration / 1e6, 2
+            )
+            result["completed"] = True
+        else:
+            result["method"] = "adb_shell_sink"
+            result["pathCoverage"] = "adb_transport_only"
+            result["fallbackReason"] = (
+                "Device curl/timing unavailable or static asset too small"
+            )
+            await _measure_fallback(serial, result)
+    except asyncio.CancelledError:
+        result["errors"].append("Measurement cancelled")
+        raise
+    except (OSError, TimeoutError, ValueError) as exc:
+        result["errors"].append(str(exc)[:160])
+    result["wholeStageDurationMs"] = round((time.monotonic() - started) * 1000, 2)
+    result["outcome"] = "pass" if result["completed"] else "unsupported"
+    return result
+
+
+async def _measure_fallback(serial: str, result: dict) -> None:
+    """Bound a host-to-device ADB-only sink when device curl is unavailable."""
+    child = await asyncio.create_subprocess_exec(
+        "adb",
+        "-s",
+        serial,
+        "shell",
+        "-T",
+        "cat | wc -c",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    start = time.monotonic()
+    written = 0
+    try:
+        payload = b"\0" * 65536
+        while time.monotonic() - start < 3:
+            child.stdin.write(payload)
+            await asyncio.wait_for(child.stdin.drain(), 0.5)
+            written += len(payload)
+        duration = (time.monotonic() - start) * 1000
+        result["effectiveMeasurementDurationMs"] = round(duration, 2)
+        result["timingValid"] = 2950 <= duration <= 3250
+        result["hostBytesSubmitted"] = written
+    finally:
+        child.stdin.close()
+        try:
+            output = await asyncio.wait_for(child.stdout.read(64), 0.5)
+            await asyncio.wait_for(child.wait(), 0.5)
+        except TimeoutError:
+            child.terminate()
+            try:
+                await asyncio.wait_for(child.wait(), 0.5)
+            except TimeoutError:
+                child.kill()
+                await child.wait()
+            raise
+    if child.returncode != 0 or not output.strip().isdigit():
+        raise ValueError("ADB sink did not confirm received byte count")
+    received = int(output.strip())
+    result["completedBytes"] = received
+    result["hostToHeadsetMbps"] = round(received * 8000 / duration / 1e6, 2)
+    result["completed"] = result["timingValid"]
+
+
+class UsbHealthReport:
+    """Own one private, atomically replaced JSON report for a clean start."""
+
+    def __init__(
+        self,
+        logs_dir: Path,
+        session_id: str,
+        generation: int,
+        serial: str | None,
+        policy: str = "warn",
+    ):
+        self.directory = logs_dir / "usb-health"
+        if self.directory.is_symlink():
+            raise OSError("USB health report directory cannot be a symlink")
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.directory, 0o700)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.path = (
+            self.directory
+            / f"usb-health-{stamp}-{secrets.token_hex(4)}-g{generation}.json"
+        )
+        salt_path = self.directory / ".serial-salt"
+        try:
+            salt = salt_path.read_bytes()
+        except FileNotFoundError:
+            try:
+                descriptor = os.open(
+                    salt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(secrets.token_bytes(32))
+            except FileExistsError:
+                pass
+            salt = salt_path.read_bytes()
+        self._serial_salt = salt
+        now = datetime.now(timezone.utc).isoformat()
+        self.payload = {
+            "schema": SCHEMA,
+            "createdAt": now,
+            "updatedAt": now,
+            "context": {
+                "mode": "usb-local",
+                "policy": policy,
+                "generation": generation,
+                "sessionIdPrefix": session_id[:8],
+                "requestedMeasurementDurationMs": 3000,
+                "reportPath": str(Path("logs/usb-health") / self.path.name),
+            },
+            "device": {
+                "selectedBy": "oobLifecycle",
+                "serialHash": None,
+                "serialPersistedRaw": False,
+            },
+            "topology": None,
+            "transferTest": None,
+            "decision": {"overallOutcome": "pending", "browserLaunchAllowed": None},
+            "events": [],
+            "errors": [],
+            "redaction": {
+                "rawSerial": False,
+                "rawUrlOrQuery": False,
+                "subprocessArgv": False,
+                "controlOrTurnCredential": False,
+            },
+        }
+        if serial is not None:
+            self.set_device(serial)
+
+    def set_device(self, serial: str) -> None:
+        digest = hashlib.sha256(self._serial_salt + serial.encode()).hexdigest()
+        self.payload["device"]["serialHash"] = f"sha256-install-salted:{digest}"
+        self.update()
+
+    def event(self, state: str) -> None:
+        self.payload["events"].append(
+            {"at": datetime.now(timezone.utc).isoformat(), "state": state}
+        )
+        self.update()
+
+    def update(self, **sections) -> None:
+        self.payload.update(sections)
+        self.payload["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        temporary = self.path.with_name(
+            self.path.name + "." + secrets.token_hex(4) + ".tmp"
+        )
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(self.payload, stream, indent=2, sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+            directory_fd = os.open(self.directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            self._prune()
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _prune(self) -> None:
+        files = sorted(
+            (
+                p
+                for p in self.directory.glob("usb-health-*.json")
+                if p.is_file() and not p.is_symlink() and stat.S_ISREG(p.stat().st_mode)
+            ),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in files[20:]:
+            old.unlink()
+        cutoff = time.time() - 14 * 86400
+        for old in files[:20]:
+            if old != self.path and old.stat().st_mtime < cutoff:
+                old.unlink()
