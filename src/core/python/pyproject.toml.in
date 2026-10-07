@@ -9,7 +9,10 @@
 # See: numpy.org/devdocs/dev/depending_on_numpy.html
 
 [build-system]
-requires = ["setuptools>=64", "wheel", "numpy>=2.0"]
+# setuptools>=77 for PEP 639: the SPDX `license` string and `license-files`
+# below are what put LICENSE.md and LICENSES/ under .dist-info/licenses/ and
+# name them in METADATA. The SBOM collector appends third-party texts there.
+requires = ["setuptools>=77", "wheel", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,6 +22,8 @@ description = "Isaac Teleop - Teleoperation with Device I/O"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+# Staged beside this file by the python_package target.
+license-files = ["LICENSE.md", "LICENSES/*.txt"]
 authors = [
     {name = "NVIDIA"}
 ]

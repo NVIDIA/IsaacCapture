@@ -5,6 +5,9 @@ cmake_minimum_required(VERSION 3.20)
 
 include(FetchContent)
 
+# Vendored third-party sources, checked in rather than fetched.
+add_subdirectory(openxr_extensions)
+
 # ==============================================================================
 # CMake sanitizers
 # ==============================================================================
@@ -277,4 +280,37 @@ if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)
     message(STATUS "MuJoCo 3.11.0 fetched")
 
     include("${CMAKE_CURRENT_LIST_DIR}/Mujoco.cmake")
+endif()
+
+# ==============================================================================
+# SPDX license list data
+# ==============================================================================
+# Reference license texts. The SBOM collector names a dependency's license by
+# matching the text that dependency ships against these; nothing from this
+# checkout is redistributed, and it builds nothing. Pinned by commit, so no tag
+# upstream can move underneath a build.
+find_package(Git REQUIRED)
+
+set(SPDX_LICENSE_DATA_COMMIT "31ba1a50e5397e00a304dbadc76531740e89ee48")  # v3.29.0
+set(SPDX_LICENSE_DATA_SOURCE_DIR "${FETCHCONTENT_BASE_DIR}/license-list-data-src")
+
+message(STATUS "Fetching SPDX license list data from GitHub...")
+FetchContent_Declare(
+    license_list_data
+    SOURCE_DIR "${SPDX_LICENSE_DATA_SOURCE_DIR}"
+    DOWNLOAD_COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DSPDX_REPOSITORY=https://github.com/spdx/license-list-data.git"
+        "-DSPDX_COMMIT=${SPDX_LICENSE_DATA_COMMIT}"
+        "-DSPDX_SOURCE_DIR=${SPDX_LICENSE_DATA_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_LIST_DIR}/fetch_license_list_data.cmake"
+)
+FetchContent_MakeAvailable(license_list_data)
+
+# What the SBOM collector reads, and what the sbom tests run against.
+set(SPDX_LICENSE_DATA_JSON_DIR "${SPDX_LICENSE_DATA_SOURCE_DIR}/json"
+    CACHE INTERNAL "SPDX reference license texts for the SBOM collector")
+if(NOT EXISTS "${SPDX_LICENSE_DATA_JSON_DIR}/licenses.json")
+    message(FATAL_ERROR "SPDX license list data is missing json/licenses.json after fetch")
 endif()

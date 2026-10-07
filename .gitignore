@@ -70,6 +70,10 @@ MUJOCO_LOG.TXT
 # Runtime device files injected by MCP server infrastructure
 .mcp.json
 
+# Coverage databases, written beside whichever suite was measured
+.coverage
+.coverage.*
+
 # Agent session logs (never committed)
 tmp/
 
@@ -84,3 +88,5 @@ tmp/
 !/examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/leader/leader_gripper.xml
 /examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/follower/*
 !/examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/follower/follower_arm.xml
+# Wheel SBOM and license evidence written by the collector in scripts/sbom/
+/sbom/

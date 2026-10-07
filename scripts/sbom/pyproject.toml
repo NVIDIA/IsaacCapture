@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The wheel SBOM collector. A project of its own so its dependencies are
+# declared once, here, rather than repeated at every call site.
+#
+#   uv run --project scripts/sbom isaaccapture-sbom --help
+#
+# See docs: references/sbom.
+
+[project]
+name = "isaaccapture-sbom"
+version = "1.0.0"
+description = "Discover and package the contents SBOM for an Isaac Capture wheel"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "NVIDIA" }]
+
+# Each owns a format the collector would otherwise parse by hand. Pinned: the
+# documents they produce are published, so an upgrade is a deliberate change.
+dependencies = [
+    "installer==1.0.1",            # RECORD
+    "license-expression==30.4.4",  # SPDX expression grammar
+    "packageurl-python==0.17.6",   # purls
+    "packaging==26.3",             # core metadata, requirements
+    "pyelftools==0.33",            # ELF dynamic section (auditwheel uses it too)
+]
+
+[project.optional-dependencies]
+# Third-party conformance check for the documents this emits.
+dev = ["pytest", "spdx-tools==0.8.3"]
+
+[project.scripts]
+isaaccapture-sbom = "sbom.cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sbom*"]

@@ -1,5 +1,7 @@
 # CloudXR runtime and SDK tarballs
 *.tar.gz
+# Where the download came from, written beside it by the fetch script.
+*.tar.gz.source
 *.tgz
 
 # CloudXR environment files

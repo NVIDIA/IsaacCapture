@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Generate Python stub file (.pyi) for a single Isaac Teleop pybind11 module.
@@ -6,10 +6,10 @@
 This script uses pybind11-stubgen's Python API to generate type stubs for IDE intellisense.
 
 Usage:
-    python generate_stubs.py <module_name> <package_dir>
+    python generate_stubs.py <module_name> <import_dir> <output_dir>
 
 Example:
-    python generate_stubs.py isaaccapture.deviceio._deviceio /path/to/python_package
+    python generate_stubs.py isaaccapture.deviceio._deviceio build/python_package/Release build/generated/stubs
 """
 
 import sys
@@ -27,18 +27,20 @@ def _err(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def generate_stub(module_name: str, package_dir: Path) -> bool:
+def generate_stub(module_name: str, import_dir: Path, output_dir: Path) -> bool:
     """Generate stub file for a single pybind11 module.
 
     Args:
         module_name: Fully qualified module name (e.g., "isaaccapture.deviceio._deviceio")
-        package_dir: Path to the python_package directory containing isaaccapture.
+        import_dir: Staged package tree to import the module from.
+        output_dir: Where to write the .pyi. Kept out of the staged tree so the
+            stub has a build-tree origin like every other generated file.
 
     Returns:
         True if successful, False otherwise.
     """
-    # Add package_dir to sys.path so pybind11-stubgen can import the module
-    sys.path.insert(0, str(package_dir))
+    # Import from the staged tree; write somewhere else entirely.
+    sys.path.insert(0, str(import_dir))
 
     try:
         from pybind11_stubgen import (
@@ -59,7 +61,7 @@ def generate_stub(module_name: str, package_dir: Path) -> bool:
     # Configure stubgen using the proper API
     args = CLIArgs(
         module_name=module_name,
-        output_dir=str(package_dir),
+        output_dir=str(output_dir),
         root_suffix="",
         ignore_invalid_expressions=None,
         ignore_invalid_identifiers=None,
@@ -111,21 +113,24 @@ def generate_stub(module_name: str, package_dir: Path) -> bool:
 
 def main() -> int:
     """Main entry point."""
-    if len(sys.argv) != 3:
-        _err(f"Usage: {sys.argv[0]} <module_name> <package_dir>")
+    if len(sys.argv) != 4:
+        _err(f"Usage: {sys.argv[0]} <module_name> <import_dir> <output_dir>")
         _err(
-            f"Example: {sys.argv[0]} isaaccapture.deviceio._deviceio /path/to/python_package"
+            f"Example: {sys.argv[0]} isaaccapture.deviceio._deviceio "
+            "build/python_package/Release build/generated/stubs"
         )
         return 1
 
     module_name = sys.argv[1]
-    package_dir = Path(sys.argv[2]).resolve()
+    import_dir = Path(sys.argv[2]).resolve()
+    output_dir = Path(sys.argv[3]).resolve()
 
-    if not package_dir.exists():
-        _err(f"Error: Package directory does not exist: {package_dir}")
+    if not import_dir.exists():
+        _err(f"Error: Import directory does not exist: {import_dir}")
         return 1
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    if generate_stub(module_name, package_dir):
+    if generate_stub(module_name, import_dir, output_dir):
         return 0
     else:
         _err("Stub generation failed.")

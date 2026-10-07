@@ -282,6 +282,73 @@ jobs:
         mv install/wheels-repaired/*.whl install/wheels/
         rmdir install/wheels-repaired || true
 
+    # Runs between auditwheel repair and every upload, because the document
+    # describes the finished wheel and the wheel gains files here.
+    # The inventory is discovered from this build tree -- CMake's file API
+    # codemodel, the fetched sources -- so nothing has to be declared anywhere.
+    - name: Package licenses and contents SBOM into wheels (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        args=()
+        for wheel in install/wheels/*.whl; do args+=(--wheel "${wheel}"); done
+        if (( ${#args[@]} == 0 )); then
+          echo "No wheels to describe"
+          exit 1
+        fi
+        uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+          isaaccapture-sbom build \
+          --build-dir "${BUILD_DIR}" "${args[@]}" --out-dir sbom
+
+    - name: Check wheel SBOMs (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        for wheel in install/wheels/*.whl; do
+          stem="$(basename "${wheel}" .whl)"
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            isaaccapture-sbom check --wheel "${wheel}" \
+            --manifest sbom/manifest.json \
+            --build-evidence "sbom/${stem}.build-evidence.json"
+        done
+        # Third-party conformance, from the collector's own dev pins.
+        for document in sbom/*.spdx.json; do
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            --extra dev pyspdxtools -i "${document}"
+        done
+
+    - name: Install and import the finished wheel (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        wheels=(install/wheels/*.whl)
+        # uv pip install re-checks every RECORD digest, so this doubles as proof
+        # that the rewrite left an installable wheel behind. --find-links resolves
+        # the isaacteleop transition wheel built alongside it; without it uv goes
+        # to PyPI for a dependency this build just produced.
+        uv venv --python ${{ matrix.python_version }} .venv-wheel-check
+        uv pip install --python .venv-wheel-check \
+          --find-links install/wheels "${wheels[@]}"
+        .venv-wheel-check/bin/python -c "import isaaccapture; print('imported', isaaccapture.__version__)"
+        # The consumer-side check, run exactly as the published instructions do.
+        for wheel in "${wheels[@]}"; do
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            isaaccapture-sbom check --wheel "${wheel}"
+        done
+
+    - name: Summarize wheel evidence (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        {
+          echo "## Wheel SBOM and license evidence"
+          echo
+          cat sbom/*.licenses.md
+        } >> "${GITHUB_STEP_SUMMARY}"
+
     - name: Create tarball to preserve permissions
       if: matrix.build_type == 'Release'
       run: tar -cvf isaacteleop-install.tar -C install .
@@ -299,6 +366,15 @@ jobs:
       with:
         name: isaacteleop-wheels-${{ matrix.arch }}-py${{ matrix.python_version }}
         path: install/wheels/*.whl
+        if-no-files-found: error
+        retention-days: 7
+
+    - name: Upload wheel SBOM sidecars
+      if: matrix.build_type == 'Release'
+      uses: actions/upload-artifact@v6
+      with:
+        name: isaaccapture-sbom-${{ matrix.arch }}-py${{ matrix.python_version }}
+        path: sbom/
         if-no-files-found: error
         retention-days: 7
 
@@ -1023,6 +1099,115 @@ jobs:
 
         echo "All wheel dependency jobs completed successfully"
 
+  publish-sbom-evidence:  # durable copies attached to the GitHub release
+    # Actions artifacts expire in days; a tagged release is where the evidence a
+    # consumer is told to fetch actually lives. Wheels keep their own copy
+    # embedded either way, so this job publishes, it does not gate.
+    runs-on: ubuntu-22.04
+    needs:
+      - wheel-gate
+    permissions:
+      contents: write
+    timeout-minutes: 20
+
+    # `!cancelled()` for the reason spelled out on `publish-wheel`: a skip
+    # anywhere upstream of `wheel-gate` reaches here too, and the result check
+    # is what should decide.
+    if: >-
+      !cancelled()
+      && needs.wheel-gate.result == 'success'
+      && github.repository_id == '1092046207'
+      && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Install uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Download wheel artifacts
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaacteleop-wheels-*
+        merge-multiple: true
+        path: wheels
+
+    - name: Download wheel SBOM sidecars
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaaccapture-sbom-*
+        path: sbom-sidecars
+
+    - name: Assemble and verify the release evidence set
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+
+        mkdir -p release-evidence
+        # A `py3-none-any` wheel is built by every matrix entry, so its sidecars
+        # arrive once per entry under the same name. Identical copies are one
+        # file; differing ones are kept apart under the entry that produced
+        # them, because dropping one would publish evidence for a wheel nobody
+        # can tell apart from the five it is not.
+        for sidecar in sbom-sidecars/*/*.spdx.json \
+                       sbom-sidecars/*/*.licenses.json \
+                       sbom-sidecars/*/*.licenses.md \
+                       sbom-sidecars/*/*.build-evidence.json; do
+          name="$(basename "${sidecar}")"
+          entry="$(basename "$(dirname "${sidecar}")")"
+          if [[ ! -e "release-evidence/${name}" ]]; then
+            cp "${sidecar}" "release-evidence/${name}"
+          elif cmp -s "${sidecar}" "release-evidence/${name}"; then
+            continue
+          else
+            cp "${sidecar}" "release-evidence/${entry}.${name}"
+          fi
+        done
+
+        uv run --project scripts/sbom --python 3.12 \
+          isaaccapture-sbom merge-manifests \
+          --output release-evidence/isaaccapture-sbom-manifest.json \
+          sbom-sidecars/*/manifest.json
+
+        # Rehearses the published verification instructions against the exact
+        # bytes a consumer will download, and re-checks every advertised digest.
+        uv run --project scripts/sbom --python 3.12 \
+          isaaccapture-sbom check-set \
+          --manifest release-evidence/isaaccapture-sbom-manifest.json \
+          --wheel-dir wheels --evidence-dir release-evidence
+
+        ls -la release-evidence
+
+    - name: Attach evidence to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+
+        # release-tag.yml pushes the tag before it creates the draft release, so
+        # this job can start first. Wait for the release rather than creating one,
+        # which would bypass the draft/approval step.
+        deadline=$(( SECONDS + 900 ))
+        until gh release view "${TAG}" >/dev/null 2>&1; do
+          if (( SECONDS >= deadline )); then
+            echo "::error::No release exists for ${TAG} after 15 minutes; evidence not attached."
+            exit 1
+          fi
+          echo "Waiting for the ${TAG} release to be created..."
+          sleep 20
+        done
+
+        # --clobber makes a retry after a partial upload idempotent. Draft state
+        # and release notes are left exactly as they were.
+        gh release upload "${TAG}" release-evidence/* --clobber
+
+        echo "Attached $(ls release-evidence | wc -l) evidence file(s) to ${TAG}"
+
   publish-wheel:  # to internal Artifactory
     runs-on: [self-hosted, linux]
     permissions: {}
@@ -1066,6 +1251,69 @@ jobs:
         pattern: isaacteleop-wheels-*
         merge-multiple: true
         path: wheels
+
+    - name: Download wheel SBOM sidecars
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaaccapture-sbom-*
+        path: sbom-sidecars
+
+    # Nothing is published until every variant the matrix produces is here and
+    # still hashes to what its own manifest recorded.
+    - name: Verify wheel variant coverage and digests
+      run: |
+        set -euo pipefail
+
+        # Mirrors the build-ubuntu Release matrix: 2 architectures x 3 Pythons.
+        platforms=(x86_64 aarch64)
+        abis=(cp311 cp312 cp313)
+        expected=$(( ${#platforms[@]} * ${#abis[@]} ))
+
+        shopt -s nullglob
+        manifests=(sbom-sidecars/*/manifest.json)
+        if (( ${#manifests[@]} != expected )); then
+          echo "Expected ${expected} SBOM manifests, found ${#manifests[@]}"
+          ls -la sbom-sidecars || true
+          exit 1
+        fi
+
+        published=()
+        for manifest in "${manifests[@]}"; do
+          while IFS=$'\t' read -r filename digest; do
+            wheel="wheels/${filename}"
+            if [[ ! -f "${wheel}" ]]; then
+              echo "Manifest names ${filename}, which is not among the downloaded wheels"
+              exit 1
+            fi
+            actual="$(sha256sum "${wheel}" | cut -d' ' -f1)"
+            if [[ "${actual}" != "${digest}" ]]; then
+              echo "${filename} was modified after its digest was bound"
+              echo "  manifest: ${digest}"
+              echo "  actual:   ${actual}"
+              exit 1
+            fi
+            published+=("${filename}")
+          done < <(jq -r '.wheels[] | [.filename, .sha256] | @tsv' "${manifest}")
+        done
+
+        for platform in "${platforms[@]}"; do
+          for abi in "${abis[@]}"; do
+            found=0
+            for filename in "${published[@]}"; do
+              if [[ "${filename}" == *"-${abi}-${abi}-manylinux"*"_${platform}.whl" ]]; then
+                found=1
+                break
+              fi
+            done
+            if (( found == 0 )); then
+              echo "No wheel was published for ${abi} on ${platform}"
+              printf '  have: %s\n' "${published[@]}"
+              exit 1
+            fi
+          done
+        done
+
+        echo "All ${expected} wheel variants present and matching their recorded digests"
 
     - name: Upload wheel(s) to Artifactory
       id: upload-artifactory
