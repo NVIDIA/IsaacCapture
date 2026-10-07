@@ -123,6 +123,16 @@ class TestBothFilters:
         assert not handler.filter(record(args=("absent",)))
         assert not handler.filter(record(name="isaaccapture.core.Session"))
 
+    def test_warnings_and_errors_always_pass(self):
+        handler = _console.ensure_handler()
+        logging_config.set_console_logger_name_filter(set())
+        logging_config.set_console_content_filter("ready")
+        for level in (logging.WARNING, logging.ERROR):
+            entry = logging.LogRecord(
+                "isaaccapture.core.Session", level, __file__, 1, "x", None, None
+            )
+            assert handler.filter(entry)
+
 
 class TestConsoleLevel:
     def test_publishes_the_level_a_plugin_executable_will_read(self):

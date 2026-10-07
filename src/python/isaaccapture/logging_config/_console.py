@@ -125,6 +125,9 @@ _match_content: Callable[[str], bool] | None = None
 
 
 def _console_filter(record: logging.LogRecord) -> bool:
+    """Pass WARNING and above; keep lower records that pass both console filters."""
+    if record.levelno >= logging.WARNING:
+        return True
     # Read each once; a setter on another thread may replace it in between.
     match_name, match_content = _match_logger_name, _match_content
     return (match_name is None or match_name(record.name) is not None) and (
