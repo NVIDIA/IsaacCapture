@@ -558,8 +558,8 @@ behavior.</p>
 <section id="openxr-ownership">
 <h2>OpenXR ownership<a class="headerlink" href="#openxr-ownership" title="Link to this heading">#</a></h2>
 <p>For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-availability. Runtime or session loss fails the provider; form-factor
-unavailability disconnects the headset while leaving the runtime provider
+tracking. Runtime or session loss fails the provider; sustained loss of active
+head tracking disconnects the headset while leaving the runtime provider
 available.</p>
 <p>For externally supplied <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>, Isaac Teleop does not consume the
 external owner’s event queue. The provider is available after setup and the
@@ -705,7 +705,7 @@ integration.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 05, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 07, 2026.
       <br/>
     
   </p>
