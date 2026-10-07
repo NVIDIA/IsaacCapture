@@ -54,6 +54,8 @@ class SomaBodySource(IDeviceIOSource):
         if not collection_id:
             raise ValueError("SOMA body collection_id must not be empty")
         self.representation = SomaBodyRepresentation(representation)
+        # Without generated native stubs, mypy can miss tracker type mismatches.
+        self._tracker: SomaBodyJointRotationsTracker | SomaBodyJointPosesTracker
         if self.representation is SomaBodyRepresentation.JOINT_ROTATIONS:
             if layer is None:
                 raise ValueError("joint-rotations requires a prepared SOMA layer")

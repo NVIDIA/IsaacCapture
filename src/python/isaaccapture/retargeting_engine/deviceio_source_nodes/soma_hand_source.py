@@ -55,6 +55,7 @@ class SomaHandSource(IDeviceIOSource):
             raise ValueError("SOMA hand source requires LEFT or RIGHT handedness")
         self.handedness = handedness
         self.representation = SomaHandRepresentation(representation)
+        self._tracker: SomaHandJointRotationsTracker | SomaHandJointPosesTracker
         if self.representation is SomaHandRepresentation.JOINT_ROTATIONS:
             if layer is None:
                 raise ValueError("joint-rotations requires a prepared SOMA hand layer")
