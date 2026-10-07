@@ -193,6 +193,24 @@ def test_dense_rotations_normalize_usable_values_and_invalidate_bad_values():
     np.testing.assert_allclose(rotations[4], [0, 0, 0, 1])
 
 
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_dense_adapters_normalize_large_finite_quaternions(sign):
+    quaternion = Quaternion(*np.full(4, sign * 2e38, dtype=np.float32))
+    rotation_entry = SomaBodyJointRotation(SomaBodyJoint.HIPS, quaternion)
+    pose_entry = SomaBodyJointPose(SomaBodyJoint.HIPS, Pose(Point(1, 2, 3), quaternion))
+
+    with np.errstate(over="raise", invalid="raise"):
+        rotations, rotation_valid = _dense_joint_rotations([rotation_entry], 77)
+        _, orientations, pose_valid = _dense_joint_poses([pose_entry], 77)
+
+    assert rotation_valid[0]
+    assert pose_valid[0]
+    np.testing.assert_allclose(rotations[0], np.full(4, sign * 0.5))
+    np.testing.assert_allclose(orientations[0], rotations[0])
+    assert rotations.dtype == np.float32
+    assert orientations.dtype == np.float32
+
+
 def test_dense_poses_normalize_or_invalidate_each_entry():
     entries = [
         SomaBodyJointPose(

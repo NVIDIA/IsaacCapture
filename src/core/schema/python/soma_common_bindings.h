@@ -17,7 +17,6 @@ inline void bind_soma_common(py::module& m)
         .value("UNSPECIFIED", SomaHandedness_UNSPECIFIED)
         .value("LEFT", SomaHandedness_LEFT)
         .value("RIGHT", SomaHandedness_RIGHT);
-
 }
 
 } // namespace core

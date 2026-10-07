@@ -4,6 +4,9 @@
 import signal
 import struct
 import subprocess
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -44,22 +47,41 @@ def test_nested_soma_serialization_uses_payload_root():
     assert evaluated_record.data.to_bytes() == evaluated.to_bytes()
 
 
+def test_layer_uses_upstream_asset_cache(monkeypatch, tmp_path):
+    soma = MagicMock()
+    soma.get_assets_dir.return_value = tmp_path
+    layer = soma.SOMALayer.return_value
+    layer.public_joint_names = [
+        "Root",
+        *[joint.name.replace("_", "") for joint in publisher.BODY_JOINTS],
+    ]
+    layer.data_root = tmp_path
+    monkeypatch.setitem(sys.modules, "soma", soma)
+    monkeypatch.setitem(sys.modules, "torch", MagicMock())
+
+    assert create_layer() is layer
+
+    soma.get_assets_dir.assert_called_once_with()
+    assert soma.SOMALayer.call_args.kwargs["data_root"] == str(tmp_path)
+    layer.prepare_identity.assert_called_once()
+
+
 @pytest.mark.parametrize("exit_code", [0, -signal.SIGINT, 1])
 def test_publisher_interrupt_preserves_real_failures(monkeypatch, tmp_path, exit_code):
-    from unittest.mock import MagicMock
-
     process = MagicMock()
     process.__enter__.return_value = process
     process.stdin.write.side_effect = KeyboardInterrupt
     process.wait.return_value = exit_code
     monkeypatch.setattr(publisher.subprocess, "Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr(publisher, "create_layer", lambda _: None)
+    monkeypatch.setattr(
+        publisher, "create_layer", lambda: SimpleNamespace(data_root=tmp_path)
+    )
     monkeypatch.setattr(
         publisher,
         "demo_controls",
         lambda *args: (np.tile([0, 0, 0, 1], (1, 77, 1)), [[0, 0, 0]], None),
     )
-    args = ["soma_body_publisher", "--data-root", str(tmp_path), "--pusher", "pusher"]
+    args = ["soma_body_publisher", "--pusher", "pusher"]
     if exit_code == 1:
         with pytest.raises(RuntimeError, match="pusher failed"):
             publisher.main(args)

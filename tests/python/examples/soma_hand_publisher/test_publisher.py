@@ -3,8 +3,12 @@
 
 import struct
 import subprocess
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
     _dense_joint_poses,
@@ -14,12 +18,80 @@ from isaaccapture.retargeting_engine.utilities.soma_hand_evaluator import (
     _SomaHandEvaluator,
 )
 from isaaccapture.schema import SomaHandedness
+from isaaccapture_examples.soma_hand_publisher import publisher
 from isaaccapture_examples.soma_hand_publisher.publisher import (
     create_layers,
     demo_hand_frames,
     soma_joint_poses,
     soma_joint_rotations,
 )
+
+
+def test_layers_resolve_assets_without_explicit_path(monkeypatch, tmp_path):
+    soma = MagicMock()
+    soma.get_assets_dir.return_value = tmp_path
+    monkeypatch.setitem(sys.modules, "soma", soma)
+    monkeypatch.setitem(sys.modules, "torch", MagicMock())
+
+    body, hands = create_layers()
+
+    assert soma.SOMALayer.call_args.kwargs["data_root"] == str(tmp_path)
+    assert [call.kwargs["hand_type"] for call in soma.SOMAHandLayer.call_args_list] == [
+        "left",
+        "right",
+    ]
+    assert all(
+        call.kwargs["data_root"] == str(tmp_path)
+        for call in soma.SOMAHandLayer.call_args_list
+    )
+    body.prepare_identity.assert_called_once()
+    assert set(hands) == {"left", "right"}
+
+
+@pytest.mark.parametrize("representation", ["joint-rotations", "joint-poses"])
+def test_publisher_uses_resolved_demo_without_asset_argument(
+    monkeypatch, tmp_path, representation
+):
+    body = SimpleNamespace(data_root=tmp_path)
+    layers = MagicMock(return_value=(body, {}))
+    frame = {
+        "rotations": np.tile([0, 0, 0, 1], (1, 25, 1)),
+        "translation": np.zeros((1, 3)),
+        "positions": np.zeros((1, 25, 3)),
+        "orientations": np.tile([0, 0, 0, 1], (1, 25, 1)),
+    }
+    demo = MagicMock(return_value={"left": frame, "right": frame})
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = 0
+    popen = MagicMock(return_value=process)
+    monkeypatch.setattr(publisher, "create_layers", layers)
+    monkeypatch.setattr(publisher, "demo_hand_frames", demo)
+    monkeypatch.setattr(publisher.subprocess, "Popen", popen)
+
+    assert (
+        publisher.main(
+            [
+                "soma_hand_publisher",
+                "--pusher",
+                "pusher",
+                "--hand-representation",
+                representation,
+                "--validate-only",
+            ]
+        )
+        == 0
+    )
+
+    layers.assert_called_once_with()
+    demo.assert_called_once_with(tmp_path / "example_animation.npy", body, {})
+    assert popen.call_args.args[0][1:] == [
+        "--hand-representation",
+        representation,
+        "--validate-only",
+    ]
+    assert process.stdin.write.call_count == 3
+    process.stdin.close.assert_called_once()
 
 
 def test_hand_payload_constructors_preserve_side_and_arrays():

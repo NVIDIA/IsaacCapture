@@ -42,7 +42,6 @@ uv run --no-sync python -m isaaccapture_examples.deviceio_live_view \
 
 source ~/.cloudxr/run/cloudxr.env
 uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
-  --data-root /path/to/SOMA-X-v0.3.1-assets \
   --pusher ./build/examples/soma_hand_publisher/cpp/soma_hand_pusher/soma_hand_pusher \
   --loop
 ```
@@ -52,7 +51,5 @@ Joint rotations are the default. To publish evaluated joint poses, add
 `--soma-hand-representation joint-poses` to the viewer. The two modes publish
 `soma_hand_joint_rotations` and `soma_hand_joint_poses`, respectively.
 
-The assets must include `SOMAHand.npz`, `example_animation.npy`, and the neutral
-SOMA identity assets from the v0.3.1 asset release. Add `--validate-only` to
-process every paired frame through the native FlatBuffer verifier without
-starting OpenXR.
+Add `--validate-only` to process every paired frame through the native
+FlatBuffer verifier without starting OpenXR.

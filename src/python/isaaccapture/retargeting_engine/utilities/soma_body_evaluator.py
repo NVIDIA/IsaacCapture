@@ -28,10 +28,12 @@ def _normalize_quaternion(value: Any) -> tuple[np.ndarray, bool]:
     quaternion = np.asarray(value, dtype=np.float32)
     if quaternion.shape != (4,) or not np.isfinite(quaternion).all():
         return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), False
-    norm = float(np.linalg.norm(quaternion.astype(np.float64)))
+    quaternion64 = quaternion.astype(np.float64)
+    norm = float(np.linalg.norm(quaternion64))
     if norm <= _QUATERNION_EPS:
         return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), False
-    return quaternion / np.float32(norm), True
+    # Finite float32 components can have a norm larger than float32 can represent.
+    return (quaternion64 / norm).astype(np.float32), True
 
 
 def _dense_joint_rotations(

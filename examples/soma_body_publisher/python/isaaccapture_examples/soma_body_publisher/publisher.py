@@ -37,11 +37,17 @@ BODY_JOINTS = tuple(
 )
 
 
-def create_layer(data_root: Path):
+def create_layer(data_root: Path | None = None):
     """Create the neutral SOMA-X v0.3.1 model used by the bundled motion."""
     import soma
     import torch
 
+    # The v0.3.1 body-layer fallback imports a nonexistent soma.body.assets.
+    if data_root is None:
+        logger.info(
+            "Loading SOMA assets. First use may download files and take a while."
+        )
+        data_root = soma.get_assets_dir()
     layer = soma.SOMALayer(
         data_root=str(data_root),
         identity_model_type="soma",
@@ -133,7 +139,6 @@ def soma_joint_poses(positions, orientations):
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-root", required=True, type=Path)
     parser.add_argument(
         "--pusher", required=True, type=Path, help="Built soma_body_pusher executable"
     )
@@ -153,8 +158,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
     if not math.isfinite(args.rate) or args.rate <= 0:
         parser.error("rate must be finite and positive")
-    layer = create_layer(args.data_root)
-    q, t, rotations = demo_controls(args.data_root / "example_animation.npy", layer)
+    layer = create_layer()
+    q, t, rotations = demo_controls(layer.data_root / "example_animation.npy", layer)
     if args.body_representation == "joint-poses":
         positions, orientations = evaluate_demo_controls(layer, rotations, t)
         frame_values = positions, orientations

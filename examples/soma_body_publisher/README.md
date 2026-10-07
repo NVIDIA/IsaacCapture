@@ -37,7 +37,6 @@ Start a SOMA consumer such as `deviceio_live_view`, connect its client, then run
 ```bash
 source ~/.cloudxr/run/cloudxr.env
 uv run --no-sync python -m isaaccapture_examples.soma_body_publisher \
-  --data-root /path/to/SOMA-X/assets \
   --pusher ./build/examples/soma_body_publisher/cpp/soma_body_pusher/soma_body_pusher \
   --loop
 ```
@@ -47,6 +46,5 @@ add `--body-representation joint-poses`. Configure the consumer with the same
 representation. The two modes publish `soma_body_joint_rotations` and
 `soma_body_joint_poses`, respectively.
 
-The assets directory must contain `example_animation.npy` and the neutral SOMA
-identity assets. Add `--validate-only` to process every bundled frame through
-the FlatBuffer verifier without starting OpenXR or publishing data.
+Add `--validate-only` to process every bundled frame through the FlatBuffer
+verifier without starting OpenXR or publishing data.

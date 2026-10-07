@@ -38,11 +38,17 @@ HAND_JOINTS = tuple(
 )
 
 
-def create_layers(data_root: Path):
+def create_layers(data_root: Path | None = None):
     """Create the neutral full-body and hand layers used by the bundled motion."""
     import soma
     import torch
 
+    # The v0.3.1 body-layer fallback imports a nonexistent soma.body.assets.
+    if data_root is None:
+        logger.info(
+            "Loading SOMA assets. First use may download files and take a while."
+        )
+        data_root = soma.get_assets_dir()
     body = soma.SOMALayer(
         data_root=str(data_root),
         identity_model_type="soma",
@@ -173,7 +179,6 @@ def _payload(frame, index: int, representation: str, handedness):
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-root", required=True, type=Path)
     parser.add_argument(
         "--pusher", required=True, type=Path, help="Built soma_hand_pusher executable"
     )
@@ -194,9 +199,9 @@ def main(argv: list[str]) -> int:
     if not math.isfinite(args.rate) or args.rate <= 0:
         parser.error("rate must be finite and positive")
 
-    body, hand_layers = create_layers(args.data_root)
+    body, hand_layers = create_layers()
     frames = demo_hand_frames(
-        args.data_root / "example_animation.npy", body, hand_layers
+        body.data_root / "example_animation.npy", body, hand_layers
     )
     command = [
         str(args.pusher.resolve()),

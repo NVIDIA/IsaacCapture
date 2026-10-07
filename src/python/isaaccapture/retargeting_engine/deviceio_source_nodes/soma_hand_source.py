@@ -63,7 +63,8 @@ class SomaHandSource(IDeviceIOSource):
         else:
             self._tracker = SomaHandJointPosesTracker(collection_id)
             self._input_type = DeviceIOSomaHandJointPosesTracked()
-        expected_hand_type = "left" if handedness is SomaHandedness.LEFT else "right"
+        # Pybind enum values read from buffers are not singleton objects.
+        expected_hand_type = "left" if handedness == SomaHandedness.LEFT else "right"
         self._evaluator = (
             _SomaHandEvaluator(layer, expected_hand_type) if layer is not None else None
         )

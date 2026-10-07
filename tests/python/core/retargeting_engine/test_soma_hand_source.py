@@ -142,6 +142,20 @@ def test_rotation_source_evaluates_received_payload():
     )
 
 
+@pytest.mark.parametrize(
+    "handedness,hand_type",
+    [(SomaHandedness.LEFT, "left"), (SomaHandedness.RIGHT, "right")],
+)
+def test_rotation_source_accepts_payload_handedness(handedness, hand_type):
+    payload = rotations(handedness)
+    layer = fake_layer(hand_type)
+
+    source = SomaHandSource("hand", "vendor.hand", payload.handedness, layer)
+
+    assert source.handedness == handedness
+    assert source._evaluator.layer is layer
+
+
 def test_joint_pose_source_maps_without_fk():
     source = SomaHandSource(
         "left",

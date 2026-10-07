@@ -100,10 +100,7 @@ build their native pushers:
      --target isaacteleop_python soma_body_pusher soma_hand_pusher \
      -j4
 
-The example packages install ``py-soma-x==0.3.1``. SOMA-X resolves the model
-assets needed by rotation consumers. The demo publishers additionally require a
-matching SOMA-X asset directory containing ``example_animation.npy``. The hand
-publisher also requires ``SOMAHand.npz``.
+The example packages install ``py-soma-x==0.3.1``.
 
 Run the body example
 --------------------
@@ -125,7 +122,6 @@ publisher:
 
    source ~/.cloudxr/run/cloudxr.env
    uv run --no-sync python -m isaaccapture_examples.soma_body_publisher \
-     --data-root /path/to/SOMA-X/assets \
      --pusher ./build/examples/soma_body_publisher/cpp/soma_body_pusher/soma_body_pusher \
      --loop
 
@@ -151,7 +147,6 @@ publisher:
 
    source ~/.cloudxr/run/cloudxr.env
    uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
-     --data-root /path/to/SOMA-X/assets \
      --pusher ./build/examples/soma_hand_publisher/cpp/soma_hand_pusher/soma_hand_pusher \
      --loop
 
@@ -238,8 +233,7 @@ The viewer receives no skeleton
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Confirm that the publisher and viewer use the same representation and
-collection names. For a demo publisher, also confirm that its asset directory
-matches SOMA-X v0.3.1 and contains the required animation and model files.
+collection names.
 
 See also
 --------
