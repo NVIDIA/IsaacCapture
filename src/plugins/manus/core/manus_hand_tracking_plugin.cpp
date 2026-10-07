@@ -665,7 +665,7 @@ bool ManusTracker::apply_glove_calibration(uint32_t glove_id, bool is_left)
         return false;
     }
 
-    m_logger->info("Applied {} glove calibration file to glove id={}", is_left ? "left" : "right", glove_id);
+    m_logger->debug("Applied {} glove calibration file to glove id={}", is_left ? "left" : "right", glove_id);
     return true;
 }
 
@@ -765,6 +765,7 @@ void ManusTracker::OnLandscapeStream(const Landscape* landscape)
             {
                 tracker.left_glove_id = glove.id;
                 tracker.m_calibration_failed[0] = !tracker.apply_glove_calibration(glove.id, true);
+                tracker.m_logger->info("Left glove connected (ID {}); start streaming.", glove.id);
             }
             // Fetch bone topology once on connect
             uint32_t nc = 0;
@@ -784,6 +785,7 @@ void ManusTracker::OnLandscapeStream(const Landscape* landscape)
             {
                 tracker.right_glove_id = glove.id;
                 tracker.m_calibration_failed[1] = !tracker.apply_glove_calibration(glove.id, false);
+                tracker.m_logger->info("Right glove connected (ID {}); start streaming.", glove.id);
             }
             uint32_t nc = 0;
             if (get_raw_skeleton_node_count(glove.id, nc) == SDKReturnCode::SDKReturnCode_Success && nc > 0)
@@ -1016,12 +1018,6 @@ void ManusTracker::push_sensor_side(bool is_left, core::SchemaPusher& pusher)
     if (count < static_cast<uint32_t>(kManusSensorCount))
     {
         return;
-    }
-
-    if (!m_sensors_logged_on[side])
-    {
-        m_sensors_logged_on[side] = true;
-        m_logger->info("{} sensors=on", is_left ? "left" : "right");
     }
 
     std::vector<core::JointSe3Pose> joints;
