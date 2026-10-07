@@ -525,6 +525,7 @@ class OobLifecycle:
                 networkPresent=True,
                 reverseRulesVerified=self.usb_local,
                 turnPrerequisitesReady=self.usb_local,
+                connectDispatched=False,
             )
 
         def on_dispatched() -> Awaitable[None]:
@@ -584,23 +585,43 @@ class OobLifecycle:
         await self._stop_monitor()
         self.connect_dispatched = False
 
-        def on_dispatched() -> Awaitable[None]:
-            self.connect_at = time.time()
-            self.connect_dispatched = True
-            return self._publish(
+        async def on_client_loaded() -> None:
+            self.client_loaded = True
+            await self._publish(
                 "degraded",
-                "CONNECT_DISPATCHED",
-                "Existing browser CONNECT dispatched; waiting for fresh stream evidence",
+                "CLIENT_LOADED",
+                "Existing browser CONNECT control is actionable",
                 adbReady=True,
                 networkPresent=True,
                 reverseRulesVerified=self.usb_local,
                 turnPrerequisitesReady=self.usb_local,
-                connectDispatched=True,
             )
+
+        def on_dispatched() -> Awaitable[None]:
+            self.connect_at = time.time()
+            self.connect_dispatched = True
+
+            async def publish() -> None:
+                if not self.client_loaded:
+                    await on_client_loaded()
+                await self._publish(
+                    "degraded",
+                    "CONNECT_DISPATCHED",
+                    "Existing browser CONNECT dispatched; waiting for fresh stream evidence",
+                    adbReady=True,
+                    networkPresent=True,
+                    reverseRulesVerified=self.usb_local,
+                    turnPrerequisitesReady=self.usb_local,
+                    connectDispatched=True,
+                )
+
+            return publish()
 
         try:
             self.monitor = await adb.attach_existing_oob_tab(
-                click_connect=True, on_dispatched=on_dispatched
+                click_connect=True,
+                on_client_loaded=on_client_loaded,
+                on_dispatched=on_dispatched,
             )
         except adb.OobAdbError:
             self.monitor = None

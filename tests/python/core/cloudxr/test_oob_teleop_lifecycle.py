@@ -2201,8 +2201,10 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
     lifecycle._client_grace_deadline = lifecycle.clock() + 20
     clicks = []
 
-    async def attach(*, click_connect, on_dispatched=None):
+    async def attach(*, click_connect, on_dispatched=None, on_client_loaded=None):
         clicks.append(click_connect)
+        if on_client_loaded:
+            await on_client_loaded()
         if on_dispatched:
             dispatched = on_dispatched()
             if asyncio.iscoroutine(dispatched):
@@ -2521,15 +2523,20 @@ async def test_same_tab_connect_publishes_dispatch_before_monitor_returns():
         config=RecoveryConfig(),
     )
     lifecycle.selected = "original"
-    lifecycle.client_loaded = True
+    assert lifecycle.client_loaded is False
 
-    async def attach(*, click_connect, on_dispatched):
+    async def attach(*, click_connect, on_client_loaded, on_dispatched):
         assert click_connect
+        assert lifecycle.client_loaded is False
+        await on_client_loaded()
+        assert hub.statuses[-1]["state"] == "CLIENT_LOADED"
+        assert hub.statuses[-1]["clientLoaded"] is True
         dispatched = on_dispatched()
         if asyncio.iscoroutine(dispatched):
             await dispatched
         assert hub.statuses[-1]["state"] == "CONNECT_DISPATCHED"
         assert hub.statuses[-1]["connectDispatched"] is True
+        assert hub.statuses[-1]["readinessStage"] == "connectDispatched"
         return asyncio.create_task(asyncio.Event().wait())
 
     with patch(
@@ -2538,3 +2545,43 @@ async def test_same_tab_connect_publishes_dispatch_before_monitor_returns():
     ):
         assert await lifecycle._same_tab_connect("terminal:1")
     await lifecycle._stop_monitor()
+
+
+async def test_grace_recovery_without_hub_report_publishes_loaded_before_connect():
+    hub = FakeHub()
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(0, result=None)
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    lifecycle.selected = "original"
+    lifecycle._transport_lost = True
+    lifecycle._restore_existing_browser = True
+    lifecycle._repair_started_at = time.time()
+    lifecycle._client_grace_deadline = lifecycle.clock() - 1
+    assert lifecycle.client_loaded is False
+
+    async def attach(*, click_connect, on_client_loaded, on_dispatched):
+        assert click_connect
+        await on_client_loaded()
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=False),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+            side_effect=attach,
+        ),
+    ):
+        await lifecycle._recover_existing_browser()
+    await lifecycle._stop_monitor()
+    stages = [status["readinessStage"] for status in hub.statuses]
+    assert stages[:2] == ["clientLoaded", "connectDispatched"]
+    assert hub.statuses[-1]["connectDispatched"] is True
