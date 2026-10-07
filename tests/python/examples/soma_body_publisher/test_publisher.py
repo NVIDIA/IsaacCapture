@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import signal
-import struct
-import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -66,72 +63,161 @@ def test_layer_uses_upstream_asset_cache(monkeypatch, tmp_path):
     layer.prepare_identity.assert_called_once()
 
 
-@pytest.mark.parametrize("exit_code", [0, -signal.SIGINT, 1])
-def test_publisher_interrupt_preserves_real_failures(monkeypatch, tmp_path, exit_code):
-    process = MagicMock()
-    process.__enter__.return_value = process
-    process.stdin.write.side_effect = KeyboardInterrupt
-    process.wait.return_value = exit_code
-    monkeypatch.setattr(publisher.subprocess, "Popen", lambda *args, **kwargs: process)
+@pytest.fixture
+def demo(monkeypatch, tmp_path):
     monkeypatch.setattr(
         publisher, "create_layer", lambda: SimpleNamespace(data_root=tmp_path)
     )
     monkeypatch.setattr(
         publisher,
         "demo_controls",
-        lambda *args: (np.tile([0, 0, 0, 1], (1, 77, 1)), [[0, 0, 0]], None),
+        lambda *args: (np.tile([0, 0, 0, 1], (2, 77, 1)), [[0, 0, 0], [1, 2, 3]], None),
     )
-    args = ["soma_body_publisher", "--pusher", "pusher"]
-    if exit_code == 1:
-        with pytest.raises(RuntimeError, match="pusher failed"):
-            publisher.main(args)
-    else:
-        assert publisher.main(args) == 0
-    process.stdin.close.assert_called_once()
+    monkeypatch.setattr(
+        publisher,
+        "evaluate_demo_controls",
+        lambda *args: (np.zeros((2, 77, 3)), np.tile([0, 0, 0, 1], (2, 77, 1))),
+    )
+    session = MagicMock()
+    session.__enter__.return_value = session
+    oxr_session = MagicMock()
+    oxr_session.__enter__.return_value = oxr_session
+    deviceio = MagicMock()
+    deviceio.run.return_value = session
+    oxr = MagicMock(return_value=oxr_session)
+    tracker = MagicMock()
+    tracker_factory = MagicMock(return_value=tracker)
+    monkeypatch.setattr(publisher, "DeviceIOSession", deviceio)
+    monkeypatch.setattr(publisher, "OpenXRSession", oxr)
+    monkeypatch.setattr(publisher, "TensorPushTracker", tracker_factory)
+    monkeypatch.setattr(publisher.time, "monotonic", lambda: 0.0)
+    sleep = MagicMock()
+    monkeypatch.setattr(publisher.time, "sleep", sleep)
+    return SimpleNamespace(
+        session=session,
+        oxr_session=oxr_session,
+        deviceio=deviceio,
+        oxr=oxr,
+        tracker=tracker,
+        tracker_factory=tracker_factory,
+        sleep=sleep,
+    )
 
 
 @pytest.mark.parametrize(
-    "packet",
-    [b"x", struct.pack("<IQ", 2049, 0), struct.pack("<IQ", 8, 0) + b"badbytes"],
+    "representation,capacity", [("joint-rotations", 2048), ("joint-poses", 4096)]
 )
-def test_pusher_rejects_invalid_packets_without_runtime(request, packet):
-    executable = request.config.getoption("--soma-pusher")
-    if executable is None:
-        pytest.skip("Pass --soma-pusher to exercise the native producer boundary")
-    result = subprocess.run(
-        [str(executable), "--validate-only"],
-        input=packet,
-        capture_output=True,
-        check=False,
+def test_publisher_pushes_selected_schema_in_process(demo, representation, capacity):
+    assert publisher.main(["publisher", "--body-representation", representation]) == 0
+    demo.tracker_factory.assert_called_once_with(
+        "soma_body_demo", "soma_body_" + representation.replace("-", "_"), capacity
     )
-    assert result.returncode == 1
+    demo.deviceio.get_required_extensions.assert_called_once_with([demo.tracker])
+    demo.oxr.assert_called_once_with(
+        "SomaBodyDemoPublisher", demo.deviceio.get_required_extensions.return_value
+    )
+    demo.deviceio.run.assert_called_once_with(
+        [demo.tracker], demo.oxr_session.get_handles.return_value
+    )
+    assert demo.session.update.call_count == 2
+    assert demo.tracker.push.call_count == 2
+    if representation == "joint-rotations":
+        expected = soma_joint_rotations(
+            np.tile([0, 0, 0, 1], (77, 1)), [1, 2, 3]
+        ).to_bytes()
+    else:
+        expected = soma_joint_poses(
+            np.zeros((77, 3)), np.tile([0, 0, 0, 1], (77, 1))
+        ).to_bytes()
+    demo.tracker.push.assert_called_with(demo.session, expected)
+    demo.sleep.assert_called_once_with(1 / 30)
+    demo.session.__exit__.assert_called_once()
+    demo.oxr_session.__exit__.assert_called_once()
 
 
-def test_pusher_rejects_mismatched_body_representation(request):
-    executable = request.config.getoption("--soma-pusher")
-    if executable is None:
-        pytest.skip("Pass --soma-pusher to exercise the native producer boundary")
-    rotations = soma_joint_rotations(
-        np.tile([0.0, 0.0, 0.0, 1.0], (77, 1)), [0.0, 0.0, 0.0]
-    ).to_bytes()
-    packet = struct.pack("<IQ", len(rotations), 0) + rotations
+@pytest.mark.parametrize("representation", ["joint-rotations", "joint-poses"])
+def test_validate_only_does_not_open_runtime_or_loop(demo, representation):
+    assert (
+        publisher.main(
+            [
+                "publisher",
+                "--body-representation",
+                representation,
+                "--validate-only",
+                "--loop",
+            ]
+        )
+        == 0
+    )
+    demo.tracker_factory.assert_not_called()
+    demo.deviceio.run.assert_not_called()
+    demo.oxr.assert_not_called()
+    demo.sleep.assert_not_called()
 
-    result = subprocess.run(
-        [
-            str(executable),
-            "--body-representation",
-            "joint-poses",
-            "--validate-only",
-        ],
-        input=packet,
-        capture_output=True,
-        check=False,
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, RuntimeError])
+def test_publisher_closes_sessions_and_preserves_push_failures(demo, error):
+    demo.tracker.push.side_effect = error("push stopped")
+    if error is KeyboardInterrupt:
+        assert publisher.main(["publisher"]) == 0
+    else:
+        with pytest.raises(RuntimeError, match="push stopped"):
+            publisher.main(["publisher"])
+    demo.session.__exit__.assert_called_once()
+    demo.oxr_session.__exit__.assert_called_once()
+
+
+def test_session_initialization_failure_closes_openxr(demo):
+    demo.deviceio.run.side_effect = RuntimeError("session failed")
+    with pytest.raises(RuntimeError, match="session failed"):
+        publisher.main(["publisher"])
+    demo.oxr_session.__exit__.assert_called_once()
+    demo.tracker.push.assert_not_called()
+
+
+def test_publisher_loop_repeats_clip_until_interrupted(demo):
+    demo.tracker.push.side_effect = [None, None, KeyboardInterrupt]
+    assert publisher.main(["publisher", "--loop"]) == 0
+    assert demo.tracker.push.call_count == 3
+    assert (
+        demo.tracker.push.call_args_list[0].args[1]
+        == demo.tracker.push.call_args_list[2].args[1]
     )
 
-    assert result.returncode == 1
+
+@pytest.mark.parametrize(
+    "representation,capacity", [("joint-rotations", 2048), ("joint-poses", 4096)]
+)
+def test_validate_only_rejects_oversized_payload(
+    demo, monkeypatch, representation, capacity
+):
+    encoder = (
+        "soma_joint_poses"
+        if representation == "joint-poses"
+        else "soma_joint_rotations"
+    )
+    monkeypatch.setattr(
+        publisher,
+        encoder,
+        lambda *args: SimpleNamespace(to_bytes=lambda: bytes(capacity + 1)),
+    )
+    with pytest.raises(ValueError, match="exceeds transport capacity"):
+        publisher.main(
+            ["publisher", "--body-representation", representation, "--validate-only"]
+        )
 
 
-def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
+@pytest.mark.parametrize("rate", ["0", "-1", "nan", "inf"])
+def test_invalid_rate_is_rejected_before_loading_model(monkeypatch, rate):
+    layer = MagicMock()
+    monkeypatch.setattr(publisher, "create_layer", layer)
+    with pytest.raises(SystemExit) as error:
+        publisher.main(["publisher", "--rate", rate])
+    assert error.value.code == 2
+    layer.assert_not_called()
+
+
+def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets):
     import torch
     from soma.geometry.transforms import (
         matrix_to_quaternion_xyzw,
@@ -188,35 +274,12 @@ def test_demo_to_fbs_to_native_soma_matches_upstream(soma_assets, request):
     flipped_positions, _, _ = evaluator.evaluate(soma_joint_rotations(-q[0], t[0]))
     np.testing.assert_allclose(flipped_positions, positions, atol=1e-6)
 
-    executable = request.config.getoption("--soma-pusher")
-    if executable is not None:
-        packets = []
-        for frame, (rotations, translation) in enumerate(zip(q, t, strict=True)):
-            encoded = soma_joint_rotations(rotations, translation).to_bytes()
-            packets.append(struct.pack("<IQ", len(encoded), frame) + encoded)
-        result = subprocess.run(
-            [str(executable), "--validate-only"],
-            input=b"".join(packets),
-            capture_output=True,
-            check=False,
+    for rotations, translation in zip(q, t, strict=True):
+        assert len(soma_joint_rotations(rotations, translation).to_bytes()) <= 2048
+    for frame_positions, frame_orientations in zip(
+        evaluated_positions, evaluated_orientations, strict=True
+    ):
+        assert (
+            len(soma_joint_poses(frame_positions, frame_orientations).to_bytes())
+            <= 4096
         )
-        assert result.returncode == 0, result.stderr.decode()
-
-        pose_packets = []
-        for frame, (frame_positions, frame_orientations) in enumerate(
-            zip(evaluated_positions, evaluated_orientations, strict=True)
-        ):
-            encoded = soma_joint_poses(frame_positions, frame_orientations).to_bytes()
-            pose_packets.append(struct.pack("<IQ", len(encoded), frame) + encoded)
-        result = subprocess.run(
-            [
-                str(executable),
-                "--body-representation",
-                "joint-poses",
-                "--validate-only",
-            ],
-            input=b"".join(pose_packets),
-            capture_output=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr.decode()

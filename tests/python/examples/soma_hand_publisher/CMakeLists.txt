@@ -12,7 +12,6 @@ foreach(test_file ${TEST_FILES})
         NAME "soma_hand_publisher_${test_name}"
         COMMAND uv run --python ${ISAAC_TELEOP_PYTHON_VERSION} --extra dev
             pytest -v --tb=short "${test_file}"
-            --soma-hand-pusher $<TARGET_FILE:soma_hand_pusher>
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     set_tests_properties("soma_hand_publisher_${test_name}" PROPERTIES

@@ -86,8 +86,7 @@ Build the examples
 
 Start with a configured Isaac Teleop checkout. See
 :doc:`../getting_started/build_from_source/index` for the complete build
-prerequisites. Install the live viewer and both deterministic publishers, then
-build their native pushers:
+prerequisites. Install the live viewer and both deterministic publishers:
 
 .. code-block:: bash
 
@@ -97,10 +96,13 @@ build their native pushers:
 
    .venv/bin/cmake -S . -B build
    .venv/bin/cmake --build build \
-     --target isaacteleop_python soma_body_pusher soma_hand_pusher \
+     --target isaacteleop_python \
      -j4
 
 The example packages install ``py-soma-x==0.3.1``.
+The publishers use the Python-accessible ``TensorPushTracker`` and its native
+``SchemaPusher`` transport; no separate sender executable is needed. Demo samples
+use the session's monotonic clock for both timestamps.
 
 Run the body example
 --------------------
@@ -122,7 +124,6 @@ publisher:
 
    source ~/.cloudxr/run/cloudxr.env
    uv run --no-sync python -m isaaccapture_examples.soma_body_publisher \
-     --pusher ./build/examples/soma_body_publisher/cpp/soma_body_pusher/soma_body_pusher \
      --loop
 
 These commands use ``joint-rotations``. To publish evaluated joint poses, add
@@ -147,7 +148,6 @@ publisher:
 
    source ~/.cloudxr/run/cloudxr.env
    uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
-     --pusher ./build/examples/soma_hand_publisher/cpp/soma_hand_pusher/soma_hand_pusher \
      --loop
 
 These commands use ``joint-rotations``. To publish evaluated joint poses, add

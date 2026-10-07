@@ -6,15 +6,16 @@
 import argparse
 import logging
 import math
-import signal
-import struct
-import subprocess
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
 
+from isaaccapture.deviceio_session import DeviceIOSession
+from isaaccapture.deviceio_trackers import TensorPushTracker
+from isaaccapture.oxr import OpenXRSession
 from isaaccapture.schema import (
     Point,
     Pose,
@@ -139,9 +140,6 @@ def soma_joint_poses(positions, orientations):
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--pusher", required=True, type=Path, help="Built soma_body_pusher executable"
-    )
     parser.add_argument("--rate", type=float, default=30.0)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument(
@@ -153,7 +151,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Validate FBS packets without OpenXR",
+        help="Encode demo frames and check transport capacity without OpenXR",
     )
     args = parser.parse_args(argv[1:])
     if not math.isfinite(args.rate) or args.rate <= 0:
@@ -165,16 +163,29 @@ def main(argv: list[str]) -> int:
         frame_values = positions, orientations
     else:
         frame_values = q, t
-    command = [
-        str(args.pusher.resolve()),
-        "--body-representation",
-        args.body_representation,
-    ] + (["--validate-only"] if args.validate_only else [])
-    with subprocess.Popen(command, stdin=subprocess.PIPE) as process:
-        interrupted = False
-        try:
+    joint_poses = args.body_representation == "joint-poses"
+    max_payload_size = 4096 if joint_poses else 2048
+    frame = 0
+    try:
+        with ExitStack() as stack:
+            session = None
+            if not args.validate_only:
+                tracker = TensorPushTracker(
+                    "soma_body_demo",
+                    "soma_body_joint_poses"
+                    if joint_poses
+                    else "soma_body_joint_rotations",
+                    max_payload_size,
+                )
+                trackers = [tracker]
+                extensions = DeviceIOSession.get_required_extensions(trackers)
+                oxr_session = stack.enter_context(
+                    OpenXRSession("SomaBodyDemoPublisher", extensions)
+                )
+                session = stack.enter_context(
+                    DeviceIOSession.run(trackers, oxr_session.get_handles())
+                )
             start = time.monotonic()
-            frame = 0
             while True:
                 for first, second in zip(*frame_values):
                     remaining = start + frame / args.rate - time.monotonic()
@@ -184,21 +195,21 @@ def main(argv: list[str]) -> int:
                         payload = soma_joint_poses(first, second).to_bytes()
                     else:
                         payload = soma_joint_rotations(first, second).to_bytes()
-                    process.stdin.write(
-                        struct.pack("<IQ", len(payload), round(frame * 1e9 / args.rate))
-                    )
-                    process.stdin.write(payload)
-                    process.stdin.flush()
+                    if len(payload) > max_payload_size:
+                        raise ValueError("SOMA body payload exceeds transport capacity")
+                    if session is not None:
+                        session.update()
+                        tracker.push(session, payload)
                     frame += 1
                 if not args.loop or args.validate_only:
                     break
-        except KeyboardInterrupt:
-            interrupted = True
-        finally:
-            process.stdin.close()
-        exit_code = process.wait()
-        if exit_code != 0 and not (interrupted and exit_code == -signal.SIGINT):
-            raise RuntimeError("SOMA body pusher failed; see its runtime diagnostics")
+    except KeyboardInterrupt:
+        pass
+    logger.info(
+        "%s %d SOMA body demo frames",
+        "Encoded" if args.validate_only else "Published",
+        frame,
+    )
     return 0
 
 

@@ -15,7 +15,6 @@ sys.path.insert(0, str(repo_root() / "examples" / "soma_body_publisher" / "pytho
 
 def pytest_addoption(parser):
     parser.addoption("--soma-assets", type=Path, help="SOMA-X assets directory")
-    parser.addoption("--soma-pusher", type=Path, help="Built soma_body_pusher")
 
 
 @pytest.fixture(scope="module")

@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import struct
-import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -48,50 +46,169 @@ def test_layers_resolve_assets_without_explicit_path(monkeypatch, tmp_path):
     assert set(hands) == {"left", "right"}
 
 
-@pytest.mark.parametrize("representation", ["joint-rotations", "joint-poses"])
-def test_publisher_uses_resolved_demo_without_asset_argument(
-    monkeypatch, tmp_path, representation
-):
+@pytest.fixture
+def demo(monkeypatch, tmp_path):
     body = SimpleNamespace(data_root=tmp_path)
     layers = MagicMock(return_value=(body, {}))
     frame = {
-        "rotations": np.tile([0, 0, 0, 1], (1, 25, 1)),
-        "translation": np.zeros((1, 3)),
-        "positions": np.zeros((1, 25, 3)),
-        "orientations": np.tile([0, 0, 0, 1], (1, 25, 1)),
+        "rotations": np.tile([0, 0, 0, 1], (2, 25, 1)),
+        "translation": np.zeros((2, 3)),
+        "positions": np.zeros((2, 25, 3)),
+        "orientations": np.tile([0, 0, 0, 1], (2, 25, 1)),
     }
-    demo = MagicMock(return_value={"left": frame, "right": frame})
-    process = MagicMock()
-    process.__enter__.return_value = process
-    process.wait.return_value = 0
-    popen = MagicMock(return_value=process)
+    frames = MagicMock(return_value={"left": frame, "right": frame})
+    session = MagicMock()
+    session.__enter__.return_value = session
+    oxr_session = MagicMock()
+    oxr_session.__enter__.return_value = oxr_session
+    deviceio = MagicMock()
+    deviceio.run.return_value = session
+    oxr = MagicMock(return_value=oxr_session)
+    left, right = MagicMock(), MagicMock()
+    tracker_factory = MagicMock(side_effect=[left, right])
     monkeypatch.setattr(publisher, "create_layers", layers)
-    monkeypatch.setattr(publisher, "demo_hand_frames", demo)
-    monkeypatch.setattr(publisher.subprocess, "Popen", popen)
+    monkeypatch.setattr(publisher, "demo_hand_frames", frames)
+    monkeypatch.setattr(publisher, "DeviceIOSession", deviceio)
+    monkeypatch.setattr(publisher, "OpenXRSession", oxr)
+    monkeypatch.setattr(publisher, "TensorPushTracker", tracker_factory)
+    monkeypatch.setattr(publisher.time, "monotonic", lambda: 0.0)
+    sleep = MagicMock()
+    monkeypatch.setattr(publisher.time, "sleep", sleep)
+    return SimpleNamespace(
+        session=session,
+        oxr_session=oxr_session,
+        deviceio=deviceio,
+        oxr=oxr,
+        left=left,
+        right=right,
+        tracker_factory=tracker_factory,
+        sleep=sleep,
+        layers=layers,
+        frames=frames,
+        body=body,
+        frame=frame,
+    )
 
+
+@pytest.mark.parametrize(
+    "representation,capacity", [("joint-rotations", 1024), ("joint-poses", 2048)]
+)
+def test_publisher_pushes_each_hand_through_one_session(demo, representation, capacity):
     assert (
         publisher.main(
             [
                 "soma_hand_publisher",
-                "--pusher",
-                "pusher",
                 "--hand-representation",
                 representation,
-                "--validate-only",
             ]
         )
         == 0
     )
 
-    layers.assert_called_once_with()
-    demo.assert_called_once_with(tmp_path / "example_animation.npy", body, {})
-    assert popen.call_args.args[0][1:] == [
-        "--hand-representation",
-        representation,
-        "--validate-only",
+    demo.layers.assert_called_once_with()
+    demo.frames.assert_called_once_with(
+        demo.body.data_root / "example_animation.npy", demo.body, {}
+    )
+    identifier = "soma_hand_" + representation.replace("-", "_")
+    assert [call.args for call in demo.tracker_factory.call_args_list] == [
+        ("soma_hand_left_demo", identifier, capacity),
+        ("soma_hand_right_demo", identifier, capacity),
     ]
-    assert process.stdin.write.call_count == 3
-    process.stdin.close.assert_called_once()
+    demo.deviceio.get_required_extensions.assert_called_once_with(
+        [demo.left, demo.right]
+    )
+    demo.oxr.assert_called_once_with(
+        "SomaHandDemoPublisher", demo.deviceio.get_required_extensions.return_value
+    )
+    demo.deviceio.run.assert_called_once_with(
+        [demo.left, demo.right], demo.oxr_session.get_handles.return_value
+    )
+    assert demo.session.update.call_count == 2
+    for tracker, handedness in (
+        (demo.left, SomaHandedness.LEFT),
+        (demo.right, SomaHandedness.RIGHT),
+    ):
+        assert tracker.push.call_count == 2
+        tracker.push.assert_called_with(
+            demo.session, publisher._payload(demo.frame, 1, representation, handedness)
+        )
+    demo.sleep.assert_called_once_with(1 / 30)
+    demo.session.__exit__.assert_called_once()
+    demo.oxr_session.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize("representation", ["joint-rotations", "joint-poses"])
+def test_validate_only_does_not_open_runtime_or_loop(demo, representation):
+    assert (
+        publisher.main(
+            [
+                "publisher",
+                "--hand-representation",
+                representation,
+                "--validate-only",
+                "--loop",
+            ]
+        )
+        == 0
+    )
+    demo.tracker_factory.assert_not_called()
+    demo.deviceio.run.assert_not_called()
+    demo.oxr.assert_not_called()
+    demo.sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, RuntimeError])
+def test_publisher_closes_sessions_and_preserves_push_failures(demo, error):
+    demo.right.push.side_effect = error("push stopped")
+    if error is KeyboardInterrupt:
+        assert publisher.main(["publisher"]) == 0
+    else:
+        with pytest.raises(RuntimeError, match="push stopped"):
+            publisher.main(["publisher"])
+    demo.session.__exit__.assert_called_once()
+    demo.oxr_session.__exit__.assert_called_once()
+
+
+def test_session_initialization_failure_closes_openxr(demo):
+    demo.deviceio.run.side_effect = RuntimeError("session failed")
+    with pytest.raises(RuntimeError, match="session failed"):
+        publisher.main(["publisher"])
+    demo.oxr_session.__exit__.assert_called_once()
+    demo.left.push.assert_not_called()
+    demo.right.push.assert_not_called()
+
+
+def test_publisher_loop_repeats_clip_until_interrupted(demo):
+    demo.right.push.side_effect = [None, None, KeyboardInterrupt]
+    assert publisher.main(["publisher", "--loop"]) == 0
+    assert demo.right.push.call_count == 3
+    assert (
+        demo.right.push.call_args_list[0].args[1]
+        == demo.right.push.call_args_list[2].args[1]
+    )
+
+
+@pytest.mark.parametrize(
+    "representation,capacity", [("joint-rotations", 1024), ("joint-poses", 2048)]
+)
+def test_validate_only_rejects_oversized_payload(
+    demo, monkeypatch, representation, capacity
+):
+    monkeypatch.setattr(publisher, "_payload", lambda *args: bytes(capacity + 1))
+    with pytest.raises(ValueError, match="exceeds transport capacity"):
+        publisher.main(
+            ["publisher", "--hand-representation", representation, "--validate-only"]
+        )
+
+
+@pytest.mark.parametrize("rate", ["0", "-1", "nan", "inf"])
+def test_invalid_rate_is_rejected_before_loading_model(monkeypatch, rate):
+    layers = MagicMock()
+    monkeypatch.setattr(publisher, "create_layers", layers)
+    with pytest.raises(SystemExit) as error:
+        publisher.main(["publisher", "--rate", rate])
+    assert error.value.code == 2
+    layers.assert_not_called()
 
 
 def test_hand_payload_constructors_preserve_side_and_arrays():
@@ -112,27 +229,7 @@ def test_hand_payload_constructors_preserve_side_and_arrays():
     assert pose_valid.all()
 
 
-def test_pusher_rejects_collection_handedness_mismatch(request):
-    executable = request.config.getoption("--soma-hand-pusher")
-    if executable is None:
-        return
-    rotations = np.tile([0.0, 0.0, 0.0, 1.0], (25, 1))
-    wrong_left = soma_joint_rotations(
-        rotations, [0, 0, 0], SomaHandedness.RIGHT
-    ).to_bytes()
-    right = soma_joint_rotations(rotations, [0, 0, 0], SomaHandedness.RIGHT).to_bytes()
-    packet = struct.pack("<IIQ", len(wrong_left), len(right), 0) + wrong_left + right
-
-    result = subprocess.run(
-        [str(executable), "--validate-only"],
-        input=packet,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 1
-
-
-def test_demo_profiles_match_upstream_hand_fk(soma_assets, request):
+def test_demo_profiles_match_upstream_hand_fk(soma_assets):
     body, hands = create_layers(soma_assets)
     frames = demo_hand_frames(soma_assets / "example_animation.npy", body, hands)
 
@@ -156,13 +253,9 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets, request):
         np.testing.assert_allclose(evaluated_positions, positions, atol=1e-5)
         assert evaluated_valid.all()
 
-    executable = request.config.getoption("--soma-hand-pusher")
-    if executable is None:
-        return
     for representation in ("joint-rotations", "joint-poses"):
-        packets = []
+        capacity = 2048 if representation == "joint-poses" else 1024
         for index in range(len(frames["left"]["positions"])):
-            encoded = []
             for side, handedness in (
                 ("left", SomaHandedness.LEFT),
                 ("right", SomaHandedness.RIGHT),
@@ -180,21 +273,4 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets, request):
                         frame["translation"][index],
                         handedness,
                     )
-                encoded.append(payload.to_bytes())
-            packets.append(
-                struct.pack("<IIQ", len(encoded[0]), len(encoded[1]), index)
-                + encoded[0]
-                + encoded[1]
-            )
-        result = subprocess.run(
-            [
-                str(executable),
-                "--hand-representation",
-                representation,
-                "--validate-only",
-            ],
-            input=b"".join(packets),
-            capture_output=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr.decode()
+                assert len(payload.to_bytes()) <= capacity

@@ -6,15 +6,16 @@
 import argparse
 import logging
 import math
-import signal
-import struct
-import subprocess
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
 
+from isaaccapture.deviceio_session import DeviceIOSession
+from isaaccapture.deviceio_trackers import TensorPushTracker
+from isaaccapture.oxr import OpenXRSession
 from isaaccapture.schema import (
     Point,
     Pose,
@@ -179,9 +180,6 @@ def _payload(frame, index: int, representation: str, handedness):
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--pusher", required=True, type=Path, help="Built soma_hand_pusher executable"
-    )
     parser.add_argument("--rate", type=float, default=30.0)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument(
@@ -193,7 +191,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="Validate FBS packets without OpenXR",
+        help="Encode demo frames and check transport capacity without OpenXR",
     )
     args = parser.parse_args(argv[1:])
     if not math.isfinite(args.rate) or args.rate <= 0:
@@ -203,16 +201,33 @@ def main(argv: list[str]) -> int:
     frames = demo_hand_frames(
         body.data_root / "example_animation.npy", body, hand_layers
     )
-    command = [
-        str(args.pusher.resolve()),
-        "--hand-representation",
-        args.hand_representation,
-    ] + (["--validate-only"] if args.validate_only else [])
-    with subprocess.Popen(command, stdin=subprocess.PIPE) as process:
-        interrupted = False
-        try:
+    joint_poses = args.hand_representation == "joint-poses"
+    max_payload_size = 2048 if joint_poses else 1024
+    frame_number = 0
+    try:
+        with ExitStack() as stack:
+            session = None
+            if not args.validate_only:
+                tensor_identifier = (
+                    "soma_hand_joint_poses"
+                    if joint_poses
+                    else "soma_hand_joint_rotations"
+                )
+                left_tracker = TensorPushTracker(
+                    "soma_hand_left_demo", tensor_identifier, max_payload_size
+                )
+                right_tracker = TensorPushTracker(
+                    "soma_hand_right_demo", tensor_identifier, max_payload_size
+                )
+                trackers = [left_tracker, right_tracker]
+                extensions = DeviceIOSession.get_required_extensions(trackers)
+                oxr_session = stack.enter_context(
+                    OpenXRSession("SomaHandDemoPublisher", extensions)
+                )
+                session = stack.enter_context(
+                    DeviceIOSession.run(trackers, oxr_session.get_handles())
+                )
             start = time.monotonic()
-            frame_number = 0
             while True:
                 for index in range(len(frames["left"]["positions"])):
                     remaining = start + frame_number / args.rate - time.monotonic()
@@ -230,27 +245,22 @@ def main(argv: list[str]) -> int:
                         args.hand_representation,
                         SomaHandedness.RIGHT,
                     )
-                    process.stdin.write(
-                        struct.pack(
-                            "<IIQ",
-                            len(left),
-                            len(right),
-                            round(frame_number * 1e9 / args.rate),
-                        )
-                    )
-                    process.stdin.write(left)
-                    process.stdin.write(right)
-                    process.stdin.flush()
+                    if len(left) > max_payload_size or len(right) > max_payload_size:
+                        raise ValueError("SOMA hand payload exceeds transport capacity")
+                    if session is not None:
+                        session.update()
+                        left_tracker.push(session, left)
+                        right_tracker.push(session, right)
                     frame_number += 1
                 if not args.loop or args.validate_only:
                     break
-        except KeyboardInterrupt:
-            interrupted = True
-        finally:
-            process.stdin.close()
-        exit_code = process.wait()
-        if exit_code != 0 and not (interrupted and exit_code == -signal.SIGINT):
-            raise RuntimeError("SOMA hand pusher failed; see its runtime diagnostics")
+    except KeyboardInterrupt:
+        pass
+    logger.info(
+        "%s %d paired SOMA hand demo frames",
+        "Encoded" if args.validate_only else "Published",
+        frame_number,
+    )
     return 0
 
 
