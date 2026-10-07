@@ -18,6 +18,45 @@ const { test, expect } = require('@playwright/test');
  * is unused by any test in this file yet - it's the signal that deferred coverage will consume.
  */
 
+/** Installs a MutationObserver on #errorMessageBox/#errorMessageText before any app code runs,
+ * recording every (visible, text) state the banner passes through onto
+ * window.__errorBannerSnapshots. Polling the banner's *current* state after the fact races any
+ * later, unrelated status update (e.g. App.tsx's capability-check success message) that can
+ * overwrite the single shared banner slot before the assertion runs - this captures the state at
+ * the moment it actually appeared instead. */
+async function captureErrorBannerSnapshots(page) {
+  await page.addInitScript(() => {
+    window.__errorBannerSnapshots = [];
+    const attach = () => {
+      const box = document.getElementById('errorMessageBox');
+      const text = document.getElementById('errorMessageText');
+      if (!box || !text) {
+        requestAnimationFrame(attach);
+        return;
+      }
+      const capture = () =>
+        window.__errorBannerSnapshots.push({
+          visible: box.classList.contains('show'),
+          text: text.textContent ?? '',
+        });
+      capture();
+      new MutationObserver(capture).observe(box, { attributes: true, attributeFilter: ['class'] });
+      new MutationObserver(capture).observe(text, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    };
+    attach();
+  });
+}
+
+/** Asserts the banner was visible with exactly `text` at some point in its captured history. */
+async function expectErrorBannerShown(page, text) {
+  const snapshots = await page.evaluate(() => window.__errorBannerSnapshots);
+  expect(snapshots.some(s => s.visible && s.text === text)).toBe(true);
+}
+
 /** Waits for a console message containing `text`, polling `lines` (already being appended to by a `page.on('console')` listener). */
 async function waitForConsoleText(lines, text, timeoutMs = 15000) {
   try {
@@ -72,6 +111,7 @@ test.describe('client UI states', () => {
     await page.addInitScript(() => {
       window.__mockCloudXRConnectDelayMs = 24 * 60 * 60 * 1000;
     });
+    await captureErrorBannerSnapshots(page);
 
     const consoleLines = [];
     page.on('console', msg => consoleLines.push(msg.text()));
@@ -104,18 +144,21 @@ test.describe('client UI states', () => {
     // isn't enabled here (no reconnectEnabled=true param), so App.tsx's onError -> showError path
     // is what surfaces it, the same as any other CloudXR error.
     //
-    // Waited for via console first, not the live #errorMessageBox: that box is a single shared
-    // slot (CloudXR2DUI.tsx's showStatus() doc comment) that an unrelated capability/performance
-    // "info" notice can legitimately overwrite shortly after. showStatus() sets the DOM and
-    // mirrors to console[type](message) in the same synchronous call, so checking the DOM right
-    // after this console wait resolves - before any later notice gets a chance to run - is safe.
+    // Not checked via the live #errorMessageBox: that box is a single shared slot
+    // (CloudXR2DUI.tsx's showStatus() doc comment) that an unrelated capability/performance
+    // "info" notice can - and does, reproducibly - overwrite shortly after. Polling the console
+    // first doesn't prevent that notice from running in between the console wait resolving and a
+    // later DOM assertion, so the visible state at assertion time isn't reliable either way.
+    // captureErrorBannerSnapshots (installed above, before page.goto) instead records every state
+    // the banner actually passed through, so we can assert it was visible with this exact message
+    // at some point, regardless of what later overwrote it.
     await waitForConsoleText(consoleLines, 'CloudXR stream did not attach within 500ms');
     await waitForConsoleText(
       consoleLines,
       'CloudXR session stopped: Stream did not attach within 500ms'
     );
-    await expect(page.locator('#errorMessageBox')).toBeVisible();
-    await expect(page.locator('#errorMessageText')).toHaveText(
+    await expectErrorBannerShown(
+      page,
       'CloudXR session stopped: Stream did not attach within 500ms'
     );
   });
