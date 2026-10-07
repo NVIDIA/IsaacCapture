@@ -452,6 +452,7 @@ class ClutchPreview:
             self._arm.drive(hand[:3], facing, base_yaw, stick_x, stick_y, dt)
 
         engaged = phase is ClutchPhase.ENGAGED
+        self._twin.publish(clutch_engaged=engaged)
         self._show(follower_visible=not engaged, ghost_visible=engaged)
 
         self._limiter_passing = False

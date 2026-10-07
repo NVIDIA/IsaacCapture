@@ -3,3 +3,7 @@
 
 cryptography>=3.0
 websockets>=14.0
+
+# Linux robot visualization controller guide.
+Pillow>=10.0; sys_platform == "linux"
+cupy-cuda12x>=13.0; sys_platform == "linux"

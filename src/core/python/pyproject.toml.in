@@ -85,6 +85,7 @@ isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed"]
     "*.pyd",
     "*.pyi",
     "assets/*.xml",
+    "controller-guide-*.png",
     "MUJOCO_LICENSE",
 ]
 robotic_grounding = [
