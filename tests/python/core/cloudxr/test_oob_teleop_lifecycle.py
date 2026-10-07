@@ -2530,7 +2530,7 @@ async def test_same_tab_connect_publishes_dispatch_before_monitor_returns():
     lifecycle.selected = "original"
     assert lifecycle.client_loaded is False
 
-    async def attach(*, click_connect, on_client_loaded, on_dispatched):
+    async def attach(*, click_connect, on_client_loaded, on_dispatched, **_kwargs):
         assert click_connect
         assert lifecycle.client_loaded is False
         await on_client_loaded()
@@ -2570,7 +2570,7 @@ async def test_grace_recovery_without_hub_report_publishes_loaded_before_connect
     lifecycle._client_grace_deadline = lifecycle.clock() - 1
     assert lifecycle.client_loaded is False
 
-    async def attach(*, click_connect, on_client_loaded, on_dispatched):
+    async def attach(*, click_connect, on_client_loaded, on_dispatched, **_kwargs):
         assert click_connect
         await on_client_loaded()
         dispatched = on_dispatched()
