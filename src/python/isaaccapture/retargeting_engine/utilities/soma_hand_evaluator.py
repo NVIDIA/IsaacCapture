@@ -8,24 +8,20 @@ from typing import Any
 
 import numpy as np
 
-from .soma_body_evaluator import _dense_joint_rotations, _numpy
+from .soma_body_evaluator import _dense_joint_rotations, _numpy, _translation_input
+from .soma_contract import resolve_soma_hand_contract
 
 
 class _SomaHandEvaluator:
     """Run upstream SOMA hand FK and expose its 25 evaluated joints."""
 
-    def __init__(self, layer: Any) -> None:
+    def __init__(self, layer: Any, expected_hand_type: str) -> None:
+        reference_pose = resolve_soma_hand_contract(layer, expected_hand_type)
         joint_names = tuple(str(name) for name in layer.rig_data["joint_names"])
         parent_ids = _numpy(layer.joint_parent_ids).astype(np.int64)
-        if len(joint_names) != 25 or parent_ids.shape != (25,):
-            raise ValueError("SOMA hand evaluator requires 25 joints")
-        if parent_ids[0] != 0 or any(
-            parent < 0 or parent >= child
-            for child, parent in enumerate(parent_ids[1:], 1)
-        ):
-            raise ValueError("SOMA hand joints must follow parent-before-child order")
 
         self.layer = layer
+        self.reference_pose = reference_pose
         self.joint_names = joint_names
         self.parent_ids = tuple(int(parent) for parent in parent_ids)
         self.bones = tuple(
@@ -47,16 +43,7 @@ class _SomaHandEvaluator:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
         rotations, control_valid = _dense_joint_rotations(data.joint_rotations, 25)
 
-        translation = data.global_translation
-        translation_valid = (
-            bool(data.global_translation_is_valid) and translation is not None
-        )
-        translation_xyz = np.asarray(
-            [translation.x, translation.y, translation.z]
-            if translation_valid
-            else [0.0, 0.0, 0.0],
-            dtype=np.float32,
-        )
+        translation_xyz, translation_valid = _translation_input(data)
         return rotations, control_valid, translation_xyz, translation_valid
 
     def evaluate(self, data: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -75,6 +62,7 @@ class _SomaHandEvaluator:
                 pose2rot=False,
                 fk_only=True,
                 apply_correctives=False,
+                reference_pose=self.reference_pose,
             )
             orientations = transforms.matrix_to_quaternion_xyzw(
                 output["transforms"][0, :, :3, :3]

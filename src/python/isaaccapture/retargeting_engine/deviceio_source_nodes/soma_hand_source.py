@@ -63,7 +63,10 @@ class SomaHandSource(IDeviceIOSource):
         else:
             self._tracker = SomaHandJointPosesTracker(collection_id)
             self._input_type = DeviceIOSomaHandJointPosesTracked()
-        self._evaluator = _SomaHandEvaluator(layer) if layer is not None else None
+        expected_hand_type = "left" if handedness is SomaHandedness.LEFT else "right"
+        self._evaluator = (
+            _SomaHandEvaluator(layer, expected_hand_type) if layer is not None else None
+        )
         super().__init__(name)
 
     def get_tracker(self) -> "ITracker":

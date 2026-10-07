@@ -66,6 +66,15 @@ The publisher must convert its native skeleton and reference frame before
 serialization. See :ref:`tracker-reference` for the complete field and
 validity contracts.
 
+Consumers normalize finite quaternions whose norm is greater than ``1e-12``. A
+zero, degenerate, or non-finite quaternion, position, or global translation is
+unavailable. Quaternion signs are not canonicalized, so ``q`` and ``-q`` remain
+equivalent.
+
+Rotation consumers resolve the SOMA v0.3.1 reference through SOMA-X and pass it
+explicitly during forward kinematics. The prepared identity and subject scale
+remain caller-selected calibration and are not constrained by this check.
+
 Body and hand joint values are sorted, unique keyed vectors. Every entry carries
 an explicit ``SomaBodyJoint`` or ``SomaHandJoint`` identifier. A missing joint is
 unavailable for that frame; producers do not serialize placeholder values for

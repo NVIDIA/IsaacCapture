@@ -72,8 +72,19 @@ from isaaccapture_examples.deviceio_live_view.soma_hand import SOMA_HAND_LAYOUT
 
 def fake_layer():
     layer = MagicMock()
-    layer.public_joint_names = ("Root", *(f"Joint{index}" for index in range(77)))
+    layer.public_joint_names = (
+        "Root",
+        *(
+            name
+            for name, joint in sorted(
+                SomaBodyJoint.__members__.items(), key=lambda item: int(item[1])
+            )
+            if name != "NUM_JOINTS"
+        ),
+    )
     layer.output_joint_parent_ids = np.array([0, 0, *range(1, 77)])
+    layer.output_unit = MagicMock(meters_per_unit=1.0)
+    layer.get_reference_pose.return_value = np.tile(np.eye(3), (78, 1, 1))
     return layer
 
 

@@ -72,7 +72,7 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets, request):
         payload = soma_joint_rotations(
             frame["rotations"][0], frame["translation"][0], handedness
         )
-        positions, _, valid = _SomaHandEvaluator(hands[side]).evaluate(payload)
+        positions, _, valid = _SomaHandEvaluator(hands[side], side).evaluate(payload)
         np.testing.assert_allclose(positions, frame["positions"][0], atol=1e-5)
         np.testing.assert_array_equal(valid, np.ones(25, dtype=np.uint8))
         evaluated = soma_joint_poses(

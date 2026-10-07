@@ -45,8 +45,19 @@ def pose():
 
 def fake_layer():
     layer = MagicMock()
-    layer.public_joint_names = ("Root", *(f"Joint{index}" for index in range(77)))
+    layer.public_joint_names = (
+        "Root",
+        *(
+            name
+            for name, joint in sorted(
+                SomaBodyJoint.__members__.items(), key=lambda item: int(item[1])
+            )
+            if name != "NUM_JOINTS"
+        ),
+    )
     layer.output_joint_parent_ids = np.array([0, 0, *range(1, 77)])
+    layer.output_unit = MagicMock(meters_per_unit=1.0)
+    layer.get_reference_pose.return_value = np.tile(np.eye(3), (78, 1, 1))
     return layer
 
 
@@ -145,6 +156,40 @@ def test_joint_pose_source_maps_received_payload_without_fk():
         evaluated[SomaBodyInputIndex.JOINT_POSITIONS], positions
     )
     assert evaluated[SomaBodyInputIndex.JOINT_VALID].all()
+
+
+def test_joint_pose_source_invalidates_bad_numeric_entries():
+    soma_source = SomaBodySource(
+        "body",
+        "vendor.soma",
+        representation=SomaBodyRepresentation.JOINT_POSES,
+    )
+    raw = SomaBodyJointPoses(
+        [
+            SomaBodyJointPose(
+                SomaBodyJoint.HIPS,
+                Pose(Point(1, 2, 3), Quaternion(0, 0, 0, -2)),
+            ),
+            SomaBodyJointPose(
+                SomaBodyJoint.SPINE1,
+                Pose(Point(np.nan, 0, 0), Quaternion(0, 0, 0, 1)),
+            ),
+            SomaBodyJointPose(
+                SomaBodyJoint.SPINE2,
+                Pose(Point(0, 0, 0), Quaternion()),
+            ),
+        ]
+    )
+    inputs = payload_group(soma_source.input_spec()["deviceio_soma_body"], raw)
+
+    evaluated = soma_source({"deviceio_soma_body": inputs})[SomaBodySource.BODY]
+
+    np.testing.assert_array_equal(
+        evaluated[SomaBodyInputIndex.JOINT_VALID][:3], [1, 0, 0]
+    )
+    np.testing.assert_allclose(
+        evaluated[SomaBodyInputIndex.JOINT_ORIENTATIONS][0], [0, 0, 0, -1]
+    )
 
 
 def test_absent_sample_clears_reused_output():

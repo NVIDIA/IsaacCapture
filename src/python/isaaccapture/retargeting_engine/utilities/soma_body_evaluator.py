@@ -8,6 +8,11 @@ from typing import Any
 
 import numpy as np
 
+from .soma_contract import resolve_soma_body_contract
+
+
+_QUATERNION_EPS = 1e-12
+
 
 def _numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
@@ -17,6 +22,16 @@ def _numpy(value: Any) -> np.ndarray:
     if hasattr(value, "numpy"):
         value = value.numpy()
     return np.asarray(value)
+
+
+def _normalize_quaternion(value: Any) -> tuple[np.ndarray, bool]:
+    quaternion = np.asarray(value, dtype=np.float32)
+    if quaternion.shape != (4,) or not np.isfinite(quaternion).all():
+        return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), False
+    norm = float(np.linalg.norm(quaternion.astype(np.float64)))
+    if norm <= _QUATERNION_EPS:
+        return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), False
+    return quaternion / np.float32(norm), True
 
 
 def _dense_joint_rotations(
@@ -33,8 +48,9 @@ def _dense_joint_rotations(
         if joint <= previous:
             raise ValueError("SOMA joint entries must be sorted and unique")
         rotation = entry.rotation
-        rotations[joint] = (rotation.x, rotation.y, rotation.z, rotation.w)
-        provided[joint] = True
+        rotations[joint], provided[joint] = _normalize_quaternion(
+            (rotation.x, rotation.y, rotation.z, rotation.w)
+        )
         previous = joint
     return rotations, provided
 
@@ -54,35 +70,47 @@ def _dense_joint_poses(
         if joint <= previous:
             raise ValueError("SOMA joint entries must be sorted and unique")
         pose = entry.pose
-        positions[joint] = (pose.position.x, pose.position.y, pose.position.z)
-        orientations[joint] = (
-            pose.orientation.x,
-            pose.orientation.y,
-            pose.orientation.z,
-            pose.orientation.w,
+        position = np.asarray(
+            (pose.position.x, pose.position.y, pose.position.z), dtype=np.float32
         )
-        provided[joint] = 1
+        orientation, orientation_valid = _normalize_quaternion(
+            (
+                pose.orientation.x,
+                pose.orientation.y,
+                pose.orientation.z,
+                pose.orientation.w,
+            )
+        )
+        if np.isfinite(position).all() and orientation_valid:
+            positions[joint] = position
+            orientations[joint] = orientation
+            provided[joint] = 1
         previous = joint
     return positions, orientations, provided
+
+
+def _translation_input(data: Any) -> tuple[np.ndarray, bool]:
+    translation = data.global_translation
+    valid = bool(data.global_translation_is_valid) and translation is not None
+    value = np.asarray(
+        (translation.x, translation.y, translation.z) if valid else (0.0, 0.0, 0.0),
+        dtype=np.float32,
+    )
+    if not np.isfinite(value).all():
+        return np.zeros(3, dtype=np.float32), False
+    return value, valid
 
 
 class _SomaBodyEvaluator:
     """Run upstream SOMA FK and expose all public transported joints."""
 
     def __init__(self, layer: Any) -> None:
+        reference_pose = resolve_soma_body_contract(layer)
         joint_names = tuple(str(name) for name in layer.public_joint_names)
         parent_ids = _numpy(layer.output_joint_parent_ids).astype(np.int64)
-        if len(joint_names) != 78 or joint_names[0].upper() != "ROOT":
-            raise ValueError("SOMA evaluator requires Root plus 77 public joints")
-        if parent_ids.shape != (78,):
-            raise ValueError("SOMA evaluator requires 78 public parent IDs")
-        if any(
-            parent < 0 or parent >= child
-            for child, parent in enumerate(parent_ids[1:], 1)
-        ):
-            raise ValueError("SOMA public joints must follow parent-before-child order")
 
         self.layer = layer
+        self.reference_pose = reference_pose
         self.joint_names = joint_names[1:]
         self.parent_ids = tuple(int(parent) for parent in parent_ids)
         self.bones = tuple(
@@ -106,16 +134,7 @@ class _SomaBodyEvaluator:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
         rotations, control_valid = _dense_joint_rotations(data.joint_rotations, 77)
 
-        translation = data.global_translation
-        translation_valid = (
-            bool(data.global_translation_is_valid) and translation is not None
-        )
-        translation_xyz = np.asarray(
-            [translation.x, translation.y, translation.z]
-            if translation_valid
-            else [0.0, 0.0, 0.0],
-            dtype=np.float32,
-        )
+        translation_xyz, translation_valid = _translation_input(data)
         return rotations, control_valid, translation_xyz, translation_valid
 
     def evaluate(self, data: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -135,6 +154,7 @@ class _SomaBodyEvaluator:
                 pose2rot=False,
                 fk_only=True,
                 apply_correctives=False,
+                reference_pose=self.reference_pose,
             )
             orientations = transforms.matrix_to_quaternion_xyzw(
                 output["transforms"][0, 1:, :3, :3]
