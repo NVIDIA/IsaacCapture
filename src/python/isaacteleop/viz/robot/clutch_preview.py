@@ -37,8 +37,7 @@ from .quaternion import MIN_QUAT_NORM
 from .clutch_phase import ClutchPhase, PhaseMachine
 from .engage_gate import KEY_ENGAGED, GateVerdict
 from .harness import HarnessBand
-from .preview_arm import deflection
-from .quaternion import conjugate, from_axis_angle, multiply, rotate, to_matrix
+from .quaternion import conjugate, multiply, rotate, to_matrix
 from .ghost import GHOST_GROUP, ghost_bodies
 from .so101_ghost import (
     GHOST_POINTING_AXIS,
@@ -70,10 +69,6 @@ HAND_POSE = HandPose.AIM
 # `/user/hand/right/input/b/click` on SECONDARY_CLICK
 # (live_controller_tracker_impl.cpp:292). GHOST_HAND is the right controller.
 _RESET_OFFSET_BUTTON = ControllerInputIndex.SECONDARY_CLICK
-
-# The A button, held to put the right thumbstick on the yaw trim instead of the grip
-# offset. Modal rather than a second stick because only one controller is wired.
-_YAW_TRIM_BUTTON = ControllerInputIndex.PRIMARY_CLICK
 
 # The clutch's engage permission, the one external graph leaf this app feeds. TeleopSession
 # validates every external leaf name is present in external_inputs on every step, so it is
@@ -133,13 +128,6 @@ _POSTURE_LIMIT_DEG = 45.0
 # leak per candidate, measured on grip; aim's is unmeasured because the grip-to-aim
 # transform is per-device. Re-measure on a headset before trusting it.
 _HAND_FORWARD_AXIS = np.array((0.0, 0.0, -1.0))
-
-# Residual azimuth between where the operator means to point and what the app reads. On AIM
-# it should be zero, so a large dialled-in value is evidence something else is wrong. Tuned
-# on a headset: hold A and push the right thumbstick, then paste back what the app prints.
-# Degrees, positive turning the arm the way a positive XR yaw does.
-_YAW_TRIM_DEG = 0.0
-_YAW_TRIM_RATE_DEG_S = 20.0
 
 
 def hand_facing_xr(q_hand_xyzw: np.ndarray) -> np.ndarray:
@@ -330,8 +318,6 @@ class ClutchPreview:
         # be permitted before then: the gate reports `controller not tracked`.
         self._hand_body_mj: np.ndarray | None = None
         self._yaw_bias = base_yaw_bias(arm)
-        self._yaw_trim_deg = _YAW_TRIM_DEG
-        self._trimming = False
         # One reading is all it takes, and it needs a tracked controller, so it cannot
         # happen at construction.
         self._frames_logged = False
@@ -460,10 +446,8 @@ class ClutchPreview:
         if phase is ClutchPhase.DISENGAGED and hand is not None:
             # The hand, not the governed pose, and raw XR rather than the ghost body:
             # preview_arm.py is free of the grip calibration and must stay that way.
+            # The stick always adjusts position; face buttons do not remap it.
             stick_x, stick_y = self._stick(result)
-            if self._trim_yaw(result, stick_x, dt):
-                # A owns the stick while held, so a trim cannot also walk the offset.
-                stick_x = stick_y = 0.0
             facing, base_yaw = self._yaws(hand[3:7])
             self._arm.drive(hand[:3], facing, base_yaw, stick_x, stick_y, dt)
 
@@ -522,41 +506,9 @@ class ClutchPreview:
         )
 
     def _yaws(self, q_hand_xyzw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """``(where the controller points, what to turn the base onto)``, both wxyz.
-
-        Which axis of a pose is its facing is a fact about the calibration, so
-        preview_arm.py is handed the answer. The second leads the first by the measured bias
-        and the operator's trim, all yaws about +Y. The follower needs both: the base takes
-        the second, the grip offset is carried on the first.
-        """
+        """Controller facing and base heading (wxyz), separated by the measured bias."""
         facing = hand_facing_xr(q_hand_xyzw)
-        trim = from_axis_angle(
-            np.array([0.0, 1.0, 0.0]), math.radians(self._yaw_trim_deg)
-        )
-        biased = multiply(facing, self._yaw_bias)
-        base_yaw = multiply(biased, trim)
-        return facing, base_yaw
-
-    def _trim_yaw(self, result, stick_x: float, dt: float) -> bool:
-        """A + the right thumbstick: walk the yaw trim. True while it owns the stick.
-
-        A rate, like the grip offset, so the trim holds where the stick left it.
-        """
-        controller = result[GHOST_HAND]
-        held = not controller.is_none and bool(controller[_YAW_TRIM_BUTTON])
-        if not held:
-            if self._trimming:
-                self._trimming = False
-                LOG.info(
-                    "preview arm: yaw trim -> _YAW_TRIM_DEG = %.1f", self._yaw_trim_deg
-                )
-            return False
-        step = deflection(stick_x) * _YAW_TRIM_RATE_DEG_S * float(dt)
-        self._yaw_trim_deg += step
-        # Only a stick that actually moved arms the log, so holding A to keep the trim
-        # off the grip offset does not print a line every time it is released.
-        self._trimming = self._trimming or step != 0.0
-        return True
+        return facing, multiply(facing, self._yaw_bias)
 
     def _stick(self, result) -> tuple[float, float]:
         """The right thumbstick's two raw axes, or a stick at rest.
