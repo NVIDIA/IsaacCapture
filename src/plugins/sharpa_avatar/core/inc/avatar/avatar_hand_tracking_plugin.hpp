@@ -149,7 +149,7 @@ private:
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;
-    std::optional<std::chrono::steady_clock::time_point> m_last_glove_wait_log;
+    bool m_glove_wait_logged = false;
 };
 
 } // namespace avatar

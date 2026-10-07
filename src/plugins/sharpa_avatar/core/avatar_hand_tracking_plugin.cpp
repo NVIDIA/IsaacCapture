@@ -6,6 +6,7 @@
 #include "avatar_glove_collection.hpp"
 
 #include <flatbuffers/flatbuffers.h>
+#include <log_bridge/logger.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/math.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -17,7 +18,6 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -37,8 +37,13 @@ namespace
 constexpr size_t kJointFlatbufferSize = 4096;
 constexpr auto kAvatarDataTimeout = std::chrono::seconds(10);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
-constexpr auto kGloveWaitLogInterval = std::chrono::seconds(10);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
+
+const std::shared_ptr<spdlog::logger>& logger()
+{
+    static const auto instance = isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar.AvatarTracker");
+    return instance;
+}
 
 size_t side_index(::avatar::DeviceSide side)
 {
@@ -260,10 +265,9 @@ void GloveState::reset() noexcept
 
 AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(config)), m_sdk(m_config.sdk_config_path)
 {
-    std::cout << "[Avatar] Avatar SDK initialized." << std::endl;
-    std::cout << "[Avatar] datasets: human=" << (m_config.human ? "on" : "off")
-              << " raw=" << (m_config.raw ? "on" : "off") << " robot=" << (m_config.robot ? "on" : "off")
-              << " haptic=" << (m_config.haptic ? "on" : "off") << std::endl;
+    logger()->info("Avatar SDK initialized.");
+    logger()->info("datasets: human={} raw={} robot={} haptic={}", m_config.human ? "on" : "off",
+                   m_config.raw ? "on" : "off", m_config.robot ? "on" : "off", m_config.haptic ? "on" : "off");
     try_connect_missing_gloves();
     initialize_openxr();
 }
@@ -366,8 +370,8 @@ void AvatarTracker::start_glove_if_present(GloveState& glove, ::avatar::DeviceSi
     const auto init_error = glove.device->init("{}");
     if (init_error != ::avatar::ErrorCode::SUCCESS)
     {
-        std::cerr << "[Avatar] " << to_string(side) << " glove initialization failed: " << error_name(init_error)
-                  << " (" << static_cast<int>(init_error) << ")" << std::endl;
+        logger()->warn("{} glove initialization failed: {} ({})", to_string(side), error_name(init_error),
+                       static_cast<int>(init_error));
         glove.reset();
         return;
     }
@@ -376,13 +380,13 @@ void AvatarTracker::start_glove_if_present(GloveState& glove, ::avatar::DeviceSi
     const auto start_error = glove.device->start();
     if (start_error != ::avatar::ErrorCode::SUCCESS)
     {
-        std::cerr << "[Avatar] " << to_string(side) << " glove start failed: " << error_name(start_error) << " ("
-                  << static_cast<int>(start_error) << ")" << std::endl;
+        logger()->warn(
+            "{} glove start failed: {} ({})", to_string(side), error_name(start_error), static_cast<int>(start_error));
         glove.reset();
         return;
     }
     glove.last_successful_fetch = std::chrono::steady_clock::now();
-    std::cout << "[Avatar] " << to_string(side) << " glove connected and streaming." << std::endl;
+    logger()->info("{} glove connected and streaming.", to_string(side));
 }
 
 void AvatarTracker::try_connect_missing_gloves()
@@ -404,12 +408,13 @@ void AvatarTracker::try_connect_missing_gloves()
     {
         start_glove_if_present(glove(side), side);
     }
-    if (std::none_of(m_gloves.begin(), m_gloves.end(), has_device) &&
-        (!m_last_glove_wait_log || now - *m_last_glove_wait_log >= kGloveWaitLogInterval))
+    // Log once per stretch with no glove; a glove connecting re-arms the message.
+    const bool waiting = std::none_of(m_gloves.begin(), m_gloves.end(), has_device);
+    if (waiting && !m_glove_wait_logged)
     {
-        m_last_glove_wait_log = now;
-        std::cout << "[Avatar] Waiting for an online glove..." << std::endl;
+        logger()->info("Waiting for an online glove...");
     }
+    m_glove_wait_logged = waiting;
 }
 
 void AvatarTracker::refresh_data()
@@ -472,6 +477,7 @@ void AvatarTracker::refresh_data()
             }
             else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
             {
+                logger()->warn("{} glove disconnected: no data for {} s.", to_string(side), kAvatarDataTimeout.count());
                 state.reset();
             }
         }
@@ -631,9 +637,8 @@ void AvatarTracker::apply_haptic_command(::avatar::DeviceSide side, const std::a
         if (!m_haptic_error_logged[index])
         {
             m_haptic_error_logged[index] = true;
-            std::cerr << "[Avatar] set_vibration failed for " << to_string(side) << " glove: " << error_name(error)
-                      << " (" << static_cast<int>(error) << "); further errors for this side will be silenced."
-                      << std::endl;
+            logger()->warn("set_vibration failed for {} glove: {} ({}); further errors for this side will be silenced.",
+                           to_string(side), error_name(error), static_cast<int>(error));
         }
     }
 }

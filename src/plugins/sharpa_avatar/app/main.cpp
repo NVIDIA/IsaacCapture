@@ -15,11 +15,11 @@
 #include "cli.hpp"
 
 #include <avatar/avatar_hand_tracking_plugin.hpp>
+#include <log_bridge/logger.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -46,6 +46,7 @@ AvatarPluginConfig parse_args(int argc, char** argv)
 {
     AvatarPluginConfig config;
     std::string datasets_arg = "human,raw,robot,haptic";
+    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar");
 
     for (int i = 1; i < argc; ++i)
     {
@@ -64,7 +65,7 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         }
         else
         {
-            std::cerr << "AvatarHandPlugin: ignoring unknown argument '" << arg << "'" << std::endl;
+            logger->warn("ignoring unknown argument '{}'", arg);
         }
     }
 
@@ -92,7 +93,7 @@ AvatarPluginConfig parse_args(int argc, char** argv)
         }
         else
         {
-            std::cerr << "AvatarHandPlugin: ignoring unknown data set '" << ds << "'" << std::endl;
+            logger->warn("ignoring unknown data set '{}'", ds);
         }
     }
 
@@ -109,7 +110,8 @@ AvatarPluginConfig parse_args(int argc, char** argv)
 int main(int argc, char** argv)
 try
 {
-    std::cout << "Avatar Hand Plugin starting..." << std::endl;
+    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar");
+    logger->info("Avatar Hand Plugin starting...");
 
     const AvatarPluginConfig config = parse_args(argc, argv);
     AvatarTracker tracker(config);
@@ -118,7 +120,7 @@ try
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    std::cout << "Plugin running. Press Ctrl+C to stop." << std::endl;
+    logger->info("Plugin running. Press Ctrl+C to stop.");
 
     // Target 90Hz frequency (~11.1ms period).
     const auto target_frame_duration = std::chrono::nanoseconds(1000000000 / 90);
@@ -132,15 +134,18 @@ try
         std::this_thread::sleep_until(frame_start + target_frame_duration);
     }
 
+    logger->info("Avatar Hand Plugin stopped: received SIGINT or SIGTERM.");
     return 0;
 }
 catch (const std::exception& e)
 {
-    std::cerr << argv[0] << ": " << e.what() << std::endl;
+    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar");
+    logger->error("Avatar Hand Plugin exiting on error: {}", e.what());
     return 1;
 }
 catch (...)
 {
-    std::cerr << argv[0] << ": Unknown error occurred" << std::endl;
+    auto logger = isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar");
+    logger->error("Avatar Hand Plugin exiting on an unknown error.");
     return 1;
 }
