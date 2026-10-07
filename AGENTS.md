@@ -100,7 +100,8 @@ the logging packages.
   names under `isaaccapture.` anyway; the naming rule above is a convention,
   not a runtime coupling.
 - **Configure through the public API instead:** `logging_config.set_console_level()`,
-  `set_console_filter()`, `set_logger_colors()`. A `--verbose` flag should call
+  `set_console_logger_name_filter()`, `set_console_content_filter()`,
+  `set_console_format()`, `set_logger_colors()`. A `--verbose` flag should call
   `set_console_level("debug")`, not build a handler.
 - **`print()` / `std::cout` are for deliberate terminal UX only** — CLI usage
   text, interactive prompts, operator banners, progress lines a log file would

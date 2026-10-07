@@ -99,9 +99,10 @@ export no log hook, so the descriptor is the only seam.
   the leader's own log file, often enough. `_stdio_stream()` answers the
   question that matters, "does this interpreter write through that number".
 
-## The package `__init__` exports four functions, and that is the whole surface
+## The package `__init__` exports six functions, and that is the whole surface
 
-`set_console_level`, `set_console_filter`, `set_logger_colors` and
+`set_console_level`, `set_console_logger_name_filter`,
+`set_console_content_filter`, `set_console_format`, `set_logger_colors` and
 `set_propagate_to_root`. `install()` is deliberately outside `__all__` and must
 be called only by the package bootstrap.
 

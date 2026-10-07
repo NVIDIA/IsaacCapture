@@ -24,28 +24,6 @@ from ._core import (
 )
 
 
-class KeywordFilter(logging.Filter):
-    """Keep only records whose logger name and/or message match *pattern*."""
-
-    def __init__(self, pattern: str, target: str = "both") -> None:
-        super().__init__()
-        if target not in ("logger_name", "content", "both"):
-            raise ValueError(
-                f"target must be 'logger_name', 'content', or 'both', got {target!r}"
-            )
-        self._regex = re.compile(pattern)
-        self._target = target
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return (
-            self._target in ("logger_name", "both")
-            and bool(self._regex.search(record.name))
-        ) or (
-            self._target in ("content", "both")
-            and bool(self._regex.search(record.getMessage()))
-        )
-
-
 _ANSI_RESET = "\033[0m"
 
 # Accept only SGR color escapes such as ``\x1b[36m``.
@@ -139,7 +117,19 @@ class _LoggerNameColorFormatter(logging.Formatter):
 
 _lock = threading.Lock()
 _handler: logging.StreamHandler | None = None
-_active_filter: KeywordFilter | None = None
+
+# The console filters as cached matchers: below WARNING a record must pass both, and
+# None passes all. A change replaces a matcher, so its cached results never go stale.
+_match_logger_name: Callable[[str], bool | None] | None = None
+_match_content: Callable[[str], bool] | None = None
+
+
+def _console_filter(record: logging.LogRecord) -> bool:
+    # Read each once; a setter on another thread may replace it in between.
+    match_name, match_content = _match_logger_name, _match_content
+    return (match_name is None or match_name(record.name) is not None) and (
+        match_content is None or match_content(record.getMessage())
+    )
 
 
 def ensure_handler() -> logging.StreamHandler:
@@ -153,6 +143,7 @@ def ensure_handler() -> logging.StreamHandler:
         handler = logging.StreamHandler()
         handler.setFormatter(_console_formatter(handler))
         handler.setLevel(env_console_level())
+        handler.addFilter(_console_filter)
         if not logging_enabled():
             _handler = handler
             return _handler
@@ -187,18 +178,43 @@ def set_console_level(level: str) -> None:
     os.environ["ISAACCAPTURE_LOG_LEVEL"] = _LEVEL_NAME_BY_VALUE[resolved]
 
 
-def set_console_filter(pattern: str | None, target: str = "both") -> None:
-    """Set the console handler's keyword filter, or clear it if *pattern* is ``None``."""
-    handler = ensure_handler()
-    # Validate the replacement before removing the active filter.
-    replacement = KeywordFilter(pattern, target=target) if pattern is not None else None
+def set_console_logger_name_filter(names: set[str] | None) -> None:
+    """Keep console records below WARNING only from *names* and their dotted descendants.
 
-    global _active_filter
-    if _active_filter is not None:
-        handler.removeFilter(_active_filter)
-    _active_filter = replacement
-    if replacement is not None:
-        handler.addFilter(replacement)
+    Each call replaces the whole set, so a name left out no longer passes; an empty
+    set passes no logger, and ``None`` removes this filter. Warnings and errors
+    always pass; other records must also pass ``set_console_content_filter()``.
+    """
+    global _match_logger_name
+    # Listed names map to True, so the lookup shared with logger colours matches them.
+    _match_logger_name = (
+        None if names is None else _cached_prefix_lookup(dict.fromkeys(names, True))
+    )
+
+
+def set_console_content_filter(pattern: str | None) -> None:
+    """Keep console records below WARNING only if their message matches regex *pattern*.
+
+    ``None`` removes this filter; an invalid *pattern* is logged as an error and the
+    current filter is kept. Warnings and errors always pass; other records must
+    also pass ``set_console_logger_name_filter()``.
+    """
+    global _match_content
+    if pattern is None:
+        _match_content = None
+        return
+    # Only compiling a regex can tell whether it is valid, so that one error is caught.
+    try:
+        regex = re.compile(pattern)
+    except re.error as exc:
+        root_logger.error(
+            "Invalid console content filter %r (%s); keeping the current one.",
+            pattern,
+            exc,
+        )
+        return
+    # Messages vary without bound, so lru_cache keeps only the most recent results.
+    _match_content = functools.lru_cache(lambda message: bool(regex.search(message)))
 
 
 class _ConsoleFormat(TypedDict, total=False):

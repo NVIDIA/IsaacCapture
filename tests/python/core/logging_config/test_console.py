@@ -31,7 +31,8 @@ def restore_console():
     color_lookup = _console._logger_color
     published = os.environ.get("ISAACCAPTURE_LOG_LEVEL")
     yield
-    logging_config.set_console_filter(None)
+    logging_config.set_console_logger_name_filter(None)
+    logging_config.set_console_content_filter(None)
     handler.setLevel(level)
     handler.setFormatter(formatter)
     _console._console_format.clear()
@@ -49,55 +50,77 @@ def record(name="isaaccapture.plugins.manus", message="gloves %s", args=("ready"
     return logging.LogRecord(name, logging.INFO, __file__, 1, message, args, None)
 
 
-class TestKeywordFilter:
-    def test_rejects_an_unknown_target(self):
-        with pytest.raises(ValueError):
-            _console.KeywordFilter("x", target="somewhere")
-
-    def test_logger_name_target_ignores_the_message(self):
-        keep = _console.KeywordFilter("manus", target="logger_name")
-        assert keep.filter(record())
-        assert not keep.filter(record(name="isaaccapture.core.Session"))
-        assert not keep.filter(
-            record(name="isaaccapture.core.Session", message="manus", args=None)
-        )
-
-    def test_content_target_matches_the_formatted_message(self):
-        keep = _console.KeywordFilter("ready", target="content")
-        assert keep.filter(record())  # "ready" only exists after args are applied
-        assert not keep.filter(record(message="gloves %s", args=("absent",)))
-
-    def test_both_is_the_union(self):
-        keep = _console.KeywordFilter("manus", target="both")
-        assert keep.filter(
-            record(name="isaaccapture.core.Session", message="manus", args=None)
-        )
-        assert keep.filter(record(message="gloves %s", args=("ready",)))
-        assert not keep.filter(
-            record(name="isaaccapture.core.Session", message="x", args=None)
-        )
-
-
-class TestConsoleFilterApi:
-    def test_set_and_clear(self):
+class TestLoggerNameFilter:
+    def test_keeps_the_names_and_their_descendants(self):
         handler = _console.ensure_handler()
-        logging_config.set_console_filter("manus", target="logger_name")
+        logging_config.set_console_logger_name_filter({"isaaccapture.plugins.manus"})
         assert handler.filter(record())
-        assert not handler.filter(record(name="isaaccapture.core.Session"))
+        assert handler.filter(record(name="isaaccapture.plugins.manus.ManusTracker"))
+        # Neither a name that only shares the leading text nor an ancestor passes.
+        assert not handler.filter(record(name="isaaccapture.plugins.manusx"))
+        assert not handler.filter(record(name="isaaccapture.plugins"))
 
-        logging_config.set_console_filter(None)
+    def test_a_name_left_out_of_the_next_set_no_longer_passes(self):
+        handler = _console.ensure_handler()
+        logging_config.set_console_logger_name_filter({"isaaccapture.plugins.manus"})
+        assert handler.filter(record())
+
+        logging_config.set_console_logger_name_filter({"isaaccapture.core"})
+        assert not handler.filter(record())
         assert handler.filter(record(name="isaaccapture.core.Session"))
 
-    def test_a_rejected_argument_leaves_the_previous_filter_in_place(self):
+    def test_an_empty_set_passes_no_logger_and_none_passes_all(self):
         handler = _console.ensure_handler()
-        logging_config.set_console_filter("manus", target="logger_name")
+        logging_config.set_console_logger_name_filter(set())
+        assert not handler.filter(record())
 
-        with pytest.raises(ValueError):
-            logging_config.set_console_filter("manus", target="somewhere")
-        with pytest.raises(re.error):
-            logging_config.set_console_filter("(unclosed")
+        logging_config.set_console_logger_name_filter(None)
+        assert handler.filter(record())
 
+    def test_editing_the_passed_set_afterwards_changes_nothing(self):
+        handler = _console.ensure_handler()
+        names = {"isaaccapture.core"}
+        logging_config.set_console_logger_name_filter(names)
+        names.add("isaaccapture.plugins.manus")
+        assert not handler.filter(record())
+
+
+class TestContentFilter:
+    def test_matches_the_formatted_message(self):
+        handler = _console.ensure_handler()
+        logging_config.set_console_content_filter("ready")
+        assert handler.filter(record())  # "ready" only exists after args are applied
+        assert not handler.filter(record(args=("absent",)))
+
+        logging_config.set_console_content_filter(None)
+        assert handler.filter(record(args=("absent",)))
+
+    def test_a_new_pattern_decides_messages_seen_before(self):
+        handler = _console.ensure_handler()
+        logging_config.set_console_content_filter("ready")
+        assert handler.filter(record())
+
+        logging_config.set_console_content_filter("absent")
+        assert not handler.filter(record())
+
+    def test_an_invalid_pattern_is_logged_and_keeps_the_current_filter(self, caplog):
+        handler = _console.ensure_handler()
+        logging_config.set_console_content_filter("ready")
+
+        logging_config.set_console_content_filter("(unclosed")
+
+        assert [entry.levelno for entry in caplog.records] == [logging.ERROR]
         # An unfiltered console is not the right answer to a bad argument.
+        assert not handler.filter(record(args=("absent",)))
+
+
+class TestBothFilters:
+    def test_a_record_below_warning_must_pass_both(self):
+        handler = _console.ensure_handler()
+        logging_config.set_console_logger_name_filter({"isaaccapture.plugins.manus"})
+        logging_config.set_console_content_filter("ready")
+        assert handler.filter(record())
+        assert not handler.filter(record(args=("absent",)))
         assert not handler.filter(record(name="isaaccapture.core.Session"))
 
 

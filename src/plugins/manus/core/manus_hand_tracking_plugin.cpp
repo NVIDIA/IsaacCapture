@@ -851,7 +851,7 @@ void ManusTracker::OnLog(LogSeverity p_Severity, const char* p_Log, uint32_t p_L
         // instead.
         //
         // Keep the SDK stream distinct from the plugin's own diagnostics so readers,
-        // set_console_filter() and set_logger_colors() can distinguish them.
+        // set_console_logger_name_filter() and set_logger_colors() can distinguish them.
         static const auto logger = isaaccapture::Logger::get("isaaccapture.plugins.manus.ManusSdk");
         const std::string message(p_Log, p_Length);
 

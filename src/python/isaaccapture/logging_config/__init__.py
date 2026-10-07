@@ -9,9 +9,12 @@ receiver for C++ and child-process records.
 nothing. Raw fd 1/2 output is captured separately by ``_native_fd.py``.
 """
 
-from ._console import set_console_filter, set_console_level, set_logger_colors
 from ._console import (
+    set_console_content_filter,
     set_console_format,
+    set_console_level,
+    set_console_logger_name_filter,
+    set_logger_colors,
 )
 
 # Internal bootstrap; intentionally excluded from ``__all__``.
@@ -20,9 +23,10 @@ from ._setup import set_propagate_to_root
 
 # Public configuration API.
 __all__ = [
-    "set_console_filter",
+    "set_console_content_filter",
     "set_console_format",
     "set_console_level",
+    "set_console_logger_name_filter",
     "set_logger_colors",
     "set_propagate_to_root",
 ]
