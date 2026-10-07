@@ -491,9 +491,9 @@ export default function CloudXRComponent({
     // no deadline for the rest of this attempt.
     if (cxrSessionRef.current && !hasStreamStartedRef.current) {
       armStreamAttachTimer(cxrSessionRef.current);
-    } else if (cxrSessionRef.current && !warmupBegunRef.current) {
+    } else if (!headless && cxrSessionRef.current && !warmupBegunRef.current) {
       armWarmupBeginTimer(cxrSessionRef.current);
-    } else if (cxrSessionRef.current && !warmupStatusRef.current.completed) {
+    } else if (!headless && cxrSessionRef.current && !warmupStatusRef.current.completed) {
       armWarmupEndTimer(cxrSessionRef.current);
     }
 
@@ -646,7 +646,12 @@ export default function CloudXRComponent({
                     clearTimeout(warmupBeginTimerRef.current);
                     warmupBeginTimerRef.current = null;
                   }
-                  if (!completeMatch && cxrSessionRef.current) {
+                  // !headless: see onStreamStarted's doc comment - headless mode doesn't arm
+                  // render-path warm-up detection at all, since it has no way to observe
+                  // completion either (onMetrics' RenderFramerate never fires). A progress log
+                  // without a matching complete log shouldn't be possible when nothing ever
+                  // begins watching for it, but skip arming regardless, for the same reason.
+                  if (!completeMatch && !headless && cxrSessionRef.current) {
                     armWarmupEndTimer(cxrSessionRef.current);
                   }
                 }
@@ -689,22 +694,37 @@ export default function CloudXRComponent({
               trackedGL.restore();
             },
             onStreamStarted: () => {
-              // Does NOT reset reconnectAttemptRef - an attach alone isn't a "successful
-              // reconnect" (warm-up can still stall indefinitely before any usable video
-              // arrives). See onMetrics' PerRender branch below, which is where the budget
-              // actually resets, once there's real video to show for it.
               hasStreamStartedRef.current = true;
               if (streamAttachTimerRef.current !== null) {
                 clearTimeout(streamAttachTimerRef.current);
                 streamAttachTimerRef.current = null;
               }
-              // The stream has attached, but decoder warm-up (no pose-backed frame rendered yet)
-              // starts a new, disjoint window that the attach timer above never covered. Reset
-              // per-attempt warm-up-begun tracking before arming, matching warmupStatusRef's own
-              // reset in establishSession().
-              warmupBegunRef.current = false;
-              if (cxrSessionRef.current) {
-                armWarmupBeginTimer(cxrSessionRef.current);
+              if (headless) {
+                // Decoder warm-up is observed two ways elsewhere: the SDK's own warm-up log
+                // text (onLog below), and onMetrics' PerRender/RenderFramerate tick as a
+                // fallback for a stream that starts already warmed up and never logs at all.
+                // Both depend on render() actually running to produce a frame to warm up with
+                // or report on - headless mode skips render() by design (see the useFrame
+                // callback's `if (!headless)` guard), so neither signal ever arrives here.
+                // There is no way to observe warm-up health without rendering, so don't arm
+                // watchdogs for a condition this mode can never detect; reset the retry budget
+                // on attach instead, same as before onMetrics-based reset existed for the
+                // non-headless path.
+                reconnectAttemptRef.current = 0;
+              } else {
+                // An attach alone isn't a "successful reconnect" - warm-up can still stall
+                // indefinitely before any usable video arrives. See onMetrics' PerRender branch
+                // below, which is where the budget actually resets, once there's real video to
+                // show for it.
+                //
+                // The stream has attached, but decoder warm-up (no pose-backed frame rendered
+                // yet) starts a new, disjoint window the attach timer above never covered. Reset
+                // per-attempt warm-up-begun tracking before arming, matching warmupStatusRef's
+                // own reset in establishSession().
+                warmupBegunRef.current = false;
+                if (cxrSessionRef.current) {
+                  armWarmupBeginTimer(cxrSessionRef.current);
+                }
               }
               console.debug('CloudXR stream started');
               onStatusChange?.(true, 'Connected');

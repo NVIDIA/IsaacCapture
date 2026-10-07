@@ -138,6 +138,12 @@ export class MockCloudXR implements CloudXR.Session {
   // CloudXRComponent's warmupEndTimeoutMs in a test. Only consulted when a pending frame's
   // frameId is `undefined` - see videoFrameReceived's doc comment.
   private warmupTotalFrames: number | null = DEFAULT_WARMUP_TOTAL_FRAMES;
+  // False until setWarmupTotalFrames() is explicitly called - render() only gates on
+  // warmupComplete when a test has opted into warm-up simulation at all. Without this, every
+  // existing demo/mock page that never calls videoFrameReceived() (most of them - warm-up
+  // simulation is new, opt-in instrumentation for the timeout tests, not the default mock
+  // experience) would render black forever, since nothing would ever flip warmupComplete.
+  private warmupSimulationEnabled = false;
   private warmupFramesSeen = 0;
   // Set via setWarmupFirstStatusFrame(); see DEFAULT_WARMUP_FIRST_STATUS_FRAME's doc comment.
   private warmupFirstStatusFrame = DEFAULT_WARMUP_FIRST_STATUS_FRAME;
@@ -296,10 +302,11 @@ export class MockCloudXR implements CloudXR.Session {
       this.processPendingFrame();
     }
 
-    if (!this.warmupComplete) {
+    if (this.warmupSimulationEnabled && !this.warmupComplete) {
       // Decoder warm-up frames carry no pose-backed video to show - see processPendingFrame,
       // which counts warm-up frames (from a frame videoFrameReceived() queued) and flips this
-      // flag.
+      // flag. Gated on warmupSimulationEnabled too: a demo that never opted into warm-up
+      // simulation (see that field's doc comment) should render normally, not black forever.
       if (this.options.gl !== NullWebGLContext) {
         const gl = this.options.gl;
         this.delegates.onWebGLStateChangeBegin?.();
@@ -381,6 +388,7 @@ export class MockCloudXR implements CloudXR.Session {
    */
   setWarmupTotalFrames(totalFrames: number | null): void {
     this.warmupTotalFrames = totalFrames;
+    this.warmupSimulationEnabled = true;
   }
 
   /**
