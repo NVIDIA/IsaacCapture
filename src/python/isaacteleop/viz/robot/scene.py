@@ -93,11 +93,14 @@ class SceneTwin:
 
         self._gl_context = None
         self._renderer = None
+        self._guide = None
+        self._clutch_engaged = False
 
         # The only state two threads touch. Merged into, not replaced: a publisher that
         # sends only what changed must not blank what it left out. A plain dict under the
         # GIL would tear between the read and the clear, hence the lock.
         self._lock = threading.Lock()
+        self._pending_clutch_engaged: bool | None = None
         self._pending_joints: np.ndarray | None = None
         self._pending_bodies: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self._pending_groups: dict[str, bool] = {}
@@ -224,6 +227,7 @@ class SceneTwin:
         bodies: Mapping[str, tuple[Sequence[float], Sequence[float]]] | None = None,
         groups: Mapping[str, bool] | None = None,
         materials: Mapping[str, Sequence[float]] | None = None,
+        clutch_engaged: bool | None = None,
     ) -> None:
         """Record a scene change. Safe from any thread; nothing is drawn or posed here.
 
@@ -238,6 +242,7 @@ class SceneTwin:
             groups: Group name -> drawn, over the sets :meth:`declare_group` named.
             materials: Material name -> rgba, over the ones :meth:`declare_material`
                 named.
+            clutch_engaged: Which controller guide to show; None preserves the state.
         """
         # Converted outside the lock: caller code must not run with the render thread
         # blocked behind it.
@@ -250,7 +255,10 @@ class SceneTwin:
             name: np.array(rgba, dtype=float)
             for name, rgba in (materials or {}).items()
         }
+        clutch_engaged = None if clutch_engaged is None else bool(clutch_engaged)
         with self._lock:
+            if clutch_engaged is not None:
+                self._pending_clutch_engaged = clutch_engaged
             if joints is not None:
                 self._pending_joints = joints
             self._pending_bodies.update(bodies)
@@ -281,6 +289,10 @@ class SceneTwin:
             far_z=far_z,
         )
 
+        from .hud import ControllerGuide
+
+        self._guide = ControllerGuide(near_z, far_z)
+
     def render(self, poses: Sequence[float], fovs: Sequence[float]) -> None:
         """Apply everything published, settle the scene, then draw every view.
 
@@ -298,18 +310,21 @@ class SceneTwin:
                 "raise kMaxGeom in src/viz/robot_twin/cpp/scene_renderer.cpp."
             )
         self._renderer.render(poses, fovs)
+        # settle() latches one published phase for both eyes.
+        self._guide.draw(self._renderer, poses, fovs, self._clutch_engaged)
 
     def color(self, view: int):
-        return self._renderer.color(view)
+        return self._guide.colors[view]
 
     def depth(self, view: int):
-        return self._renderer.depth(view)
+        return self._guide.depths[view]
 
     def frustum(self, view: int):
         return self._renderer.frustum(view)
 
     def destroy(self) -> None:
         """Innermost first: the renderer's GL objects need a current context."""
+        self._guide = None
         try:
             if self._renderer is not None:
                 renderer, self._renderer = self._renderer, None
@@ -324,6 +339,9 @@ class SceneTwin:
         caller can pose the scene and read it back without a GPU.
         """
         with self._lock:
+            if self._pending_clutch_engaged is not None:
+                self._clutch_engaged = self._pending_clutch_engaged
+                self._pending_clutch_engaged = None
             joints, self._pending_joints = self._pending_joints, None
             bodies, self._pending_bodies = self._pending_bodies, {}
             groups, self._pending_groups = self._pending_groups, {}

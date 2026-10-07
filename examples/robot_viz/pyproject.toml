@@ -26,7 +26,7 @@ dependencies = [
     # Unversioned, and a live hazard: a published isaacteleop exists on PyPI, so this
     # resolves happily against a release that is not this checkout's viz -- and against
     # one with no robot twin at all. Install the locally built wheel first.
-    "isaacteleop",
+    "isaacteleop[cloudxr]",
     # app.py imports numpy directly.
     "numpy",
 ]
@@ -41,9 +41,6 @@ dev = ["pytest", "numpy"]
 where = ["python"]
 include = ["isaacteleop_examples*"]
 namespaces = true
-
-# No package-data: the scene and its meshes belong to isaacteleop.viz.robot, which fetches
-# them into a cache on first use. This example ships nothing but Python.
 
 [tool.pytest.ini_options]
 pythonpath = ["python"]
