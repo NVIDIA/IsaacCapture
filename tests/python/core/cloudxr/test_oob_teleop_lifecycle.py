@@ -2201,7 +2201,9 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
     lifecycle._client_grace_deadline = lifecycle.clock() + 20
     clicks = []
 
-    async def attach(*, click_connect, on_dispatched=None, on_client_loaded=None):
+    async def attach(
+        *, click_connect, on_dispatched=None, on_client_loaded=None, **_kwargs
+    ):
         clicks.append(click_connect)
         if on_client_loaded:
             await on_client_loaded()
@@ -2211,9 +2213,12 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
                 await dispatched
         return asyncio.create_task(asyncio.Event().wait())
 
-    with patch(
-        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
-        side_effect=attach,
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+            side_effect=attach,
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.teardown_adb_forward_cdp"),
     ):
         await lifecycle._recover_existing_browser()
         await lifecycle._recover_existing_browser()
@@ -2223,7 +2228,7 @@ async def test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry(
         event[0] = "terminal-2"
         phase[0] = "terminal"
         await lifecycle._recover_existing_browser()
-    await lifecycle._stop_monitor()
+        await lifecycle._stop_monitor()
     assert clicks[0] is False
     assert [click for click in clicks if click] == [True, True]
     assert lifecycle.generation == 0
@@ -2585,3 +2590,252 @@ async def test_grace_recovery_without_hub_report_publishes_loaded_before_connect
     stages = [status["readinessStage"] for status in hub.statuses]
     assert stages[:2] == ["clientLoaded", "connectDispatched"]
     assert hub.statuses[-1]["connectDispatched"] is True
+
+
+# ============================================================================
+# CDP-observed terminal errors (PR #1146's single-recovery-owner fix): the monitor
+# (oob_teleop_adb._monitor_teleop_error_banner) is diagnostic-only - it never closes,
+# navigates, or relaunches the tab itself. It reports a terminal client error via the
+# on_terminal_error callback, which _on_cdp_terminal_error stores; _handle_cdp_terminal_error
+# then acts on it the same way _observe_stream already acts on a hub-reported
+# terminalEventId (see test_terminal_event_clicks_same_tab_once_and_distinct_event_can_retry
+# above) - same-tab CONNECT first, falling back to the existing preserving-browser path.
+# Reusing that path, rather than a new one, is what makes OobLifecycle the single owner:
+# the monitor that observed the error never races it by also acting on its own.
+# ============================================================================
+
+
+def test_on_cdp_terminal_error_only_records_the_observation():
+    """The callback itself must stay synchronous and side-effect-free beyond recording -
+    it's called directly from the monitor's own asyncio task, not awaited by it."""
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    assert lifecycle._pending_cdp_terminal_error is None
+    lifecycle._on_cdp_terminal_error("Stream did not attach within 500ms")
+    assert lifecycle._pending_cdp_terminal_error == "Stream did not attach within 500ms"
+    # A second report before consumption overwrites rather than queuing - the monitor only
+    # calls back on a banner *change*, so an overwrite only loses an intermediate report,
+    # never the latest one.
+    lifecycle._on_cdp_terminal_error("A later, different error")
+    assert lifecycle._pending_cdp_terminal_error == "A later, different error"
+
+
+async def test_cdp_terminal_error_dispatches_same_tab_connect_when_not_usb_local():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    with patch.object(lifecycle, "_same_tab_connect", return_value=True) as same_tab:
+        await lifecycle._handle_cdp_terminal_error("Stream did not attach within 500ms")
+    same_tab.assert_awaited_once_with("cdp:0:1")
+    # Same-tab succeeded - no fallback to the preserving-browser path.
+    assert lifecycle._transport_lost is False
+    assert lifecycle._restore_existing_browser is False
+
+
+async def test_cdp_terminal_error_falls_back_to_preservation_when_same_tab_fails():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+        clock=lambda: 42.0,
+    )
+    before = time.time()
+    with patch.object(lifecycle, "_same_tab_connect", return_value=False) as same_tab:
+        await lifecycle._handle_cdp_terminal_error("Stream did not attach within 500ms")
+    after = time.time()
+    same_tab.assert_awaited_once_with("cdp:0:1")
+    assert lifecycle._transport_lost is True
+    assert lifecycle._restore_existing_browser is True
+    # _repair_started_at is real wall-clock time.time(), not the injected clock=lambda above -
+    # it's later compared against hub-reported metrics_at (wall-clock epoch ms, e.g. lines ~598/
+    # 724's `metrics_at > self._repair_started_at * 1000`), and production never overrides
+    # self.clock away from its time.monotonic default (see wss.py's one real construction site),
+    # so this field must stay wall-clock regardless of what self.clock() returns.
+    assert before <= lifecycle._repair_started_at <= after
+    assert lifecycle._client_grace_deadline is not None
+
+
+async def test_cdp_terminal_error_raises_transport_disrupted_when_usb_local():
+    """USB-local mode repairs host-owned substrate before trusting any browser fallback -
+    same priority as a hub-reported terminalEventId in that mode."""
+    from isaaccapture.cloudxr.oob_teleop_lifecycle import _TransportDisrupted
+
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+    )
+    with patch.object(lifecycle, "_same_tab_connect") as same_tab:
+        with pytest.raises(_TransportDisrupted, match="terminal stream error"):
+            await lifecycle._handle_cdp_terminal_error(
+                "Stream did not attach within 500ms"
+            )
+    same_tab.assert_not_called()
+
+
+async def test_cdp_terminal_error_keys_are_distinct_per_occurrence():
+    """Each call gets its own _same_tab_connect key, so _soft_click_keys (which dedupes by
+    key) never suppresses a second, later CDP-observed error the way it would a repeated
+    identical hub terminalEventId - the monitor's own banner-change dedup already prevents
+    redundant reports reaching here at all."""
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    with patch.object(lifecycle, "_same_tab_connect", return_value=True) as same_tab:
+        await lifecycle._handle_cdp_terminal_error("first error")
+        await lifecycle._handle_cdp_terminal_error("second error")
+    assert [call.args[0] for call in same_tab.await_args_list] == ["cdp:0:1", "cdp:0:2"]
+
+
+async def test_automate_wires_the_terminal_error_callback():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    calls = []
+
+    async def connect(**kwargs):
+        calls.append(kwargs.get("on_terminal_error"))
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            side_effect=connect,
+        ),
+        patch.object(lifecycle, "_verify_browser", new=lambda: asyncio.sleep(0)),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.teardown_adb_forward_cdp"),
+    ):
+        await lifecycle._automate()
+        await lifecycle._stop_monitor()
+    assert calls == [lifecycle._on_cdp_terminal_error]
+
+
+async def test_attach_existing_monitor_wires_the_terminal_error_callback():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    calls = []
+
+    async def attach(**kwargs):
+        calls.append(kwargs.get("on_terminal_error"))
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+            side_effect=attach,
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.teardown_adb_forward_cdp"),
+    ):
+        assert await lifecycle._attach_existing_monitor() is True
+        await lifecycle._stop_monitor()
+    assert calls == [lifecycle._on_cdp_terminal_error]
+
+
+async def test_same_tab_connect_wires_the_terminal_error_callback():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    calls = []
+
+    async def attach(**kwargs):
+        calls.append(kwargs.get("on_terminal_error"))
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+            side_effect=attach,
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.teardown_adb_forward_cdp"),
+    ):
+        assert await lifecycle._same_tab_connect("key-1") is True
+        await lifecycle._stop_monitor()
+    assert calls == [lifecycle._on_cdp_terminal_error]
+
+
+async def test_run_consumes_pending_cdp_error_before_observing_stream():
+    """A pending CDP observation preempts the normal browser_ready dispatch
+    (_observe_stream) on the very next run() iteration, regardless of what
+    _observe_stream would otherwise have found."""
+    hub = FakeHub()
+    ready = AdbDevices((("original", "device"),))
+    ticks = [0]
+
+    async def sleep(_):
+        ticks[0] += 1
+        if ticks[0] == 1:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+        sleep=sleep,
+    )
+    lifecycle.selected = "original"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "old-page"
+    lifecycle._pending_cdp_terminal_error = "Stream did not attach within 500ms"
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(lifecycle, "_handle_cdp_terminal_error") as handle,
+        patch.object(lifecycle, "_observe_stream") as observe,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    handle.assert_awaited_once_with("Stream did not attach within 500ms")
+    observe.assert_not_called()
+    assert lifecycle._pending_cdp_terminal_error is None

@@ -157,6 +157,11 @@ class OobLifecycle:
         self._transport_disruption_signature: tuple | None = None
         self._handled_terminal_events: set[str] = set()
         self._soft_click_keys: set[str] = set()
+        # Set by _on_cdp_terminal_error (passed to the monitor as on_terminal_error),
+        # consumed once per run() iteration by _handle_cdp_terminal_error - see that
+        # method's doc comment for why the monitor itself never acts on this.
+        self._pending_cdp_terminal_error: str | None = None
+        self._cdp_terminal_error_seq = 0
 
         # Wall-clock status timestamps and latest prerequisite observations.
         self.last_adb_at: float | None = None
@@ -320,7 +325,13 @@ class OobLifecycle:
             self._last_reason = reason
 
     async def _stop_monitor(self) -> None:
-        had_monitor = self.monitor is not None
+        # Awaiting a cancelled monitor task normally still runs its finally block to
+        # completion (standard asyncio cancellation semantics), which removes the same
+        # forward - see _monitor_teleop_error_banner's finally. But a task cancelled
+        # before the event loop ever gives its coroutine a first turn never executes any
+        # of its body, including that finally, so the explicit removal below is the only
+        # cleanup that happens in that case. teardown_adb_forward_cdp() is a no-op when
+        # the forward isn't installed, so this is harmless in the normal case too.
         if self.monitor is not None:
             self.monitor.cancel()
             try:
@@ -328,19 +339,8 @@ class OobLifecycle:
             except (asyncio.CancelledError, Exception):
                 # Shutdown must continue even if the monitor already failed.
                 pass
+            await asyncio.to_thread(adb.teardown_adb_forward_cdp)
             self.monitor = None
-        if self.selected and had_monitor:
-            try:
-                await asyncio.to_thread(
-                    adb._adb_run,
-                    ["adb", "forward", "--remove", "tcp:9223"],
-                    capture_output=True,
-                    text=True,
-                    timeout=1,
-                    check=False,
-                )
-            except Exception:
-                log.debug("CDP forward cleanup failed", exc_info=True)
 
     async def _remember_transport_loss(self) -> None:
         """Drop transport-owned state while preserving the prior browser intent."""
@@ -376,6 +376,9 @@ class OobLifecycle:
             self._client_grace_deadline = None
             self._fresh_stream_without_cdp = False
         await self._stop_monitor()
+        # A different recovery path is taking over (USB/ADB/network loss) - any pending CDP
+        # observation is about the client this abandons, not whatever comes next.
+        self._pending_cdp_terminal_error = None
         self.browser_ready = False
         self.browser_client = None
         self.client_loaded = False
@@ -903,6 +906,7 @@ class OobLifecycle:
 
     async def _automate(self) -> None:
         await self._stop_monitor()
+        self._pending_cdp_terminal_error = None
         self._transport_lost = False
         self._restore_existing_browser = False
         self._repair_started_at = None
@@ -959,6 +963,7 @@ class OobLifecycle:
             host_client=self.host_client,
             on_dispatched=on_dispatched,
             on_client_loaded=on_client_loaded,
+            on_terminal_error=self._on_cdp_terminal_error,
         )
         # A successful return still establishes dispatch if an adapter omits the callback.
         if not self.connect_dispatched:
@@ -980,7 +985,13 @@ class OobLifecycle:
             return True
         self.monitor = None
         try:
-            self.monitor = await adb.attach_existing_oob_tab(click_connect=False)
+            self.monitor = await adb.attach_existing_oob_tab(
+                resolved_port=self.resolved_port,
+                click_connect=False,
+                usb_local=self.usb_local,
+                host_client=self.host_client,
+                on_terminal_error=self._on_cdp_terminal_error,
+            )
         except adb.OobAdbError:
             log.info(
                 "Existing browser is healthy through OOB but CDP is not attachable"
@@ -1030,12 +1041,17 @@ class OobLifecycle:
 
         try:
             self.monitor = await adb.attach_existing_oob_tab(
+                resolved_port=self.resolved_port,
                 click_connect=True,
                 on_client_loaded=on_client_loaded,
                 on_dispatched=on_dispatched,
+                usb_local=self.usb_local,
+                host_client=self.host_client,
+                on_terminal_error=self._on_cdp_terminal_error,
             )
         except adb.OobAdbError:
             self.monitor = None
+            self.connect_dispatched = False
             return False
         if not self.connect_dispatched:
             await on_dispatched()
@@ -1305,6 +1321,39 @@ class OobLifecycle:
             browserRegistered=True,
             healthProbeAcknowledged=True,
         )
+
+    def _on_cdp_terminal_error(self, banner: str) -> None:
+        """Passed to the monitor as its ``on_terminal_error`` callback. Synchronous and
+        cheap on purpose: the monitor's own asyncio task calls this directly, so it must
+        never await lifecycle recovery or mutate browser/recovery state itself - it only
+        records the observation. See _handle_cdp_terminal_error for what happens with it.
+        """
+        self._pending_cdp_terminal_error = banner
+
+    async def _handle_cdp_terminal_error(self, banner: str) -> None:
+        """Act on a terminal error the CDP monitor observed, exactly like a hub-reported
+        ``terminalEventId`` (see _observe_stream's own handling below): try one trusted
+        same-tab CONNECT first, falling back to the existing preserving-browser path
+        (which _recover_existing_browser escalates to a full _automate() bootstrap after
+        its bounded grace) if that doesn't land. Reusing that path, rather than a separate
+        one, is what makes this the single recovery owner - the monitor that observed this
+        banner never closes or relaunches anything itself.
+        """
+        self._cdp_terminal_error_seq += 1
+        key = f"cdp:{self.generation}:{self._cdp_terminal_error_seq}"
+        if self.usb_local:
+            # Same treatment as a hub terminal event in USB-local mode: repair host-owned
+            # substrate before trusting any browser fallback.
+            raise _TransportDisrupted(
+                f"Browser reported a terminal stream error: {banner}",
+                adb_ready=True,
+                network_present=True,
+            )
+        if not await self._same_tab_connect(key):
+            self._transport_lost = True
+            self._restore_existing_browser = True
+            self._repair_started_at = time.time()
+            self._client_grace_deadline = self._bounded_client_grace_deadline()
 
     async def _observe_stream(self) -> None:
         state = await self.hub.get_snapshot()
@@ -1735,7 +1784,15 @@ class OobLifecycle:
                     # In USB-local mode, ACTIVE/VERIFYING_BROWSER revalidate USB first.
                     if self.browser_ready or self.connect_dispatched:
                         await self._check_usb_prerequisites()
-                    if self.browser_ready:
+                    # Checked after prerequisites (a genuine USB/ADB/network failure keeps
+                    # priority) but before per-state dispatch below, so a CDP-observed
+                    # terminal error is handled the same way regardless of which state
+                    # (browser_ready, connect_dispatched, or neither) it arrived in.
+                    if self._pending_cdp_terminal_error is not None:
+                        banner = self._pending_cdp_terminal_error
+                        self._pending_cdp_terminal_error = None
+                        await self._handle_cdp_terminal_error(banner)
+                    elif self.browser_ready:
                         await self._observe_stream()
                     elif self.connect_dispatched:
                         await self._verify_browser()
