@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+ARG PYTORCH_IMAGE=pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime
+
+# Build the pinned upstream package without adding Git to the runtime image.
+FROM ${PYTORCH_IMAGE} AS dinov3-wheel
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-dinov3.txt /tmp/requirements-dinov3.txt
+RUN python -m pip wheel --no-cache-dir --no-deps \
+    --wheel-dir /wheels -r /tmp/requirements-dinov3.txt
+
+FROM ${PYTORCH_IMAGE}
+
+# EGL for headless pyrender + ffmpeg for video encode; gcc for Triton 3.7.1 JIT
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libegl1 libgles2 libgomp1 ffmpeg gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps — installed before source COPY so this layer is cached across code changes.
+# torch is already pre-installed in the base image (2.13.0+cu130); only install the
+# remaining runtime deps so the base image's torch installation is never clobbered.
+# requirements.txt covers pyrender/warp-lang/usd-core/rtree (usd-core/warp-lang/rtree
+# are unconditional imports in the reachable code path, pyrender only for
+# --no_save_videos=false overlay rendering) and soma (the SOMA/MHR hand+body layer,
+# from the py-soma-x PyPI package).
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+
+# EgoHand supplies torch and numpy for its DINOv3 backbone. Skip upstream's broader
+# training dependencies so this installation cannot replace the CUDA torch stack.
+COPY --from=dinov3-wheel /wheels /tmp/dinov3-wheels
+COPY requirements-dinov3.txt /opt/dinov3/requirements-dinov3.txt
+RUN python -m pip install --no-cache-dir --no-index --no-deps \
+        --break-system-packages /tmp/dinov3-wheels/*.whl \
+    && rm -rf /tmp/dinov3-wheels \
+    && python -c "from dinov3.models.vision_transformer import DinoVisionTransformer"
+
+# Run as a non-root user. HOME is fixed rather than left to the runtime UID, and
+# made writable by any UID, so the HF cache (including the SOMA assets fetched
+# below) and Triton's JIT cache work both as app and as the caller's UID passed
+# by egohand_inference.sh run via docker run --user.
+RUN useradd --create-home --home-dir /home/app --shell /usr/sbin/nologin app
+ENV HOME=/home/app
+
+# Pre-fetch soma's rig assets (SOMAHand.npz, SOMA_neutral.npz, ...) at build
+# time so the image doesn't need network access to huggingface.co at run
+# time. Cached under the image's default HF cache dir ($HOME/.cache); run_egohand_
+# inference_pipeline.py's --soma_hand_assets resolves to this same cache via
+# soma.get_assets_dir() unless overridden.
+RUN python -c "from soma import get_assets_dir; get_assets_dir()" \
+    && chmod -R a+rwX "$HOME"
+
+# Bake the inference-path source into the image. Checkpoints and the input videos
+# are volume-mounted at run time (see egohand_inference.sh run). Only what the
+# entrypoint — inference/scripts/run_egohand_inference_pipeline.py — reaches is copied.
+COPY egohand /workspace/egohand
+COPY inference /workspace/inference
+
+# Optional bundled weights. Populated by egohand_inference.sh build --egohand-ckpt /...
+# and --hand-detector-weight /... If the files are absent the directory is still
+# created (empty), so the COPY is always valid. At run time the volume-mount
+# paths take precedence; bundled paths are the fallback.
+COPY weights/ /workspace/weights/
+
+ENV PYOPENGL_PLATFORM=egl
+ENV EGOHAND_ROOT=/workspace
+ENV PYTHONPATH=/workspace
+WORKDIR /workspace
+USER app

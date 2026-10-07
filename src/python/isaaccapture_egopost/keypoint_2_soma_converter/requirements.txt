@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+# Run from this folder: python -m pip install -r requirements.txt
+# Pin the main numerical runtime used for the sample; pyproject.toml supplies
+# the complete direct dependency list. This is not a transitive lock file.
+--extra-index-url https://download.pytorch.org/whl/cu128
+py-soma-x==0.3.0
+cholespy==2.2.0
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+triton==3.3.1
+transformers==5.18.0
+numpy==1.26.4
+scipy==1.17.1
+opencv-python-headless==4.11.0.86
+warp-lang==1.17.0
+usd-core==26.8
+trimesh==5.1.0
+rtree==1.4.1
+imageio-ffmpeg==0.6.0
+-e .[cuda]
