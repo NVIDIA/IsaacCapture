@@ -25,13 +25,20 @@ def restore_console():
     """This process shares the one handler under test with every other test."""
     handler = _console.ensure_handler()
     level = handler.level
+    formatter = handler.formatter
+    console_format = dict(_console._console_format)
     colors = dict(_console._logger_colors)
+    color_lookup = _console._logger_color
     published = os.environ.get("ISAACCAPTURE_LOG_LEVEL")
     yield
     logging_config.set_console_filter(None)
     handler.setLevel(level)
+    handler.setFormatter(formatter)
+    _console._console_format.clear()
+    _console._console_format.update(console_format)
     _console._logger_colors.clear()
     _console._logger_colors.update(colors)
+    _console._logger_color = color_lookup
     if published is None:
         os.environ.pop("ISAACCAPTURE_LOG_LEVEL", None)
     else:
@@ -121,12 +128,15 @@ class _Tty(io.StringIO):
         return True
 
 
-def render(stream, level=logging.INFO, name="isaaccapture.core.Probe") -> str:
+def render(
+    stream, level=logging.INFO, name="isaaccapture.core.Probe", **options
+) -> str:
     handler = logging.StreamHandler(stream)
     formatter = _console._LoggerNameColorFormatter(
         _core.LINE_FORMAT,
         datefmt=_core.DATE_FORMAT,
         handler=handler,
+        **options,
     )
     return formatter.format(
         logging.LogRecord(name, level, __file__, 1, "msg", None, None)
@@ -157,9 +167,35 @@ class TestColourFormatter:
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})
         assert f"[\033[36misaaccapture.core.Probe{_RESET}]" in render(_Tty())
 
+    def test_a_logger_colour_also_applies_to_its_descendants(self):
+        logging_config.set_logger_colors({"isaaccapture.core": "\033[36m"})
+        assert f"[\033[36misaaccapture.core.Probe{_RESET}]" in render(_Tty())
+        # A name that only shares the leading text is not a descendant.
+        assert "\033[36m" not in render(_Tty(), name="isaaccapture.corex.Probe")
+
+    def test_the_most_specific_colour_wins(self):
+        logging_config.set_logger_colors(
+            {"isaaccapture.core": "\033[36m", "isaaccapture.core.Probe": "\033[35m"}
+        )
+        assert f"[\033[35misaaccapture.core.Probe{_RESET}]" in render(_Tty())
+
+    def test_a_change_reaches_names_already_looked_up(self):
+        logging_config.set_logger_colors({"isaaccapture.core": "\033[36m"})
+        assert f"[\033[36misaaccapture.core.Probe{_RESET}]" in render(_Tty())
+        logging_config.set_logger_colors({"isaaccapture.core": "\033[35m"})
+        assert f"[\033[35misaaccapture.core.Probe{_RESET}]" in render(_Tty())
+        logging_config.set_logger_colors({"isaaccapture.core": None})
+        assert "\033[" not in render(_Tty())
+        # Lookups never write what they resolve into the configured colours.
+        assert "isaaccapture.core.Probe" not in _console._logger_colors
+
     def test_oob_progress_logger_is_cyan_by_default(self):
         name = "isaaccapture.cloudxr.oob_teleop_env"
         assert f"[\033[36m{name}{_RESET}]" in render(_Tty(), name=name)
+
+    def test_the_last_segment_keeps_the_full_names_colour(self):
+        logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})
+        assert f"[\033[36mProbe{_RESET}]" in render(_Tty(), use_short_name=True)
 
     def test_the_record_is_handed_back_unmodified(self):
         # The file handler shares the record and must stay escape-free.
@@ -200,3 +236,59 @@ class TestLoggerColours:
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})
         logging_config.set_logger_colors({"isaaccapture.core.Probe": None})
         assert "isaaccapture.core.Probe" not in _console._logger_colors
+
+
+def probe() -> logging.LogRecord:
+    return logging.LogRecord(
+        "isaaccapture.core.Probe", logging.INFO, __file__, 1, "msg", None, None
+    )
+
+
+class TestConsoleFormat:
+    def test_defaults_are_time_level_and_the_last_name_segment(self):
+        assert re.fullmatch(
+            r"\[\d{2}:\d{2}:\d{2}\.\d{3}\] \[INFO \] \[Probe\] msg",
+            _console.ensure_handler().format(probe()),
+        )
+
+    def test_only_the_given_keys_change(self):
+        logging_config.set_console_format({"show_pid": True, "use_short_name": False})
+        logging_config.set_console_format({"show_time": False})
+        assert re.fullmatch(
+            r"\[INFO \] \[isaaccapture\.core\.Probe\] \[pid:\d+\] msg",
+            _console.ensure_handler().format(probe()),
+        )
+
+    def test_every_optional_column_can_be_dropped(self):
+        logging_config.set_console_format(
+            {
+                "show_time": False,
+                "show_level": False,
+                "show_logger_name": False,
+                "show_pid": False,
+            }
+        )
+        assert _console.ensure_handler().format(probe()) == "msg"
+
+    def test_last_segment_shortens_only_the_console_line(self):
+        logging_config.set_console_format({"show_time": False})
+        entry = probe()
+        assert _console.ensure_handler().format(entry) == "[INFO ] [Probe] msg"
+        # The file handler formats the same record next.
+        assert entry.name == "isaaccapture.core.Probe"
+
+    def test_an_unknown_key_is_logged_and_skipped(self, caplog):
+        logging_config.set_console_format({"colour": True, "show_time": False})
+        assert "colour" not in _console._console_format
+        assert _console._console_format["show_time"] is False
+        [record] = caplog.records
+        assert record.levelno == logging.ERROR
+        assert "'colour'" in record.getMessage()
+
+    def test_a_wrong_type_is_logged_and_skipped(self, caplog):
+        logging_config.set_console_format({"show_pid": 1, "show_time": False})
+        assert _console._console_format["show_pid"] is False
+        assert _console._console_format["show_time"] is False
+        [record] = caplog.records
+        assert record.levelno == logging.ERROR
+        assert "'show_pid' must be a bool, got 1" in record.getMessage()

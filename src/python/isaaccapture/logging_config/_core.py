@@ -22,7 +22,7 @@ def logging_enabled() -> bool:
 
 
 LINE_FORMAT = "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)s] [pid:%(process)d] %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+DATE_FORMAT = "%H:%M:%S"
 
 # POSIX needs per-uid isolation; the Windows temp directory is already per-user.
 _DEFAULT_LOG_DIR = (

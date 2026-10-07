@@ -10,6 +10,9 @@ nothing. Raw fd 1/2 output is captured separately by ``_native_fd.py``.
 """
 
 from ._console import set_console_filter, set_console_level, set_logger_colors
+from ._console import (
+    set_console_format,
+)
 
 # Internal bootstrap; intentionally excluded from ``__all__``.
 from ._setup import install as install
@@ -18,6 +21,7 @@ from ._setup import set_propagate_to_root
 # Public configuration API.
 __all__ = [
     "set_console_filter",
+    "set_console_format",
     "set_console_level",
     "set_logger_colors",
     "set_propagate_to_root",

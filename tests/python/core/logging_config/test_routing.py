@@ -12,6 +12,7 @@ process that dropped the address), and a destination.
 from __future__ import annotations
 
 import json
+import re
 import stat
 
 import pytest
@@ -73,7 +74,11 @@ class TestPythonLeader:
         assert "python info" in logged
         assert "python debug" in logged
         assert LINE_RE.fullmatch(line_with(logged, "python info")) is not None
-        assert LINE_RE.fullmatch(line_with(result.stderr, "python info")) is not None
+        # The console defaults to the short columns: no pid, last name segment.
+        assert re.fullmatch(
+            r"\[\d{2}:\d{2}:\d{2}\.\d{3}\] \[INFO \] \[routing\] python info",
+            line_with(result.stderr, "python info"),
+        )
 
 
 @requires_emitter

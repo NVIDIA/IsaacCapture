@@ -46,7 +46,7 @@ namespace
 constexpr std::size_t kFileMaxBytes = 10 * 1024 * 1024; // 10 MiB
 constexpr std::size_t kFileBackupCount = 5;
 // Match Python's LINE_FORMAT; %* renders Python-style level names.
-constexpr const char* kPattern = "[%Y-%m-%d %H:%M:%S.%e] [%*] [%n] [pid:%P] %v";
+constexpr const char* kPattern = "[%H:%M:%S.%e] [%*] [%n] [pid:%P] %v";
 
 // Map spdlog levels to Python's display names.
 std::string_view python_level_name(spdlog::level::level_enum level)

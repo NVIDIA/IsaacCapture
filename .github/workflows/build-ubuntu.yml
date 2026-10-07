@@ -875,7 +875,9 @@ jobs:
         # proxy up. This is the primary bring-up marker.
         BRINGUP_MARKER="CloudXR runtime and WSS proxy started"
         SESSION_MARKER="TeleopSession started successfully"
-        PLUGIN_MARKER_RE="wuji_glove\.WujiGlovePlugin\].*initialized and running"
+        # The console names a logger by its last segment only (logging_config's
+        # default), so the plugin's line reads "[WujiGlovePlugin] ...".
+        PLUGIN_MARKER_RE="\[WujiGlovePlugin\].*initialized and running"
         # Hard failures from the launcher, runtime, or plugin lifecycle.
         FAIL_RE="CloudXR runtime failed to start|SDK missing libcloudxr.so|CloudXR EULA was not accepted|CloudXR launcher is not running|runtime process exited unexpectedly|WSS proxy thread stopped unexpectedly|Plugin process exited immediately|Required plugin .* was not discovered"
 
