@@ -100,6 +100,8 @@ struct GloveState
     ::avatar::AvatarDataFrame robot_frame;
     // Empty until start() or a successful fetch; drives the data-timeout window.
     std::optional<std::chrono::steady_clock::time_point> last_successful_fetch;
+    // Newest sample stamp seen; a fetch only counts as data when it advances this.
+    ::avatar::Stamp last_sample_stamp;
 };
 
 class __attribute__((visibility("default"))) AvatarTracker
