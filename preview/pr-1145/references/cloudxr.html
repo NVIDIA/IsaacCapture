@@ -456,13 +456,14 @@ that only the service exposes.</p></li>
 <li><p><a class="reference internal" href="#start-the-service" id="id4">Start the service</a></p></li>
 <li><p><a class="reference internal" href="#manage-the-service" id="id5">Manage the service</a></p></li>
 <li><p><a class="reference internal" href="#optional-launch-modes" id="id6">Optional launch modes</a></p></li>
-<li><p><a class="reference internal" href="#re-open-the-client-on-the-headset" id="id7">Re-open the client on the headset</a></p></li>
-<li><p><a class="reference internal" href="#load-cloudxr-environment-variables" id="id8">Load CloudXR environment variables</a></p></li>
-<li><p><a class="reference internal" href="#run-teleop-examples-against-the-service" id="id9">Run teleop examples against the service</a></p></li>
-<li><p><a class="reference internal" href="#use-a-system-openxr-runtime-no-cloudxr-attach" id="id10">Use a system OpenXR runtime (no CloudXR attach)</a></p></li>
-<li><p><a class="reference internal" href="#run-the-service-in-a-container-or-ci" id="id11">Run the service in a container or CI</a></p></li>
-<li><p><a class="reference internal" href="#configuration" id="id12">Configuration</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id13">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#usb-local-startup-checks" id="id7">USB-local startup checks</a></p></li>
+<li><p><a class="reference internal" href="#re-open-the-client-on-the-headset" id="id8">Re-open the client on the headset</a></p></li>
+<li><p><a class="reference internal" href="#load-cloudxr-environment-variables" id="id9">Load CloudXR environment variables</a></p></li>
+<li><p><a class="reference internal" href="#run-teleop-examples-against-the-service" id="id10">Run teleop examples against the service</a></p></li>
+<li><p><a class="reference internal" href="#use-a-system-openxr-runtime-no-cloudxr-attach" id="id11">Use a system OpenXR runtime (no CloudXR attach)</a></p></li>
+<li><p><a class="reference internal" href="#run-the-service-in-a-container-or-ci" id="id12">Run the service in a container or CI</a></p></li>
+<li><p><a class="reference internal" href="#configuration" id="id13">Configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id14">Troubleshooting</a></p></li>
 </ul>
 </nav>
 <section id="start-the-service">
@@ -583,6 +584,34 @@ and a WiFi-associated headset.</p></td>
 <a class="reference internal" href="oob_teleop_control.html"><span class="doc">Out-of-Band Teleop Control</span></a> for full OOB documentation. The OOB hub
 prints a banner as it comes up, so <code class="docutils literal notranslate"><span class="pre">run</span></code> is often the more useful command
 while setting those modes up for the first time.</p>
+</section>
+<section id="usb-local-startup-checks">
+<h2>USB-local startup checks<a class="headerlink" href="#usb-local-startup-checks" title="Link to this heading">#</a></h2>
+<p>On a clean <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> start, the service records the selected headset’s
+negotiated USB speed, hub and controller path, and evidence of faster USB
+root hubs on the same controller. After its existing adb reverse rules are
+ready, it measures three seconds of host-to-headset transfer using the
+already served <code class="docutils literal notranslate"><span class="pre">/client/bundle.js</span></code> over HTTPS. This finishes before the
+browser is opened. The selected headset must first report
+<code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; if that cannot be confirmed, no transfer or browser
+launch occurs and the JSON report records the incomplete check. If the headset
+lacks a usable curl or timer, the service uses a three-second ADB-only transfer
+and labels the narrower coverage in the result.</p>
+<p>One JSON report is saved under <code class="docutils literal notranslate"><span class="pre">&lt;CloudXR</span> <span class="pre">install</span> <span class="pre">dir&gt;/logs/usb-health/</span></code> for
+each USB-local start. It begins before ADB selection, records partial results
+when device preparation or a check fails, and refreshes link topology after
+a preserved browser reconnect without repeating the active transfer. It
+uses a hashed device serial, and keeps at most 20 reports or 14 days of
+history. A link below 5000 Mb/s or an incomplete transfer is logged as a
+warning and startup continues. <code class="docutils literal notranslate"><span class="pre">hostToHeadsetMbps</span></code> is the completed bytes
+divided by the full three-second wall-clock interval. Each curl request opens
+a new connection, so this includes request and TLS setup. The optional
+<code class="docutils literal notranslate"><span class="pre">hostToHeadsetResponseBodyMbps</span></code> instead divides those same completed bytes
+by the sum of curl’s <code class="docutils literal notranslate"><span class="pre">time_total</span> <span class="pre">-</span> <span class="pre">time_starttransfer</span></code> intervals. It excludes
+setup and gaps between requests; it is a response-body estimate, not sustained
+goodput or USB line rate. Neither metric measures headset-to-host traffic or
+CloudXR stream throughput. A faster root hub is a topology clue, not proof
+that an accessible physical port is free.</p>
 </section>
 <section id="re-open-the-client-on-the-headset">
 <h2>Re-open the client on the headset<a class="headerlink" href="#re-open-the-client-on-the-headset" title="Link to this heading">#</a></h2>
@@ -832,6 +861,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-service">Start the service</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#manage-the-service">Manage the service</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-launch-modes">Optional launch modes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#usb-local-startup-checks">USB-local startup checks</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#re-open-the-client-on-the-headset">Re-open the client on the headset</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#load-cloudxr-environment-variables">Load CloudXR environment variables</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run-teleop-examples-against-the-service">Run teleop examples against the service</a></li>
