@@ -126,6 +126,8 @@ class OobLifecycle:
         self._usb_transfer_history: list[dict] = []
         self._usb_transfer_stale = False
         self._usb_wake_confirmed: bool | None = None
+        # Only a failed strict wake check permits polling after episode expiry.
+        self._usb_waiting_for_awake = False
         self._usb_link: dict | None = None
         self._usb_transfer: dict | None = None
 
@@ -342,6 +344,7 @@ class OobLifecycle:
 
     async def _remember_transport_loss(self) -> None:
         """Drop transport-owned state while preserving the prior browser intent."""
+        self._usb_waiting_for_awake = False
         if self._usb_wake_confirmed is not None:
             self._usb_wake_confirmed = None
             if self._usb_health_report is not None:
@@ -806,6 +809,7 @@ class OobLifecycle:
     async def _confirm_usb_awake(self) -> None:
         """Require a fresh Awake observation immediately before active transfer."""
         self._usb_wake_confirmed = False
+        self._usb_waiting_for_awake = False
         started = self.clock()
         await self._publish(
             "degraded",
@@ -823,6 +827,7 @@ class OobLifecycle:
                 adb.assert_headset_awake, timeout=10.0, require_awake=True
             )
         except (Exception, asyncio.CancelledError):
+            self._usb_waiting_for_awake = True
             self._persist_usb_health(
                 wakeCheck={
                     "confirmedAwake": False,
@@ -1686,11 +1691,41 @@ class OobLifecycle:
                     and not self.browser_ready
                     and not self.connect_dispatched
                 ):
-                    self._record_usb_wait("WAITING_FOR_ADB", "recovery_deadline")
+                    waiting_for_awake = (
+                        self.usb_local
+                        and self.usb_health_policy != "off"
+                        and self._usb_waiting_for_awake
+                    )
+                    if waiting_for_awake:
+                        try:
+                            wake = await asyncio.to_thread(adb.headset_wakefulness)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            log.debug(
+                                "Passive USB wake observation failed", exc_info=True
+                            )
+                            wake = ""
+                        if wake == "Awake":
+                            self._usb_waiting_for_awake = False
+                            self._record_usb_event("USB_WAKE_OBSERVED")
+                            self._restart_episode()
+                            continue
+                    wait_state = (
+                        "WAITING_FOR_AWAKE" if waiting_for_awake else "WAITING_FOR_ADB"
+                    )
+                    self._record_usb_wait(
+                        wait_state,
+                        "awake_recovery_deadline"
+                        if waiting_for_awake
+                        else "recovery_deadline",
+                    )
                     await self._publish(
                         "degraded",
-                        "WAITING_FOR_ADB",
-                        "Recovery episode expired; observing for a change",
+                        wait_state,
+                        "Recovery episode expired; waiting for selected headset to wake"
+                        if waiting_for_awake
+                        else "Recovery episode expired; observing for a change",
                         adbReady=True,
                         networkPresent=True,
                     )
@@ -1721,6 +1756,7 @@ class OobLifecycle:
                             self._record_usb_event("PREPARING_DEVICE")
                             if self.usb_local:
                                 self._usb_wake_confirmed = False
+                                self._usb_waiting_for_awake = False
                             try:
                                 await self._prepare_device()
                             except (Exception, asyncio.CancelledError) as exc:

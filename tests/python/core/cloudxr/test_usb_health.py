@@ -687,6 +687,208 @@ async def test_startup_checks_finish_before_browser(
 
 
 @pytest.mark.asyncio
+async def test_expired_usb_wake_wait_resumes_when_selected_headset_wakes(
+    tmp_path, monkeypatch
+):
+    now = [0.0]
+    wake_polls = []
+    strict_checks = []
+    transfers = []
+    launches = []
+    statuses = []
+    selected = "selected-headset"
+    devices = adb.AdbDevices(((selected, "device"),))
+    lifecycle = OobLifecycle(
+        hub=_Hub(),
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=60, interval_sec=5),
+        clock=lambda: now[0],
+        on_status=statuses.append,
+        usb_health_logs_dir=tmp_path,
+    )
+    lifecycle.selected = selected
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 1
+
+    async def sleep(seconds):
+        now[0] += seconds
+        if now[0] >= 90:
+            raise asyncio.CancelledError
+
+    def wakefulness():
+        assert adb.SELECTED_ADB_SERIAL.get() == selected
+        wake_polls.append(now[0])
+        return "Awake" if now[0] >= 65 else "Asleep"
+
+    def strict_wake(*, timeout, require_awake):
+        assert adb.SELECTED_ADB_SERIAL.get() == selected
+        assert timeout == 10.0 and require_awake
+        strict_checks.append(now[0])
+        if now[0] < 65:
+            raise adb.OobAdbError("still asleep")
+
+    async def link():
+        lifecycle._usb_link = {"negotiatedSpeedMbps": 5000}
+        lifecycle._persist_usb_health(topology=lifecycle._usb_link)
+
+    async def transfer():
+        assert lifecycle._usb_wake_confirmed is True
+        transfers.append(now[0])
+        lifecycle._usb_transfer = {"completed": True, "outcome": "pass"}
+        lifecycle._persist_usb_health(transferTest=lifecycle._usb_transfer)
+
+    async def browser():
+        launches.append(now[0])
+        raise asyncio.CancelledError
+
+    lifecycle.sleep = sleep
+    monkeypatch.setattr(lifecycle, "_prepare_device", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_check_usb_link", link)
+    monkeypatch.setattr(lifecycle, "_rebuild_usb", AsyncMock())
+    monkeypatch.setattr(lifecycle, "_check_usb_transfer", transfer)
+    monkeypatch.setattr(lifecycle, "_automate", browser)
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=adb.HeadsetNetworkProbe(
+                adb.HeadsetNetworkState.NETWORK_PRESENT
+            ),
+        ),
+        patch.object(adb, "_run_adb", return_value="stable-reverse-rules"),
+        patch.object(adb, "headset_wakefulness", side_effect=wakefulness),
+        patch.object(adb, "assert_headset_awake", side_effect=strict_wake),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert wake_polls == [60.0, 65.0]
+    assert strict_checks[-1] == 65.0
+    assert transfers == launches == [65.0]
+    assert any(
+        status["state"] == "WAITING_FOR_AWAKE"
+        and status["adbReady"]
+        and status["reason"]
+        == "Recovery episode expired; waiting for selected headset to wake"
+        for status in statuses
+    )
+    report = json.loads(lifecycle._usb_health_report.path.read_text())
+    assert report["wakeCheck"]["confirmedAwake"] is True
+    assert report["decision"]["overallOutcome"] == "pass"
+    assert any(error["code"] == "awake_not_confirmed" for error in report["errors"])
+    assert any(
+        error["state"] == "WAITING_FOR_AWAKE"
+        and error["code"] == "awake_recovery_deadline"
+        for error in report["errors"]
+    )
+    assert any(event["state"] == "USB_WAKE_OBSERVED" for event in report["events"])
+
+
+@pytest.mark.parametrize(
+    ("usb_local", "policy", "waiting_for_awake"),
+    [(True, "warn", False), (True, "off", True), (False, "warn", True)],
+)
+@pytest.mark.asyncio
+async def test_unrelated_expired_episode_does_not_poll_usb_wake(
+    usb_local, policy, waiting_for_awake
+):
+    now = [0.0]
+    selected = "selected-headset"
+    devices = adb.AdbDevices(((selected, "device"),))
+    lifecycle = OobLifecycle(
+        hub=_Hub(),
+        resolved_port=48322,
+        usb_local=usb_local,
+        host_client=True,
+        turn_port=3478 if usb_local else None,
+        config=RecoveryConfig(timeout_sec=60, interval_sec=5),
+        clock=lambda: now[0],
+        usb_health_policy=policy,
+    )
+    lifecycle.selected = selected
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 1
+    lifecycle.last_network_state = adb.HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._usb_waiting_for_awake = waiting_for_awake
+    now[0] = 65.0
+
+    async def stop(_seconds):
+        raise asyncio.CancelledError
+
+    lifecycle.sleep = stop
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=adb.HeadsetNetworkProbe(
+                adb.HeadsetNetworkState.NETWORK_PRESENT
+            ),
+        ),
+        patch.object(adb, "_run_adb", return_value="stable-reverse-rules"),
+        patch.object(adb, "headset_wakefulness") as wake,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    wake.assert_not_called()
+    assert lifecycle.episode_start == 0.0
+    assert lifecycle.snapshot["state"] == "WAITING_FOR_ADB"
+
+
+@pytest.mark.asyncio
+async def test_prepare_failure_clears_prior_wake_wait_before_deadline():
+    now = [0.0]
+    selected = "selected-headset"
+    devices = adb.AdbDevices(((selected, "device"),))
+    lifecycle = OobLifecycle(
+        hub=_Hub(),
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(timeout_sec=5, interval_sec=5),
+        clock=lambda: now[0],
+    )
+    lifecycle.selected = selected
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 1
+    lifecycle.last_network_state = adb.HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._usb_waiting_for_awake = True
+
+    async def sleep(seconds):
+        now[0] += seconds
+        if now[0] >= 10:
+            raise asyncio.CancelledError
+
+    lifecycle.sleep = sleep
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=adb.HeadsetNetworkProbe(
+                adb.HeadsetNetworkState.NETWORK_PRESENT
+            ),
+        ),
+        patch.object(adb, "_run_adb", return_value="stable-reverse-rules"),
+        patch.object(adb, "headset_wakefulness") as wake,
+        patch.object(
+            lifecycle,
+            "_prepare_device",
+            side_effect=adb.OobAdbError("prepare failed"),
+        ),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    wake.assert_not_called()
+    assert lifecycle._usb_waiting_for_awake is False
+
+
+@pytest.mark.asyncio
 async def test_missing_adb_writes_partial_usb_report(tmp_path, monkeypatch):
     lifecycle = OobLifecycle(
         hub=_Hub(),
