@@ -58,13 +58,20 @@ export function createSession(
 
 declare global {
   interface Window {
-    __mockCloudXRFail?: (message?: string) => void;
+    __mockCloudXRFail?: (message?: string, code?: number) => void;
     __mockCloudXRConnectDelayMs?: number;
   }
 }
 
 if (typeof window !== 'undefined') {
-  window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage') => {
-    activeSession?.triggerFailure({ name: 'StreamingError', message });
+  // code is optional and omitted by default (a recoverable failure, matching the SDK's
+  // own default): CloudXRComponent.tsx's onStreamStopped auto-reconnects on a recoverable
+  // error without ever showing #errorMessageBox, exactly as it would for a real transient
+  // failure. Pass a code in the 0xc0f22300-0xc0f223ff (server-disconnect) range - see
+  // helpers/streamingErrorClassification.ts's isRecoverable() - for a genuine terminal
+  // error that surfaces on the DOM, matching CloudXRComponentTest.tsx's own
+  // NON_RETRYABLE_CODE steps.
+  window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage', code) => {
+    activeSession?.triggerFailure({ name: 'StreamingError', message, code });
   };
 }
