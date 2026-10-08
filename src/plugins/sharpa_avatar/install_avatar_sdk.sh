@@ -11,7 +11,9 @@ set -euo pipefail
 # Pinned fingerprints must be present on the downloaded key; extra fingerprints are allowed.
 apt_base_url="https://packages.sharpa.com/repository"
 key_url="$apt_base_url/raw-releases/gpg-keys/apt-releases.gpg"
-expected_fingerprints=$'80D634617D407A87CF54136D1594113827B5B686\nF9A50A81FE8797F953DB24E1938548788D899BCC'
+# Pin primary (signing) keys only: the check below reads primary fingerprints, and
+# F9A50A81FE8797F953DB24E1938548788D899BCC is this key's encryption subkey, bound by it.
+expected_fingerprints=$'80D634617D407A87CF54136D1594113827B5B686'
 keyring="/etc/apt/keyrings/sharpa-avatar-sdk.gpg"
 source_list="/etc/apt/sources.list.d/sharpa-avatar-sdk.list"
 # Pinned production SDK package version for reproducible installs.
