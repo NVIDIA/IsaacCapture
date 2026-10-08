@@ -36,6 +36,8 @@ SPDX-License-Identifier: Apache-2.0
   startup; state that MuJoCo is required for simulation and omitted for real robots;
   identify processes with comments above their command blocks in network setup,
   including the network SFU as Edge Process 0.
+  Include the final Pico streamer launch and headset connection instruction
+  directly in network startup; do not rely on a link to the process overview.
 - Mark host-to-container transitions explicitly in deployment instructions;
   an environment prompt prefix does not establish that Docker was entered.
 - Document fresh Robot Site provisioning (GR00T clone/LFS, deployment guide,
@@ -50,3 +52,15 @@ SPDX-License-Identifier: Apache-2.0
 - Network profiles must keep server signing/TLS private keys on Edge Compute,
   distribute only site-scoped client tokens, and verify the generated profile
   through the actual SDK (including certificate rejection and changing video).
+
+- Keep repeated network setup operations in runnable helpers; README steps should
+  use short commands rather than requiring operators to paste remote shell bodies.
+- Mark shell helpers with shebangs executable before staging; pre-commit enforces
+  the executable bit even when README commands invoke them through bash.
+- In stack comparison diagrams, place Edge Compute on the left and Robot Site
+  on the right; align the original stack from camera visualization to simulator.
+- Put credential sourcing and the generated YAML path together in network launch
+  examples; label localhost alternatives explicitly at the point of use.
+- Resolve viewer import failures before suggesting a launch retry; configuration
+  changes cannot repair a mixed legacy/current Python environment. Preserve local
+  builds and shared package files when replacing a legacy distribution.

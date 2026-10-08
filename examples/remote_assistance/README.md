@@ -195,6 +195,20 @@ network, as in the existing setup. The Pico manager runs on Edge Compute, not he
 
 #### Process 2 — Robot — Robot Control Bridge
 
+**Two computers — run on the Robot Site host (Thor):**
+
+```bash
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
+  "$HOME/remote-assistance-robot/session.yaml" --role robot
+```
+
+Source credentials in each new terminal. The generated YAML selects the Edge
+server; sourcing credentials alone does not override a localhost YAML.
+
+**Single-computer development test only:**
+
 ```bash
 cd ~/IsaacTeleop
 examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
@@ -206,6 +220,20 @@ feedback back to Edge Compute. This is the initial Teleop Remote Session adapter
 
 #### Process 3 — Camera Televiz — Camera Frame Sender
 
+**Two computers — run on the Robot Site host (Thor):**
+
+```bash
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera.yaml"
+```
+
+Source credentials in each new terminal. The generated YAML selects the Edge
+server; sourcing credentials alone does not override a localhost YAML.
+
+**Single-computer development test only:**
+
 ```bash
 cd ~/IsaacTeleop
 examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
@@ -216,11 +244,15 @@ Captures the local V4L2 camera and publishes video to LiveKit. Only this process
 should own the camera device; stop a direct-camera viewer before starting it.
 Camera capture and robot control remain separate processes in the same room.
 
-Capture size and rate come from `livekit-webcam.yaml` (currently 1920×1080 at
-60 fps, MJPG). For 1440p30, set width/height/fps to 2560/1440/30. Keep sender and
-viewer configurations consistent and restart both after changing the mode.
+Capture size and rate come from the selected camera YAML. Choose a mode supported
+by that camera, keep sender and viewer configurations consistent, and restart
+both after changing the mode.
 
 ### Edge Compute
+
+**For two computers, use the generated server profile in Network setup step 3
+and the bridge/viewer commands in step 8.** The localhost commands below are
+for single-computer development; Process 3 applies to both setups.
 
 #### Process 0 — Essential — LiveKit SFU
 
@@ -412,19 +444,47 @@ The generator copies the current camera settings, selects a unique room, and
 issues separate participant tokens. Tokens expire after 24 hours by default
 (`--hours` accepts 1–168); test TLS certificates expire after seven days.
 Files are private and ignored by Git. **Never commit the generated bundles.**
-The command refuses to overwrite an existing output directory. To renew tokens
-or change the Edge IP, generate a new bundle directory, stop the old network
-profile, transfer the new robot bundle, and restart server and clients together.
+The command refuses an existing output directory unless `--replace` is supplied.
+To renew tokens or change the Edge IP, stop the bridge and camera clients on both
+sites, then run on Edge Compute:
+
+```bash
+docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" down
+examples/remote_assistance/.venv/bin/python -m remote_assistance.network_setup \
+  --edge-ip "$EDGE_IP" \
+  --output "$HOME/remote-assistance-network" \
+  --hours 24 --replace
+```
+
+Replacement generates the complete new bundle before moving the old directory to
+`remote-assistance-network.backup.<timestamp>-<unique suffix>`. Generation failures
+leave the old bundle intact. The option also works for first-time generation.
+Camera settings come from the template (`--camera-config`), so edits made only in
+an old generated `camera.yaml` must be reapplied or supplied as that template.
+Transfer the new robot bundle in step 2, restart the server and clients, and source
+the new `credentials.env` in every client terminal.
 This rotates credentials and the test CA. Token expiry affects new joins;
 it is not an immediate disconnect/revocation mechanism for existing sessions.
 
-**2. Transfer only `robot/` to Robot Site**, using an approved secure transfer
-method such as SSH/SCP. Run this on Edge Compute using the variables from step 0:
+**2. Transfer only `robot/` to Robot Site.** With Robot bridge and camera clients
+stopped, run this single command on Edge Compute after step 1:
 
 ```bash
-scp -r "$HOME/remote-assistance-network/robot" \
-  "${ROBOT_USER}@${ROBOT_IP}:~/remote-assistance-robot"
+bash examples/remote_assistance/deploy_robot_bundle.sh
 ```
+
+The script uses the exported `ROBOT_USER` and `ROBOT_IP` variables from step 0.
+It defaults to `~/remote-assistance-network`; pass another bundle directory as
+its only argument if needed. SSH may prompt for your Robot Site password.
+No separate Thor terminal or script installation on Thor is needed.
+
+The script streams the four Robot configuration/credential files over SSH into
+a private staging directory. After transfer succeeds, it preserves any existing
+bundle at `~/remote-assistance-robot.backup.<unique suffix>/robot` and installs
+the new one at `~/remote-assistance-robot`. Failed uploads leave the existing
+bundle intact and report the staging path. Retry this command after resolving
+the error. Run only one transfer at a time. Restart clients only after success,
+using the new `credentials.env`. Server keys remain on Edge Compute.
 
 Do not run the generator independently on both machines: they need matching
 server credentials, room and CA. The generated `credentials.env` works after
@@ -569,12 +629,16 @@ examples/remote_assistance/.venv/bin/python -m remote_assistance bridge \
 ```
 
 ```bash
-# Process 3 — Camera Televiz — camera sender
+# Process 3 — Camera Televiz — camera sender (separate Robot Site host terminal)
 cd ~/IsaacTeleop
 source "$HOME/remote-assistance-robot/credentials.env"
 examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
   "$HOME/remote-assistance-robot/camera.yaml"
 ```
+
+**Camera sender uses `camera`, not `bridge --role edge`.** The latter is a
+control-data process that belongs on Edge Compute. A connection attempt to
+`ws://127.0.0.1:7880` indicates the localhost development profile was selected.
 
 Adjust `device` in the Robot Site camera YAML for that machine's camera before
 starting the sender. Match width/height/fps in both camera YAML files to a
@@ -584,8 +648,8 @@ the sender and use the probe in step 8 instead of the viewer.
 **8. Start the processes on Edge Compute.** The network server (process 0) is
 already running from step 3. For Robot control, start the edge bridge (process 1)
 below; for Camera Televiz, start the viewer (process 2). Then start CloudXR / Pico
-Teleop Streamer (process 3) using the [Edge Compute instructions](#edge-compute)
-above. Run each process in its own terminal.
+Teleop Streamer (process 3) with the command below. Run each process in its own
+terminal.
 
 ```bash
 # Process 1 — Robot — edge bridge
@@ -613,6 +677,23 @@ source "$HOME/remote-assistance-network/edge/credentials.env"
 examples/remote_assistance/.venv/bin/python -m remote_assistance probe \
   "$HOME/remote-assistance-network/edge/probe.yaml" --seconds 15 --synthetic
 ```
+
+Finally, start the XR input process in a separate Edge Compute terminal:
+
+```bash
+# Process 3 — Essential — CloudXR / Pico Teleop Streamer
+cd ~/GR00T-WholeBodyControl
+source .venv_teleop/bin/activate
+python gear_sonic/scripts/pico_manager_thread_server.py \
+  --manager --input-source isaac-teleop \
+  --port 5558 --zmq_feedback_port 5559
+```
+
+After it starts, the teleoperator can connect the headset's CloudXR.js web client
+to the CloudXR runtime on Edge Compute, using the existing headset connection
+workflow. Keep this process and the selected bridges/viewer running while
+operating. Process 3 is not required for the headless probe or window-only camera
+viewing.
 
 Verify changing pixels, then test robot control with MuJoCo and observe bridge
 counters in both directions. A stable optical baseline on one computer does

@@ -10,7 +10,8 @@ from pathlib import Path
 import secrets
 import shlex
 import subprocess
-from datetime import timedelta
+from datetime import datetime, timedelta
+from tempfile import TemporaryDirectory
 
 from livekit import api
 import yaml
@@ -22,6 +23,45 @@ def write_private(path, text):
 
 
 def generate(
+    output, edge_ip, session_template, camera_template, *, replace=False, **kwargs
+):
+    output = Path(output).absolute()
+    if output.is_symlink() or (output.exists() and not output.is_dir()):
+        raise ValueError("Output must be a directory, not a file or symlink")
+    if output.exists() and not replace:
+        raise FileExistsError(
+            f"{output} already exists; use --replace to preserve a backup and regenerate"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Build alongside the destination so installation uses same-filesystem renames.
+    with TemporaryDirectory(
+        prefix=f".{output.name}.staging-", dir=output.parent
+    ) as staging:
+        fresh = _generate(
+            Path(staging) / "bundle",
+            edge_ip,
+            session_template,
+            camera_template,
+            **kwargs,
+        )
+        backup = None
+        if output.exists():
+            backup = output.with_name(
+                f"{output.name}.backup.{datetime.now():%Y%m%d-%H%M%S-%f}-{secrets.token_hex(4)}"
+            )
+            output.rename(backup)
+        try:
+            fresh.rename(output)
+        except OSError:
+            if backup is not None:
+                backup.rename(output)
+            raise
+    if backup is not None:
+        print(f"Previous bundle preserved at {backup}")
+    return output
+
+
+def _generate(
     output,
     edge_ip,
     session_template,
@@ -281,7 +321,12 @@ def main():
         "--output",
         type=Path,
         required=True,
-        help="New private directory; never overwritten",
+        help="Private bundle directory (existing directories require --replace)",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Back up an existing bundle and generate fresh credentials; stop services first",
     )
     parser.add_argument("--session-config", type=Path, default=root / "session.yaml")
     parser.add_argument(
@@ -307,6 +352,7 @@ def main():
             args.edge_ip,
             args.session_config,
             args.camera_config,
+            replace=args.replace,
             hours=args.hours,
             room=args.room,
             signal_port=args.signal_port,
@@ -325,6 +371,10 @@ def main():
     print(
         "Signaling uses verified TLS; source each site credentials.env in its process terminals. Certificates expire in 7 days."
     )
+    if args.replace:
+        print(
+            "Transfer the new robot bundle, restart the network server and all clients, and source the new credentials.env in every client terminal. Camera settings come from --camera-config, not the old bundle."
+        )
     print("Direct LAN/VPN reachability required. No services were started or changed.")
 
 

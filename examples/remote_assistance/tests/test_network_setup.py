@@ -15,12 +15,13 @@ from remote_assistance.network_setup import generate
 ROOT = Path(__file__).parents[1]
 
 
-def setup(output, address="192.168.1.20"):
+def setup(output, address="192.168.1.20", **kwargs):
     return generate(
         output,
         address,
         ROOT / "session.yaml",
         ROOT.parent / "camera_viz/configs/livekit-webcam.yaml",
+        **kwargs,
     )
 
 
@@ -80,3 +81,39 @@ def test_invalid_advertised_address(tmp_path, address):
     with pytest.raises(ValueError):
         setup(tmp_path / "network", address)
     assert not (tmp_path / "network").exists()
+
+
+def test_replace_preserves_old_bundle_and_rotates_credentials(tmp_path):
+    output = setup(tmp_path / "network")
+    old = (output / "edge/credentials.env").read_bytes()
+    setup(output, replace=True)
+    backups = list(tmp_path.glob("network.backup.*"))
+    assert len(backups) == 1
+    assert (backups[0] / "edge/credentials.env").read_bytes() == old
+    assert (output / "edge/credentials.env").read_bytes() != old
+    assert output.stat().st_mode & 0o777 == 0o700
+
+
+def test_failed_replacement_leaves_existing_bundle_intact(tmp_path, monkeypatch):
+    output = setup(tmp_path / "network")
+    old = (output / "edge/credentials.env").read_bytes()
+
+    def fail(*args):
+        raise OSError("certificate generation failed")
+
+    monkeypatch.setattr("remote_assistance.network_setup.make_certificates", fail)
+    with pytest.raises(OSError, match="certificate generation failed"):
+        setup(output, replace=True)
+    assert (output / "edge/credentials.env").read_bytes() == old
+    assert not list(tmp_path.glob("network.backup.*"))
+    assert not list(tmp_path.glob(".network.staging-*"))
+
+
+def test_replace_rejects_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    output = tmp_path / "network"
+    output.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        setup(output, replace=True)
+    assert output.is_symlink()
