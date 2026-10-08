@@ -45,6 +45,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         fetch-depth: 0 # Full history for accurate git describe
+        lfs: true
 
     # One build directory per job; later steps (ctest, coverage, test packaging,
     # install) all refer to it through BUILD_DIR.
@@ -310,6 +311,7 @@ jobs:
       with:
         fetch-depth: 1
         persist-credentials: false
+        lfs: true
 
     - name: Install uv
       uses: ./.github/actions/setup-uv
