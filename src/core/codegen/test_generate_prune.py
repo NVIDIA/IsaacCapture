@@ -8,10 +8,11 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from generate_trackers import (
     _is_generator_owned_file,
+    emit_cmake,
     _prune_stale,
     _write_if_changed,
     _write_ownership_marker,
@@ -116,3 +117,18 @@ class PruneStaleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmitCmakeTest(unittest.TestCase):
+    """The generated `.cmake` is read by CMake, which has its own escapes."""
+
+    def test_the_output_directory_is_written_with_posix_separators(self) -> None:
+        """A Windows path interpolated raw is a syntax error, not a path.
+
+        CMake reads a backslash as an escape, so `D:\\a\\IsaacTeleop\\build`
+        fails to parse at `\\a` -- which is where every Windows CI build runs.
+        """
+        text = emit_cmake(["live_trackers/x.cpp"], PureWindowsPath("D:/a/proj/build"))
+
+        self.assertIn('set(GENERATED_TRACKER_DIR "D:/a/proj/build")', text)
+        self.assertNotIn("\\", text)

@@ -5,22 +5,55 @@
 
 from __future__ import annotations
 
+import asyncio
+import http.server
+import json
+import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+from websockets.asyncio.server import serve as ws_serve
 
+from cloudxr_py_test_ns import oob_teleop_adb as adb_module
 from cloudxr_py_test_ns.oob_teleop_adb import (
     OobAdbError,
+    _cdp_session_click_connect,
+    _close_stale_teleop_tabs,
+    _discover_devtools_socket,
     adb_automation_failure_hint,
     adb_device_state,
     assert_adb_device_online,
     assert_exactly_one_adb_device,
+    build_teleop_url,
     coturn_binary_path,
     oob_adb_automation_message,
     require_adb_on_path,
     require_coturn_available,
     run_adb_headset_bookmark,
 )
+
+
+def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None:
+    for name in (
+        "TELEOP_CLIENT_RECONNECT_ENABLED",
+        "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+        "TELEOP_CLIENT_RECONNECT_DELAY_MS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    url = build_teleop_url(
+        resolved_port=48322,
+        usb_local=True,
+        web_client_base="https://localhost:8080",
+    )
+    query = parse_qs(urlparse(url).query)
+    assert query["reconnectEnabled"] == ["true"]
+    assert query["reconnectMaxAttempts"] == ["10"]
+    assert query["reconnectDelayMs"] == ["3000"]
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +92,150 @@ def test_oob_adb_automation_message() -> None:
 def test_oob_adb_automation_message_empty_detail() -> None:
     msg = oob_adb_automation_message(2, "", "")
     assert "no output from adb" in msg
+
+
+@pytest.mark.asyncio
+async def test_local_client_reloads_without_http_cache_before_connect() -> None:
+    """The updated local bundle is fetched even if this URL was cached before."""
+
+    class FakeCDP:
+        def __init__(self) -> None:
+            self.methods: list[str] = []
+            self.last: dict = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send(self, raw: str) -> None:
+            self.last = json.loads(raw)
+            self.methods.append(self.last["method"])
+
+        async def recv(self) -> str:
+            result = {}
+            if self.last["method"] == "Runtime.evaluate":
+                expression = self.last["params"]["expression"]
+                if "details-button" in expression:
+                    value = False
+                elif "document.readyState" in expression:
+                    value = {"state": "ready", "x": 12, "y": 34}
+                elif "const btnText" in expression:
+                    value = {"btnText": "DISCONNECT", "errorText": None}
+                else:
+                    value = None
+                result = {"result": {"value": value}}
+            return json.dumps({"id": self.last["id"], "result": result})
+
+    cdp = FakeCDP()
+    dispatched = []
+    milestones = []
+
+    async def loaded():
+        milestones.append("clientLoaded")
+
+    def on_dispatched():
+        dispatched.append(list(cdp.methods))
+
+        async def publish():
+            assert "startButton" in cdp.last["params"]["expression"]
+            milestones.append("connectDispatched")
+
+        return publish()
+
+    with patch("websockets.asyncio.client.connect", return_value=cdp):
+        await adb_module._cdp_session_click_connect(
+            "ws://test",
+            refresh_static_assets=True,
+            on_client_loaded=loaded,
+            on_dispatched=on_dispatched,
+        )
+    assert milestones == ["clientLoaded", "connectDispatched"]
+    assert len(dispatched) == 1
+    assert dispatched[0][-1] == "Input.dispatchMouseEvent"
+    assert cdp.methods.index("Network.setCacheDisabled") < cdp.methods.index(
+        "Page.reload"
+    )
+    assert cdp.methods.index("Page.reload") < cdp.methods.index(
+        "Input.dispatchMouseEvent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() -> None:
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    async def monitor(*_args):
+        await asyncio.Event().wait()
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module, "_discover_devtools_socket", return_value="socket"),
+        patch.object(adb_module, "_adb_forward_cdp"),
+        patch.object(
+            adb_module,
+            "_cdp_list_tabs",
+            return_value=[
+                {
+                    "url": "https://localhost:8080/other",
+                    "webSocketDebuggerUrl": "ws://other",
+                },
+                {
+                    "url": "https://localhost:8080/?oobEnable=1",
+                    "webSocketDebuggerUrl": "ws://teleop",
+                },
+            ],
+        ),
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "_cdp_send_reset_panel_key") as reset_key,
+        patch.object(adb_module, "_monitor_teleop_error_banner", side_effect=monitor),
+        patch.object(adb_module, "_close_stale_teleop_tabs") as close_tabs,
+        patch.object(adb_module, "run_adb_headset_bookmark") as launch,
+    ):
+        task = await adb_module.attach_existing_oob_tab(click_connect=True)
+        click.assert_awaited_once_with(
+            "ws://teleop",
+            refresh_static_assets=False,
+            allow_navigation=False,
+            clear_stale_error=True,
+            on_dispatched=None,
+            on_client_loaded=None,
+        )
+        # Unconditional: this reattach path is the one case the client's own
+        # automatic first-XR-frame reset never covers (no new session starts).
+        reset_key.assert_awaited_once_with("ws://teleop")
+        close_tabs.assert_not_called()
+        launch.assert_not_called()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_attach_existing_tab_without_exact_oob_page_cleans_forward() -> None:
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module, "_discover_devtools_socket", return_value="socket"),
+        patch.object(adb_module, "_adb_forward_cdp"),
+        patch.object(
+            adb_module,
+            "_cdp_list_tabs",
+            return_value=[
+                {"url": "https://localhost:8080/", "webSocketDebuggerUrl": "ws://other"}
+            ],
+        ),
+        patch.object(adb_module, "_adb_forward_remove") as cleanup,
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+    ):
+        with pytest.raises(OobAdbError, match="no surviving teleop tab"):
+            await adb_module.attach_existing_oob_tab(click_connect=True)
+    click.assert_not_awaited()
+    cleanup.assert_called_once_with(9223)
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb.shutil.which", return_value="/usr/bin/adb")
@@ -457,49 +634,140 @@ def test_setup_adb_reverse_turn_offline_short_circuits(
 # WiFi-drop monitor (H6) -----------------------------------------------------
 
 
-import asyncio  # noqa: E402
+from cloudxr_py_test_ns.oob_teleop_adb import (  # noqa: E402
+    HeadsetNetworkProbe,
+    HeadsetNetworkState,
+    monitor_headset_wifi,
+    probe_headset_network,
+    SELECTED_ADB_SERIAL,
+)
 
-from cloudxr_py_test_ns.oob_teleop_adb import monitor_headset_wifi  # noqa: E402
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "state"),
+    [
+        (
+            0,
+            "20: wlan0 inet 10.0.0.1/24 scope global wlan0",
+            HeadsetNetworkState.NETWORK_PRESENT,
+        ),
+        (0, "1: lo inet 127.0.0.1/8 scope host lo", HeadsetNetworkState.NO_NETWORK),
+        (0, "", HeadsetNetworkState.NO_NETWORK),
+        (1, "", HeadsetNetworkState.ADB_UNAVAILABLE),
+    ],
+)
+def test_network_probe_preserves_adb_outcome(returncode, stdout, state):
+    proc = subprocess.CompletedProcess(
+        [], returncode, stdout, "device offline" if returncode else ""
+    )
+    with patch("cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", return_value=proc):
+        result = probe_headset_network(serial="headset-1")
+    assert result.state is state
+    assert bool(result.interfaces) is (state is HeadsetNetworkState.NETWORK_PRESENT)
 
 
-async def test_monitor_headset_wifi_warns_on_drop(capsys) -> None:
-    # Sequence: had ifaces → still ifaces → drops → still dropped.
-    seq = [
-        [("wlan0", "10.0.0.1")],
-        [("wlan0", "10.0.0.1")],
-        [],
-        [],
-    ]
+def test_network_probe_uses_selected_serial():
+    proc = subprocess.CompletedProcess([], 0, "", "")
     with patch(
-        "cloudxr_py_test_ns.oob_teleop_adb.headset_non_loopback_interfaces",
-        side_effect=lambda: seq.pop(0) if seq else [],
+        "cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", return_value=proc
+    ) as run:
+        token = SELECTED_ADB_SERIAL.set("pinned")
+        try:
+            probe_headset_network()
+        finally:
+            SELECTED_ADB_SERIAL.reset(token)
+    assert run.call_args.args[0][:3] == ["adb", "-s", "pinned"]
+
+
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError("adb"), subprocess.TimeoutExpired("adb", 5)]
+)
+def test_network_probe_transport_exceptions(error):
+    with patch("cloudxr_py_test_ns.oob_teleop_adb.subprocess.run", side_effect=error):
+        assert probe_headset_network().state is HeadsetNetworkState.ADB_UNAVAILABLE
+
+
+async def test_wifi_monitor_ignores_adb_disconnect(caplog):
+    present = HeadsetNetworkProbe(
+        HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+    )
+    unavailable = HeadsetNetworkProbe(HeadsetNetworkState.ADB_UNAVAILABLE)
+    sequence = [present, unavailable, present]
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            side_effect=lambda: sequence.pop(0) if sequence else present,
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
+    ):
+        task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        await task
+    assert not any("Wi-Fi dropped" in record.message for record in caplog.records)
+
+
+async def test_monitor_headset_wifi_warns_on_drop(caplog) -> None:
+    # Sequence: had ifaces → still ifaces → drops → still dropped.
+    present = HeadsetNetworkProbe(
+        HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+    )
+    absent = HeadsetNetworkProbe(HeadsetNetworkState.NO_NETWORK)
+    seq = [present, present, absent, absent]
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            side_effect=lambda: seq.pop(0) if seq else absent,
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
     ):
         task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
         # Poll for the warning rather than racing a fixed sleep budget. On
         # Windows, asyncio.sleep resolution (~15ms timer tick) plus to_thread
         # dispatch makes the two loop iterations needed to detect the drop
         # blow past a 50ms budget.
-        out = ""
         for _ in range(200):  # up to ~2s
             await asyncio.sleep(0.01)
-            out += capsys.readouterr().err
-            if "Headset Wi-Fi dropped" in out:
+            if any(
+                "Headset Wi-Fi dropped" in record.message for record in caplog.records
+            ):
                 break
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
-    out += capsys.readouterr().err
-    assert "Headset Wi-Fi dropped" in out
-    # Reason should be spelled out so operators don't think USB-local removed the WiFi requirement.
-    assert "required even in USB-local mode" in out
+    messages = [record.message for record in caplog.records]
+    assert any("Headset Wi-Fi dropped" in message for message in messages)
+    assert any("required even in USB-local mode" in message for message in messages)
 
 
-async def test_monitor_headset_wifi_silent_when_steady(capsys) -> None:
-    with patch(
-        "cloudxr_py_test_ns.oob_teleop_adb.headset_non_loopback_interfaces",
-        return_value=[("wlan0", "10.0.0.1")],
+async def test_monitor_headset_wifi_silent_when_steady(caplog) -> None:
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(
+                HeadsetNetworkState.NETWORK_PRESENT, (("wlan0", "10.0.0.1"),)
+            ),
+        ),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.asyncio.to_thread", side_effect=immediate
+        ),
     ):
         task = asyncio.create_task(monitor_headset_wifi(poll_seconds=0.001))
         await asyncio.sleep(0.02)
@@ -508,7 +776,7 @@ async def test_monitor_headset_wifi_silent_when_steady(capsys) -> None:
             await task
         except asyncio.CancelledError:
             pass
-    assert capsys.readouterr().err == ""
+    assert not any("Wi-Fi dropped" in record.message for record in caplog.records)
 
 
 # Coturn watchdog (H7) -------------------------------------------------------
@@ -537,7 +805,7 @@ def test_teleop_error_hint(banner: str, needle: str) -> None:
         assert hint == ""
 
 
-async def test_watch_coturn_restarts_once_then_gives_up(capsys) -> None:
+async def test_watch_coturn_restarts_once_then_gives_up(caplog) -> None:
     dead_proc = MagicMock()
     dead_proc.poll.return_value = 1
     dead_proc.returncode = 1
@@ -566,4 +834,379 @@ async def test_watch_coturn_restarts_once_then_gives_up(capsys) -> None:
         await asyncio.wait_for(task, timeout=1.0)
     assert mock_start.call_count == 1
     assert proc_box[0] is new_proc
-    assert "died again" in capsys.readouterr().err
+    assert any("died again" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
+    """A dropped CDP connection removes its forward without blocking WSS."""
+    loop_thread = threading.get_ident()
+    cleanup_calls: list[tuple[int, int]] = []
+
+    def remove_forward(port: int) -> None:
+        cleanup_calls.append((port, threading.get_ident()))
+
+    async def off_loop(fn, *args):
+        # Own the worker so pytest-asyncio does not inherit a pending default
+        # executor thread from the module's other ADB tests.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return await asyncio.get_running_loop().run_in_executor(
+                pool, lambda: fn(*args)
+            )
+
+    with (
+        patch("websockets.asyncio.client.connect", side_effect=OSError("CDP closed")),
+        patch.object(adb_module, "_adb_forward_remove", side_effect=remove_forward),
+        patch.object(adb_module.asyncio, "to_thread", side_effect=off_loop),
+    ):
+        await adb_module._monitor_teleop_error_banner("ws://test", 9222)
+
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0][0] == 9222
+    assert cleanup_calls[0][1] != loop_thread
+
+
+# ============================================================================
+# CDP: _discover_devtools_socket / _close_stale_teleop_tabs
+#
+# _close_stale_teleop_tabs is driven against a genuine local HTTP server standing in for
+# Chromium's CDP `/json` endpoint, exercising the real tab-matching/close-request logic rather
+# than asserting mocked call arguments.
+# ============================================================================
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_prefers_weblayer_over_generic(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @chrome_devtools_remote\n"
+        "1: 00000003 00000000 00010000 0001 01 12346 @weblayer_devtools_remote_777\n"
+    )
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_777"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_falls_back_to_first_candidate(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @some.custom_devtools_remote\n"
+    )
+    assert _discover_devtools_socket() == "some.custom_devtools_remote"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_no_candidates_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = (
+        "0: 00000003 00000000 00010000 0001 01 12345 @unrelated_socket\n"
+    )
+    assert _discover_devtools_socket() is None
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_adb_unreachable_returns_none(
+    mock_run_adb: MagicMock,
+) -> None:
+    mock_run_adb.return_value = None
+    assert _discover_devtools_socket() is None
+
+
+class _FakeCdpHandler(http.server.BaseHTTPRequestHandler):
+    """Stands in for Chromium's CDP HTTP endpoint: GET /json (tab list) and GET /json/close/<id>."""
+
+    tabs: ClassVar[list[dict]] = []
+    closed_ids: ClassVar[list[str]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+        if self.path == "/json":
+            body = json.dumps(self.tabs).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/json/close/"):
+            self.closed_ids.append(self.path.removeprefix("/json/close/"))
+            self.send_response(200)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(
+        self, *args
+    ) -> None:  # silence BaseHTTPRequestHandler's request logging
+        pass
+
+
+@contextmanager
+def _fake_cdp_server(tabs: list[dict]):
+    """Serves *tabs* on an OS-assigned port for the duration of the block; yields the handler
+    class so the test can inspect `.closed_ids` after.
+
+    _close_stale_teleop_tabs() reads the module-level _CDP_LOCAL_PORT constant rather than
+    taking a port parameter, so this patches that constant to the assigned port for the
+    block's lifetime instead of binding the real (production) port - avoids colliding with an
+    actual adb forward or other listener already using it on the test host.
+    """
+    _FakeCdpHandler.tabs = tabs
+    _FakeCdpHandler.closed_ids = []
+    server = http.server.HTTPServer(("localhost", 0), _FakeCdpHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with patch.object(adb_module, "_CDP_LOCAL_PORT", server.server_port):
+            yield _FakeCdpHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_closes_only_oob_tabs(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [
+        {"id": "stale-1", "url": "https://headset.local/?oobEnable=1"},
+        {"id": "unrelated", "url": "https://headset.local/some-other-page"},
+        {"id": "stale-2", "url": "https://headset.local/?oobEnable=1&codec=av1"},
+    ]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+        # Read the port while the fixture's patch is still active - it's restored to the
+        # real _CDP_LOCAL_PORT once this block exits.
+        patched_port = adb_module._CDP_LOCAL_PORT
+
+    assert closed == 2
+    assert sorted(handler.closed_ids) == ["stale-1", "stale-2"]
+    mock_forward.assert_called_once_with("chrome_devtools_remote", patched_port)
+    mock_remove.assert_called_once_with(patched_port)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_matches_closes_nothing(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    mock_discover.return_value = "chrome_devtools_remote"
+    tabs = [{"id": "unrelated", "url": "https://headset.local/some-other-page"}]
+    with _fake_cdp_server(tabs) as handler:
+        closed = _close_stale_teleop_tabs()
+        patched_port = adb_module._CDP_LOCAL_PORT
+
+    assert closed == 0
+    assert handler.closed_ids == []
+    mock_remove.assert_called_once_with(patched_port)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_no_devtools_socket_returns_zero(
+    mock_discover: MagicMock,
+) -> None:
+    mock_discover.return_value = None
+    assert _close_stale_teleop_tabs() == 0
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._discover_devtools_socket")
+def test_close_stale_teleop_tabs_forward_failure_returns_zero_without_remove(
+    mock_discover: MagicMock,
+    mock_forward: MagicMock,
+    mock_remove: MagicMock,
+) -> None:
+    """`adb forward` failing means no rule was ever set up - `_adb_forward_remove` (a `--remove`
+    of that rule) is therefore not called, unlike the success-then-cleanup path above."""
+    mock_discover.return_value = "chrome_devtools_remote"
+    mock_forward.side_effect = OobAdbError("adb forward failed")
+    assert _close_stale_teleop_tabs() == 0
+    mock_remove.assert_not_called()
+
+
+# ============================================================================
+# CDP: _cdp_session_click_connect
+#
+# Drives the real function against a genuine local CDP WebSocket server; _CdpScript below is a
+# scripted responder standing in for a real Chromium DevTools target, so the cert-interstitial
+# bypass and readiness-poll state machine run for real rather than being asserted via mocked
+# call arguments.
+# ============================================================================
+
+
+class _CdpScript:
+    """Scripted responder for the CDP calls `_cdp_session_click_connect` makes.
+
+    *readiness_states* is consumed one entry per readiness-poll call (repeating the last entry
+    once exhausted). *interstitial_url* starting with `chrome-error:` forces the DOM
+    click-through fallback instead of the primary `Page.navigate` bypass - the same branch
+    condition the real function itself checks.
+    """
+
+    def __init__(
+        self,
+        *,
+        interstitial: bool = False,
+        interstitial_url: str = "https://headset.local/",
+        readiness_states: list[dict] | None = None,
+    ) -> None:
+        self.interstitial = interstitial
+        self.interstitial_url = interstitial_url
+        self.readiness_states = readiness_states or [
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20}
+        ]
+        self._readiness_index = 0
+        self._reached_ready = False
+        self.calls: list[tuple[str, dict]] = []
+
+    def respond(self, method: str, params: dict) -> dict:
+        self.calls.append((method, params))
+        expr = params.get("expression", "")
+
+        if method == "Input.dispatchMouseEvent":
+            # A real browser can't be clicked before the button is actionable - reject here so
+            # a caller that dispatches too early fails the test instead of silently "succeeding".
+            if not self._reached_ready:
+                raise AssertionError(
+                    "Input.dispatchMouseEvent before CONNECT reached its ready state"
+                )
+            return {}
+        if method in (
+            "Security.setIgnoreCertificateErrors",
+            "Page.bringToFront",
+            "Page.navigate",
+        ):
+            return {}
+        if expr == "!!document.getElementById('details-button')":
+            return {"result": {"value": self.interstitial}}
+        if expr == "window.location.href":
+            return {"result": {"value": self.interstitial_url}}
+        if expr in (
+            "document.getElementById('details-button')?.click()",
+            "document.getElementById('proceed-link')?.click()",
+            "document.getElementById('startButton')?.click()",
+        ):
+            return {}
+        if "getBoundingClientRect" in expr:
+            i = min(self._readiness_index, len(self.readiness_states) - 1)
+            self._readiness_index += 1
+            state = self.readiness_states[i]
+            if state.get("state") == "ready":
+                self._reached_ready = True
+            return {"result": {"value": state}}
+        if "errorMessageBox" in expr:
+            # Reports the session as already active (btnText != 'CONNECT') so the post-click
+            # outcome-monitor loop returns on its first iteration instead of polling for real.
+            return {"result": {"value": {"btnText": "DISCONNECT", "errorText": None}}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+@asynccontextmanager
+async def _fake_cdp_ws(script: _CdpScript):
+    """Serves *script*'s responses on an OS-assigned port; yields the `ws://` URL to connect to."""
+
+    async def handler(websocket):
+        async for raw in websocket:
+            msg = json.loads(raw)
+            result = script.respond(msg["method"], msg.get("params", {}))
+            await websocket.send(json.dumps({"id": msg["id"], "result": result}))
+
+    async with ws_serve(handler, "localhost", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        yield f"ws://localhost:{port}"
+
+
+async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_clicks() -> (
+    None
+):
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "initializing",
+                "text": "CONNECT (checking capabilities)",
+                "disabled": True,
+            },
+            {"state": "ready", "text": "CONNECT", "disabled": False, "x": 10, "y": 20},
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    assert "Page.navigate" not in methods
+    # Ordered mousePressed then mouseReleased at the readiness poll's (x, y), followed by the
+    # DOM startButton.click() safety net - not just "a dispatchMouseEvent happened somewhere",
+    # which would also pass for an incomplete click (e.g. missing mouseReleased).
+    mouse_events = [p for m, p in script.calls if m == "Input.dispatchMouseEvent"]
+    assert [e["type"] for e in mouse_events] == ["mousePressed", "mouseReleased"]
+    for event in mouse_events:
+        assert event["x"] == 10
+        assert event["y"] == 20
+        assert event["button"] == "left"
+        assert event["clickCount"] == 1
+    dispatch_index = methods.index("Input.dispatchMouseEvent")
+    click_index = next(
+        i
+        for i, (m, p) in enumerate(script.calls)
+        if m == "Runtime.evaluate"
+        and p.get("expression") == "document.getElementById('startButton')?.click()"
+    )
+    assert click_index > dispatch_index
+
+
+async def test_cdp_session_click_connect_failed_capability_check_raises() -> None:
+    script = _CdpScript(
+        interstitial=False,
+        readiness_states=[
+            {
+                "state": "failed",
+                "text": "CONNECT (capability check failed)",
+                "disabled": True,
+            }
+        ],
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        with pytest.raises(OobAdbError, match="startButton marked failed"):
+            await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
+
+
+async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> None:
+    script = _CdpScript(interstitial=True, interstitial_url="https://headset.local/")
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" in methods
+    assert fallback_clicks == []
+
+
+async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> None:
+    script = _CdpScript(
+        interstitial=True, interstitial_url="chrome-error://chromewebdata/"
+    )
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    methods = [m for m, _ in script.calls]
+    fallback_clicks = [
+        p.get("expression")
+        for m, p in script.calls
+        if m == "Runtime.evaluate" and "proceed-link" in p.get("expression", "")
+    ]
+    assert "Page.navigate" not in methods
+    assert fallback_clicks == ["document.getElementById('proceed-link')?.click()"]

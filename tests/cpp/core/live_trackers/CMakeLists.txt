@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(live_trackers_tests
     test_vendor_validation.cpp
     test_ego_dispatch.cpp
+    test_keyboard_session.cpp
 )
 
 target_link_libraries(live_trackers_tests PRIVATE
@@ -15,6 +16,7 @@ target_link_libraries(live_trackers_tests PRIVATE
     # live_trackers' McapTrackerChannels instantiations reference; MCAP is
     # compiled once inside deviceio_session (see src/core/mcap/cpp/CMakeLists.txt).
     deviceio::deviceio_session
+    mcap_test_support
     Catch2::Catch2WithMain
 )
 

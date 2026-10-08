@@ -97,6 +97,16 @@ def test_redact_token_masks_value() -> None:
     assert "port=48322" in masked
 
 
+def test_redact_oob_query_token_masks_value() -> None:
+    masked = redact_control_token(
+        "https://x.test/oob?token=s3cret&mode=1 and token=another-secret"
+    )
+    assert "s3cret" not in masked
+    assert "another-secret" not in masked
+    assert masked.count("token=<REDACTED>") == 2
+    assert "mode=1" in masked
+
+
 def test_redact_token_noop_without_token() -> None:
     url = "https://x.test/?oobEnable=1&port=48322"
     assert redact_control_token(url) == url

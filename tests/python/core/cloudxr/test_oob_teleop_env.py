@@ -47,6 +47,9 @@ def clear_teleop_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEOP_STREAM_PORT",
         "TELEOP_CLIENT_CODEC",
         "TELEOP_CLIENT_PANEL_HIDDEN_AT_START",
+        "TELEOP_CLIENT_RECONNECT_ENABLED",
+        "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+        "TELEOP_CLIENT_RECONNECT_DELAY_MS",
         "TELEOP_CLIENT_ROUTE",
         "TELEOP_WEB_CLIENT_BASE",
         "TELEOP_PROXY_HOST",
@@ -227,6 +230,24 @@ def test_build_headset_bookmark_url_panel_hidden() -> None:
     assert q["panelHiddenAtStart"] == ["true"]
 
 
+def test_build_headset_bookmark_url_with_reconnect_policy() -> None:
+    """The host-owned retry budget reaches the browser on its initial page load."""
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={
+            "serverIP": "10.0.0.1",
+            "port": 48322,
+            "reconnectEnabled": False,
+            "reconnectMaxAttempts": 5,
+            "reconnectDelayMs": 750,
+        },
+    )
+    q = parse_qs(urlparse(u).query)
+    assert q["reconnectEnabled"] == ["false"]
+    assert q["reconnectMaxAttempts"] == ["5"]
+    assert q["reconnectDelayMs"] == ["750"]
+
+
 def test_build_headset_bookmark_url_requires_server_ip() -> None:
     """stream_config without serverIP raises ValueError."""
     with pytest.raises(ValueError, match="serverIP"):
@@ -288,8 +309,44 @@ def test_build_headset_bookmark_url_route_empty_suppresses_fragment(
 
 
 def test_client_ui_fields_from_env_empty(clear_teleop_env: None) -> None:
-    """client_ui_fields_from_env returns an empty dict when no UI env vars are set."""
-    assert client_ui_fields_from_env() == {}
+    """Client and host receive the same default bounded-retry settings."""
+    assert client_ui_fields_from_env() == {
+        "reconnectEnabled": True,
+        "reconnectMaxAttempts": 10,
+        "reconnectDelayMs": 3000,
+    }
+
+
+def test_client_ui_fields_from_env_reconnect_overrides(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_ENABLED", "false")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "750")
+    assert client_ui_fields_from_env() == {
+        "reconnectEnabled": False,
+        "reconnectMaxAttempts": 5,
+        "reconnectDelayMs": 750,
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TELEOP_CLIENT_RECONNECT_ENABLED", "maybe"),
+        ("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "-1"),
+        ("TELEOP_CLIENT_RECONNECT_DELAY_MS", "1.5"),
+    ],
+)
+def test_client_ui_fields_reject_invalid_reconnect_values(
+    clear_teleop_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        client_ui_fields_from_env()
 
 
 def test_client_ui_fields_from_env_codec(
@@ -419,6 +476,25 @@ def test_require_web_client_static_dir_ok(
     (tmp_path / "bundle.js").write_text("// bundle", encoding="utf-8")
     monkeypatch.setenv(TELEOP_WEB_CLIENT_STATIC_DIR_ENV, str(tmp_path))
     assert require_web_client_static_dir() == tmp_path.resolve()
+
+
+def test_oob_static_dir_rejects_cached_bundle_without_health_protocol(
+    clear_teleop_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "index.html").write_text("<script src='bundle.js'></script>")
+    bundle = tmp_path / "bundle.js"
+    bundle.write_bytes(b"old WebXR client")
+    monkeypatch.setenv(TELEOP_WEB_CLIENT_STATIC_DIR_ENV, str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
+        require_web_client_static_dir(require_health_probe=True)
+
+    bundle.write_bytes(b'"healthProbe" "healthReport"')
+    assert (
+        require_web_client_static_dir(require_health_probe=True) == tmp_path.resolve()
+    )
 
 
 def test_require_web_client_static_dir_not_a_directory(

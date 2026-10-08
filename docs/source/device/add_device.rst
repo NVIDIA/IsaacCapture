@@ -257,7 +257,11 @@ schema is not sent over the wire.
    ./install/examples/schemaio/pedal_pusher
 
 The printer discovers the tensor collection created by the pusher and prints received samples.
-Both exit after 100 samples, or press Ctrl+C to exit early.
+Both exit after 1000 samples, or press Ctrl+C to exit early.
+
+The same build installs ``se3_printer``, ``full_body_printer`` and ``frame_metadata_printer`` next
+to them. Those read other schemas and need their own data source, so they are not part of this
+example; ``full_body_printer`` is covered in :doc:`body_tracking`.
 
 **Components**
 

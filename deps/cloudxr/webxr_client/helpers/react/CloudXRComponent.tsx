@@ -36,7 +36,7 @@
 import * as CloudXR from '@nvidia/cloudxr';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useXR } from '@react-three/xr';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { WebGLRenderer } from 'three';
 import { Color } from 'three';
 
@@ -55,6 +55,55 @@ import { applyTargetFrameRate } from '../../src/config/frameRate';
 
 /** Clear color shown in headless mode so it's visually obvious the client is running with rendering suppressed. */
 const HEADLESS_CLEAR_COLOR = 0x00194d;
+
+// Matches the SDK's own onLog message reporting decoder warm-up progress (server encoder
+// priming before any pose-backed frame is renderable), periodically while it's in progress.
+// Parsed from onLog rather than a dedicated delegate because the SDK doesn't expose warm-up
+// progress any other way.
+const WARMUP_PROGRESS_LOG_PATTERN =
+  /^Decoder warm-up in progress: (\d+) initialization frames received$/;
+// Matches the SDK's own onLog message reporting that decoder warm-up has finished and the first
+// pose-backed frame has rendered, emitted exactly once, with count >= 1.
+const WARMUP_COMPLETE_LOG_PATTERN =
+  /^Stream rendering started after (\d+) decoder warm-up frames?$/;
+
+// Default for the streamAttachTimeoutMs prop below - see its doc comment. Deliberately generous:
+// a real CloudXR server/network can legitimately take much longer than a mock ever would to
+// attach a stream, and a false positive here means an otherwise-fine session gets torn down and
+// retried for no reason. Callers who want faster passthrough-only detection (e.g. tests) should
+// override via the streamAttachTimeoutMs prop, not by lowering this default.
+const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
+
+// Defaults for the warmupBeginTimeoutMs/warmupEndTimeoutMs props below. Both shorter than
+// STREAM_ATTACH_BASE_TIMEOUT_MS and, unlike it, neither grows per reconnect attempt (see
+// armWarmupBeginTimer/armWarmupEndTimer): once the stream has attached at all, decoder warm-up
+// is a fast, bounded startup step (server encoder priming), not something that legitimately
+// takes longer on a slow network the way the initial attach can. Split into two deadlines
+// because "no warm-up signal at all since attaching" and "warm-up started but never finishes"
+// are different failure modes worth distinguishing in the synthetic error message.
+const WARMUP_BEGIN_BASE_TIMEOUT_MS = 10000; // 10 seconds - first warm-up log since onStreamStarted
+const WARMUP_END_BASE_TIMEOUT_MS = 30000; // 30 seconds - completion since warm-up began
+
+// setTimeout's delay is stored as a 32-bit signed int internally; a value above this overflows
+// and fires (almost) immediately instead of waiting - the opposite of what a long configured
+// timeout is asking for. Both the base value (user/URL-configurable, no upper bound today) and
+// its doubled-per-attempt growth need to stay under this.
+const MAX_SET_TIMEOUT_MS = 2147483647;
+
+/**
+ * Decoder warm-up status for the current connection attempt, derived by parsing the SDK's own
+ * `onLog` messages (see WARMUP_PROGRESS_LOG_PATTERN / WARMUP_COMPLETE_LOG_PATTERN) - the SDK
+ * doesn't expose this as a dedicated delegate. Reset to framesSeen: 0 at the start of each
+ * connection attempt (including retries), since warm-up is a per-attempt counter in the SDK too.
+ */
+export interface WarmupStatus {
+  /** Decoder warm-up (RTP-timestamp-0) frames received so far this connection attempt. */
+  framesSeen: number;
+  /** `Date.now()` when this status last changed. */
+  timestamp: number;
+  /** True once the first pose-backed frame has rendered after warm-up. */
+  completed: boolean;
+}
 
 /**
  * Props for the CloudXRComponent.
@@ -94,6 +143,43 @@ interface CloudXRComponentProps {
    */
   reconnect?: { maxAttempts?: number; delayMs?: number };
 
+  /**
+   * Base timeout (ms) for detecting "passthrough-only" - a session that entered XR and called
+   * connect() but whose stream never attached (see the stream-attach timer in establishSession).
+   * Independent of `reconnect`: detection always runs, with or without that prop, so a stream
+   * that never attaches is never silently left hanging even with no reconnect configured at all -
+   * only whether the resulting synthetic error gets retried depends on `reconnect`. Doubles on
+   * every reconnect attempt (this value, then x2, then x4, ...) so a connection that's genuinely
+   * just slow, not stuck, gets more time on each retry instead of being cut off at the same fixed
+   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (2 minutes).
+   */
+  streamAttachTimeoutMs?: number;
+
+  /**
+   * Timeout (ms) for detecting a stream that attached (onStreamStarted fired) but produced no
+   * decoder warm-up signal at all - not even a single WARMUP_PROGRESS_LOG_PATTERN/
+   * WARMUP_COMPLETE_LOG_PATTERN log (see armWarmupBeginTimer, armed in onStreamStarted).
+   * A separate deadline from streamAttachTimeoutMs because it covers a later, disjoint window:
+   * onStreamStarted already cleared the attach timer by the time this one is armed. Distinct
+   * from warmupEndTimeoutMs because "nothing happened since attaching" and "warm-up started but
+   * never finishes" are different failure modes worth distinguishing in the synthetic error
+   * message. Like warmupEndTimeoutMs, does NOT grow per reconnect attempt - warm-up is a fast,
+   * bounded server-side priming step once the stream has attached at all, not something that
+   * legitimately takes longer under retry the way the initial attach can. Defaults to
+   * WARMUP_BEGIN_BASE_TIMEOUT_MS (10 seconds).
+   */
+  warmupBeginTimeoutMs?: number;
+
+  /**
+   * Timeout (ms) for detecting decoder warm-up that began (at least one warm-up log arrived)
+   * but never completed - no pose-backed frame ever rendered (see armWarmupEndTimer, armed once
+   * the first warm-up log arrives and cleared by WARMUP_COMPLETE_LOG_PATTERN). See
+   * warmupBeginTimeoutMs's doc comment for why this is a separate deadline. Does NOT grow per
+   * reconnect attempt, for the same reason warmupBeginTimeoutMs doesn't. Defaults to
+   * WARMUP_END_BASE_TIMEOUT_MS (30 seconds).
+   */
+  warmupEndTimeoutMs?: number;
+
   /** Callback fired with the resolved server address after proxy configuration is applied. */
   onServerAddress?: (address: string) => void;
 
@@ -120,6 +206,13 @@ interface CloudXRComponentProps {
    * Entries are already mirrored to the console; use this only to route them elsewhere.
    */
   onLog?: (entries: CloudXR.LogEntry[]) => void;
+
+  /**
+   * Callback fired whenever decoder warm-up status changes: on each warm-up progress log
+   * (roughly every 10 warm-up frames) and once more when warm-up completes (first pose-backed
+   * frame rendered). Parsed from SDK log messages - see {@link WarmupStatus}.
+   */
+  onWarmupStatus?: (status: WarmupStatus) => void;
 
   /**
    * Pre-stream network test. When set, the SDK measures link quality before streaming
@@ -174,11 +267,15 @@ export default function CloudXRComponent({
   onExitImmersiveXR,
   onSessionReady,
   reconnect,
+  streamAttachTimeoutMs,
+  warmupBeginTimeoutMs,
+  warmupEndTimeoutMs,
   onServerAddress,
   onRenderPerformanceMetrics,
   onStreamingPerformanceMetrics,
   onNetworkPerformanceMetrics,
   onLog,
+  onWarmupStatus,
   streamTest,
   onStreamTestStarted,
   onStreamTestStopped,
@@ -198,8 +295,144 @@ export default function CloudXRComponent({
   // caller that explicitly asks for retry (even as `reconnect={{}}`) gets it.
   const maxReconnectAttempts = reconnect ? (reconnect.maxAttempts ?? 3) : 0;
   const reconnectDelayMs = reconnect?.delayMs ?? 3000;
+  const streamAttachBaseTimeoutMs = streamAttachTimeoutMs ?? STREAM_ATTACH_BASE_TIMEOUT_MS;
+  const warmupBeginBaseTimeoutMs = warmupBeginTimeoutMs ?? WARMUP_BEGIN_BASE_TIMEOUT_MS;
+  const warmupEndBaseTimeoutMs = warmupEndTimeoutMs ?? WARMUP_END_BASE_TIMEOUT_MS;
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamAttachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmupBeginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmupEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Clears the attach and both warm-up watchdogs - the three fire a synthetic error if left
+   * pending past an attempt that's already been handled some other way (success, a real error,
+   * or the WebXR session itself ending). Does not touch reconnectTimerRef: callers that also
+   * need to cancel a pending retry do so separately, since not all of them do. */
+  const clearStartupTimers = useCallback(() => {
+    if (streamAttachTimerRef.current !== null) {
+      clearTimeout(streamAttachTimerRef.current);
+      streamAttachTimerRef.current = null;
+    }
+    if (warmupBeginTimerRef.current !== null) {
+      clearTimeout(warmupBeginTimerRef.current);
+      warmupBeginTimerRef.current = null;
+    }
+    if (warmupEndTimerRef.current !== null) {
+      clearTimeout(warmupEndTimerRef.current);
+      warmupEndTimerRef.current = null;
+    }
+  }, []);
+
+  // False from session creation until a real onStreamStarted fires; lets the effect below tell
+  // "still waiting to attach" apart from "already connected" when it re-registers mid-connection
+  // (see the config-change re-arm logic further down).
+  const hasStreamStartedRef = useRef(false);
+  // The delegates object currently wired to cxrSessionRef.current - only ever reassigned inside
+  // handleSessionStart, but read from outside its closure (the config-change re-arm check below)
+  // to redispatch through the exact same callbacks a real stream event would use.
+  const cloudXRDelegatesRef = useRef<CloudXR.SessionDelegates | null>(null);
+  // Reset at the top of establishSession() (each connection attempt, including retries) since
+  // the SDK's own warm-up frame counter is per-attempt.
+  const warmupStatusRef = useRef<WarmupStatus>({ framesSeen: 0, timestamp: 0, completed: false });
+  // True once at least one warm-up log (progress or completion) has arrived this attempt - lets
+  // the effect's re-arm logic below tell "waiting for warm-up to begin" apart from "warm-up
+  // began, waiting for it to end".
+  const warmupBegunRef = useRef(false);
+
+  /**
+   * Arms (or re-arms) the passthrough-only stream-attach timer for *cxrSession*: if
+   * onStreamStarted hasn't fired by the deadline, disconnects the session (so it can never later
+   * fire a stray onStreamStarted reporting a false Connected once we've moved on to a retry) and
+   * dispatches a synthetic recoverable StreamingError through onStreamStopped, so it gets the
+   * same bounded-retry treatment a real stream error does. Deadline doubles per reconnect attempt
+   * and is capped at MAX_SET_TIMEOUT_MS (setTimeout's own 32-bit-int delay limit - above it, the
+   * browser fires (almost) immediately instead of waiting, the opposite of what a long configured
+   * timeout is asking for).
+   */
+  const armStreamAttachTimer = useCallback(
+    (cxrSession: CloudXR.Session) => {
+      const attemptForThisTimer = reconnectAttemptRef.current;
+      const attachTimeoutMs = Math.min(
+        streamAttachBaseTimeoutMs * 2 ** attemptForThisTimer,
+        MAX_SET_TIMEOUT_MS
+      );
+      streamAttachTimerRef.current = setTimeout(() => {
+        streamAttachTimerRef.current = null;
+        console.warn(
+          `CloudXR stream did not attach within ${attachTimeoutMs}ms ` +
+            `(attempt ${attemptForThisTimer + 1})`
+        );
+        try {
+          cxrSession.disconnect();
+        } catch {
+          // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        }
+        cloudXRDelegatesRef.current?.onStreamStopped?.({
+          message: `Stream did not attach within ${attachTimeoutMs}ms`,
+        } as CloudXR.StreamingError);
+      }, attachTimeoutMs);
+    },
+    [streamAttachBaseTimeoutMs]
+  );
+
+  /**
+   * Arms the decoder-warm-up-begin timer for *cxrSession*: if no warm-up log (progress or
+   * completion) has arrived by the deadline, disconnects the session and dispatches a synthetic
+   * recoverable StreamingError through onStreamStopped, the same treatment armStreamAttachTimer
+   * gives a stuck attach. Called from onStreamStarted, i.e. after the attach timer has already
+   * been cleared - this covers the next, disjoint window. Cleared (see the onLog handler below)
+   * as soon as any warm-up log arrives, at which point armWarmupEndTimer takes over. Like
+   * armWarmupEndTimer, the deadline is fixed: it does not grow per reconnect attempt, since a
+   * stream that has already attached should start warming up in roughly constant time regardless
+   * of which attempt this is.
+   */
+  const armWarmupBeginTimer = useCallback(
+    (cxrSession: CloudXR.Session) => {
+      // Same overflow guard as armStreamAttachTimer: an uncapped delay above setTimeout's
+      // ~24.8-day int32 limit wraps and fires near-immediately instead of waiting.
+      const timeoutMs = Math.min(warmupBeginBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
+      warmupBeginTimerRef.current = setTimeout(() => {
+        warmupBeginTimerRef.current = null;
+        console.warn(`CloudXR decoder warm-up did not begin within ${timeoutMs}ms`);
+        try {
+          cxrSession.disconnect();
+        } catch {
+          // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        }
+        cloudXRDelegatesRef.current?.onStreamStopped?.({
+          message: `Decoder warm-up did not begin within ${timeoutMs}ms`,
+        } as CloudXR.StreamingError);
+      }, timeoutMs);
+    },
+    [warmupBeginBaseTimeoutMs]
+  );
+
+  /**
+   * Arms the decoder-warm-up-end timer for *cxrSession*: if warm-up hasn't completed (no
+   * pose-backed frame rendered - see WARMUP_COMPLETE_LOG_PATTERN) by the deadline since it began,
+   * disconnects the session and dispatches a synthetic recoverable StreamingError through
+   * onStreamStopped. Called from the onLog handler once the first warm-up log arrives, i.e. after
+   * armWarmupBeginTimer has already been cleared - this covers the next, disjoint window. Fixed
+   * deadline, same rationale as armWarmupBeginTimer.
+   */
+  const armWarmupEndTimer = useCallback(
+    (cxrSession: CloudXR.Session) => {
+      const timeoutMs = Math.min(warmupEndBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
+      warmupEndTimerRef.current = setTimeout(() => {
+        warmupEndTimerRef.current = null;
+        console.warn(`CloudXR decoder warm-up did not complete within ${timeoutMs}ms`);
+        try {
+          cxrSession.disconnect();
+        } catch {
+          // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        }
+        cloudXRDelegatesRef.current?.onStreamStopped?.({
+          message: `Decoder warm-up did not complete within ${timeoutMs}ms`,
+        } as CloudXR.StreamingError);
+      }, timeoutMs);
+    },
+    [warmupEndBaseTimeoutMs]
+  );
 
   // Metrics trackers for averaging performance metrics
   // Use prop values if provided, otherwise use defaults
@@ -250,6 +483,19 @@ export default function CloudXRComponent({
   // Set up event listeners in useEffect to add them only once
   useEffect(() => {
     const webXRManager = threeRenderer.xr;
+
+    // This effect re-registers on every `config` change (e.g. the operator edits a setting
+    // while a stream is still connecting). The cleanup below already cleared every timer ref,
+    // but a fresh sessionstart event won't fire just because the effect re-ran - the WebXR
+    // session is already live. Without this, the in-flight connection would keep running with
+    // no deadline for the rest of this attempt.
+    if (cxrSessionRef.current && !hasStreamStartedRef.current) {
+      armStreamAttachTimer(cxrSessionRef.current);
+    } else if (!headless && cxrSessionRef.current && !warmupBegunRef.current) {
+      armWarmupBeginTimer(cxrSessionRef.current);
+    } else if (!headless && cxrSessionRef.current && !warmupStatusRef.current.completed) {
+      armWarmupEndTimer(cxrSessionRef.current);
+    }
 
     if (webXRManager) {
       const handleSessionStart = async () => {
@@ -388,6 +634,46 @@ export default function CloudXRComponent({
                         ? console.debug
                         : console.info;
                 printFn(`[CloudXR] ${message}`);
+
+                const progressMatch = message.match(WARMUP_PROGRESS_LOG_PATTERN);
+                const completeMatch = message.match(WARMUP_COMPLETE_LOG_PATTERN);
+                if ((progressMatch || completeMatch) && !warmupBegunRef.current) {
+                  // First warm-up log this attempt: hand off from "waiting for warm-up to
+                  // begin" to "waiting for it to end" (unless it already ended in this same
+                  // log line, in which case there's nothing left to wait for).
+                  warmupBegunRef.current = true;
+                  if (warmupBeginTimerRef.current !== null) {
+                    clearTimeout(warmupBeginTimerRef.current);
+                    warmupBeginTimerRef.current = null;
+                  }
+                  // !headless: see onStreamStarted's doc comment - headless mode doesn't arm
+                  // render-path warm-up detection at all, since it has no way to observe
+                  // completion either (onMetrics' RenderFramerate never fires). A progress log
+                  // without a matching complete log shouldn't be possible when nothing ever
+                  // begins watching for it, but skip arming regardless, for the same reason.
+                  if (!completeMatch && !headless && cxrSessionRef.current) {
+                    armWarmupEndTimer(cxrSessionRef.current);
+                  }
+                }
+                if (progressMatch) {
+                  warmupStatusRef.current = {
+                    framesSeen: Number(progressMatch[1]),
+                    timestamp: Date.now(),
+                    completed: false,
+                  };
+                  onWarmupStatus?.(warmupStatusRef.current);
+                } else if (completeMatch) {
+                  warmupStatusRef.current = {
+                    framesSeen: Number(completeMatch[1]),
+                    timestamp: Date.now(),
+                    completed: true,
+                  };
+                  if (warmupEndTimerRef.current !== null) {
+                    clearTimeout(warmupEndTimerRef.current);
+                    warmupEndTimerRef.current = null;
+                  }
+                  onWarmupStatus?.(warmupStatusRef.current);
+                }
               }
               onLog?.(entries);
             },
@@ -408,13 +694,47 @@ export default function CloudXRComponent({
               trackedGL.restore();
             },
             onStreamStarted: () => {
-              // A successful (re)connect clears the counter, so an unrelated later failure
-              // gets its own full budget of attempts rather than inheriting this one's count.
-              reconnectAttemptRef.current = 0;
+              hasStreamStartedRef.current = true;
+              if (streamAttachTimerRef.current !== null) {
+                clearTimeout(streamAttachTimerRef.current);
+                streamAttachTimerRef.current = null;
+              }
+              if (headless) {
+                // Decoder warm-up is observed two ways elsewhere: the SDK's own warm-up log
+                // text (onLog below), and onMetrics' PerRender/RenderFramerate tick as a
+                // fallback for a stream that starts already warmed up and never logs at all.
+                // Both depend on render() actually running to produce a frame to warm up with
+                // or report on - headless mode skips render() by design (see the useFrame
+                // callback's `if (!headless)` guard), so neither signal ever arrives here.
+                // There is no way to observe warm-up health without rendering, so don't arm
+                // watchdogs for a condition this mode can never detect; reset the retry budget
+                // on attach instead, same as before onMetrics-based reset existed for the
+                // non-headless path.
+                reconnectAttemptRef.current = 0;
+              } else {
+                // An attach alone isn't a "successful reconnect" - warm-up can still stall
+                // indefinitely before any usable video arrives. See onMetrics' PerRender branch
+                // below, which is where the budget actually resets, once there's real video to
+                // show for it.
+                //
+                // The stream has attached, but decoder warm-up (no pose-backed frame rendered
+                // yet) starts a new, disjoint window the attach timer above never covered. Reset
+                // per-attempt warm-up-begun tracking before arming, matching warmupStatusRef's
+                // own reset in establishSession().
+                warmupBegunRef.current = false;
+                if (cxrSessionRef.current) {
+                  armWarmupBeginTimer(cxrSessionRef.current);
+                }
+              }
               console.debug('CloudXR stream started');
               onStatusChange?.(true, 'Connected');
             },
             onStreamStopped: (error?: CloudXR.StreamingError) => {
+              // A real stream-stop (including the synthetic ones the attach/warmup timers below
+              // dispatch through this same delegate) means we're no longer "waiting to attach" or
+              // "warming up" - clear any pending timer so it can't fire again after this attempt
+              // has already been handled.
+              clearStartupTimers();
               if (error) {
                 // Display user-friendly error message with error code if available
                 const errorMsg = error.code
@@ -462,24 +782,44 @@ export default function CloudXRComponent({
               // Every cadence delivers a *partial* record: only the metrics sampled on this
               // tick are present. Forward just those keys and let the consumer merge, so an
               // absent metric is never reported downstream as a zero.
-              if (onRenderPerformanceMetrics && cadence === CloudXR.MetricsCadence.PerRender) {
-                const update: RenderMetricsUpdate = {};
+              if (cadence === CloudXR.MetricsCadence.PerRender) {
                 const renderFps = metrics[CloudXR.MetricsName.RenderFramerate];
                 if (renderFps !== undefined) {
-                  update.framerate = renderFpsTrackerRef.current.add(renderFps);
+                  // A render tick carrying an actual framerate means real, pose-backed video is
+                  // being decoded - an independent "the stream is genuinely healthy" signal that
+                  // doesn't depend on the SDK's warm-up log text (see WARMUP_COMPLETE_LOG_PATTERN's
+                  // doc comment: a stream that starts warmed up, with zero warm-up frames, never
+                  // emits that log at all). Cancel both warm-up watchdogs and give this attempt
+                  // the full retry budget back - matching onStreamStarted's old (and wrong)
+                  // on-attach reset, but only once there's real video to show for it.
+                  if (warmupBeginTimerRef.current !== null) {
+                    clearTimeout(warmupBeginTimerRef.current);
+                    warmupBeginTimerRef.current = null;
+                  }
+                  if (warmupEndTimerRef.current !== null) {
+                    clearTimeout(warmupEndTimerRef.current);
+                    warmupEndTimerRef.current = null;
+                  }
+                  reconnectAttemptRef.current = 0;
                 }
-                const poseSendFps = metrics[CloudXR.MetricsName.PoseSendFramerate];
-                if (poseSendFps !== undefined) {
-                  update.sendFramerate = poseSendFpsTrackerRef.current.add(poseSendFps);
-                }
-                const xrPoseAgeMs = metrics[CloudXR.MetricsName.LatencyXrPoseAgeMs];
-                if (xrPoseAgeMs !== undefined) {
-                  update.xrPoseAgeMs = xrPoseAgeMs;
-                }
-                // The send-begin and render-begin paths each emit their own PerRender tick,
-                // so skip ticks that carried none of the keys we track.
-                if (Object.keys(update).length > 0) {
-                  onRenderPerformanceMetrics(update);
+                if (onRenderPerformanceMetrics) {
+                  const update: RenderMetricsUpdate = {};
+                  if (renderFps !== undefined) {
+                    update.framerate = renderFpsTrackerRef.current.add(renderFps);
+                  }
+                  const poseSendFps = metrics[CloudXR.MetricsName.PoseSendFramerate];
+                  if (poseSendFps !== undefined) {
+                    update.sendFramerate = poseSendFpsTrackerRef.current.add(poseSendFps);
+                  }
+                  const xrPoseAgeMs = metrics[CloudXR.MetricsName.LatencyXrPoseAgeMs];
+                  if (xrPoseAgeMs !== undefined) {
+                    update.xrPoseAgeMs = xrPoseAgeMs;
+                  }
+                  // The send-begin and render-begin paths each emit their own PerRender tick,
+                  // so skip ticks that carried none of the keys we track.
+                  if (Object.keys(update).length > 0) {
+                    onRenderPerformanceMetrics(update);
+                  }
                 }
               }
 
@@ -544,6 +884,7 @@ export default function CloudXRComponent({
               }
             },
           };
+          cloudXRDelegatesRef.current = cloudXRDelegates;
 
           // Creates and connects a CloudXR session against the options/delegates above. Called
           // once here for the initial connect, and again (unchanged) by onStreamStopped's retry
@@ -572,6 +913,9 @@ export default function CloudXRComponent({
 
             // Store the session in the ref so it persists across re-renders
             cxrSessionRef.current = cxrSession;
+            hasStreamStartedRef.current = false;
+            warmupStatusRef.current = { framesSeen: 0, timestamp: 0, completed: false };
+            warmupBegunRef.current = false;
 
             // Notify parent that session is ready
             onSessionReady?.(cxrSession);
@@ -582,6 +926,12 @@ export default function CloudXRComponent({
               console.log('CloudXR session connect initiated');
               // Note: The session will transition to Connected state via the onStreamStarted callback
               // Use cxrSession.state to check if streaming has actually started
+
+              // Passthrough-only detection: the session can enter XR and call connect()
+              // successfully while the stream never actually attaches, with no error callback to
+              // signal it - isXRMode alone can't tell that state apart from a slow-but-fine
+              // connect. See armStreamAttachTimer's doc comment.
+              armStreamAttachTimer(cxrSession);
             } catch (error) {
               onStatusChange?.(false, 'Connection Failed');
               // Report error via callback
@@ -616,6 +966,7 @@ export default function CloudXRComponent({
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
+        clearStartupTimers();
         if (cxrSessionRef.current) {
           cxrSessionRef.current.disconnect();
           cxrSessionRef.current = null;
@@ -640,6 +991,7 @@ export default function CloudXRComponent({
           clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
+        clearStartupTimers();
       };
     }
   }, [threeRenderer, config]); // Re-register handlers when renderer or config changes

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import signal
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from ._service import CloudXRService
 
@@ -128,7 +130,7 @@ def _fail(message: str) -> None:
 
 
 def _oob_preflight(args: argparse.Namespace) -> str | None:
-    """Check adb/coturn/network prerequisites; return the resolved LAN host.
+    """Check host prerequisites; headset readiness belongs to the lifecycle.
 
     Valid flag combinations:
 
@@ -142,49 +144,45 @@ def _oob_preflight(args: argparse.Namespace) -> str | None:
     """
     from ..oob_teleop_adb import (  # noqa: PLC0415
         OobAdbError,
-        assert_exactly_one_adb_device,
-        assert_headset_awake,
-        clear_headset_browser_cache,
         require_adb_on_path,
         require_coturn_available,
-        require_headset_non_loopback_network,
         require_turn_port_free,
     )
     from ..oob_teleop_env import (  # noqa: PLC0415
         oob_progress,
         print_host_preflight_warnings,
         resolve_lan_host_for_oob,
+        resolve_oob_recovery_config,
         usb_turn_port,
     )
+
+    if args.setup_oob:
+        try:
+            config = resolve_oob_recovery_config()
+        except ValueError as exc:
+            _fail(str(exc))
+        args._oob_recovery_config = config
+        oob_progress(
+            "setup-oob",
+            f"recovery episode {config.timeout_sec:g}s, retry/observe {config.interval_sec:g}s",
+        )
 
     if args.usb_local:
         oob_progress(
             "usb-local",
-            "preflight: adb, single headset, awake, coturn, non-loopback IP ...",
+            "host preflight: adb, coturn, ports, assets ...",
         )
         require_adb_on_path()
-        oob_progress("usb-local", "clearing headset browser cache ...")
-        cleared = clear_headset_browser_cache(usb_local=True)
-        if cleared:
-            oob_progress("usb-local", f"cleared cache for {cleared} origin(s)")
-        else:
-            oob_progress("usb-local", "no cache cleared (browser not running)")
         try:
             require_coturn_available()
             require_turn_port_free(usb_turn_port())
-        except OobAdbError as exc:
-            _fail(str(exc))
-        assert_exactly_one_adb_device()
-        assert_headset_awake()
-        try:
-            require_headset_non_loopback_network()
         except OobAdbError as exc:
             _fail(str(exc))
         try:
             print_host_preflight_warnings(usb_local=True)
         except RuntimeError as exc:
             _fail(str(exc))
-        oob_progress("usb-local", "preflight OK")
+        oob_progress("usb-local", "host preflight OK; waiting for headset after listen")
         return None
 
     if not args.setup_oob:
@@ -198,17 +196,14 @@ def _oob_preflight(args: argparse.Namespace) -> str | None:
             "setup-oob", "hub-only mode (TELEOP_OOB_HUB_ONLY) — skipping adb preflight"
         )
     else:
-        oob_progress("setup-oob", "preflight: adb, single headset, awake ...")
+        oob_progress("setup-oob", "host preflight: adb and network configuration ...")
         require_adb_on_path()
     lan_host = resolve_lan_host_for_oob()
-    if not hub_only:
-        assert_exactly_one_adb_device()
-        assert_headset_awake()
     try:
         print_host_preflight_warnings(usb_local=False)
     except RuntimeError as exc:
         _fail(str(exc))
-    oob_progress("setup-oob", "preflight OK")
+    oob_progress("setup-oob", "host preflight OK; headset automation may be pending")
     return lan_host
 
 
@@ -316,6 +311,108 @@ def _print_service_summary(
     )
 
 
+class _OobConsoleReporter:
+    """Turn lifecycle snapshots into sparse, actionable launcher messages."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._last_emitted: dict[str, float] = {}
+        self._adb_ready = False
+        self._ever_ready = False
+        self._last_health: str | None = None
+        self._last_stage: tuple | None = None
+        self._last_ignored: tuple | None = None
+
+    def observe(self, snapshot: dict) -> list[str]:
+        """Return messages for a new snapshot, with repeated states limited."""
+        health = snapshot.get("health")
+        if health == "starting":
+            return []
+        state = snapshot.get("state")
+        reason = snapshot.get("reason") or "unknown reason"
+        serial = snapshot.get("selectedSerial")
+        ready = bool(snapshot.get("adbReady"))
+        stage = (state, snapshot.get("episodeStartedAt"), snapshot.get("generation"))
+        entered_stage = stage != self._last_stage
+        messages: list[str] = []
+        ignored = tuple(sorted(snapshot.get("ignoredSerials") or ()))
+        ignored_signature = (ignored, ready, reason if not ready else None)
+
+        def emit(key: str, message: str, interval: float = 30.0) -> None:
+            now = self._clock()
+            if now - self._last_emitted.get(key, float("-inf")) >= interval:
+                self._last_emitted[key] = now
+                messages.append(f"[setup-oob] {message}")
+
+        if ready and not self._adb_ready:
+            verb = "reconnected" if self._ever_ready else "detected"
+            emit(
+                "adb-ready",
+                f"USB-attached HMD {verb} (serial {serial}); continuing OOB setup.",
+                0,
+            )
+            self._ever_ready = True
+        elif not ready and self._adb_ready:
+            emit(
+                "adb-lost",
+                "USB-attached HMD connection lost; waiting for the selected headset.",
+                0,
+            )
+        self._adb_ready = ready
+
+        if ignored and ignored_signature != self._last_ignored:
+            names = ", ".join(ignored)
+            if ready:
+                messages.append(
+                    f"[setup-oob] Ignored ADB device(s) {names}; continuing with selected headset {serial}."
+                )
+            else:
+                state_detail = (
+                    " (offline)"
+                    if "offline" in reason.lower()
+                    else " (unauthorized)"
+                    if "unauthorized" in reason.lower()
+                    else ""
+                )
+                messages.append(
+                    f"[setup-oob] Ignored ADB device(s) {names}; waiting for selected headset {serial}{state_detail} to reconnect."
+                )
+        self._last_ignored = ignored_signature
+
+        if state == "WAITING_FOR_ADB" and not ready:
+            if serial is None and not any(
+                word in reason.lower()
+                for word in ("unauthorized", "offline", "multiple")
+            ):
+                emit(
+                    "no-hmd",
+                    "No USB-attached HMD detected; connect a headset to continue.",
+                    60,
+                )
+            else:
+                emit(f"adb-wait:{reason}", f"Waiting for USB-attached HMD: {reason}")
+        elif state == "PREPARING_DEVICE" and ready and entered_stage:
+            emit("prepare", f"Preparing headset {serial} for OOB setup.", 0)
+        elif state == "REBUILDING_USB" and entered_stage:
+            emit("usb", "Configuring USB reverse rules and TURN.", 0)
+        elif state == "AUTOMATING_BROWSER" and entered_stage:
+            emit("browser", "Opening headset browser and connecting OOB client.", 0)
+        elif state == "VERIFYING_BROWSER" and entered_stage:
+            emit("verify", "Waiting for headset browser health report.", 0)
+        elif state == "DEGRADED":
+            emit(f"failure:{reason}", f"OOB recovery delayed: {reason}")
+        elif health == "fatal":
+            emit("fatal", f"OOB stopped: {reason}", 0)
+
+        if health == "browser_ready" and self._last_health != health:
+            emit("browser-ready", "OOB browser ready; waiting for OpenXR stream.")
+        elif health == "active" and self._last_health != health:
+            emit("active", "OOB stream active with fresh client metrics.")
+        self._last_health = health
+        self._last_stage = stage
+        return messages
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run the service in the foreground until interrupted."""
     if args.usb_local and not args.setup_oob:
@@ -336,6 +433,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             setup_oob=args.setup_oob,
             usb_local=args.usb_local,
             host_client=args.host_client,
+            recovery_config=getattr(args, "_oob_recovery_config", None),
         )
     except RuntimeError as exc:
         # Operator-facing conditions (a live runtime, a rejected EULA); the
@@ -353,6 +451,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
             include_oob=True,
         )
         _out_interactive("\033[33mKeep this terminal open, Ctrl+C to terminate.\033[0m")
+        reporter = _OobConsoleReporter() if args.setup_oob else None
+
+        def report_oob_updates() -> None:
+            if reporter is not None:
+                for snapshot in service.drain_oob_updates():
+                    for message in reporter.observe(snapshot):
+                        _out(message)
+
+        report_oob_updates()
 
         stop = False
 
@@ -365,7 +472,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGTERM, on_signal)
 
         while not stop:
-            service.health_check()
+            report_oob_updates()
+            try:
+                service.health_check()
+            except RuntimeError:
+                status = service.oob_status()
+                if reporter is None or not status or status.get("health") != "fatal":
+                    raise
+                report_oob_updates()
+                return 1
             time.sleep(0.1)
 
     _out("Stopped.")
@@ -465,11 +580,22 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
     run_dir, logs_dir = _resolve_dirs(args)
     pid = background.read_pid(run_dir)
+    status_path = Path(run_dir) / "oob_status.json"
+    try:
+        oob = json.loads(status_path.read_text(encoding="utf-8"))
+        if not isinstance(oob, dict) or oob.get("schemaVersion") != 1:
+            oob = None
+    except (OSError, ValueError):
+        oob = None
 
     if not is_runtime_live(run_dir):
         print(
             f"CloudXR runtime:   \033[31mnot running\033[0m  \033[90m({run_dir})\033[0m"
         )
+        if oob and oob.get("health") == "fatal":
+            print(
+                f"CloudXR OOB:       fatal: {oob.get('reason', 'unknown')} ({status_path})"
+            )
         return 1
 
     # Report the session that is actually running, not this command's defaults.
@@ -494,6 +620,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
             "CloudXR service: \033[36mforeground\033[0m  \033[90m(started by "
             "`service run`, a container entrypoint, or run_embedded)\033[0m"
         )
+    if oob:
+        writer_pid = oob.get("writerPid")
+        runtime_pid = oob.get("runtimePid")
+        try:
+            if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
+                raise ProcessLookupError
+            os.kill(writer_pid, 0)
+            os.kill(runtime_pid, 0)
+        except (ProcessLookupError, PermissionError):
+            print("CloudXR OOB:       status unavailable (stale writer)")
+        else:
+            print(
+                f"CloudXR OOB:       {oob.get('health', 'unknown')}: {oob.get('reason', '')}"
+            )
     return 0
 
 

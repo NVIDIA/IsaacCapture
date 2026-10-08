@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "teleop-keyboard-example-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "numpy",
+    "glfw>=2.7",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

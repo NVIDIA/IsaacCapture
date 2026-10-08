@@ -84,3 +84,9 @@ tensor_identifier = "device_state"
 max_flatbuffer_size = 32768
 mcap_channels = ["DeviceState", "DeviceState_tracked"]
 replay_channels = ["DeviceState"]
+
+[[tracker]]
+name = "steering_wheel"
+table = "SteeringWheelOutput"
+max_flatbuffer_size = 1024
+python_accessor = "get_wheel_data"

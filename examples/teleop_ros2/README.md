@@ -181,6 +181,11 @@ docker run --rm --gpus all --net=host --ipc=host \
   teleop_ros2_ref --ros-args -p cloudxr_accept_eula:=true
 ```
 
+All device plugins used with Docker must run in the `teleop_ros2_ref`
+container. The node starts managed hand-tracking plugins automatically; launch
+external plugins such as `foot_pedal_reader` in the running container with
+`docker exec`.
+
 Select the hand provider independently from the robot-hand retargeter. The node
 starts the selected plugin automatically:
 

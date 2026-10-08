@@ -107,6 +107,80 @@ async def test_headset_register_hello_and_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_baseline_client_can_register_stream_without_health_probe_reply() -> None:
+    """The pre-healthProbe client still sends its existing OOB messages."""
+    hub = OOBControlHub()
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+    await ws.inject(
+        json.dumps({"type": "streamStatus", "payload": {"streaming": True}})
+    )
+    await asyncio.sleep(0)
+
+    state = await hub.get_snapshot()
+    assert state["headsets"][0]["streaming"] is True
+    assert await hub.probe_browser(1, 0, timeout=0.02) is None
+    assert any(msg["type"] == "healthProbe" for msg in _loads_sent(ws))
+    assert (await hub.get_snapshot())["headsets"][0]["streaming"] is True
+    await ws.end_stream()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_generation_probe_requires_matching_fresh_client() -> None:
+    hub = OOBControlHub()
+    ws = QueueWS()
+    handler = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+    registered_at = (await hub.get_snapshot())["headsets"][0]["registeredAt"] / 1000
+    assert await hub.probe_browser(1, registered_at + 1, timeout=0.02) is None
+
+    pending = asyncio.create_task(hub.probe_browser(2, registered_at - 1, timeout=0.2))
+    for _ in range(10):
+        await asyncio.sleep(0)
+        probes = [msg for msg in _loads_sent(ws) if msg["type"] == "healthProbe"]
+        if probes:
+            break
+    assert probes
+    probe = probes[-1]["payload"]
+    await ws.inject(
+        json.dumps(
+            {"type": "healthReport", "payload": {**probe, "lifecycleGeneration": 1}}
+        )
+    )
+    await asyncio.sleep(0)
+    assert not pending.done()
+    await ws.inject(
+        json.dumps({"type": "healthReport", "payload": {**probe, "probeId": "old"}})
+    )
+    await asyncio.sleep(0)
+    assert not pending.done()
+    await ws.inject(
+        json.dumps(
+            {
+                "type": "clientMetrics",
+                "payload": {"cadence": "network", "metrics": {"rtt": 1}},
+            }
+        )
+    )
+    await ws.inject(json.dumps({"type": "healthReport", "payload": probe}))
+    report = await pending
+    assert report is not None
+    assert report["lastMetricsAt"] is not None
+    state = await hub.get_snapshot()
+    assert state["headsets"][0]["lastSeenAt"] is not None
+    assert state["headsets"][0]["lastMetricsAt"] is not None
+    assert report["lastMetricsAt"] == state["headsets"][0]["lastMetricsAt"]
+    await hub.set_lifecycle_snapshot({"health": "browser_ready"})
+    assert (await hub.get_snapshot())["lifecycle"]["health"] == "browser_ready"
+    await ws.end_stream()
+    await handler
+
+
+@pytest.mark.asyncio
 async def test_register_rejects_bad_token() -> None:
     hub = OOBControlHub(control_token="ok")
     ws = QueueWS()
@@ -228,6 +302,72 @@ async def test_stream_status_updates_snapshot() -> None:
     snap = await hub.get_snapshot()
     assert snap["headsets"][0]["streaming"] is False
     assert snap["headsets"][0]["streamingSince"] is None
+
+    await ws.end_stream()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_structured_stream_status_retains_terminal_until_new_attempt() -> None:
+    hub = OOBControlHub()
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(json.dumps({"type": "register", "payload": {"role": "headset"}}))
+    await asyncio.sleep(0)
+
+    await ws.inject(
+        json.dumps(
+            {
+                "type": "streamStatus",
+                "payload": {
+                    "streaming": False,
+                    "phase": "terminal",
+                    "detail": "Error",
+                    "terminalEventId": "failure-1",
+                    "terminalDetail": "retry exhausted",
+                },
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    headset = (await hub.get_snapshot())["headsets"][0]
+    assert headset["streamPhase"] == "terminal"
+    assert headset["terminalEventId"] == "failure-1"
+
+    # The XR session-end callback follows Error with Disconnected. It must not
+    # erase terminal evidence before the host's next observation.
+    await ws.inject(
+        json.dumps(
+            {"type": "streamStatus", "payload": {"streaming": False, "phase": "idle"}}
+        )
+    )
+    await asyncio.sleep(0)
+    headset = (await hub.get_snapshot())["headsets"][0]
+    assert headset["streamPhase"] == "idle"
+    assert headset["terminalEventId"] == "failure-1"
+
+    await ws.inject(
+        json.dumps(
+            {
+                "type": "streamStatus",
+                "payload": {"streaming": False, "phase": "retrying"},
+            }
+        )
+    )
+    await asyncio.sleep(0)
+    headset = (await hub.get_snapshot())["headsets"][0]
+    assert headset["streamPhase"] == "retrying"
+    assert headset["terminalEventId"] is None
+
+    # Untrusted structured fields must fall back to legacy boolean semantics,
+    # not terminate the WebSocket handler with an unhashable-type error.
+    await ws.inject(
+        json.dumps(
+            {"type": "streamStatus", "payload": {"streaming": False, "phase": []}}
+        )
+    )
+    await asyncio.sleep(0)
+    assert (await hub.get_snapshot())["headsets"][0]["streamPhase"] == "idle"
 
     await ws.end_stream()
     await task

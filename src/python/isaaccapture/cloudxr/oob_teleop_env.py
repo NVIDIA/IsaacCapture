@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import socket
@@ -31,6 +32,72 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
+
+CLIENT_RECONNECT_DEFAULT_ENABLED = True
+CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS = 10
+CLIENT_RECONNECT_DEFAULT_DELAY_MS = 3000
+
+
+def client_reconnect_config_from_env() -> dict:
+    """Return validated WebXR retry settings shared by the URL and host lifecycle."""
+
+    def boolean(name: str, default: bool) -> bool:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be a boolean")
+
+    def nonnegative_int(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        try:
+            value = default if raw is None else int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a non-negative integer") from exc
+        if value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+        return value
+
+    return {
+        "reconnectEnabled": boolean(
+            "TELEOP_CLIENT_RECONNECT_ENABLED", CLIENT_RECONNECT_DEFAULT_ENABLED
+        ),
+        "reconnectMaxAttempts": nonnegative_int(
+            "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
+            CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS,
+        ),
+        "reconnectDelayMs": nonnegative_int(
+            "TELEOP_CLIENT_RECONNECT_DELAY_MS", CLIENT_RECONNECT_DEFAULT_DELAY_MS
+        ),
+    }
+
+
+def resolve_oob_recovery_config():
+    """Resolve and validate the bounded recovery cadence once at startup."""
+    from .oob_teleop_lifecycle import RecoveryConfig  # noqa: PLC0415
+
+    def positive(name: str, default: float) -> float:
+        raw = os.environ.get(name)
+        try:
+            value = default if raw is None else float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a positive finite number") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        return value
+
+    reconnect = client_reconnect_config_from_env()
+    return RecoveryConfig(
+        timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
+        interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
+        client_reconnect_enabled=reconnect["reconnectEnabled"],
+        client_reconnect_max_attempts=reconnect["reconnectMaxAttempts"],
+        client_reconnect_delay_ms=reconnect["reconnectDelayMs"],
+    )
 
 
 def versioned_web_client_url(version: str) -> str:
@@ -92,9 +159,9 @@ CHROME_INSPECT_DEVICES_URL = "chrome://inspect/#devices"
 #
 # "USB-local" means: the headset reaches the PC over loopback (127.0.0.1) via
 # ``adb reverse``.  Static assets live under ``TELEOP_WEB_CLIENT_STATIC_DIR`` or
-# default ``~/.cloudxr/static-client`` (downloaded from NVIDIA GitHub Pages if
-# missing) and are served at ``/client/`` on the WSS proxy (``PROXY_PORT``),
-# the same path as ``--host-client``.
+# default ``~/.cloudxr/static-client`` (downloaded from NVIDIA GitHub Pages if missing).
+# The WSS proxy serves these files from ``/client/`` on its existing TLS port.
+# USB-local reaches that same origin through the PROXY_PORT reverse rule.
 # ---------------------------------------------------------------------------
 
 USB_HOST = "127.0.0.1"  # serverIP seen by the headset (its own localhost)
@@ -174,7 +241,7 @@ _REQUIRED_WEB_CLIENT_ASSETS = ("index.html", "bundle.js")
 _OPTIONAL_WEB_CLIENT_ASSETS = ("bundle.emulator.js",)
 
 
-def require_web_client_static_dir() -> Path:
+def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path:
     """Ensure web client static assets exist under :func:`resolve_web_client_static_dir`.
 
     Creates the directory if needed. If ``index.html``, ``bundle.js``, or
@@ -182,7 +249,9 @@ def require_web_client_static_dir() -> Path:
     Isaac Teleop client URLs (emulator bundle is optional on older releases).
 
     Idempotent: safe to call from both :class:`~.launcher.CloudXRLauncher` and ``wss.run``
-    (second call skips network when files are present).
+    (second call skips network when files are present). OOB automation requires
+    the current browser health protocol; a non-empty older cache is not a
+    compatible substitute.
 
     Raises:
         RuntimeError: If the path is invalid or downloads/final validation fail.
@@ -226,6 +295,19 @@ def require_web_client_static_dir() -> Path:
         fp = p / name
         if not fp.is_file() or fp.stat().st_size == 0:
             raise RuntimeError(f"Web client file missing or empty after fetch: {fp}")
+    if require_health_probe:
+        bundle = p / "bundle.js"
+        try:
+            bundle_bytes = bundle.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"Cannot read WebXR bundle {bundle}: {exc}") from exc
+        if b"healthProbe" not in bundle_bytes or b"healthReport" not in bundle_bytes:
+            raise RuntimeError(
+                f"WebXR bundle {bundle} lacks the OOB healthProbe/healthReport "
+                "protocol. Build deps/cloudxr/webxr_client with `npm run build` "
+                "and set TELEOP_WEB_CLIENT_STATIC_DIR to its build directory. "
+                "An older non-empty static cache is not replaced automatically."
+            )
     return p
 
 
@@ -329,10 +411,11 @@ def default_initial_stream_config(resolved_proxy_port: int) -> dict:
 def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
-    Keys match query params the WebXR client reads on page load
-    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``).
+    Keys match query params the WebXR client reads on page load, including
+    codec, panel visibility, and bounded stream-reconnect policy.
     """
     out: dict = {}
+    out.update(client_reconnect_config_from_env())
     codec = os.environ.get("TELEOP_CLIENT_CODEC", "").strip()
     if codec:
         out["codec"] = codec
@@ -405,6 +488,13 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    v = cfg.get("reconnectEnabled")
+    if isinstance(v, bool):
+        params["reconnectEnabled"] = "true" if v else "false"
+    for key in ("reconnectMaxAttempts", "reconnectDelayMs"):
+        v = cfg.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
         params["turnServer"] = str(v).strip()
@@ -427,13 +517,17 @@ def build_headset_bookmark_url(
 
 
 def redact_control_token(text: str) -> str:
-    """Mask ``controlToken`` values in *text* for display or logging.
+    """Mask ``controlToken`` and ``token`` query values in display or log text.
 
-    Shared by every path that surfaces a bookmark URL — the startup banner,
-    the ``am start`` log line, and the standalone opener — so a token can
-    never reach a terminal or log file through one of them.
+    Shared by every path that surfaces a credential-bearing URL, including
+    the OOB WSS failure log and service status diagnostic.
     """
-    return re.sub(r"(controlToken=)[^&\s'\"]+", r"\1<REDACTED>", text)
+    return re.sub(
+        r"(?<![\w])((?:controlToken|token)=)[^&\s'\"#]+",
+        r"\1<REDACTED>",
+        text,
+        flags=re.IGNORECASE,
+    )
 
 
 def resolve_lan_host_for_oob() -> str:
@@ -455,12 +549,8 @@ def oob_progress(stage: str, msg: str) -> None:
     is in its sequence of steps without these lines competing with the
     success banner (stdout) or error prints (red).
 
-    A print(), deliberately, and one the repo root AGENTS.md names as such:
-    progress lines are terminal UX, not diagnostics. Routing them through a
-    logger puts them behind the console threshold, so an operator who had
-    called set_console_level("warning") -- a supported, public thing to do --
-    lost every phase marker in a sequence that drives adb, coturn and a
-    headset browser in turn. Do not "migrate" this one.
+    This stays a print so progress remains visible when the console log level
+    is set to warning.
     """
     print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
@@ -477,10 +567,10 @@ def print_oob_hub_startup_banner(
         lan_host: PC LAN address (WiFi mode) or ``"127.0.0.1"`` (USB-local mode).
         usb_local: When ``True``, adjust the banner to describe the USB-local
             topology: everything reachable from the headset via ``adb reverse``
-            on loopback; WebXR UI at ``/client/`` on the WSS proxy.
+            on loopback; WebXR UI from ``TELEOP_WEB_CLIENT_STATIC_DIR`` (HTTPS, same PEM as WSS).
         web_client_base: Override the WebXR client base URL in the bookmark.
             When ``None`` (default), uses the versioned GitHub Pages client
-            (WiFi mode) or ``https://localhost:<PROXY_PORT>/client`` (USB-local).
+            (WiFi mode) or the USB-local HTTPS origin (USB-local mode).
             ``TELEOP_WEB_CLIENT_BASE`` env var still takes precedence over this.
     """
     port = wss_proxy_port()
@@ -495,7 +585,7 @@ def print_oob_hub_startup_banner(
     if usb_local:
         web_base = (
             os.environ.get("TELEOP_WEB_CLIENT_BASE", "").strip()
-            or f"https://localhost:{port}/client"
+            or f"https://localhost:{port}/client/"
         )
     elif web_client_base is not None:
         web_base = web_client_base
@@ -547,12 +637,12 @@ def print_oob_hub_startup_banner(
     if usb_local:
         print(
             "  USB-local mode: adb reverse active for ports "
-            f"{port}/tcp (WSS + /client/), "
+            f"{port}/tcp (WSS + WebXR UI), "
             f"{backend_port}/tcp (backend), "
             f"{turn_port}/tcp (TURN relay — coturn)."
         )
         print(
-            "  The launcher has started coturn automatically "
+            "  The launcher serves the WebXR UI on the WSS proxy and starts coturn automatically "
             "(see coturn-cloudxr-3478.log if CONNECT fails)."
         )
     else:

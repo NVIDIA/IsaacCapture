@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import types
@@ -41,6 +42,51 @@ _windows_skip = pytest.mark.skipif(
 
 class TestServiceConstruction:
     """Tests for CloudXRService construction (which starts the runtime)."""
+
+    def test_embedded_oob_preflight_fails_before_runtime_spawn(self, tmp_path):
+        """Embedded startup validates host ADB without requiring a headset."""
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch(
+                "isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path",
+                side_effect=RuntimeError("adb missing"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="adb missing"):
+                CloudXRService(install_dir=str(tmp_path), setup_oob=True)
+            mocks["popen"].assert_not_called()
+
+    def test_embedded_usb_preflight_checks_coturn_before_runtime_spawn(self, tmp_path):
+        """A missing TURN binary is a host setup failure, not a retry episode."""
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch("isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch(
+                "isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available",
+                side_effect=RuntimeError("coturn missing"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="coturn missing"):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            mocks["popen"].assert_not_called()
+
+    def test_oob_rejects_incompatible_webxr_bundle_before_runtime_spawn(self, tmp_path):
+        with (
+            mock_service_deps(tmp_path, ready=True) as mocks,
+            patch(
+                "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
+                side_effect=RuntimeError("lacks the OOB healthProbe"),
+            ) as require_static,
+        ):
+            with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            require_static.assert_called_once_with(require_health_probe=True)
+            mocks["popen"].assert_not_called()
 
     def test_construction_stores_parameters(self, tmp_path):
         """Constructor stores install_dir, env_config, device_profile, and accept_eula."""
@@ -279,7 +325,16 @@ class TestCleanupStaleRuntime:
             os.path.join(run_dir, name)
             for name in ("ipc_cloudxr", "runtime_started", "cloudxr.pid")
         ]
-        for path in paths:
+        # A stale IPC endpoint is a closed Unix socket, not a regular file.
+        cwd = os.getcwd()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            os.chdir(run_dir)
+            sock.bind("ipc_cloudxr")
+        finally:
+            os.chdir(cwd)
+            sock.close()
+        for path in paths[1:]:
             Path(path).touch()
         return run_dir, paths
 

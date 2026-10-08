@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """GStreamer-based NVENC H.264 encoder — Jetson alternative to ``NvH264Encoder``.
 
-    appsrc(NV12 sysmem) ! nvv4l2h264enc ! h264parse ! appsink
+    appsrc(NV12 sysmem) ! [nvvidconv ! NVMM caps !] nvv4l2h264enc ! h264parse ! appsink
 
 Jetson L4T R35+: ``nvv4l2h264enc`` (V4L2 M2M NVENC). Falls back to
 ``nvh264enc`` (desktop GstCUDA) if the Jetson plugin is missing.
@@ -80,11 +80,18 @@ def _encoder_args(name: str, *, bitrate: int, gop: int) -> str:
         # Jetson V4L2 M2M NVENC. control-rate=1 → CBR. preset-level=1 →
         # ultra-fast (lowest latency). insert-sps-pps=true lets the
         # receiver sync mid-stream.
-        return (
+        args = (
             f"{name} bitrate={bitrate} iframeinterval={gop} "
-            f"insert-sps-pps=true control-rate=1 preset-level=1 "
-            f"maxperf-enable=true"
+            f"insert-sps-pps=true control-rate=1 preset-level=1"
         )
+        # JetPack R39 dropped maxperf-enable; an unknown property fails parse_launch.
+        from gi.repository import Gst
+
+        if Gst.ElementFactory.make(name, None).find_property("maxperf-enable"):
+            args += " maxperf-enable=true"
+        # R39's encoder rejects sysmem NV12 (no-link, or silent no-output via
+        # appsrc); stage through NVMM.
+        return f"nvvidconv ! video/x-raw(memory:NVMM),format=NV12 ! {args}"
     if name == "nvh264enc":
         return (
             f"{name} bitrate={bitrate // 1000} gop-size={gop} "

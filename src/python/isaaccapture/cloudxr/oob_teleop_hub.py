@@ -36,6 +36,12 @@ class _HeadsetState:
     # edge only (so a repeated True doesn't reset the timestamp).
     streaming: bool = False
     streaming_since: float | None = None
+    last_seen_at: float | None = None
+    last_metrics_at: float | None = None
+    stream_phase: str = "idle"
+    stream_detail: str | None = None
+    terminal_event_id: str | None = None
+    terminal_detail: str | None = None
 
 
 class OOBControlHub:
@@ -55,6 +61,8 @@ class OOBControlHub:
         self._stream_config: dict = dict(initial_config or {})
         self._config_version: int = 0
         self._lock = asyncio.Lock()
+        self._lifecycle: dict | None = None
+        self._health_waiters: dict[tuple[str, int], tuple[Any, asyncio.Future]] = {}
 
     # ------------------------------------------------------------------
     # Public interface
@@ -99,6 +107,12 @@ class OOBControlHub:
         finally:
             async with self._lock:
                 self._headsets.pop(ws, None)
+                for key, (target_ws, waiter) in tuple(self._health_waiters.items()):
+                    if target_ws is not ws:
+                        continue
+                    if not waiter.done():
+                        waiter.set_result(None)
+                    self._health_waiters.pop(key, None)
             log.info("Teleop client disconnected (clientId=%s)", client_id)
 
     async def get_snapshot(self) -> dict:
@@ -116,6 +130,16 @@ class OOBControlHub:
                     ),
                     "deviceLabel": s.device_label,
                     "registeredAt": int(s.registered_at * 1000),
+                    "lastSeenAt": int(s.last_seen_at * 1000)
+                    if s.last_seen_at
+                    else None,
+                    "lastMetricsAt": int(s.last_metrics_at * 1000)
+                    if s.last_metrics_at
+                    else None,
+                    "streamPhase": s.stream_phase,
+                    "streamDetail": s.stream_detail,
+                    "terminalEventId": s.terminal_event_id,
+                    "terminalDetail": s.terminal_detail,
                     "metricsByCadence": s.metrics_by_cadence,
                 }
                 for s in self._headsets.values()
@@ -125,7 +149,57 @@ class OOBControlHub:
                 "configVersion": self._config_version,
                 "config": dict(self._stream_config),
                 "headsets": headsets,
+                "lifecycle": dict(self._lifecycle) if self._lifecycle else None,
             }
+
+    async def set_lifecycle_snapshot(self, snapshot: dict) -> None:
+        """Publish the lifecycle's already redacted status in the HTTP state."""
+        async with self._lock:
+            self._lifecycle = dict(snapshot)
+
+    async def probe_browser(
+        self,
+        generation: int,
+        after: float,
+        timeout: float = 5.0,
+        client_id: str | None = None,
+    ) -> dict | None:
+        """Require a reply from a client registered after browser navigation."""
+        deadline = time.monotonic() + timeout
+        target = None
+        while target is None and time.monotonic() < deadline:
+            async with self._lock:
+                target = max(
+                    (
+                        s
+                        for s in self._headsets.values()
+                        if s.registered_at > after
+                        and (client_id is None or s.client_id == client_id)
+                    ),
+                    key=lambda s: s.registered_at,
+                    default=None,
+                )
+            if target is None:
+                await asyncio.sleep(0.1)
+        if target is None:
+            return None
+        async with self._lock:
+            probe_id = str(uuid.uuid4())
+            key = (probe_id, generation)
+            waiter = asyncio.get_running_loop().create_future()
+            self._health_waiters[key] = (target.ws, waiter)
+        await self._send(
+            target.ws,
+            "healthProbe",
+            {"probeId": probe_id, "lifecycleGeneration": generation},
+        )
+        try:
+            return await asyncio.wait_for(waiter, max(0.1, deadline - time.monotonic()))
+        except TimeoutError:
+            return None
+        finally:
+            async with self._lock:
+                self._health_waiters.pop(key, None)
 
     async def wait_for_streaming(
         self, *, poll_seconds: float = 1.0
@@ -230,6 +304,8 @@ class OOBControlHub:
             await self._handle_client_metrics(ws, payload)
         elif msg_type == "streamStatus":
             await self._handle_stream_status(ws, payload)
+        elif msg_type == "healthReport":
+            await self._handle_health_report(ws, payload)
         else:
             await self._send_error(
                 ws, "BAD_REQUEST", f"Unknown message type: {msg_type}"
@@ -278,19 +354,43 @@ class OOBControlHub:
             await self._send(headset.ws, "config", push_payload)
 
     async def _handle_stream_status(self, ws: Any, payload: dict) -> None:
-        """Wire format: ``{"streaming": true|false}``. Rising edge stamps ``streaming_since``."""
+        """Store legacy streaming state plus optional client-recovery phase evidence."""
         streaming = bool(payload.get("streaming", False))
+        phase = payload.get("phase")
+        valid_phases = {"idle", "connecting", "retrying", "streaming", "terminal"}
+        if not isinstance(phase, str) or phase not in valid_phases:
+            phase = "streaming" if streaming else "idle"
         async with self._lock:
             state = self._headsets.get(ws)
             if state is None:
                 return
+            state.last_seen_at = time.time()
             if streaming and not state.streaming:
                 state.streaming_since = time.time()
             elif not streaming:
                 state.streaming_since = None
             state.streaming = streaming
+            state.stream_phase = str(phase)
+            detail = payload.get("detail")
+            state.stream_detail = str(detail)[:300] if detail is not None else None
+            terminal_event_id = payload.get("terminalEventId")
+            if phase == "terminal":
+                if terminal_event_id:
+                    state.terminal_event_id = str(terminal_event_id)[:160]
+                elif state.terminal_event_id is None:
+                    state.terminal_event_id = str(uuid.uuid4())
+                terminal_detail = payload.get("terminalDetail", detail)
+                state.terminal_detail = (
+                    str(terminal_detail)[:300] if terminal_detail is not None else None
+                )
+            elif phase in {"connecting", "retrying", "streaming"}:
+                state.terminal_event_id = None
+                state.terminal_detail = None
             log.info(
-                "Headset %s streamStatus: streaming=%s", state.client_id, streaming
+                "Headset %s streamStatus: streaming=%s phase=%s",
+                state.client_id,
+                streaming,
+                phase,
             )
 
     async def _handle_client_metrics(self, ws: Any, payload: dict) -> None:
@@ -298,6 +398,8 @@ class OOBControlHub:
             state = self._headsets.get(ws)
             if state is None:
                 return
+            state.last_seen_at = time.time()
+            state.last_metrics_at = state.last_seen_at
             cadence = str(payload.get("cadence", "unknown"))
             raw_metrics = payload.get("metrics", {})
             if not isinstance(raw_metrics, dict):
@@ -310,6 +412,54 @@ class OOBControlHub:
                     if isinstance(v, (int, float))
                 },
             }
+
+    async def _handle_health_report(self, ws: Any, payload: dict) -> None:
+        """Resolve the matching lifecycle probe from its intended headset only."""
+        key = (str(payload.get("probeId", "")), payload.get("lifecycleGeneration"))
+        async with self._lock:
+            state = self._headsets.get(ws)
+            pending = self._health_waiters.get(key)
+            if (
+                state is None
+                or pending is None
+                or pending[0] is not ws
+                or pending[1].done()
+            ):
+                return
+            state.last_seen_at = time.time()
+            phase = payload.get("streamPhase")
+            if isinstance(phase, str) and phase in {
+                "idle",
+                "connecting",
+                "retrying",
+                "streaming",
+                "terminal",
+            }:
+                state.stream_phase = str(phase)
+            terminal_event_id = payload.get("terminalEventId")
+            if terminal_event_id:
+                state.terminal_event_id = str(terminal_event_id)[:160]
+                terminal_detail = payload.get("terminalDetail")
+                state.terminal_detail = (
+                    str(terminal_detail)[:300]
+                    if terminal_detail is not None
+                    else state.terminal_detail
+                )
+            pending[1].set_result(
+                {
+                    "clientId": state.client_id,
+                    "streaming": state.streaming,
+                    "lastMetricsAt": (
+                        int(state.last_metrics_at * 1000)
+                        if state.last_metrics_at is not None
+                        else None
+                    ),
+                    "receivedAt": state.last_seen_at,
+                    "streamPhase": state.stream_phase,
+                    "terminalEventId": state.terminal_event_id,
+                    "terminalDetail": state.terminal_detail,
+                }
+            )
 
     # ------------------------------------------------------------------
     # Private: send helpers

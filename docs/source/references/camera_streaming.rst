@@ -63,6 +63,10 @@ of the surrounding checkout (:code-file:`scripts/_install_deps.sh
 ``--build-from-source`` override the choice). Finally it probes the system packages it needs and
 prints the exact ``apt-get`` line to approve — declining, or a non-interactive run, aborts.
 
+Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
+``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
+kernel before reporting success.
+
 By default ``setup`` provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
 needs. Flags trim or extend that:
@@ -507,6 +511,25 @@ Troubleshooting
 - **Split mode renders nothing** — check the sender is up (``./camera_viz.sh service-status``),
   ``$STREAMING_HOST`` was the workstation's IP at deploy time, and UDP ports (default 5000+)
   aren't firewalled.
+- **CUDA kernel errors** — rerun the setup check from ``examples/camera_viz``. It prints
+  CUDA diagnostics on failure; a driver version from ``nvidia-smi`` does not identify
+  the installed toolkit:
+
+  .. code-block:: bash
+
+     .venv/bin/python scripts/check_cuda.py
+
+- **Thor: ``CUDA_ERROR_NO_BINARY_FOR_GPU``** — an older NVRTC compiler can produce kernels
+  incompatible with Thor. Select your JetPack's CUDA 13.x toolkit and rerun setup. As a
+  temporary workaround for CuPy kernels, try:
+
+  .. code-block:: bash
+
+     CUPY_COMPILE_WITH_PTX=1 ./camera_viz.sh run configs/synthetic.yaml
+
+  This lets the driver compile the kernel for the GPU (`CuPy PTX option
+  <https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx>`__).
+
 - **Not sure which side is stuck?** — set ``verbose: true`` at the top of the YAML for periodic
   per-source breadcrumbs on both ends.
 

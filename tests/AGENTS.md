@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Layout
 
-All pytest and Catch2/CTest suites live under this tree:
+Pytest and Catch2/CTest suites generally live under this tree:
 
 ```text
 tests/
@@ -42,6 +42,11 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 
 - Each leaf directory has its own `pyproject.toml` so `uv run` resolves deps
   locally (mujoco pins, asyncio, cupy extras, grounding/wuji extras).
+- After updating CloudXR import or mock-patch paths for the `isaaccapture`
+  package, run `ruff format` on the touched tests; longer paths can change
+  multiline layout.
+- Format changed Python tests before staging; if pre-commit rewrites a file,
+  restage the result and rerun the full hook set.
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
 - Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or
@@ -60,6 +65,7 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 
 ## Out of scope here
 
+- Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
 - `examples/oxr/python/test_*.py` — standalone scripts for CloudXR GPU CI.
 - ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.

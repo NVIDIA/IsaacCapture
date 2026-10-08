@@ -72,6 +72,8 @@ wuji = [
 cloudxr = [
     "cryptography>=3.0",
     "websockets>=14.0",
+    "Pillow>=10.0; sys_platform == 'linux'",
+    "cupy-cuda12x>=13.0; sys_platform == 'linux'",
 ]
 
 # Derive the version from the VERSION file (MAJOR.MINOR.x) as MAJOR.MINOR+local,

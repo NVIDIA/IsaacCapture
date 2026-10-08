@@ -16,11 +16,11 @@
  */
 
 /**
- * Standalone build for tests/mock/CloudXRComponentTest - mounts the REAL CloudXRComponent
- * (helpers/react/CloudXRComponent.tsx) against MockCloudXR via the same '@nvidia/cloudxr' alias
- * webpack.app-mock.js uses for the full app, but as a minimal Canvas/XR harness instead of
- * App.tsx's production UI. Own single-entry output in build-component-mock/, never build/ or the
- * other demo pages' output dirs.
+ * Standalone build for tests/mock/CloudXRComponentTest and tests/mock/StreamAttachTimeoutTest -
+ * both mount the REAL CloudXRComponent (helpers/react/CloudXRComponent.tsx) against MockCloudXR
+ * via the same '@nvidia/cloudxr' alias webpack.app-mock.js uses for the full app, but as a
+ * minimal Canvas/XR harness instead of App.tsx's production UI. Own multi-entry output in
+ * build-component-mock/, never build/ or the other demo pages' output dirs.
  */
 
 const path = require('path');
@@ -31,6 +31,7 @@ module.exports = {
   devtool: 'eval-source-map',
   entry: {
     componentTest: './tests/mock/CloudXRComponentTest.tsx',
+    streamAttachTimeoutTest: './tests/mock/StreamAttachTimeoutTest.tsx',
   },
   module: {
     rules: [
@@ -51,7 +52,7 @@ module.exports = {
     },
   },
   output: {
-    filename: 'bundle.component-mock.js',
+    filename: 'bundle.[name].js',
     path: path.resolve(__dirname, './build-component-mock'),
     clean: true,
   },
@@ -60,6 +61,11 @@ module.exports = {
       filename: 'CloudXRComponentTest.html',
       template: './tests/mock/CloudXRComponentTest.html',
       chunks: ['componentTest'],
+    }),
+    new HtmlWebpackPlugin({
+      filename: 'StreamAttachTimeoutTest.html',
+      template: './tests/mock/StreamAttachTimeoutTest.html',
+      chunks: ['streamAttachTimeoutTest'],
     }),
   ],
   devServer: {

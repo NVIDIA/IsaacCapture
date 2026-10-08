@@ -46,6 +46,13 @@ jobs:
       with:
         fetch-depth: 0 # Full history for accurate git describe
 
+    # Artifacts are stamped with this, so it has to be a property of the commit
+    # and not of when a job happened to run. Without it a `py3-none-any` wheel,
+    # which every matrix entry builds, comes out different from each entry --
+    # same filename, different bytes.
+    - name: Pin the build clock to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
     # One build directory per job; later steps (ctest, coverage, test packaging,
     # install) all refer to it through BUILD_DIR.
     - name: Resolve build directory
@@ -309,7 +316,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
       with:
-        fetch-depth: 1
+        # Full history: the version is the number of commits since VERSION
+        # last changed, and on a tag build CMake compares that against the
+        # tag. A shallow clone counts 0, so every release tag mismatches.
+        fetch-depth: 0
         persist-credentials: false
 
     - name: Install uv
@@ -1025,10 +1035,20 @@ jobs:
 
     # Publish only for same-repo runs (pushes or non-fork PRs). github.repository
     # is the base repo even for fork PRs, so compare the PR head repo instead.
+    # `!cancelled()` because a skip propagates through the whole dependency
+    # chain, not one level: a test job that does not run -- an empty arch matrix,
+    # say -- skips `wheel-gate`'s dependents even though `wheel-gate` itself
+    # succeeded through `always()`. The result check below is what should gate
+    # this job, and without a status function it never gets the chance.
+    #
+    # Continuations sit at the block's indentation: a folded scalar keeps the
+    # newline of a more-indented line, so the expression would reach the
+    # evaluator with a newline inside it.
     if: >-
-      needs.wheel-gate.result == 'success'
+      !cancelled()
+      && needs.wheel-gate.result == 'success'
       && (github.event_name != 'pull_request'
-        || github.event.pull_request.head.repo.full_name == github.repository)
+      || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
     - name: Set up Python

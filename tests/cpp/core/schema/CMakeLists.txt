@@ -12,6 +12,7 @@ add_executable(schema_tests
   test_full_body.cpp
   test_controller.cpp
   test_pedals.cpp
+  test_steering_wheel.cpp
   test_plugin_device_status.cpp
   test_joint_se3_pose.cpp
   test_se3_tracker.cpp

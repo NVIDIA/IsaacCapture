@@ -15,7 +15,11 @@ Available Retargeters:
     - LocomotionFixedRootCmdRetargeter: Fixed root command (standing still)
     - LocomotionRootCmdRetargeter: Locomotion from controller inputs
     - FootPedalRootCmdRetargeter: Root command from 3-axis foot pedal (horizontal/vertical + rudder)
+    - VehicleControlRetargeter: Vehicle command retargeting from steering wheel input
     - GripperRetargeter: Pinch-based gripper control
+    - KeyboardToSe3RelRetargeter: Keyboard press state -> relative EE delta control
+    - KeyboardGripperRetargeter: Keyboard K-key toggle -> gripper open/closed
+    - KeyboardToSe2Retargeter: Keyboard press state -> base velocity command (v_x, v_y, omega_z)
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
@@ -104,9 +108,53 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "FootPedalRootCmdRetargeterConfig",
         None,
     ),
+    # .vehicle_control_retargeter
+    "VehicleControlCommand": (
+        ".vehicle_control_retargeter",
+        "VehicleControlCommand",
+        None,
+    ),
+    "VehicleControlRetargeter": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeter",
+        None,
+    ),
+    "VehicleControlRetargeterConfig": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeterConfig",
+        None,
+    ),
+    "axis_to_pedal": (".vehicle_control_retargeter", "axis_to_pedal", None),
     # .gripper_retargeter
     "GripperRetargeter": (".gripper_retargeter", "GripperRetargeter", None),
     "GripperRetargeterConfig": (".gripper_retargeter", "GripperRetargeterConfig", None),
+    "KeyboardGripperRetargeter": (
+        ".gripper_retargeter",
+        "KeyboardGripperRetargeter",
+        None,
+    ),
+    # .keyboard_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "KeyboardToSe3RelRetargeter": (
+        ".keyboard_se3_retargeter",
+        "KeyboardToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "KeyboardToSe3RelRetargeterConfig": (
+        ".keyboard_se3_retargeter",
+        "KeyboardToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    # .keyboard_se2_retargeter
+    "KeyboardToSe2Retargeter": (
+        ".keyboard_se2_retargeter",
+        "KeyboardToSe2Retargeter",
+        None,
+    ),
+    "KeyboardToSe2RetargeterConfig": (
+        ".keyboard_se2_retargeter",
+        "KeyboardToSe2RetargeterConfig",
+        None,
+    ),
     # .SO101 (SO-101 5-DOF arm: clutch EE-pose, analog gripper)
     "SO101ClutchRetargeter": (
         ".SO101.clutch_retargeter",
@@ -139,6 +187,33 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
     "JointStateRetargeterConfig": (
         ".joint_space.joint_state_retargeter",
         "JointStateRetargeterConfig",
+        None,
+    ),
+    # .ee_pose_jump_guard
+    "EE_POSE_JUMP_GUARD_STATUS_KEY": (
+        ".ee_pose_jump_guard",
+        "EE_POSE_JUMP_GUARD_STATUS_KEY",
+        None,
+    ),
+    "EePoseJumpGuard": (".ee_pose_jump_guard", "EePoseJumpGuard", None),
+    "EePoseJumpGuardConfig": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardConfig",
+        None,
+    ),
+    "EePoseJumpGuardDisposition": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardDisposition",
+        None,
+    ),
+    "EePoseJumpGuardState": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardState",
+        None,
+    ),
+    "EePoseJumpGuardStatusIndex": (
+        ".ee_pose_jump_guard",
+        "EePoseJumpGuardStatusIndex",
         None,
     ),
     # .rate_limiter (safety harness: per-frame velocity bounds for EE / joint streams)
@@ -242,6 +317,10 @@ __all__ = [
     "TriHandMotionControllerConfig",
     "FootPedalRootCmdRetargeter",
     "FootPedalRootCmdRetargeterConfig",
+    "VehicleControlCommand",
+    "VehicleControlRetargeter",
+    "VehicleControlRetargeterConfig",
+    "axis_to_pedal",
     # Locomotion retargeters
     "LocomotionFixedRootCmdRetargeter",
     "LocomotionFixedRootCmdRetargeterConfig",
@@ -250,6 +329,11 @@ __all__ = [
     # Manipulator retargeters
     "GripperRetargeter",
     "GripperRetargeterConfig",
+    "KeyboardToSe3RelRetargeter",
+    "KeyboardToSe3RelRetargeterConfig",
+    "KeyboardGripperRetargeter",
+    "KeyboardToSe2Retargeter",
+    "KeyboardToSe2RetargeterConfig",
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",
@@ -259,6 +343,13 @@ __all__ = [
     # Generic joint-space device retargeters (leader arms, exoskeletons, ...)
     "JointStateRetargeter",
     "JointStateRetargeterConfig",
+    # EE-pose discontinuity guard
+    "EE_POSE_JUMP_GUARD_STATUS_KEY",
+    "EePoseJumpGuard",
+    "EePoseJumpGuardConfig",
+    "EePoseJumpGuardDisposition",
+    "EePoseJumpGuardState",
+    "EePoseJumpGuardStatusIndex",
     # Safety-harness rate limiters (per-frame velocity bounds)
     "ControllerPoseSource",
     "EePoseRateLimiter",

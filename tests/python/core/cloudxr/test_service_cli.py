@@ -4,7 +4,7 @@
 """Tests for the `python -m isaaccapture.cloudxr.service` CLI."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -54,6 +54,222 @@ class TestRunFlags:
     def test_accept_eula_is_never_baked_into_the_unit(self):
         """Acceptance is a marker file written at install time, not a unit flag."""
         assert "--accept-eula" not in cli._run_flags(_run_args(accept_eula=True))
+
+
+class TestOobConsoleReporter:
+    def test_ignored_set_and_selected_state_changes_emit_once(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {
+            "health": "degraded",
+            "state": "WAITING_FOR_ADB",
+            "reason": "Waiting for selected headset to reconnect",
+            "selectedSerial": "original",
+            "adbReady": False,
+            "ignoredSerials": ["other"],
+        }
+        assert any(
+            "Ignored ADB device(s) other; waiting for selected headset original" in line
+            for line in reporter.observe(base)
+        )
+        assert reporter.observe(base) == []
+        offline = {
+            **base,
+            "reason": "Selected headset offline; reconnect the USB cable",
+        }
+        assert any("original (offline)" in line for line in reporter.observe(offline))
+        assert reporter.observe(offline) == []
+        more = {**offline, "ignoredSerials": ["other", "another"]}
+        assert any("another, other" in line for line in reporter.observe(more))
+        assert reporter.observe({**more, "ignoredSerials": ["another", "other"]}) == []
+        ready = {**more, "state": "PREPARING_DEVICE", "adbReady": True}
+        assert any(
+            "continuing with selected headset original" in line
+            for line in reporter.observe(ready)
+        )
+        assert reporter.observe(ready) == []
+
+    def test_absent_headset_is_visible_but_rate_limited(self):
+        now = [0.0]
+        reporter = cli._OobConsoleReporter(clock=lambda: now[0])
+        waiting = {
+            "health": "degraded",
+            "state": "WAITING_FOR_ADB",
+            "reason": "Waiting for selected headset",
+            "selectedSerial": None,
+            "adbReady": False,
+        }
+        assert reporter.observe({**waiting, "health": "starting"}) == []
+        assert reporter.observe(waiting) == [
+            "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
+        ]
+        now[0] = 5
+        assert reporter.observe(waiting) == []
+        now[0] = 61
+        assert reporter.observe(waiting) == [
+            "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
+        ]
+
+    def test_ready_loss_and_reconnection_are_reported(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        ready = {
+            "health": "degraded",
+            "state": "PREPARING_DEVICE",
+            "reason": "Preparing selected headset",
+            "selectedSerial": "HMD-1",
+            "adbReady": True,
+        }
+        first = reporter.observe(ready)
+        assert any("HMD detected (serial HMD-1)" in line for line in first)
+        assert reporter.observe(ready) == []
+        lost = {**ready, "state": "WAITING_FOR_ADB", "adbReady": False}
+        assert any("connection lost" in line for line in reporter.observe(lost))
+        assert any(
+            "HMD reconnected (serial HMD-1)" in line for line in reporter.observe(ready)
+        )
+
+    def test_phase_failure_and_health_transitions(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {"selectedSerial": "HMD-1", "adbReady": True, "health": "degraded"}
+        assert any(
+            "USB reverse rules" in line
+            for line in reporter.observe({**base, "state": "REBUILDING_USB"})
+        )
+        assert reporter.observe({**base, "state": "REBUILDING_USB"}) == []
+        failure = {**base, "state": "DEGRADED", "reason": "coturn is not listening"}
+        assert reporter.observe(failure) == [
+            "[setup-oob] OOB recovery delayed: coturn is not listening"
+        ]
+        assert reporter.observe(failure) == []
+        browser = {**base, "health": "browser_ready", "state": "ACTIVE"}
+        assert reporter.observe(browser) == [
+            "[setup-oob] OOB browser ready; waiting for OpenXR stream."
+        ]
+        assert reporter.observe({**browser, "health": "active"}) == [
+            "[setup-oob] OOB stream active with fresh client metrics."
+        ]
+
+    def test_quick_replug_reports_each_reentered_phase(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        base = {"health": "degraded", "selectedSerial": "HMD-1", "adbReady": True}
+        phases = (
+            ("PREPARING_DEVICE", "Preparing headset HMD-1"),
+            ("REBUILDING_USB", "Configuring USB reverse rules"),
+            ("AUTOMATING_BROWSER", "Opening headset browser"),
+            ("VERIFYING_BROWSER", "Waiting for headset browser"),
+        )
+        for state, expected in phases:
+            snapshot = {**base, "state": state}
+            assert any(expected in line for line in reporter.observe(snapshot))
+            assert reporter.observe(snapshot) == []
+
+        lost = {**base, "state": "WAITING_FOR_ADB", "adbReady": False}
+        assert any("connection lost" in line for line in reporter.observe(lost))
+        for state, expected in phases:
+            snapshot = {**base, "state": state}
+            assert any(expected in line for line in reporter.observe(snapshot))
+            assert reporter.observe(snapshot) == []
+
+        same_stage_new_generation = {
+            **base,
+            "state": "VERIFYING_BROWSER",
+            "generation": 2,
+        }
+        assert any(
+            "Waiting for headset browser" in line
+            for line in reporter.observe(same_stage_new_generation)
+        )
+
+    def test_foreground_run_prints_queued_lifecycle_after_banner(
+        self, tmp_path, capsys
+    ):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.drain_oob_updates.side_effect = [
+            [
+                {"health": "starting", "state": "WAITING_FOR_ADB"},
+                {
+                    "health": "degraded",
+                    "state": "WAITING_FOR_ADB",
+                    "selectedSerial": None,
+                    "adbReady": False,
+                },
+            ],
+            [],
+        ]
+        args = _run_args(
+            setup_oob=True, usb_local=True, cloudxr_install_dir=str(tmp_path)
+        )
+        with (
+            patch.object(cli, "_oob_preflight", return_value=None),
+            patch.object(cli, "CloudXRService", return_value=service),
+            patch.object(cli, "_print_service_summary") as summary,
+            patch.object(cli.time, "sleep", side_effect=KeyboardInterrupt),
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                cli._cmd_run(args)
+        summary.assert_called_once()
+        assert capsys.readouterr().out.count("No USB-attached HMD detected") == 1
+
+
+@pytest.mark.parametrize("hub_only", [False, True])
+def test_foreground_fatal_emits_one_operator_diagnostic(
+    tmp_path, capsys, monkeypatch, hub_only
+):
+    if hub_only:
+        monkeypatch.setenv("TELEOP_OOB_HUB_ONLY", "1")
+    else:
+        monkeypatch.delenv("TELEOP_OOB_HUB_ONLY", raising=False)
+    service = MagicMock()
+    service.__enter__.return_value = service
+    fatal = {
+        "health": "fatal",
+        "state": "FATAL",
+        "reason": "OOB lifecycle worker failed: boom; check wss.log and restart",
+        "selectedSerial": None,
+        "adbReady": False,
+    }
+    service.drain_oob_updates.side_effect = [[], [], [fatal]]
+    service.oob_status.return_value = fatal
+    service.health_check.side_effect = RuntimeError("boom")
+    args = _run_args(setup_oob=True, cloudxr_install_dir=str(tmp_path))
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(cli, "CloudXRService", return_value=service),
+        patch.object(cli, "_print_service_summary"),
+    ):
+        assert cli._cmd_run(args) == 1
+    output = capsys.readouterr()
+    assert output.out.count("OOB stopped:") == 1
+    assert "restart" in output.out
+    assert output.err == ""
+    service.__exit__.assert_called_once()
+
+
+def test_foreground_fatal_with_stalled_writer_keeps_single_diagnostic(tmp_path, capsys):
+    service = object.__new__(cli.CloudXRService)
+    service._fatal_error = RuntimeError("worker failed")
+    service._runtime_proc = None
+    service._wss_log_path = tmp_path / "wss.log"
+    service.stop = MagicMock(side_effect=RuntimeError("status persistence draining"))
+    fatal = {
+        "health": "fatal",
+        "state": "FATAL",
+        "reason": "OOB worker failed; check wss.log and restart",
+    }
+    service.drain_oob_updates = MagicMock(side_effect=[[], [], [fatal]])
+    service.oob_status = MagicMock(return_value=fatal)
+    service.health_check = MagicMock(side_effect=RuntimeError("worker failed"))
+    args = _run_args(setup_oob=True, cloudxr_install_dir=str(tmp_path))
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(cli, "CloudXRService", return_value=service),
+        patch.object(cli, "_print_service_summary"),
+    ):
+        assert cli._cmd_run(args) == 1
+    output = capsys.readouterr()
+    assert output.out.count("OOB stopped:") == 1
+    assert output.err == ""
+    service.stop.assert_called_once()
 
 
 class TestStartEula:

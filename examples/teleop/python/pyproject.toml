@@ -8,4 +8,5 @@ description = "Isaac Teleop Retargeting Examples"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "isaaccapture[retargeters]",
+    "glfw>=2.7",  # keyboard_printer_example: the window and its platform constants
 ]

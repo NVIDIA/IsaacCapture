@@ -41,6 +41,8 @@ class HeadTracker;
 class IHeadTrackerImpl;
 class HapticCommandReaderTracker;
 class IHapticCommandReaderTrackerImpl;
+class KeyboardTracker;
+class IKeyboardTrackerImpl;
 struct OpenXRSessionHandles;
 
 // Forward decls for trackers declared in deviceio_trackers/trackers.toml. Generated at
@@ -92,6 +94,7 @@ public:
     std::unique_ptr<ITensorPushTrackerImpl> create_tensor_push_tracker_impl(const TensorPushTracker* tracker);
     std::unique_ptr<IHapticCommandReaderTrackerImpl> create_haptic_command_reader_tracker_impl(
         const HapticCommandReaderTracker* tracker);
+    std::unique_ptr<IKeyboardTrackerImpl> create_keyboard_tracker_impl(const KeyboardTracker* tracker);
     // create_<name>_tracker_impl for every manifest tracker.
     std::unique_ptr<IEgoFrameMetadataTrackerImpl> create_ego_frame_metadata_tracker_impl(
         const EgoFrameMetadataTracker* tracker);

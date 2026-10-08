@@ -31,6 +31,8 @@ class HandTracker;
 class IHandTrackerImpl;
 class HeadTracker;
 class IHeadTrackerImpl;
+class KeyboardTracker;
+class IKeyboardTrackerImpl;
 class HapticCommandReaderTracker;
 class IHapticCommandReaderTrackerImpl;
 class MessageChannelTracker;
@@ -72,6 +74,7 @@ public:
     std::unique_ptr<IMessageChannelTrackerImpl> create_message_channel_tracker_impl(const MessageChannelTracker* tracker);
     std::unique_ptr<IHapticCommandReaderTrackerImpl> create_haptic_command_reader_tracker_impl(
         const HapticCommandReaderTracker* tracker);
+    std::unique_ptr<IKeyboardTrackerImpl> create_keyboard_tracker_impl(const KeyboardTracker* tracker);
     // create_<name>_tracker_impl for every manifest tracker.
     std::unique_ptr<IEgoFrameMetadataTrackerImpl> create_ego_frame_metadata_tracker_impl(
         const EgoFrameMetadataTracker* tracker);

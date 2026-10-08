@@ -59,7 +59,6 @@ class StatusReason(str, Enum):
     RUNTIME_UPDATE_FAILED = "runtime_update_failed"
     OPENXR_SESSION_READY = "openxr_session_ready"
     EXTERNAL_OPENXR_HEALTH_UNKNOWN = "external_openxr_health_unknown"
-    OPENXR_FORM_FACTOR_UNAVAILABLE = "openxr_form_factor_unavailable"
     OPENXR_SESSION_LOST = "openxr_session_lost"
     OPENXR_INSTANCE_LOST = "openxr_instance_lost"
     OPENXR_POLL_ERROR = "openxr_poll_error"
