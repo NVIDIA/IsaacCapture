@@ -218,6 +218,10 @@ async def test_adb_shell_kill_race_preserves_timeout_and_reaps(monkeypatch):
     assert child.reaped
 
 
+class _ProbeAbort(BaseException):
+    pass
+
+
 class _FallbackProcess:
     def __init__(self, *, drain: str, read: str, wait_timeout: bool = False):
         self.drain_behavior = drain
@@ -244,6 +248,8 @@ class _FallbackProcess:
             await asyncio.Future()
         if self.drain_behavior == "timeout":
             raise TimeoutError
+        if self.drain_behavior == "abort":
+            raise _ProbeAbort
 
     def close(self):
         self.closed = True
@@ -254,6 +260,8 @@ class _FallbackProcess:
             await asyncio.Future()
         if self.read_behavior == "timeout":
             raise TimeoutError
+        if self.read_behavior == "abort":
+            raise _ProbeAbort
         return b"0\n"
 
     def terminate(self):
@@ -355,6 +363,31 @@ async def test_fallback_cancel_during_cleanup_read_reaps_child(monkeypatch):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert child.closed
+    assert child.terminated
+    assert child.reaped
+
+
+@pytest.mark.parametrize("phase", ["drain", "final_read"])
+@pytest.mark.asyncio
+async def test_fallback_non_exception_abort_is_rethrown_after_reap(monkeypatch, phase):
+    child = _FallbackProcess(
+        drain="abort" if phase == "drain" else "complete",
+        read="abort" if phase == "final_read" else "complete",
+    )
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    if phase == "final_read":
+        ticks = iter((0.0, 0.0, 0.0, 3.0, 3.0))
+        monkeypatch.setattr(
+            usb_health, "time", SimpleNamespace(monotonic=lambda: next(ticks, 3.0))
+        )
+    with pytest.raises(_ProbeAbort):
+        await usb_health.measure_transfer("selected", 48322, 500000)
     assert child.closed
     assert child.terminated
     assert child.reaped

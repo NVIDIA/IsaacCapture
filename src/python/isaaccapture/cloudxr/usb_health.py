@@ -395,7 +395,8 @@ async def _measure_fallback(serial: str, result: dict) -> None:
         result["effectiveMeasurementDurationMs"] = round(duration, 2)
         result["timingValid"] = 2950 <= duration <= 3250
         result["hostBytesSubmitted"] = written
-    # Preserve every interruption through cleanup, including process-exit signals.
+    # drain() can raise cancellation or a non-Exception signal; retain it until
+    # the owned ADB child is reaped, then re-raise that same failure below.
     except BaseException as exc:
         failure = exc
     try:
@@ -407,6 +408,8 @@ async def _measure_fallback(serial: str, result: dict) -> None:
         try:
             output = await asyncio.wait_for(child.stdout.read(64), 0.5)
             await asyncio.wait_for(child.wait(), 0.5)
+        # The final read/wait can also be interrupted; Exception would miss
+        # CancelledError and skip reaping before the original signal propagates.
         except BaseException as exc:
             failure = exc
     if failure is not None:
