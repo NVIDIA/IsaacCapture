@@ -175,7 +175,6 @@
 <label class="version-switcher">
   <span class="version-switcher__label">Version</span>
   <select class="version-switcher__select" onchange="location = this.value;">
-    <option value="manus.html" selected>release/1.6.x</option>
     <option value="../../../main/device/manus.html" >main</option>
     <option value="../../1.0.x/index.html" >release/1.0.x</option>
     <option value="../../1.1.x/index.html" >release/1.1.x</option>
@@ -183,6 +182,7 @@
     <option value="../../1.3.x/device/manus.html" >release/1.3.x</option>
     <option value="../../1.4.x/device/manus.html" >release/1.4.x</option>
     <option value="../../1.5.x/device/manus.html" >release/1.5.x</option>
+    <option value="manus.html" selected>release/1.6.x</option>
     <option value="../../../v1.4.145/device/manus.html" >v1.4.145</option>
     <option value="../../../v1.4.142/device/manus.html" >v1.4.142</option>
     <option value="../../../v1.3.131/device/manus.html" >v1.3.131</option>
@@ -292,7 +292,6 @@
 <label class="version-switcher">
   <span class="version-switcher__label">Version</span>
   <select class="version-switcher__select" onchange="location = this.value;">
-    <option value="manus.html" selected>release/1.6.x</option>
     <option value="../../../main/device/manus.html" >main</option>
     <option value="../../1.0.x/index.html" >release/1.0.x</option>
     <option value="../../1.1.x/index.html" >release/1.1.x</option>
@@ -300,6 +299,7 @@
     <option value="../../1.3.x/device/manus.html" >release/1.3.x</option>
     <option value="../../1.4.x/device/manus.html" >release/1.4.x</option>
     <option value="../../1.5.x/device/manus.html" >release/1.5.x</option>
+    <option value="manus.html" selected>release/1.6.x</option>
     <option value="../../../v1.4.145/device/manus.html" >v1.4.145</option>
     <option value="../../../v1.4.142/device/manus.html" >v1.4.142</option>
     <option value="../../../v1.3.131/device/manus.html" >v1.3.131</option>
@@ -695,8 +695,7 @@ VUH coordinate setup. A joint absent from a frame is not tracked. Poses are raw
 Manus flex transforms; hosts that mask against a re-framed skeleton must apply
 their own sensor-pose processing.</p>
 <p>This path requires CloudXR tensor <strong>push</strong> extensions
-(<code class="docutils literal notranslate"><span class="pre">XR_NVX1_push_tensor</span></code> and <code class="docutils literal notranslate"><span class="pre">XR_NVX1_tensor_data</span></code>). When sensors first become
-available the plugin logs <code class="docutils literal notranslate"><span class="pre">sensors=on</span></code> once per side.</p>
+(<code class="docutils literal notranslate"><span class="pre">XR_NVX1_push_tensor</span></code> and <code class="docutils literal notranslate"><span class="pre">XR_NVX1_tensor_data</span></code>).</p>
 <p>Host-side consumption example:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.deviceio_trackers</span><span class="w"> </span><span class="kn">import</span> <span class="n">JointSe3PoseTracker</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">JointName</span><span class="p">,</span> <span class="n">JointType</span>
@@ -778,7 +777,10 @@ re-run the install script.</p></td>
 building, set <code class="docutils literal notranslate"><span class="pre">LD_LIBRARY_PATH</span></code> to its <code class="docutils literal notranslate"><span class="pre">lib/</span></code> directory.</p></td>
 </tr>
 <tr class="row-odd"><td><p>No data received</p></td>
-<td><p>Ensure MANUS Core is running and the gloves are connected and calibrated.</p></td>
+<td><p>Ensure MANUS Core is running and the gloves are connected and calibrated.
+The plugin logs <code class="docutils literal notranslate"><span class="pre">Left</span> <span class="pre">glove</span> <span class="pre">connected</span> <span class="pre">(ID</span> <span class="pre">&lt;n&gt;);</span> <span class="pre">start</span> <span class="pre">streaming.</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">Right</span> <span class="pre">...</span></code>) when MANUS Core reports a glove; without that line it has
+no glove to stream.</p></td>
 </tr>
 <tr class="row-even"><td><p>CloudXR runtime errors</p></td>
 <td><p>Check that a runtime is serving with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">status</span></code>,
@@ -969,7 +971,7 @@ by this project.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 07, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 08, 2026.
       <br/>
     
   </p>

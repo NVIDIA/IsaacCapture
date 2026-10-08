@@ -221,8 +221,7 @@ Manus flex transforms; hosts that mask against a re-framed skeleton must apply
 their own sensor-pose processing.
 
 This path requires CloudXR tensor **push** extensions
-(``XR_NVX1_push_tensor`` and ``XR_NVX1_tensor_data``). When sensors first become
-available the plugin logs ``sensors=on`` once per side.
+(``XR_NVX1_push_tensor`` and ``XR_NVX1_tensor_data``).
 
 Host-side consumption example:
 
@@ -300,6 +299,9 @@ Troubleshooting
        building, set ``LD_LIBRARY_PATH`` to its ``lib/`` directory.
    * - No data received
      - Ensure MANUS Core is running and the gloves are connected and calibrated.
+       The plugin logs ``Left glove connected (ID <n>); start streaming.`` (or
+       ``Right ...``) when MANUS Core reports a glove; without that line it has
+       no glove to stream.
    * - CloudXR runtime errors
      - Check that a runtime is serving with ``python -m isaaccapture.cloudxr.service status``,
        and that ``~/.cloudxr/run/cloudxr.env`` has been sourced in the same
