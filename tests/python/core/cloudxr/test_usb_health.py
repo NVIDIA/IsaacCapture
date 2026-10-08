@@ -161,7 +161,11 @@ class _AdbShellProcess:
         self.cleanup = cleanup
         self.signal_race = signal_race
         self.started = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.cleanup_released = asyncio.Event()
         self.calls = 0
+        self.wait_calls = 0
+        self.killed = False
         self.reaped = False
         self.returncode = None
 
@@ -172,7 +176,12 @@ class _AdbShellProcess:
             if self.first == "stall":
                 await asyncio.Future()
             raise TimeoutError
-        if self.calls == 2 and self.cleanup == "timeout":
+        if self.calls == 2 and self.cleanup in {"timeout", "pipe_held_after_kill"}:
+            raise TimeoutError
+        if self.calls == 2 and self.cleanup == "stall":
+            self.cleanup_started.set()
+            await self.cleanup_released.wait()
+        if self.calls == 3 and self.cleanup == "pipe_held_after_kill":
             raise TimeoutError
         self.reaped = True
         self.returncode = 0
@@ -183,8 +192,15 @@ class _AdbShellProcess:
             raise ProcessLookupError
 
     def kill(self):
+        self.killed = True
         if self.signal_race == "kill":
             raise ProcessLookupError
+
+    async def wait(self):
+        self.wait_calls += 1
+        self.reaped = True
+        self.returncode = -9
+        return self.returncode
 
 
 @pytest.mark.asyncio
@@ -215,6 +231,43 @@ async def test_adb_shell_kill_race_preserves_timeout_and_reaps(monkeypatch):
     with pytest.raises(TimeoutError):
         await usb_health._adb_shell("selected", "date +%s%N", 1)
     assert child.calls == 3
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_adb_shell_reaps_killed_child_when_descendant_holds_stdout(monkeypatch):
+    child = _AdbShellProcess(
+        first="timeout", cleanup="pipe_held_after_kill", signal_race="none"
+    )
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(TimeoutError):
+        await usb_health._adb_shell("selected", "date +%s%N", 1)
+    assert child.killed
+    assert child.calls == 3
+    assert child.wait_calls == 1
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_adb_shell_repeated_cancellation_reaps_before_return(monkeypatch):
+    child = _AdbShellProcess(first="stall", cleanup="stall", signal_race="none")
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(usb_health._adb_shell("selected", "date +%s%N", 1))
+    await asyncio.wait_for(child.started.wait(), 1)
+    task.cancel()
+    await asyncio.wait_for(child.cleanup_started.wait(), 1)
+    task.cancel()
+    child.cleanup_released.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert child.reaped
 
 

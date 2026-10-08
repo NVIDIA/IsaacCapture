@@ -63,6 +63,7 @@ def _load_or_create_serial_salt(directory: Path) -> bytes:
 
 
 def _read(path: Path) -> str | None:
+    """Read bounded sysfs text, returning unknown for inaccessible fields."""
     try:
         return path.read_text(encoding="utf-8").strip()[:160]
     except (OSError, UnicodeError):
@@ -70,6 +71,7 @@ def _read(path: Path) -> str | None:
 
 
 def _number(path: Path) -> float | None:
+    """Parse an optional numeric sysfs field without assuming it exists."""
     try:
         return float(_read(path))
     except (TypeError, ValueError):
@@ -77,12 +79,14 @@ def _number(path: Path) -> float | None:
 
 
 def _pci(path: Path) -> str | None:
+    """Find the PCI controller that owns a resolved USB sysfs node."""
     return next(
         (p.name for p in path.resolve().parents if PCI_NODE.fullmatch(p.name)), None
     )
 
 
 def _node(path: Path) -> dict:
+    """Capture the non-secret sysfs attributes of one USB topology node."""
     return {
         "node": path.name,
         "speedMbps": _number(path / "speed"),
@@ -178,6 +182,7 @@ def inspect_link(
 
 
 async def _adb_shell(serial: str, script: str, timeout: float) -> tuple[int, str]:
+    """Run pinned ADB shell, preserving timeout/cancellation after bounded cleanup."""
     child = await asyncio.create_subprocess_exec(
         "adb",
         "-s",
@@ -191,17 +196,44 @@ async def _adb_shell(serial: str, script: str, timeout: float) -> tuple[int, str
     try:
         output, _ = await asyncio.wait_for(child.communicate(), timeout)
         return child.returncode, output[:65536].decode("ascii", "replace")
-    except (asyncio.CancelledError, TimeoutError):
-        # ADB may exit before the signal; still drain and reap its pipe.
+    except (asyncio.CancelledError, TimeoutError) as original_failure:
+        cleanup = asyncio.create_task(_terminate_adb_shell_child(child))
+        later_cancellation = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as exc:
+                # A later cancellation must not abandon the owned child.
+                later_cancellation = exc
+        # Cleanup failure cannot replace the original timeout or cancellation.
+        with suppress(Exception):
+            cleanup.result()
+        if later_cancellation is not None:
+            raise later_cancellation from None
+        raise original_failure from None
+
+
+async def _terminate_adb_shell_child(child) -> bool:
+    """Attempt bounded drain and reap, even when a descendant holds stdout."""
+    # ADB may exit before either signal; communicate still drains its pipe.
+    with suppress(ProcessLookupError):
+        child.terminate()
+    try:
+        await asyncio.wait_for(child.communicate(), 0.5)
+        return True
+    except TimeoutError:
         with suppress(ProcessLookupError):
-            child.terminate()
+            child.kill()
         try:
             await asyncio.wait_for(child.communicate(), 0.5)
+            return True
         except TimeoutError:
-            with suppress(ProcessLookupError):
-                child.kill()
-            await child.communicate()
-        raise
+            # A descendant may hold stdout open after ADB itself exits.
+            try:
+                await asyncio.wait_for(child.wait(), 0.5)
+                return True
+            except TimeoutError:
+                return False
 
 
 async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
@@ -441,6 +473,7 @@ class UsbHealthReport:
         serial: str | None,
         policy: str = "warn",
     ) -> None:
+        """Prepare private report state and a salted identity for this session."""
         self.directory = logs_dir / "usb-health"
         if self.directory.is_symlink():
             raise OSError("USB health report directory cannot be a symlink")
@@ -525,6 +558,7 @@ class UsbHealthReport:
             temporary.unlink(missing_ok=True)
 
     def _prune(self) -> None:
+        """Keep at most 20 reports, dropping retained files older than 14 days."""
         files = sorted(
             (
                 p

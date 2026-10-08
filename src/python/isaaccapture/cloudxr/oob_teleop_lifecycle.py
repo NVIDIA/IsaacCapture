@@ -565,6 +565,7 @@ class OobLifecycle:
             self._cache_cleared = True
 
     def _ensure_usb_report(self) -> None:
+        """Open the USB-local report and bind it to the selected device when known."""
         if (
             not self.usb_local
             or self.usb_health_policy == "off"
@@ -590,6 +591,7 @@ class OobLifecycle:
             )
 
     def _record_usb_wait(self, state: str, code: str) -> None:
+        """Persist one deduplicated startup wait with a bounded error history."""
         self._ensure_usb_report()
         signature = (state, code)
         if self._usb_health_report is None or signature == self._usb_wait_signature:
@@ -610,6 +612,7 @@ class OobLifecycle:
         )
 
     def _link_outcome(self) -> str | None:
+        """Classify the current negotiated link, or leave it unknown if absent."""
         if self._usb_link is None:
             return None
         speed = self._usb_link.get("negotiatedSpeedMbps")
@@ -847,6 +850,7 @@ class OobLifecycle:
         self._record_usb_event("USB_WAKE_CONFIRMED")
 
     def _persist_usb_health(self, **sections) -> None:
+        """Best-effort persist report sections without interrupting recovery."""
         if self._usb_health_report is None:
             return
         try:
@@ -855,6 +859,7 @@ class OobLifecycle:
             log.warning("USB health report update failed", exc_info=True)
 
     def _record_usb_event(self, state: str) -> None:
+        """Best-effort persist one USB startup or recovery transition."""
         if self._usb_health_report is None:
             return
         try:
@@ -863,6 +868,7 @@ class OobLifecycle:
             log.warning("USB health report event update failed", exc_info=True)
 
     def _usb_launch_allowed(self) -> bool:
+        """Apply the configured warn/block policy to current USB evidence."""
         speed = self._usb_link.get("negotiatedSpeedMbps") if self._usb_link else None
         transfer_ok = bool(self._usb_transfer and self._usb_transfer.get("completed"))
         degraded = speed is None or speed < 5000 or not transfer_ok
