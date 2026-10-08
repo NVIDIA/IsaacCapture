@@ -237,6 +237,11 @@ class OobLifecycle:
                 if self._usb_transfer and not self._usb_transfer_stale
                 else None
             ),
+            "usbTransferResponseBodyMbps": (
+                self._usb_transfer.get("hostToHeadsetResponseBodyMbps")
+                if self._usb_transfer and not self._usb_transfer_stale
+                else None
+            ),
             "usbLinkOutcome": self._link_outcome(),
             "usbTransferOutcome": (
                 "stale"
@@ -732,8 +737,10 @@ class OobLifecycle:
             logging.WARNING
             if not self._usb_transfer.get("completed")
             else logging.INFO,
-            "USB-local pre-browser host-to-headset application goodput: %s Mb/s (%s)",
+            "USB-local pre-browser host-to-headset application goodput: %s Mb/s "
+            "wall-clock; response-body-only: %s Mb/s (%s)",
             self._usb_transfer.get("hostToHeadsetMbps"),
+            self._usb_transfer.get("hostToHeadsetResponseBodyMbps"),
             self._usb_transfer.get("pathCoverage"),
         )
 

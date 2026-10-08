@@ -64,7 +64,13 @@ async def test_curl_measurement_counts_only_completed_responses(monkeypatch):
                 0,
                 "/system/bin/curl\n/system/bin/timeout\n1791403150633088373\n/system/bin/cat\n",
             )
-        return 0, "B:500000\nB:500000\nT:1000000000000000000:1000000003000000000\n"
+        return (
+            0,
+            "B:500000:0.010000:0.040000\n"
+            "B:500000:0.020000:0.060000\n"
+            "curl: (28) partial final response was cut off\n"
+            "T:1000000000000000000:1000000003000000000\n",
+        )
 
     monkeypatch.setattr(usb_health, "_adb_shell", shell)
     status = await usb_health.measure_transfer("selected", 48322, 500000)
@@ -72,9 +78,54 @@ async def test_curl_measurement_counts_only_completed_responses(monkeypatch):
     assert status["effectiveMeasurementDurationMs"] == 3000
     assert status["completedBytes"] == 1000000
     assert status["hostToHeadsetMbps"] == pytest.approx(2.67, abs=0.01)
+    assert status["hostToHeadsetResponseBodyMbps"] == pytest.approx(114.29)
+    assert status["completedResponseBodyDurationMs"] == pytest.approx(70)
+    assert status["completedFirstByteWaitDurationMs"] == pytest.approx(30)
+    assert status["responseBodyTimingValid"] is True
+    assert status["measurementRevision"] == 2
     assert status["method"] == "device_curl_static_asset_loop"
     assert calls[1][0] == "selected"
+    assert "%{time_starttransfer}:%{time_total}" in calls[1][1]
     assert calls[1][2] == 5
+
+
+@pytest.mark.asyncio
+async def test_curl_phase_metric_unavailable_when_timings_are_invalid(monkeypatch):
+    async def shell(_serial, _script, _timeout):
+        if "command -v curl" in _script:
+            return 0, "/system/bin/curl\n/system/bin/timeout\n1791403150633088373\n"
+        return (
+            0,
+            "B:500000:0.060000:0.040000\nT:1000000000000000000:1000000003000000000\n",
+        )
+
+    monkeypatch.setattr(usb_health, "_adb_shell", shell)
+    status = await usb_health.measure_transfer("selected", 48322, 500000)
+    assert status["completed"] is True
+    assert status["hostToHeadsetMbps"] == pytest.approx(1.33, abs=0.01)
+    assert status["hostToHeadsetResponseBodyMbps"] is None
+    assert status["responseBodyTimingValid"] is False
+
+
+@pytest.mark.parametrize(
+    "second_sample", ["B:123:bad:0.030000", "B:123:0.010000:0.030000"]
+)
+@pytest.mark.asyncio
+async def test_curl_rejects_malformed_or_wrong_size_samples(monkeypatch, second_sample):
+    async def shell(_serial, script, _timeout):
+        if "command -v curl" in script:
+            return 0, "/system/bin/curl\n/system/bin/timeout\n1791403150633088373\n"
+        return (
+            0,
+            "B:500000:0.010000:0.040000\n"
+            f"{second_sample}\nT:1000000000000000000:1000000003000000000\n",
+        )
+
+    monkeypatch.setattr(usb_health, "_adb_shell", shell)
+    status = await usb_health.measure_transfer("selected", 48322, 500000)
+    assert status["completed"] is False
+    assert status["hostToHeadsetResponseBodyMbps"] is None
+    assert status["outcome"] == "unsupported"
 
 
 @pytest.mark.asyncio
@@ -97,6 +148,8 @@ async def test_missing_curl_uses_labeled_adb_fallback(monkeypatch):
     assert result["method"] == "adb_shell_sink"
     assert result["pathCoverage"] == "adb_transport_only"
     assert result["fallbackReason"]
+    assert result["hostToHeadsetResponseBodyMbps"] is None
+    assert result["headsetToHostMbps"] is None
 
 
 def test_atomic_report_is_private_and_redacts_serial(tmp_path):
@@ -496,6 +549,7 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
         "outcome": "pass",
         "method": "device_curl_static_asset_loop",
         "hostToHeadsetMbps": 300,
+        "hostToHeadsetResponseBodyMbps": 900,
     }
     devices = adb.AdbDevices((("selected", "device"),))
     lifecycle._last_observation = (devices.devices, devices.diagnostic)
@@ -563,6 +617,7 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
     assert payload["transferTest"]["hostToHeadsetMbps"] is None
     assert payload["transferTest"]["outcome"] == "pending_retest"
     assert payload["transferHistory"][0]["hostToHeadsetMbps"] == 300
+    assert payload["transferHistory"][0]["hostToHeadsetResponseBodyMbps"] == 900
     assert payload["decision"]["transferRetestDeferred"] is True
     assert payload["decision"]["overallOutcome"] == decision
     awake.assert_called_once_with(timeout=10.0)
@@ -570,5 +625,6 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
         "pass" if reconnected_speed >= 5000 else "slow_link"
     )
     assert lifecycle.snapshot["usbTransferMbps"] is None
+    assert lifecycle.snapshot["usbTransferResponseBodyMbps"] is None
     assert lifecycle.snapshot["usbTransferMethod"] is None
     assert lifecycle.snapshot["usbTransferOutcome"] == "stale"

@@ -19,7 +19,9 @@ from pathlib import Path
 
 USB_NODE = re.compile(r"^\d+-\d+(?:\.\d+)*$")
 PCI_NODE = re.compile(r"^\d{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
-BYTE_LINE = re.compile(r"^B:(\d+)$")
+CURL_LINE = re.compile(
+    r"^B:(\d{1,12}):(\d{1,4}(?:\.\d{1,9})?):(\d{1,4}(?:\.\d{1,9})?)$"
+)
 TIME_LINE = re.compile(r"^T:(\d+):(\d+)$")
 SCHEMA = "isaac-capture.usb-health/v1"
 
@@ -152,7 +154,7 @@ async def _adb_shell(serial: str, script: str, timeout: float) -> tuple[int, str
     )
     try:
         output, _ = await asyncio.wait_for(child.communicate(), timeout)
-        return child.returncode, output[:16384].decode("ascii", "replace")
+        return child.returncode, output[:65536].decode("ascii", "replace")
     except (asyncio.CancelledError, TimeoutError):
         child.terminate()
         try:
@@ -172,6 +174,7 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
         "requestedMeasurementDurationMs": 3000,
         "effectiveMeasurementDurationMs": None,
         "hostToHeadsetMbps": None,
+        "hostToHeadsetResponseBodyMbps": None,
         "headsetToHostMbps": None,
         "completedBytes": 0,
         "completedRequests": 0,
@@ -182,6 +185,7 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
         "newListenerCreated": False,
         "newReverseRuleCreated": False,
         "childCleanup": {"reaped": True},
+        "measurementRevision": 2,
         "errors": [],
     }
     try:
@@ -204,22 +208,29 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
         if curl_ready and timeout_ready and timer_ready and asset_size >= 262144:
             result["method"] = "device_curl_static_asset_loop"
             result["pathCoverage"] = "https_static_over_adb_reverse"
-            # Each B line is printed only after curl exits successfully; a truncated
-            # final response contributes zero bytes.
+            # A line is emitted only after a complete curl response; the cut-off
+            # request contributes no bytes or response-body timing.
             script = (
                 "start=$(date +%s%N); "
                 "timeout 3 sh -c 'while :; do "
-                'n=$(curl -fksS --max-time 2 -o /dev/null -w "%{size_download}" '
+                "n=$(curl -fksS --max-time 2 -o /dev/null "
+                '-w "%{size_download}:%{time_starttransfer}:%{time_total}" '
                 f"https://127.0.0.1:{port}/client/bundle.js); "
                 'rc=$?; if test "$rc" = 0; then printf "B:%s\\n" "$n"; fi; '
                 'done\'; end=$(date +%s%N); printf \'T:%s:%s\\n\' "$start" "$end"'
             )
             code, output = await _adb_shell(serial, script, 5)
-            byte_counts = [
-                int(match.group(1))
+            samples = [
+                (int(match.group(1)), float(match.group(2)), float(match.group(3)))
                 for line in output.splitlines()
-                if (match := BYTE_LINE.fullmatch(line))
+                if (match := CURL_LINE.fullmatch(line))
             ]
+            malformed_samples = [
+                line
+                for line in output.splitlines()
+                if line.startswith("B:") and not CURL_LINE.fullmatch(line)
+            ]
+            byte_counts = [size for size, _, _ in samples]
             timing = next(
                 (
                     match
@@ -236,16 +247,36 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
             result["completedBytes"] = sum(byte_counts)
             result["completedRequests"] = len(byte_counts)
             result["partialTailExcluded"] = True
+            result["responseBodyTimingMethod"] = "curl_total_minus_starttransfer"
             if (
                 code != 0
                 or not result["timingValid"]
                 or not byte_counts
+                or malformed_samples
                 or any(count != asset_size for count in byte_counts)
             ):
                 raise ValueError("Device transfer window was invalid")
             result["hostToHeadsetMbps"] = round(
                 sum(byte_counts) * 8000 / duration / 1e6, 2
             )
+            # Each curl starts a new TLS connection; do not substitute the
+            # response-body-only rate for three-second wall-clock goodput.
+            phase_valid = all(0 <= first < total <= 2.5 for _, first, total in samples)
+            result["responseBodyTimingValid"] = phase_valid
+            if phase_valid:
+                first_byte_wait_ms = sum(first for _, first, _ in samples) * 1000
+                body_ms = sum(total - first for _, first, total in samples) * 1000
+                result["completedFirstByteWaitDurationMs"] = round(
+                    first_byte_wait_ms, 2
+                )
+                result["completedResponseBodyDurationMs"] = round(body_ms, 2)
+                result["hostToHeadsetResponseBodyMbps"] = round(
+                    sum(byte_counts) * 8000 / body_ms / 1e6, 2
+                )
+            else:
+                result["responseBodyTimingUnavailableReason"] = (
+                    "curl returned invalid per-request timing"
+                )
             result["completed"] = True
         else:
             result["method"] = "adb_shell_sink"

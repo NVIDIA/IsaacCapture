@@ -155,9 +155,15 @@ when device preparation or a check fails, and refreshes link topology after
 a preserved browser reconnect without repeating the active transfer. It
 uses a hashed device serial, and keeps at most 20 reports or 14 days of
 history. A link below 5000 Mb/s or an incomplete transfer is logged as a
-warning and startup continues. The measured Mbps is one-way application
-goodput, not USB line rate or CloudXR stream throughput. A faster root hub
-is a topology clue, not proof that an accessible physical port is free.
+warning and startup continues. ``hostToHeadsetMbps`` is the completed bytes
+divided by the full three-second wall-clock interval. Each curl request opens
+a new connection, so this includes request and TLS setup. The optional
+``hostToHeadsetResponseBodyMbps`` instead divides those same completed bytes
+by the sum of curl's ``time_total - time_starttransfer`` intervals. It excludes
+setup and gaps between requests; it is a response-body estimate, not sustained
+goodput or USB line rate. Neither metric measures headset-to-host traffic or
+CloudXR stream throughput. A faster root hub is a topology clue, not proof
+that an accessible physical port is free.
 
 Re-open the client on the headset
 ---------------------------------
