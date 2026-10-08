@@ -262,7 +262,8 @@ void GloveState::reset() noexcept
     robot_frame = {};
     device.reset();
     last_successful_fetch.reset();
-    last_sample_stamp = {};
+    last_sample_stamp.reset();
+    streaming = false;
 }
 
 AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(config)), m_sdk(m_config.sdk_config_path)
@@ -388,7 +389,6 @@ void AvatarTracker::start_glove_if_present(GloveState& glove, ::avatar::DeviceSi
         return;
     }
     glove.last_successful_fetch = std::chrono::steady_clock::now();
-    logger()->info("{} glove connected and streaming.", to_string(side));
 }
 
 void AvatarTracker::try_connect_missing_gloves()
@@ -438,8 +438,12 @@ void AvatarTracker::refresh_data()
         bool fetched_any = false;
         const auto note_stamp = [&state, &fetched_any](const ::avatar::Stamp& stamp)
         {
-            if (std::tie(stamp.sec, stamp.nanosec) >
-                std::tie(state.last_sample_stamp.sec, state.last_sample_stamp.nanosec))
+            if (!state.last_sample_stamp)
+            {
+                state.last_sample_stamp = stamp;
+            }
+            else if (std::tie(stamp.sec, stamp.nanosec) >
+                     std::tie(state.last_sample_stamp->sec, state.last_sample_stamp->nanosec))
             {
                 state.last_sample_stamp = stamp;
                 fetched_any = true;
@@ -482,6 +486,12 @@ void AvatarTracker::refresh_data()
         const auto now = std::chrono::steady_clock::now();
         if (fetched_any)
         {
+            if (!state.streaming)
+            {
+                state.streaming = true;
+                isaaccapture::Logger::get("isaaccapture.plugins.sharpa_avatar.AvatarTracker")
+                    ->info("{} glove connected and streaming.", to_string(side));
+            }
             state.last_successful_fetch = now;
         }
         else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
