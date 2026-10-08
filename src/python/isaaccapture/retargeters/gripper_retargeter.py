@@ -4,12 +4,15 @@
 """
 Gripper Retargeter Module.
 
-Retargeter specifically for gripper control based on hand tracking data.
+Gripper control from hand tracking or controller input (GripperRetargeter) and from a keyboard
+toggle (KeyboardGripperRetargeter).
 """
 
 import numpy as np
 from dataclasses import dataclass
 
+from isaaccapture.deviceio_trackers import EvdevKeyCode
+from isaaccapture.retargeting_engine.deviceio_source_nodes import KeyboardPressedType
 from isaaccapture.retargeting_engine.interface import (
     BaseRetargeter,
     RetargeterIOType,
@@ -134,3 +137,42 @@ class GripperRetargeter(BaseRetargeter):
 
         # Output: -1.0 if closed, 1.0 if open (matching IsaacLab implementation)
         gripper_out[0] = -1.0 if self._previous_gripper_command else 1.0
+
+
+class KeyboardGripperRetargeter(BaseRetargeter):
+    """
+    Toggles a gripper open/closed state on each press of the K key.
+
+    Consumes ``keyboard_pressed`` (keys with a press event this frame), so a tap shorter
+    than a frame still toggles and a key held across frames or across a reset never
+    re-toggles -- no edge state to keep. Toggles at most once per frame: two taps within one
+    frame count as one.
+
+    Output matches GripperRetargeter's convention: -1.0 when closed, 1.0 when open.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name)
+        self._closed = False
+
+    def input_spec(self) -> RetargeterIOType:
+        return {"keyboard_pressed": OptionalType(KeyboardPressedType())}
+
+    def output_spec(self) -> RetargeterIOType:
+        return {
+            "gripper_command": TensorGroupType(
+                "gripper_command", [FloatType("command")]
+            )
+        }
+
+    def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
+        gripper_out = outputs["gripper_command"]
+        pressed = inputs["keyboard_pressed"]
+
+        if context.execution_events.reset:
+            # A press landing on the reset frame is consumed by the reset.
+            self._closed = False
+        elif not pressed.is_none and np.asarray(pressed[0])[EvdevKeyCode.KeyK]:
+            self._closed = not self._closed
+
+        gripper_out[0] = -1.0 if self._closed else 1.0

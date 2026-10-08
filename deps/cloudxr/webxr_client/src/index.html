@@ -1195,12 +1195,73 @@ limitations under the License.
                   aria-label="Control panel start position"
                 >
                   <option value="left">Left</option>
-                  <option value="center" selected>Center</option>
-                  <option value="right">Right</option>
+                  <option value="center">Center</option>
+                  <option value="right" selected>Right</option>
                 </select>
                 <div class="config-text">
                   Where the in-XR control panel appears when you enter the session: left, center, or
                   right.
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label class="input-label">Control Panel Layout</label>
+                <label for="controlPanelDistance" class="input-label"
+                  >Distance from viewer, meters (default: 1.8)</label
+                >
+                <input
+                  id="controlPanelDistance"
+                  class="ui-input config-input"
+                  type="number"
+                  step="0.1"
+                  placeholder="Distance in meters"
+                  spellcheck="false"
+                  value="1.8"
+                />
+                <label for="controlPanelHeight" class="input-label"
+                  >Height, meters (default: 1.85)</label
+                >
+                <input
+                  id="controlPanelHeight"
+                  class="ui-input config-input"
+                  type="number"
+                  step="0.1"
+                  placeholder="Height in meters"
+                  spellcheck="false"
+                  value="1.85"
+                />
+                <label for="controlPanelAngleDegrees" class="input-label"
+                  >Left/right angle from center, degrees (default: 70)</label
+                >
+                <input
+                  id="controlPanelAngleDegrees"
+                  class="ui-input config-input"
+                  type="number"
+                  step="1"
+                  placeholder="Angle in degrees"
+                  spellcheck="false"
+                  value="70"
+                />
+                <div class="config-text">
+                  Only applies to the left/right start positions above; ignored for center.
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label for="controlPanelTrackHeadset" class="input-label">Track Headset</label>
+                <div class="config-text">
+                  <input
+                    type="checkbox"
+                    id="controlPanelTrackHeadset"
+                    class="config-input"
+                    style="width: auto; margin-right: 0.5em"
+                    aria-label="Track headset: keep the control panel at a fixed position relative to your head"
+                  />
+                  <span
+                    >Keep the control panel at the position/layout above relative to your head,
+                    instead of a fixed point in the room. Dragging still works while on - it updates
+                    the tracked offset instead of a fixed room position.</span
+                  >
                 </div>
               </div>
 
@@ -1483,6 +1544,69 @@ limitations under the License.
                   value="3000"
                 />
                 <div class="config-text">Delay before each retry attempt, in milliseconds.</div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrStreamAttachTimeoutMs" class="input-label"
+                  >Stream Attach Timeout (ms, default: 120000 / 2 minutes)</label
+                >
+                <input
+                  id="cloudxrStreamAttachTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="Stream attach timeout in ms"
+                  spellcheck="false"
+                  value="120000"
+                />
+                <div class="config-text">
+                  How long to wait for the video stream to attach before treating the session as
+                  stuck ("passthrough-only" - entered XR with nothing rendering). Independent of
+                  Retry on Error above: this detection always runs; doubles on each retry attempt
+                  when retry is also on.
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrWarmupBeginTimeoutMs" class="input-label"
+                  >Warm-up Begin Timeout (ms, default: 10000 / 10 seconds)</label
+                >
+                <input
+                  id="cloudxrWarmupBeginTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="Warm-up begin timeout in ms"
+                  spellcheck="false"
+                  value="10000"
+                />
+                <div class="config-text">
+                  How long to wait, after the stream attaches, for the first sign that decoder
+                  warm-up has started before treating the session as stuck. Independent of Stream
+                  Attach Timeout above (a separate, later window); does not grow on retry.
+                </div>
+              </div>
+
+              <div class="config-section">
+                <label for="cloudxrWarmupEndTimeoutMs" class="input-label"
+                  >Warm-up End Timeout (ms, default: 30000 / 30 seconds)</label
+                >
+                <input
+                  id="cloudxrWarmupEndTimeoutMs"
+                  class="ui-input config-input"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="Warm-up end timeout in ms"
+                  spellcheck="false"
+                  value="30000"
+                />
+                <div class="config-text">
+                  How long to wait for decoder warm-up to finish once it has begun before treating
+                  the session as stuck. Does not grow on retry.
+                </div>
               </div>
 
               <div class="config-section">

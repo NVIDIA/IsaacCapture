@@ -482,11 +482,17 @@ class CloudXRService:
                 "browserRegistered",
                 "healthProbeAcknowledged",
                 "browserReady",
+                "socketBound",
+                "transportReady",
+                "clientLoaded",
                 "connectDispatched",
+                "streamConfirmed",
                 "streaming",
                 "clientMetricsFresh",
             ):
                 payload[flag] = False
+            payload["readinessStage"] = "fatal"
+            payload["readinessSince"] = payload["updatedAt"]
             self._oob_snapshot = payload
             self._oob_updates.append(payload)
         self._fatal_supervisor = threading.Thread(

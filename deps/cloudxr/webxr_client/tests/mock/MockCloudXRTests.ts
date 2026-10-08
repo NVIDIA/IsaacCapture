@@ -98,7 +98,9 @@ async function startMockSession(): Promise<void> {
   appendLog(
     '[info] window.mockCloudXR is live: try mockCloudXR.triggerFailure(), ' +
       'mockCloudXR.connectWait(3000), mockCloudXR.setNetworkQuality(1) (Unsustainable..4 Excellent), ' +
-      'mockCloudXR.setSceneTime(2.5)'
+      'mockCloudXR.videoFrameReceived(1, 100) (real frame, scene time = 100ms), ' +
+      'mockCloudXR.setWarmupTotalFrames(3) (or null to never complete), ' +
+      'mockCloudXR.setWarmupFirstStatusFrame(1), mockCloudXR.getCurrentFrameID()'
   );
 
   cxrSession.connect();

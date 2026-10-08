@@ -26,6 +26,41 @@ TIME_LINE = re.compile(r"^T:(\d+):(\d+)$")
 SCHEMA = "isaac-capture.usb-health/v1"
 
 
+def _read_serial_salt(path: Path) -> bytes:
+    """Reject symlinks and incomplete salts before hashing device identifiers."""
+
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+        salt = stream.read(33)
+    if len(salt) != 32:
+        raise OSError("USB health serial salt is not a complete 32-byte value")
+    return salt
+
+
+def _load_or_create_serial_salt(directory: Path) -> bytes:
+    """Publish a complete per-install salt before concurrent readers can see it."""
+    salt_path = directory / ".serial-salt"
+    try:
+        return _read_serial_salt(salt_path)
+    except FileNotFoundError:
+        # No salt is published yet; race to publish a complete candidate below.
+        pass
+    temporary = directory / f".serial-salt.{secrets.token_hex(8)}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(secrets.token_bytes(32))
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, salt_path)
+        except FileExistsError:
+            # Another creator published its complete salt first; use that one.
+            pass
+    finally:
+        temporary.unlink(missing_ok=True)
+    return _read_serial_salt(salt_path)
+
+
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8").strip()[:160]
@@ -351,7 +386,7 @@ class UsbHealthReport:
         generation: int,
         serial: str | None,
         policy: str = "warn",
-    ):
+    ) -> None:
         self.directory = logs_dir / "usb-health"
         if self.directory.is_symlink():
             raise OSError("USB health report directory cannot be a symlink")
@@ -362,20 +397,7 @@ class UsbHealthReport:
             self.directory
             / f"usb-health-{stamp}-{secrets.token_hex(4)}-g{generation}.json"
         )
-        salt_path = self.directory / ".serial-salt"
-        try:
-            salt = salt_path.read_bytes()
-        except FileNotFoundError:
-            try:
-                descriptor = os.open(
-                    salt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                )
-                with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(secrets.token_bytes(32))
-            except FileExistsError:
-                pass
-            salt = salt_path.read_bytes()
-        self._serial_salt = salt
+        self._serial_salt = _load_or_create_serial_salt(self.directory)
         now = datetime.now(timezone.utc).isoformat()
         self.payload = {
             "schema": SCHEMA,
@@ -410,17 +432,20 @@ class UsbHealthReport:
             self.set_device(serial)
 
     def set_device(self, serial: str) -> None:
+        """Store an installation-salted serial hash, never the raw serial."""
         digest = hashlib.sha256(self._serial_salt + serial.encode()).hexdigest()
         self.payload["device"]["serialHash"] = f"sha256-install-salted:{digest}"
         self.update()
 
     def event(self, state: str) -> None:
+        """Append one timestamped report state transition."""
         self.payload["events"].append(
             {"at": datetime.now(timezone.utc).isoformat(), "state": state}
         )
         self.update()
 
     def update(self, **sections) -> None:
+        """Atomically persist new report sections with private permissions."""
         self.payload.update(sections)
         self.payload["updatedAt"] = datetime.now(timezone.utc).isoformat()
         temporary = self.path.with_name(

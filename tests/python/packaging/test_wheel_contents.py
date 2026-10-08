@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
+from repo_paths import repo_root
 
 DIST = "isaaccapture"
 ALIAS = "isaacteleop"  # the shim from src/compat; TODO(1.9): drop it
@@ -58,6 +59,14 @@ def test_package_tree_is_not_empty() -> None:
         "no extension module in the wheel: the staged tree or a package-data key "
         "stopped matching"
     )
+
+
+def test_chromium_notice_ships_beside_the_key_table() -> None:
+    """_deviceio_trackers compiles in Chromium's BSD-3-Clause key table; its notice must ship."""
+    vendored = (repo_root() / "deps/third_party/chromium/LICENSE").read_bytes()
+    with zipfile.ZipFile(_wheel()) as archive:
+        shipped = archive.read(f"{DIST}/deviceio_trackers/CHROMIUM_LICENSE")
+    assert shipped == vendored
 
 
 def test_the_shim_ships_beside_the_real_package() -> None:

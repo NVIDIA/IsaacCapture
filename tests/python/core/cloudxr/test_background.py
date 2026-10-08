@@ -58,7 +58,15 @@ class TestReadPid:
         )
         try:
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
-            assert background.read_pid(str(tmp_path)) == proc.pid
+            # A freshly spawned pid's /proc/<pid>/cmdline isn't guaranteed to be
+            # populated the instant Popen() returns, especially on a loaded CI
+            # runner - poll briefly instead of asserting on the very first read.
+            deadline = time.monotonic() + 2.0
+            pid = background.read_pid(str(tmp_path))
+            while pid is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+                pid = background.read_pid(str(tmp_path))
+            assert pid == proc.pid
         finally:
             proc.kill()
             proc.wait()

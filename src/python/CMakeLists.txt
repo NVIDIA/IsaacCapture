@@ -23,6 +23,7 @@ file(GLOB_RECURSE ISAAC_TELEOP_PYTHON_SOURCES
     CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/*.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/*.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/viz/robot/*.png"
 )
 
 # viz/__init__.py does a top-level `from ._viz import ...`, so without _viz it is

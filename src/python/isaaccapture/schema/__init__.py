@@ -41,6 +41,11 @@ from ._schema import (
     # Steering wheel types.
     SteeringWheelOutput,
     SteeringWheelOutputRecord,
+    # Keyboard types (held keys plus ordered key events).
+    KeyAction,
+    KeyEvent,
+    KeyboardOutput,
+    KeyboardOutputRecord,
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
@@ -141,6 +146,11 @@ __all__ = [
     # Steering wheel types.
     "SteeringWheelOutput",
     "SteeringWheelOutputRecord",
+    # Keyboard types (held keys plus ordered key events).
+    "KeyAction",
+    "KeyEvent",
+    "KeyboardOutput",
+    "KeyboardOutputRecord",
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",

@@ -145,7 +145,7 @@ const systemNoticeBodyText = computed(() =>
 /** How long the in-XR notice stays up before dismissing itself [ms]. */
 const SYSTEM_NOTICE_AUTO_DISMISS_MS = 20000;
 
-const CONTROL_PANEL_LAYOUT = {
+const DEFAULT_CONTROL_PANEL_LAYOUT = {
   distance: 1.8,
   height: 1.85,
   angleDegrees: 70,
@@ -1045,11 +1045,21 @@ function AppContent() {
     };
   }, []);
 
+  // User-adjustable overrides for the default layout, memoized so both the initial world-space
+  // position and CloudXR3DUI's own head-relative reset use the exact same values.
+  const controlPanelLayout = useMemo(
+    () => ({
+      distance: config?.controlPanelDistance ?? DEFAULT_CONTROL_PANEL_LAYOUT.distance,
+      height: config?.controlPanelHeight ?? DEFAULT_CONTROL_PANEL_LAYOUT.height,
+      angleDegrees: config?.controlPanelAngleDegrees ?? DEFAULT_CONTROL_PANEL_LAYOUT.angleDegrees,
+    }),
+    [config?.controlPanelDistance, config?.controlPanelHeight, config?.controlPanelAngleDegrees]
+  );
+
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () =>
-      getControlPanelPositionVector(config?.controlPanelPosition ?? 'center', CONTROL_PANEL_LAYOUT),
-    [config?.controlPanelPosition]
+    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    [config?.controlPanelPosition, controlPanelLayout]
   );
 
   // Sync XR mode state to body class for CSS styling
@@ -1198,6 +1208,9 @@ function AppContent() {
                       }
                     : undefined
                 }
+                streamAttachTimeoutMs={config?.streamAttachTimeoutMs}
+                warmupBeginTimeoutMs={config?.warmupBeginTimeoutMs}
+                warmupEndTimeoutMs={config?.warmupEndTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
                   if (cloudXR2DUI) {
@@ -1244,6 +1257,9 @@ function AppContent() {
                   onCountdownDecrease={handleDecreaseCountdown}
                   countdownDisabled={isCountingDown}
                   position={controlPanelPositionVector}
+                  controlPanelPosition={config?.controlPanelPosition ?? 'right'}
+                  controlPanelLayout={controlPanelLayout}
+                  trackHeadset={config?.controlPanelTrackHeadset ?? false}
                   rotation={[0, 0, 0]}
                   renderFpsText={renderFpsText}
                   poseSendFpsText={poseSendFpsText}

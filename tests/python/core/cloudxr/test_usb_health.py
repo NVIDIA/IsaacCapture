@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
@@ -173,6 +175,44 @@ def test_report_can_begin_before_adb_selection(tmp_path):
     assert json.loads(payload)["device"]["serialHash"].startswith(
         "sha256-install-salted:"
     )
+
+
+def test_concurrent_reports_share_only_a_complete_published_salt(tmp_path):
+    barrier = Barrier(2)
+    original_link = usb_health.os.link
+
+    def race_publish(source, destination):
+        barrier.wait(timeout=5)
+        return original_link(source, destination)
+
+    with (
+        patch.object(usb_health.os, "link", side_effect=race_publish),
+        ThreadPoolExecutor(max_workers=2) as pool,
+    ):
+        reports = list(
+            pool.map(
+                lambda _: usb_health.UsbHealthReport(
+                    tmp_path, "session", 0, "same-serial"
+                ),
+                range(2),
+            )
+        )
+    directory = tmp_path / "usb-health"
+    assert len((directory / ".serial-salt").read_bytes()) == 32
+    assert not list(directory.glob(".serial-salt.*.tmp"))
+    assert (
+        reports[0].payload["device"]["serialHash"]
+        == reports[1].payload["device"]["serialHash"]
+    )
+
+
+@pytest.mark.parametrize("invalid_salt", [b"", b"too-short"])
+def test_incomplete_existing_serial_salt_is_rejected(tmp_path, invalid_salt):
+    directory = tmp_path / "usb-health"
+    directory.mkdir()
+    (directory / ".serial-salt").write_bytes(invalid_salt)
+    with pytest.raises(OSError, match="complete 32-byte"):
+        usb_health.UsbHealthReport(tmp_path, "session", 0, "selected")
 
 
 @pytest.mark.parametrize("wakefulness", ["Asleep", ""])
@@ -387,6 +427,141 @@ async def test_prepare_failure_writes_partial_usb_report(tmp_path, monkeypatch):
     )
     assert "private headset detail" not in payload_text
     assert '"selected"' not in payload_text
+
+
+@pytest.mark.parametrize("failure", ["timeout", "symlink_loop"])
+@pytest.mark.asyncio
+async def test_link_probe_failure_preserves_report_and_warn_launch(
+    tmp_path, monkeypatch, failure
+):
+    lifecycle = OobLifecycle(
+        hub=_Hub(),
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        usb_health_logs_dir=tmp_path,
+    )
+    lifecycle.selected = "selected"
+    devices = adb.AdbDevices((("selected", "device"),))
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 1
+    browser_reached = []
+
+    async def no_op():
+        pass
+
+    async def awake():
+        lifecycle._usb_wake_confirmed = True
+
+    async def transfer():
+        lifecycle._usb_transfer = {"completed": True, "outcome": "pass"}
+
+    async def browser():
+        browser_reached.append(True)
+        raise asyncio.CancelledError
+
+    async def stop(_seconds):
+        raise asyncio.CancelledError
+
+    def listing(args, **_kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, 4)
+        return subprocess.CompletedProcess(
+            args, 0, "selected device usb:1-2.1 model:A9210\n", ""
+        )
+
+    def inspect(_serial, _listing):
+        raise RuntimeError("sysfs symlink loop")
+
+    lifecycle._prepare_device = no_op
+    lifecycle._rebuild_usb = no_op
+    lifecycle._confirm_usb_awake = awake
+    lifecycle._check_usb_transfer = transfer
+    lifecycle._automate = browser
+    lifecycle.sleep = stop
+    monkeypatch.setattr(adb, "_adb_run", listing)
+    monkeypatch.setattr(usb_health, "inspect_link", inspect)
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=adb.HeadsetNetworkProbe(
+                adb.HeadsetNetworkState.NETWORK_PRESENT
+            ),
+        ),
+        patch.object(adb, "_run_adb", return_value=""),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    payload = json.loads(
+        next((tmp_path / "usb-health").glob("usb-health-*.json")).read_text()
+    )
+    assert browser_reached == [True]
+    assert payload["linkProbe"]["probeSucceeded"] is False
+    assert payload["topology"]["negotiatedSpeedMbps"] is None
+    assert payload["topology"]["errors"]
+
+
+@pytest.mark.asyncio
+async def test_reverse_failure_retains_bounded_structured_error_history(
+    tmp_path, monkeypatch
+):
+    lifecycle = OobLifecycle(
+        hub=_Hub(),
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        usb_health_logs_dir=tmp_path,
+    )
+    lifecycle.selected = "selected"
+    devices = adb.AdbDevices((("selected", "device"),))
+    lifecycle._last_observation = (devices.devices, devices.diagnostic)
+    lifecycle._ready_count = 1
+    lifecycle._ensure_usb_report()
+    for index in range(20):
+        lifecycle._record_usb_wait("WAITING_FOR_ADB", f"prior_{index}")
+
+    async def no_op():
+        pass
+
+    async def fail_reverse():
+        raise adb.OobAdbError("private reverse detail")
+
+    async def stop(_seconds):
+        raise asyncio.CancelledError
+
+    lifecycle._prepare_device = no_op
+    lifecycle._check_usb_link = no_op
+    lifecycle._rebuild_usb = fail_reverse
+    lifecycle.sleep = stop
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=adb.HeadsetNetworkProbe(
+                adb.HeadsetNetworkState.NETWORK_PRESENT
+            ),
+        ),
+        patch.object(adb, "_run_adb", return_value=""),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+    payload_text = next((tmp_path / "usb-health").glob("usb-health-*.json")).read_text()
+    payload = json.loads(payload_text)
+    assert len(payload["errors"]) == 20
+    assert all(isinstance(item, dict) for item in payload["errors"])
+    assert payload["errors"][0]["code"] == "prior_1"
+    assert payload["errors"][-1]["state"] == "REBUILDING_USB"
+    assert payload["errors"][-1]["code"] == "OobAdbError"
+    assert payload["decision"]["overallOutcome"] == "incomplete"
+    assert payload["decision"]["browserLaunchAllowed"] is False
+    assert "private reverse detail" not in payload_text
 
 
 @pytest.mark.asyncio

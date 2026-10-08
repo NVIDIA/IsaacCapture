@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import socket
+import subprocess
 import time
 from pathlib import Path
 from collections.abc import Awaitable, Callable
@@ -40,6 +41,8 @@ class _TransportDisrupted(adb.OobAdbError):
 
 @dataclass(frozen=True)
 class RecoveryConfig:
+    """Timeout and retry budget for headset transport and browser recovery."""
+
     timeout_sec: float = 60.0
     interval_sec: float = 5.0
     client_reconnect_enabled: bool = True
@@ -138,6 +141,7 @@ class OobLifecycle:
         self.coturn = None
         self.browser_client: str | None = None
         self.browser_ready = False
+        self.client_loaded = False
         self.connect_dispatched = False
         self.last_metrics_at: float | None = None
         self.last_stream_at: float | None = None
@@ -170,6 +174,8 @@ class OobLifecycle:
         self._last_ignored_warning: tuple | None = None
         self._last_reason = ""
         self._last_health: str | None = None
+        self._readiness_stage: str | None = None
+        self._readiness_since: float | None = None
         self._prerequisite_signature: tuple | None = None
         self.snapshot: dict = {}
 
@@ -213,6 +219,7 @@ class OobLifecycle:
             "lastTurnAt": self.last_turn_at,
             "lastBrowserAt": self.last_browser_at,
             "lastStreamAt": self.last_stream_at,
+            "lastMetricsAt": self.last_metrics_at,
             "adbReady": False,
             "networkPresent": False,
             "reverseRulesVerified": False,
@@ -258,6 +265,48 @@ class OobLifecycle:
             "usbWakeConfirmed": self._usb_wake_confirmed,
             **flags,
         }
+        transport_ready = bool(
+            snapshot["adbReady"]
+            and snapshot["networkPresent"]
+            and (
+                not self.usb_local
+                or (
+                    snapshot["reverseRulesVerified"]
+                    and snapshot["turnPrerequisitesReady"]
+                )
+            )
+        )
+        client_loaded = transport_ready and (self.client_loaded or self.browser_ready)
+        dispatched = client_loaded and snapshot["connectDispatched"]
+        confirmed = bool(
+            transport_ready
+            and health == "active"
+            and snapshot["streaming"]
+            and snapshot["clientMetricsFresh"]
+        )
+        stage = (
+            "streamConfirmed"
+            if confirmed
+            else "connectDispatched"
+            if dispatched
+            else "clientLoaded"
+            if client_loaded
+            else "transportReady"
+            if transport_ready
+            else "socketBound"
+        )
+        if stage != self._readiness_stage:
+            self._readiness_stage = stage
+            self._readiness_since = snapshot["updatedAt"]
+        snapshot.update(
+            socketBound=True,
+            transportReady=transport_ready,
+            clientLoaded=client_loaded,
+            connectDispatched=dispatched,
+            streamConfirmed=confirmed,
+            readinessStage=stage,
+            readinessSince=self._readiness_since,
+        )
         self.snapshot = snapshot
         await self.hub.set_lifecycle_snapshot(snapshot)
         if self.on_status:
@@ -326,6 +375,7 @@ class OobLifecycle:
         await self._stop_monitor()
         self.browser_ready = False
         self.browser_client = None
+        self.client_loaded = False
         self.connect_dispatched = False
 
     def _invalidate_completed_repair(self, signature: tuple) -> bool:
@@ -596,7 +646,13 @@ class OobLifecycle:
             self._usb_link = await asyncio.to_thread(
                 usb_health.inspect_link, self.selected, listing.stdout or ""
             )
-        except (OSError, TimeoutError, adb.OobAdbError) as exc:
+        except (
+            OSError,
+            TimeoutError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            adb.OobAdbError,
+        ) as exc:
             self._usb_link = {
                 "probeSucceeded": False,
                 "negotiatedSpeedMbps": None,
@@ -845,6 +901,7 @@ class OobLifecycle:
         self.generation += 1
         self.browser_ready = False
         self.browser_client = None
+        self.client_loaded = False
         self.connect_dispatched = False
         before = time.time()
         self.browser_probe_after = before
@@ -858,9 +915,31 @@ class OobLifecycle:
             turnPrerequisitesReady=self.usb_local,
         )
 
-        def on_dispatched() -> None:
+        async def on_client_loaded() -> None:
+            self.client_loaded = True
+            await self._publish(
+                "degraded",
+                "CLIENT_LOADED",
+                "Client loaded; waiting for CONNECT",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=self.usb_local,
+                turnPrerequisitesReady=self.usb_local,
+                connectDispatched=False,
+            )
+
+        def on_dispatched() -> Awaitable[None]:
             self.connect_at = time.time()
             self.connect_dispatched = True
+            return self._publish(
+                "degraded",
+                "CONNECT_DISPATCHED",
+                "CONNECT dispatched; waiting for stream",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=self.usb_local,
+                turnPrerequisitesReady=self.usb_local,
+            )
 
         self.monitor = await adb.run_oob_connect(
             resolved_port=self.resolved_port,
@@ -868,10 +947,11 @@ class OobLifecycle:
             usb_local=self.usb_local,
             host_client=self.host_client,
             on_dispatched=on_dispatched,
+            on_client_loaded=on_client_loaded,
         )
         # A successful return still establishes dispatch if an adapter omits the callback.
         if not self.connect_dispatched:
-            on_dispatched()
+            await on_dispatched()
         await self._publish(
             "degraded",
             "VERIFYING_BROWSER",
@@ -905,19 +985,49 @@ class OobLifecycle:
         await self._stop_monitor()
         self.connect_dispatched = False
 
-        def on_dispatched() -> None:
+        async def on_client_loaded() -> None:
+            self.client_loaded = True
+            await self._publish(
+                "degraded",
+                "CLIENT_LOADED",
+                "Existing browser CONNECT control is actionable",
+                adbReady=True,
+                networkPresent=True,
+                reverseRulesVerified=self.usb_local,
+                turnPrerequisitesReady=self.usb_local,
+            )
+
+        def on_dispatched() -> Awaitable[None]:
             self.connect_at = time.time()
             self.connect_dispatched = True
 
+            async def publish() -> None:
+                if not self.client_loaded:
+                    await on_client_loaded()
+                await self._publish(
+                    "degraded",
+                    "CONNECT_DISPATCHED",
+                    "Existing browser CONNECT dispatched; waiting for fresh stream evidence",
+                    adbReady=True,
+                    networkPresent=True,
+                    reverseRulesVerified=self.usb_local,
+                    turnPrerequisitesReady=self.usb_local,
+                    connectDispatched=True,
+                )
+
+            return publish()
+
         try:
             self.monitor = await adb.attach_existing_oob_tab(
-                click_connect=True, on_dispatched=on_dispatched
+                click_connect=True,
+                on_client_loaded=on_client_loaded,
+                on_dispatched=on_dispatched,
             )
         except adb.OobAdbError:
             self.monitor = None
             return False
         if not self.connect_dispatched:
-            on_dispatched()
+            await on_dispatched()
         self._client_grace_deadline = self._bounded_client_grace_deadline()
         await self._publish(
             "degraded",
@@ -966,12 +1076,14 @@ class OobLifecycle:
 
         self.browser_client = report["clientId"]
         self.browser_ready = True
+        self.client_loaded = True
         self.last_browser_at = time.time()
         phase = report.get("streamPhase") or (
             "streaming" if report.get("streaming") else "idle"
         )
         terminal_event = report.get("terminalEventId")
         metrics_at = report.get("lastMetricsAt")
+        self.last_metrics_at = metrics_at
         fresh_post_repair = bool(
             metrics_at
             and metrics_at > self._repair_started_at * 1000
@@ -1093,11 +1205,13 @@ class OobLifecycle:
 
         self.browser_client = report["clientId"]
         self.browser_ready = True
+        self.client_loaded = True
         self.last_browser_at = time.time()
         phase = report.get("streamPhase") or (
             "streaming" if report.get("streaming") else "idle"
         )
         metrics_at = report.get("lastMetricsAt")
+        self.last_metrics_at = metrics_at
         fresh_post_repair = bool(
             metrics_at
             and metrics_at > self._repair_started_at * 1000
@@ -1167,6 +1281,7 @@ class OobLifecycle:
             return
         self.browser_client = report["clientId"]
         self.browser_ready = True
+        self.client_loaded = True
         self.last_browser_at = time.time()
         await self._publish(
             "browser_ready",
@@ -1239,6 +1354,7 @@ class OobLifecycle:
                 self._client_grace_deadline = self._bounded_client_grace_deadline()
             return
         # Snapshot timestamps are epoch milliseconds; local time.time() values are seconds.
+        self.last_metrics_at = client.get("lastMetricsAt")
         fresh = bool(
             client.get("lastMetricsAt")
             and (time.time() * 1000 - client["lastMetricsAt"])
@@ -1454,13 +1570,11 @@ class OobLifecycle:
                     continue
                 if network.state is adb.HeadsetNetworkState.NETWORK_PRESENT:
                     self.last_network_at = time.time()
-                if (
-                    self.usb_local
-                    and network.state is adb.HeadsetNetworkState.NO_NETWORK
-                ):
-                    # Preserve the page while the headset network returns;
-                    # transport repair runs before any browser fallback.
-                    self._record_usb_wait("WAITING_FOR_NETWORK", "network_absent")
+                if network.state is adb.HeadsetNetworkState.NO_NETWORK:
+                    # An absent non-loopback interface cannot satisfy transport
+                    # readiness or support browser automation in either mode.
+                    if self.usb_local:
+                        self._record_usb_wait("WAITING_FOR_NETWORK", "network_absent")
                     await self._enter_transport_recovery(
                         "Headset has no non-loopback network",
                         "PREPARING_DEVICE",
@@ -1614,10 +1728,10 @@ class OobLifecycle:
                                 try:
                                     await self._rebuild_usb()
                                 except (Exception, asyncio.CancelledError) as exc:
+                                    self._record_usb_wait(
+                                        "REBUILDING_USB", type(exc).__name__
+                                    )
                                     self._persist_usb_health(
-                                        errors=[
-                                            f"USB reverse setup failed: {type(exc).__name__}"
-                                        ],
                                         decision={
                                             "overallOutcome": "incomplete",
                                             "browserLaunchAllowed": False,

@@ -33,7 +33,8 @@ import subprocess
 import time
 import urllib.request
 from contextvars import ContextVar
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from dataclasses import dataclass
 from enum import Enum
 from .oob_teleop_env import (
@@ -1440,13 +1441,58 @@ def clear_headset_browser_cache(*, usb_local: bool) -> int:
         _adb_forward_remove(_CDP_LOCAL_PORT)
 
 
+# Must match CloudXRUI.tsx's RESET_PANEL_KEY / the keydown listener's key check.
+_RESET_PANEL_KEY = "r"
+_RESET_PANEL_CODE = (
+    "KeyR"  # DOM KeyboardEvent.code convention, not the same string as .key
+)
+_RESET_PANEL_VIRTUAL_KEY_CODE = 82  # VK_R
+
+
+async def _cdp_send_reset_panel_key(ws_url: str) -> None:
+    """Synthesize the reset-panel keypress (CloudXRUI.tsx's window keydown listener) over CDP.
+
+    Recovers a "missing panel" (hidden, or dragged out of reach) by fixing it rather than
+    detecting it first: the client-side handler un-hides the panel and repositions it in front
+    of the current head pose, regardless of where it ended up or why. Best-effort - exceptions
+    propagate; callers treat this as non-fatal.
+    """
+    from websockets.asyncio.client import connect as ws_connect  # noqa: PLC0415
+
+    _seq = 0
+
+    async def send(ws, method: str, params: dict | None = None) -> None:
+        nonlocal _seq
+        _seq += 1
+        req_id = _seq
+        await ws.send(
+            json.dumps({"id": req_id, "method": method, "params": params or {}})
+        )
+        while True:
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+            if msg.get("id") == req_id:
+                return
+
+    key_params = {
+        "key": _RESET_PANEL_KEY,
+        "code": _RESET_PANEL_CODE,
+        "windowsVirtualKeyCode": _RESET_PANEL_VIRTUAL_KEY_CODE,
+        "nativeVirtualKeyCode": _RESET_PANEL_VIRTUAL_KEY_CODE,
+    }
+    async with ws_connect(ws_url) as ws:
+        await send(ws, "Input.dispatchKeyEvent", {"type": "rawKeyDown", **key_params})
+        await send(ws, "Input.dispatchKeyEvent", {"type": "keyUp", **key_params})
+    log.info("CDP: sent reset-panel key (%s)", _RESET_PANEL_KEY)
+
+
 async def _cdp_session_click_connect(
     ws_url: str,
     *,
     refresh_static_assets: bool = False,
     allow_navigation: bool = True,
     clear_stale_error: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> None:
     """Open a single CDP session and click the CONNECT button.
 
@@ -1655,6 +1701,10 @@ async def _cdp_session_click_connect(
             )
 
         log.info("CDP: page ready in %.1fs", loop.time() - start_ready)
+        if on_client_loaded is not None:
+            result = on_client_loaded()
+            if isawaitable(result):
+                await result
 
         # Extra grace period: the CONNECT button can become enabled before the
         # React <XR> store is fully mounted, which causes "XR is not available"
@@ -1687,17 +1737,20 @@ async def _cdp_session_click_connect(
                     "clickCount": 1,
                 },
             )
-        if on_dispatched is not None:
-            on_dispatched()
-        # Follow-up DOM click (safety net for Quest Browser) — inside the
-        # user-activation window opened by the trusted mouse events above.
-        await send(
-            ws,
-            "Runtime.evaluate",
-            {
-                "expression": "document.getElementById('startButton')?.click()",
-            },
-        )
+        dispatched = on_dispatched() if on_dispatched is not None else None
+        # Keep the Quest fallback inside the user-activation window; status
+        # persistence may block, so await it only after the DOM click.
+        try:
+            await send(
+                ws,
+                "Runtime.evaluate",
+                {
+                    "expression": "document.getElementById('startButton')?.click()",
+                },
+            )
+        finally:
+            if isawaitable(dispatched):
+                await dispatched
         log.info("CDP: CONNECT click dispatched (mouse + DOM)")
 
         # ---- monitor connection outcome -------------------------------------
@@ -1752,13 +1805,19 @@ async def _cdp_session_click_connect(
 async def attach_existing_oob_tab(
     *,
     click_connect: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> asyncio.Task:
     """Attach CDP monitoring to a surviving OOB tab without navigating it.
 
     When *click_connect* is true, dispatch one trusted CONNECT click in the
-    existing tab. This path never closes tabs, invokes ``am start``, reloads,
-    or creates a new browser page.
+    existing tab, then unconditionally reset the panel (see
+    :func:`_cdp_send_reset_panel_key`) — this is the one reconnect path the
+    client's own automatic initial-placement reset never covers, since no new
+    XR session starts (the page was never reloaded). Best-effort: a reset
+    failure is logged and swallowed, not fatal to the reattach. This path
+    never closes tabs, invokes ``am start``, reloads, or creates a new
+    browser page.
     """
     socket_name = await asyncio.to_thread(_discover_devtools_socket)
     if not socket_name:
@@ -1785,7 +1844,12 @@ async def attach_existing_oob_tab(
                 allow_navigation=False,
                 clear_stale_error=True,
                 on_dispatched=on_dispatched,
+                on_client_loaded=on_client_loaded,
             )
+            try:
+                await _cdp_send_reset_panel_key(ws_url)
+            except Exception as exc:
+                log.warning("CDP: reset-panel key failed after reattach: %s", exc)
         return asyncio.create_task(
             _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT),
             name="cloudxr-oob-error-monitor",
@@ -1801,7 +1865,8 @@ async def run_oob_connect(
     timeout: float = 60.0,
     usb_local: bool = False,
     host_client: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> asyncio.Task | None:
     """Open the teleop page on the headset via ``am start`` and click CONNECT via CDP.
 
@@ -1815,6 +1880,12 @@ async def run_oob_connect(
       6. Find the CONNECT button and click it via ``Input.dispatchMouseEvent``.
       7. Start a background monitor that forwards mid-stream errors from the
          web client's ``errorMessageBox`` into the server log.
+
+    No reset-panel keypress here (unlike :func:`attach_existing_oob_tab`): this
+    path always navigates to a fresh page, and ``CloudXRUI.tsx``'s own
+    first-XR-frame placement already resets the panel unconditionally on every
+    new session — sending the key too would just be a redundant second write
+    to the same position.
 
     Args:
         resolved_port: WSS proxy port used for signalling.
@@ -2034,6 +2105,7 @@ async def run_oob_connect(
             ws_url,
             refresh_static_assets=usb_local or host_client,
             on_dispatched=on_dispatched,
+            on_client_loaded=on_client_loaded,
         )
 
         # --- Step 5: background monitor for mid-stream error banners ---------

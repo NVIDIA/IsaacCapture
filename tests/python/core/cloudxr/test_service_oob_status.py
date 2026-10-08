@@ -213,6 +213,12 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
             "selectedSerial": "headset",
             "streaming": True,
             "browserReady": True,
+            "socketBound": True,
+            "transportReady": True,
+            "clientLoaded": True,
+            "connectDispatched": True,
+            "streamConfirmed": True,
+            "readinessStage": "streamConfirmed",
             "clientMetricsFresh": True,
         }
     )
@@ -230,8 +236,19 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
     assert status["sessionId"] == "test-session"
     assert status["writerPid"] == os.getpid()
     assert status["runtimePid"] == os.getpid()
-    for field in ("streaming", "browserReady", "clientMetricsFresh", "adbReady"):
+    for field in (
+        "streaming",
+        "browserReady",
+        "clientMetricsFresh",
+        "adbReady",
+        "socketBound",
+        "transportReady",
+        "clientLoaded",
+        "connectDispatched",
+        "streamConfirmed",
+    ):
         assert status[field] is False
+    assert status["readinessStage"] == "fatal"
     assert "fatal lifecycle failure" in status["reason"]
     assert "wss.log" in status["reason"]
     assert service.drain_oob_updates() == [status]
@@ -432,3 +449,31 @@ def test_attached_launcher_rejects_stale_writer_or_runtime(tmp_path):
             )
         )
         assert launcher.oob_status()["health"] == "degraded"
+
+
+def test_attached_launcher_preserves_only_observed_fatal_session(tmp_path):
+    launcher = object.__new__(CloudXRLauncher)
+    launcher._service = None
+    launcher._run_dir = str(tmp_path)
+    launcher._observed_oob_session = None
+    path = tmp_path / "oob_status.json"
+    identity = {
+        "schemaVersion": 1,
+        "sessionId": "current-session",
+        "writerPid": os.getpid(),
+        "runtimePid": os.getpid(),
+    }
+    path.write_text(json.dumps({**identity, "health": "active"}))
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=True):
+        assert launcher.oob_status()["health"] == "active"
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=False):
+        path.write_text(
+            json.dumps({**identity, "health": "fatal", "reason": "Worker failed"})
+        )
+        assert launcher.oob_status()["reason"] == "Worker failed"
+        with pytest.raises(RuntimeError, match="Worker failed"):
+            launcher.wait_for_oob_stage(timeout_sec=1)
+        path.write_text(
+            json.dumps({**identity, "sessionId": "other", "health": "fatal"})
+        )
+        assert launcher.oob_status() is None
