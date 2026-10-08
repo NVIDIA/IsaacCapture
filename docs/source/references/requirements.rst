@@ -58,13 +58,13 @@ The recommended workstation configuration for Sim-based Teleop is:
     * - GPU
       - 1x RTX 6000 Pro (Blackwell) or 2x RTX 6000 (Ada)
     * - OS
-      - Ubuntu 22.04 [#isaaclab-req]_
+      - Ubuntu 22.04 or 24.04 [#isaaclab-req]_
     * - Python
       - 3.12 [#isaaclab-req]_
     * - CUDA
       - 12.8 or newer
     * - NVIDIA Driver
-      - 580.95.05 or newer
+      - Per Isaac Sim's requirements [#isaacsim-req]_
 
 If you are only using XR headsets for teleoperation, you can host the workstation in the cloud.
 See `Isaac Lab Cloud Deployment <https://isaac-sim.github.io/IsaacLab/develop/source/deployment/index.html>`_
