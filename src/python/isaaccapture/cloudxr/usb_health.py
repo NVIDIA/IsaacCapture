@@ -14,6 +14,7 @@ import secrets
 import shlex
 import stat
 import time
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -333,19 +334,16 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
 async def _terminate_fallback_child(child) -> bool:
     """Bound termination and reaping of the ADB sink child."""
     if child.returncode is None:
-        try:
+        # The child may exit between the returncode check and the signal.
+        with suppress(ProcessLookupError):
             child.terminate()
-        except ProcessLookupError:
-            pass
     try:
         await asyncio.wait_for(child.wait(), 0.5)
         return True
     except TimeoutError:
         if child.returncode is None:
-            try:
+            with suppress(ProcessLookupError):
                 child.kill()
-            except ProcessLookupError:
-                pass
         try:
             await asyncio.wait_for(child.wait(), 0.5)
             return True
@@ -394,6 +392,7 @@ async def _measure_fallback(serial: str, result: dict) -> None:
         result["effectiveMeasurementDurationMs"] = round(duration, 2)
         result["timingValid"] = 2950 <= duration <= 3250
         result["hostBytesSubmitted"] = written
+    # Preserve every interruption through cleanup, including process-exit signals.
     except BaseException as exc:
         failure = exc
     try:

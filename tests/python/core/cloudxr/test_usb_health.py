@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -212,6 +212,24 @@ class _FallbackProcess:
 
 async def _missing_curl(_serial, _script, _timeout):
     return 0, "/system/bin/timeout\n1791403150633088373\n"
+
+
+@pytest.mark.asyncio
+async def test_fallback_signal_races_still_reap_exited_child():
+    exited_before_terminate = SimpleNamespace(
+        returncode=None,
+        terminate=Mock(side_effect=ProcessLookupError),
+        wait=AsyncMock(return_value=0),
+    )
+    assert await usb_health._terminate_fallback_child(exited_before_terminate)
+
+    exited_before_kill = SimpleNamespace(
+        returncode=None,
+        terminate=Mock(),
+        kill=Mock(side_effect=ProcessLookupError),
+        wait=AsyncMock(side_effect=[TimeoutError, 0]),
+    )
+    assert await usb_health._terminate_fallback_child(exited_before_kill)
 
 
 @pytest.mark.asyncio
