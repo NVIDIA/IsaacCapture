@@ -430,8 +430,9 @@ void AvatarTracker::refresh_data()
         }
         // Liveness comes from fetched data, not get_device_info().online: the SDK
         // leaves that flag false on a glove first discovered offline and powered on later.
+        // A haptic-only glove still fetches RAW so the data timeout below can drop a dead handle.
+        const bool probe_raw = !m_config.human && !m_config.raw && !m_config.robot;
 
-        const bool expects_data = m_config.human || m_config.raw || m_config.robot;
         // fetch_data() keeps returning a silent glove's last sample, so only a newer
         // sample stamp counts as data for the timeout below.
         bool fetched_any = false;
@@ -461,7 +462,7 @@ void AvatarTracker::refresh_data()
         }
         for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
         {
-            if (!dataset_enabled(category))
+            if (!dataset_enabled(category) && !(probe_raw && category == ::avatar::DeviceDataCategory::RAW))
             {
                 continue;
             }
@@ -478,18 +479,15 @@ void AvatarTracker::refresh_data()
                 cached = {};
             }
         }
-        if (expects_data)
+        const auto now = std::chrono::steady_clock::now();
+        if (fetched_any)
         {
-            const auto now = std::chrono::steady_clock::now();
-            if (fetched_any)
-            {
-                state.last_successful_fetch = now;
-            }
-            else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
-            {
-                logger()->warn("{} glove disconnected: no data for {} s.", to_string(side), kAvatarDataTimeout.count());
-                state.reset();
-            }
+            state.last_successful_fetch = now;
+        }
+        else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
+        {
+            logger()->warn("{} glove disconnected: no data for {} s.", to_string(side), kAvatarDataTimeout.count());
+            state.reset();
         }
     }
 }
