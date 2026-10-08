@@ -330,6 +330,43 @@ async def measure_transfer(serial: str, port: int, asset_size: int) -> dict:
     return result
 
 
+async def _terminate_fallback_child(child) -> bool:
+    """Bound termination and reaping of the ADB sink child."""
+    if child.returncode is None:
+        try:
+            child.terminate()
+        except ProcessLookupError:
+            pass
+    try:
+        await asyncio.wait_for(child.wait(), 0.5)
+        return True
+    except TimeoutError:
+        if child.returncode is None:
+            try:
+                child.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(child.wait(), 0.5)
+            return True
+        except TimeoutError:
+            return False
+
+
+async def _reap_fallback_child(child) -> bool:
+    """Finish bounded reaping even if cancellation recurs during cleanup."""
+    cleanup = asyncio.create_task(_terminate_fallback_child(child))
+    cancellation = None
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    if cancellation is not None:
+        raise cancellation
+    return cleanup.result()
+
+
 async def _measure_fallback(serial: str, result: dict) -> None:
     """Bound a host-to-device ADB-only sink when device curl is unavailable."""
     child = await asyncio.create_subprocess_exec(
@@ -345,6 +382,8 @@ async def _measure_fallback(serial: str, result: dict) -> None:
     )
     start = time.monotonic()
     written = 0
+    failure: BaseException | None = None
+    output = b""
     try:
         payload = b"\0" * 65536
         while time.monotonic() - start < 3:
@@ -355,19 +394,29 @@ async def _measure_fallback(serial: str, result: dict) -> None:
         result["effectiveMeasurementDurationMs"] = round(duration, 2)
         result["timingValid"] = 2950 <= duration <= 3250
         result["hostBytesSubmitted"] = written
-    finally:
+    except BaseException as exc:
+        failure = exc
+    try:
         child.stdin.close()
+    except Exception as exc:
+        if failure is None:
+            failure = exc
+    if failure is None:
         try:
             output = await asyncio.wait_for(child.stdout.read(64), 0.5)
             await asyncio.wait_for(child.wait(), 0.5)
-        except TimeoutError:
-            child.terminate()
-            try:
-                await asyncio.wait_for(child.wait(), 0.5)
-            except TimeoutError:
-                child.kill()
-                await child.wait()
-            raise
+        except BaseException as exc:
+            failure = exc
+    if failure is not None:
+        try:
+            result["childCleanup"] = {"reaped": await _reap_fallback_child(child)}
+        except asyncio.CancelledError as exc:
+            failure = exc
+        except Exception:
+            result["childCleanup"] = {"reaped": False}
+        # Cleanup failure must not turn shutdown cancellation into warn-mode success.
+        raise failure
+    result["childCleanup"] = {"reaped": True}
     if child.returncode != 0 or not output.strip().isdigit():
         raise ValueError("ADB sink did not confirm received byte count")
     received = int(output.strip())
@@ -445,7 +494,10 @@ class UsbHealthReport:
         self.update()
 
     def update(self, **sections) -> None:
-        """Atomically persist new report sections with private permissions."""
+        """Replace whole top-level sections, then synchronously persist and prune.
+
+        I/O failures propagate to the caller.
+        """
         self.payload.update(sections)
         self.payload["updatedAt"] = datetime.now(timezone.utc).isoformat()
         temporary = self.path.with_name(

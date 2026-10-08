@@ -11,6 +11,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -152,6 +153,170 @@ async def test_missing_curl_uses_labeled_adb_fallback(monkeypatch):
     assert result["fallbackReason"]
     assert result["hostToHeadsetResponseBodyMbps"] is None
     assert result["headsetToHostMbps"] is None
+
+
+class _FallbackProcess:
+    def __init__(self, *, drain: str, read: str, wait_timeout: bool = False):
+        self.drain_behavior = drain
+        self.read_behavior = read
+        self.wait_timeout = wait_timeout
+        self.drain_started = asyncio.Event()
+        self.read_started = asyncio.Event()
+        self.wait_started = asyncio.Event()
+        self.wait_released = None
+        self.stdin = self
+        self.stdout = self
+        self.returncode = None
+        self.closed = False
+        self.terminated = False
+        self.killed = False
+        self.reaped = False
+
+    def write(self, _payload):
+        pass
+
+    async def drain(self):
+        self.drain_started.set()
+        if self.drain_behavior == "stall":
+            await asyncio.Future()
+        if self.drain_behavior == "timeout":
+            raise TimeoutError
+
+    def close(self):
+        self.closed = True
+
+    async def read(self, _size):
+        self.read_started.set()
+        if self.read_behavior == "stall":
+            await asyncio.Future()
+        if self.read_behavior == "timeout":
+            raise TimeoutError
+        return b"0\n"
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    async def wait(self):
+        self.wait_started.set()
+        if self.wait_released is not None:
+            await self.wait_released.wait()
+        if self.wait_timeout and not self.killed:
+            raise TimeoutError
+        self.reaped = True
+        self.returncode = -9 if self.killed else -15 if self.terminated else 0
+        return self.returncode
+
+
+async def _missing_curl(_serial, _script, _timeout):
+    return 0, "/system/bin/timeout\n1791403150633088373\n"
+
+
+@pytest.mark.asyncio
+async def test_fallback_cancel_during_drain_survives_cleanup_timeout(monkeypatch):
+    child = _FallbackProcess(drain="stall", read="timeout", wait_timeout=True)
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(usb_health.measure_transfer("selected", 48322, 500000))
+    await asyncio.wait_for(child.drain_started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert child.closed
+    assert child.terminated
+    assert child.killed
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_fallback_repeated_cancel_waits_for_bounded_reaping(monkeypatch):
+    child = _FallbackProcess(drain="stall", read="timeout")
+    child.wait_released = asyncio.Event()
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(usb_health.measure_transfer("selected", 48322, 500000))
+    await asyncio.wait_for(child.drain_started.wait(), 1)
+    task.cancel()
+    await asyncio.wait_for(child.wait_started.wait(), 1)
+    task.cancel()
+    child.wait_released.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert child.terminated
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_fallback_cancel_during_cleanup_read_reaps_child(monkeypatch):
+    child = _FallbackProcess(drain="complete", read="stall")
+    ticks = iter((0.0, 0.0, 0.0, 3.0, 3.0))
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(
+        usb_health, "time", SimpleNamespace(monotonic=lambda: next(ticks, 3.0))
+    )
+    task = asyncio.create_task(usb_health.measure_transfer("selected", 48322, 500000))
+    await asyncio.wait_for(child.read_started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert child.closed
+    assert child.terminated
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_fallback_normal_drain_timeout_returns_unsupported_after_reap(
+    monkeypatch,
+):
+    child = _FallbackProcess(drain="timeout", read="complete")
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    result = await usb_health.measure_transfer("selected", 48322, 500000)
+    assert result["outcome"] == "unsupported"
+    assert result["completed"] is False
+    assert result["childCleanup"]["reaped"] is True
+    assert child.closed
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_fallback_cleanup_timeout_returns_unsupported_after_reap(monkeypatch):
+    child = _FallbackProcess(drain="complete", read="timeout")
+    ticks = iter((0.0, 0.0, 0.0, 3.0, 3.0))
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health, "_adb_shell", _missing_curl)
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(
+        usb_health, "time", SimpleNamespace(monotonic=lambda: next(ticks, 3.0))
+    )
+    result = await usb_health.measure_transfer("selected", 48322, 500000)
+    assert result["outcome"] == "unsupported"
+    assert result["childCleanup"]["reaped"] is True
+    assert child.closed
+    assert child.terminated
+    assert child.reaped
 
 
 def test_atomic_report_is_private_and_redacts_serial(tmp_path):
