@@ -29,8 +29,17 @@ const { merge } = require('webpack-merge');
 const common = require('./webpack.common.js');
 
 module.exports = merge(common, {
-  mode: 'development',
-  devtool: 'eval-source-map',
+  // production, not development: src/index.tsx wraps the app in
+  // <React.StrictMode>, which double-invokes effects in a dev build - that calls
+  // CloudXRComponent.tsx's establishSession() (and so CloudXR.createSession())
+  // twice, leaving tests/mock/cloudxr-mock-alias.ts's activeSession pointing at
+  // whichever MockCloudXR instance was created last while the mounted component
+  // may be running against the other one. window.__mockCloudXRFail() then
+  // silently no-ops against a session nothing is actually using. A production
+  // build's NODE_ENV=production makes React skip StrictMode's double-invoke
+  // entirely, so this is the actual fix, not a workaround.
+  mode: 'production',
+  devtool: 'source-map',
   resolve: {
     alias: {
       // Exact match ($) only: the shim itself (and MockCloudXR.ts) reach the real SDK via the
