@@ -155,6 +155,69 @@ async def test_missing_curl_uses_labeled_adb_fallback(monkeypatch):
     assert result["headsetToHostMbps"] is None
 
 
+class _AdbShellProcess:
+    def __init__(self, *, first: str, cleanup: str, signal_race: str):
+        self.first = first
+        self.cleanup = cleanup
+        self.signal_race = signal_race
+        self.started = asyncio.Event()
+        self.calls = 0
+        self.reaped = False
+        self.returncode = None
+
+    async def communicate(self):
+        self.calls += 1
+        if self.calls == 1:
+            self.started.set()
+            if self.first == "stall":
+                await asyncio.Future()
+            raise TimeoutError
+        if self.calls == 2 and self.cleanup == "timeout":
+            raise TimeoutError
+        self.reaped = True
+        self.returncode = 0
+        return b"", b""
+
+    def terminate(self):
+        if self.signal_race == "terminate":
+            raise ProcessLookupError
+
+    def kill(self):
+        if self.signal_race == "kill":
+            raise ProcessLookupError
+
+
+@pytest.mark.asyncio
+async def test_adb_shell_terminate_race_preserves_measurement_cancellation(monkeypatch):
+    child = _AdbShellProcess(first="stall", cleanup="complete", signal_race="terminate")
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(usb_health.measure_transfer("selected", 48322, 500000))
+    await asyncio.wait_for(child.started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert child.calls == 2
+    assert child.reaped
+
+
+@pytest.mark.asyncio
+async def test_adb_shell_kill_race_preserves_timeout_and_reaps(monkeypatch):
+    child = _AdbShellProcess(first="timeout", cleanup="timeout", signal_race="kill")
+
+    async def spawn(*_args, **_kwargs):
+        return child
+
+    monkeypatch.setattr(usb_health.asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(TimeoutError):
+        await usb_health._adb_shell("selected", "date +%s%N", 1)
+    assert child.calls == 3
+    assert child.reaped
+
+
 class _FallbackProcess:
     def __init__(self, *, drain: str, read: str, wait_timeout: bool = False):
         self.drain_behavior = drain
@@ -884,7 +947,7 @@ async def test_transport_loss_invalidates_current_wake_but_preserves_history(tmp
 
 @pytest.mark.parametrize(
     ("reconnected_speed", "decision"),
-    [(480, "degraded"), (5000, "incomplete")],
+    [(480, "degraded"), (5000, "incomplete"), (None, "degraded")],
 )
 @pytest.mark.asyncio
 async def test_preserved_browser_reconnect_refreshes_link_without_active_transfer(
@@ -914,6 +977,7 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
     lifecycle._ready_count = 1
     speeds = iter((5000, reconnected_speed))
     observed = []
+    listing_calls = 0
 
     def inspect(_serial, _listing):
         speed = next(speeds)
@@ -936,14 +1000,17 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
     async def stop(_seconds):
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(usb_health, "inspect_link", inspect)
-    monkeypatch.setattr(
-        adb,
-        "_adb_run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
+    def listing(args, **_kwargs):
+        nonlocal listing_calls
+        listing_calls += 1
+        if reconnected_speed is None and listing_calls == 2:
+            raise subprocess.TimeoutExpired(args, 4)
+        return subprocess.CompletedProcess(
             args, 0, "selected device usb:1-2.1 model:A9210\n", ""
-        ),
-    )
+        )
+
+    monkeypatch.setattr(usb_health, "inspect_link", inspect)
+    monkeypatch.setattr(adb, "_adb_run", listing)
     lifecycle._rebuild_usb = rebuild
     lifecycle._recover_existing_browser = recover
     lifecycle._check_usb_transfer = forbidden_transfer
@@ -978,9 +1045,14 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
     assert payload["transferHistory"][0]["hostToHeadsetResponseBodyMbps"] == 900
     assert payload["decision"]["transferRetestDeferred"] is True
     assert payload["decision"]["overallOutcome"] == decision
+    assert payload["linkProbe"]["probeSucceeded"] is (reconnected_speed is not None)
     awake.assert_called_once_with(timeout=10.0)
     assert lifecycle.snapshot["usbLinkOutcome"] == (
-        "pass" if reconnected_speed >= 5000 else "slow_link"
+        "unknown"
+        if reconnected_speed is None
+        else "pass"
+        if reconnected_speed >= 5000
+        else "slow_link"
     )
     assert lifecycle.snapshot["usbTransferMbps"] is None
     assert lifecycle.snapshot["usbTransferResponseBodyMbps"] is None

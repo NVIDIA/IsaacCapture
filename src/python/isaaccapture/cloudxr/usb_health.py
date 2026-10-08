@@ -192,11 +192,14 @@ async def _adb_shell(serial: str, script: str, timeout: float) -> tuple[int, str
         output, _ = await asyncio.wait_for(child.communicate(), timeout)
         return child.returncode, output[:65536].decode("ascii", "replace")
     except (asyncio.CancelledError, TimeoutError):
-        child.terminate()
+        # ADB may exit before the signal; still drain and reap its pipe.
+        with suppress(ProcessLookupError):
+            child.terminate()
         try:
             await asyncio.wait_for(child.communicate(), 0.5)
         except TimeoutError:
-            child.kill()
+            with suppress(ProcessLookupError):
+                child.kill()
             await child.communicate()
         raise
 
