@@ -137,9 +137,10 @@ def set_console_level(level: str) -> None:
     """Set the console threshold by level name and mirror raw output only at ``TRACE``.
 
     *level* is trace, debug, info, warning, error or critical, in any case; any
-    other name is logged as an error and the current threshold is kept.
+    other value, an integer included, is logged as an error and the current
+    threshold is kept.
     """
-    if level.lower() not in _LEVEL_NAME_BY_VALUE.values():
+    if not isinstance(level, str) or level.lower() not in _LEVEL_NAME_BY_VALUE.values():
         root_logger.error(
             "Unknown console level %r, expected one of %s; keeping the current one.",
             level,

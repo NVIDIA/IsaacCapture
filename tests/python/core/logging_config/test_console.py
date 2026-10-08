@@ -103,8 +103,9 @@ class TestConsoleLevel:
         assert _console.ensure_handler().level == _core.TRACE
         assert os.environ["ISAACCAPTURE_LOG_LEVEL"] == "trace"
 
-    # spdlog's "warn" spelling is deliberately not a level name here.
-    @pytest.mark.parametrize("level", ["loud", "warn"])
+    # spdlog's "warn" spelling is deliberately not a level name here, and a
+    # stdlib level number is not a name either.
+    @pytest.mark.parametrize("level", ["loud", "warn", logging.DEBUG, _core.TRACE])
     def test_an_invalid_level_is_logged_and_keeps_the_threshold(self, level, caplog):
         handler = _console.ensure_handler()
         before = (handler.level, os.environ.get("ISAACCAPTURE_LOG_LEVEL"))
