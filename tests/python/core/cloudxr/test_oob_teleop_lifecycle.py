@@ -168,6 +168,80 @@ async def test_fresh_browser_wake_wait_retries_after_expiry_without_transport_ch
     assert lifecycle._browser_waiting_for_awake is False
 
 
+async def test_expired_same_tab_click_without_preservation_retries_after_wake():
+    hub = FakeHub()
+    now = [0.0]
+    sleeps = []
+    click_times = []
+    wake_polls = []
+    ready = AdbDevices((("pinned-headset", "device"),))
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+        if 10 <= now[0] < 20:
+            assert lifecycle._same_tab_wake_blocked is True
+            assert lifecycle.browser_ready is False
+            assert lifecycle.connect_dispatched is False
+            assert lifecycle._restore_existing_browser is False
+        if now[0] >= 25:
+            raise asyncio.CancelledError
+
+    async def attach(*, click_connect, on_dispatched=None, **_kwargs):
+        assert click_connect
+        assert lifecycle.browser_ready is False
+        assert lifecycle.connect_dispatched is False
+        click_times.append(now[0])
+        if now[0] < 20:
+            raise adb.HeadsetNotAwakeError("headset asleep")
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
+        return None
+
+    def wakefulness():
+        wake_polls.append(now[0])
+        return "Awake" if now[0] >= 20 else "Asleep"
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(timeout_sec=10, interval_sec=5),
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    lifecycle.selected = "pinned-headset"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle._pending_cdp_terminal_error = "stream terminal"
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=ready),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(adb, "headset_wakefulness", side_effect=wakefulness),
+        patch.object(adb, "attach_existing_oob_tab", side_effect=attach),
+        patch.object(lifecycle, "_automate", new_callable=AsyncMock) as automate,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert click_times == [0.0, 5.0, 20.0]
+    assert wake_polls == [10.0, 15.0, 20.0]
+    assert sleeps == [5] * 5
+    assert lifecycle.browser_ready is False
+    assert lifecycle.connect_dispatched is True
+    assert lifecycle._same_tab_wake_blocked is False
+    assert lifecycle._pending_cdp_terminal_error is None
+    assert any(status["state"] == "WAITING_FOR_AWAKE" for status in hub.statuses)
+    automate.assert_not_awaited()
+
+
 async def test_expired_preserved_tab_waits_for_wake_before_retrying_connect(tmp_path):
     hub = FakeHub()
     hub.probe_browser = AsyncMock(return_value=None)
