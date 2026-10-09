@@ -827,7 +827,8 @@ See <a class="reference internal" href="#composition-model">Composition model</a
 </table>
 </div>
 <p>Its placement is a <code class="docutils literal notranslate"><span class="pre">QuadLayerPlacement</span></code> — a <code class="docutils literal notranslate"><span class="pre">pose</span></code> plus <code class="docutils literal notranslate"><span class="pre">size_meters</span></code>. In window mode it
-is optional: a quad with no placement fills the window. In XR it is <strong>required</strong>: set it in the
+is optional: a quad with no placement fills its tile of the window (the whole window when it is
+the only layer). In XR it is <strong>required</strong>: set it in the
 config or with <code class="docutils literal notranslate"><span class="pre">set_placement()</span></code> before a submitted frame is rendered, or <code class="docutils literal notranslate"><span class="pre">render()</span></code> raises
 <code class="docutils literal notranslate"><span class="pre">RuntimeError:</span> <span class="pre">...</span> <span class="pre">requires</span> <span class="pre">Config::placement</span> <span class="pre">to</span> <span class="pre">be</span> <span class="pre">set</span></code>. <code class="docutils literal notranslate"><span class="pre">add_quad_layer()</span></code> does not reject
 a missing placement, so a placement strategy can set it after the layer is created.</p>
