@@ -20,6 +20,7 @@ from isaaccapture.schema import (
     ControllerSnapshot,
     Generic3AxisPedalOutput,
     KeyboardOutput,
+    SpaceMouseOutput,
     JointStateOutput,
     FullBodyPose,
     SomaBodyJointPoses,
@@ -101,6 +102,12 @@ class KeyboardOutputTrackedType(_PayloadTensorType):
     """KeyboardOutput payload from DeviceIO KeyboardTracker."""
 
     _payload_cls = KeyboardOutput
+
+
+class SpaceMouseOutputTrackedType(_PayloadTensorType):
+    """SpaceMouseOutput payload from DeviceIO SpaceMouseTracker."""
+
+    _payload_cls = SpaceMouseOutput
 
 
 class JointStateOutputTrackedType(_PayloadTensorType):
@@ -216,6 +223,18 @@ def DeviceIOKeyboardOutputTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_keyboard_output",
         [KeyboardOutputTrackedType("keyboard_tracked")],
+    )
+
+
+def DeviceIOSpaceMouseOutputTracked() -> TensorGroupType:
+    """Tracked SpaceMouse data from DeviceIO SpaceMouseTracker.
+
+    Contains:
+        spacemouse_tracked: SpaceMouseOutput handle, or None while the plugin is not pushing
+    """
+    return TensorGroupType(
+        "deviceio_spacemouse_output",
+        [SpaceMouseOutputTrackedType("spacemouse_tracked")],
     )
 
 

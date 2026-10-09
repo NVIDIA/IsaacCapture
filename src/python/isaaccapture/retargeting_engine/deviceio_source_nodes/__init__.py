@@ -11,6 +11,12 @@ from .head_source import HeadSource
 from .hands_source import HandsSource
 from .controllers_source import ControllersSource
 from .pedals_source import Generic3AxisPedalSource
+from .spacemouse_source import (
+    SpaceMouseButtonsType,
+    SpaceMouseRotationType,
+    SpaceMouseSource,
+    SpaceMouseTranslationType,
+)
 
 from .keyboard_source import (
     KeyboardHeldType,
@@ -41,6 +47,7 @@ from .deviceio_tensor_types import (
     ControllerSnapshotTrackedType,
     Generic3AxisPedalOutputTrackedType,
     KeyboardOutputTrackedType,
+    SpaceMouseOutputTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
     SomaBodyJointRotationsTrackedType,
@@ -52,6 +59,7 @@ from .deviceio_tensor_types import (
     DeviceIOControllerSnapshotTracked,
     DeviceIOGeneric3AxisPedalOutputTracked,
     DeviceIOKeyboardOutputTracked,
+    DeviceIOSpaceMouseOutputTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
     DeviceIOSomaBodyJointRotationsTracked,
@@ -73,6 +81,10 @@ __all__ = [
     "HandsSource",
     "ControllersSource",
     "Generic3AxisPedalSource",
+    "SpaceMouseButtonsType",
+    "SpaceMouseRotationType",
+    "SpaceMouseSource",
+    "SpaceMouseTranslationType",
     "KeyboardHeldType",
     "KeyboardPressedType",
     "KeyboardAttachment",
@@ -99,6 +111,7 @@ __all__ = [
     "ControllerSnapshotTrackedType",
     "Generic3AxisPedalOutputTrackedType",
     "KeyboardOutputTrackedType",
+    "SpaceMouseOutputTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
     "SomaBodyJointRotationsTrackedType",
@@ -113,6 +126,7 @@ __all__ = [
     "DeviceIOControllerSnapshotTracked",
     "DeviceIOGeneric3AxisPedalOutputTracked",
     "DeviceIOKeyboardOutputTracked",
+    "DeviceIOSpaceMouseOutputTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
     "DeviceIOSomaBodyJointRotationsTracked",
