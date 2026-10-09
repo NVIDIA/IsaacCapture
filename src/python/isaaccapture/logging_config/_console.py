@@ -192,17 +192,18 @@ def set_console_logger_name_filter(names: set[str] | None) -> None:
     )
 
 
-def set_console_content_filter(pattern: str | None) -> None:
+def set_console_content_filter(pattern: str | None) -> bool:
     """Keep console records below WARNING only if their message matches regex *pattern*.
 
-    ``None`` removes this filter; an invalid *pattern* is logged as an error and the
-    current filter is kept. Warnings and errors always pass; other records must
+    ``None`` removes this filter. Returns ``True`` once the filter is applied or
+    removed, and ``False`` for an invalid *pattern*, which is logged as an error while
+    the current filter stays. Warnings and errors always pass; other records must
     also pass ``set_console_logger_name_filter()``.
     """
     global _match_content
     if pattern is None:
         _match_content = None
-        return
+        return True
     # Only compiling a regex can tell whether it is valid, so that one error is caught.
     try:
         regex = re.compile(pattern)
@@ -212,9 +213,10 @@ def set_console_content_filter(pattern: str | None) -> None:
             pattern,
             exc,
         )
-        return
+        return False
     # Messages vary without bound, so lru_cache keeps only the most recent results.
     _match_content = functools.lru_cache(lambda message: bool(regex.search(message)))
+    return True
 
 
 class _ConsoleFormat(TypedDict, total=False):

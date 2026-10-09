@@ -88,11 +88,11 @@ class TestLoggerNameFilter:
 class TestContentFilter:
     def test_matches_the_formatted_message(self):
         handler = _console.ensure_handler()
-        logging_config.set_console_content_filter("ready")
+        assert logging_config.set_console_content_filter("ready") is True
         assert handler.filter(record())  # "ready" only exists after args are applied
         assert not handler.filter(record(args=("absent",)))
 
-        logging_config.set_console_content_filter(None)
+        assert logging_config.set_console_content_filter(None) is True
         assert handler.filter(record(args=("absent",)))
 
     def test_a_new_pattern_decides_messages_seen_before(self):
@@ -103,11 +103,11 @@ class TestContentFilter:
         logging_config.set_console_content_filter("absent")
         assert not handler.filter(record())
 
-    def test_an_invalid_pattern_is_logged_and_keeps_the_current_filter(self, caplog):
+    def test_an_invalid_pattern_is_rejected_and_keeps_the_current_filter(self, caplog):
         handler = _console.ensure_handler()
         logging_config.set_console_content_filter("ready")
 
-        logging_config.set_console_content_filter("(unclosed")
+        assert logging_config.set_console_content_filter("(unclosed") is False
 
         assert [entry.levelno for entry in caplog.records] == [logging.ERROR]
         # An unfiltered console is not the right answer to a bad argument.
