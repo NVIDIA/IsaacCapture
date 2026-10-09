@@ -61,7 +61,11 @@ After building, install the wheel with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   uv pip install isaacteleop --find-links=./install/wheels/ --reinstall
+   # Install the wheel by path so a newer release on the index cannot win over the local build
+   # (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.
+   WHEEL=$(ls -t ./install/wheels/isaacteleop-*-cp312-*.whl | head -1)
+   # --reinstall-package replaces an already-installed isaacteleop.
+   uv pip install "${WHEEL}" --reinstall-package isaacteleop
 
    # or
    pip install install/wheels/isaacteleop-*.whl
