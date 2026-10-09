@@ -16,7 +16,6 @@ from typing import TypedDict, TypeVar
 from . import _forwarding, _native_fd
 from ._core import (
     _LEVEL_NAME_BY_VALUE,
-    DATE_FORMAT,
     TRACE,
     env_console_level,
     logging_enabled,
@@ -211,6 +210,10 @@ class _ConsoleFormat(TypedDict, total=False):
     use_short_name: bool  # True: only the last dotted segment
 
 
+# Console only: log files keep DATE_FORMAT's date, which sessions crossing midnight,
+# rotated logs and cross-process correlation need.
+_CONSOLE_DATE_FORMAT = "%H:%M:%S"
+
 # The console's current columns, starting from the defaults the handler is built with.
 _console_format: dict[str, bool] = {
     "show_time": True,
@@ -232,7 +235,7 @@ def _console_formatter(handler: logging.StreamHandler) -> _LoggerNameColorFormat
     ]
     return _LoggerNameColorFormatter(
         " ".join(column for column in columns if column),
-        datefmt=DATE_FORMAT,
+        datefmt=_CONSOLE_DATE_FORMAT,
         handler=handler,
         use_short_name=_console_format["use_short_name"],
     )
@@ -244,8 +247,8 @@ def set_console_format(changes: _ConsoleFormat) -> None:
     Keys left out keep their current setting, which starts as time, level and the
     last logger-name segment, without the pid; an unknown key or a non-bool value
     is logged as an error and skipped. Columns keep the ``LINE_FORMAT`` order with
-    the time as ``HH:MM:SS.mmm``; files and C++ sinks keep ``LINE_FORMAT``, and
-    logger colours still match the full name.
+    the time as ``HH:MM:SS.mmm``; log files from both halves keep the full
+    ``LINE_FORMAT``, date included, and logger colours still match the full name.
     """
     for key, value in changes.items():
         if key not in _console_format:

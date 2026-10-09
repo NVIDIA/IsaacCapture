@@ -73,7 +73,7 @@ class TestLevelVocabulary:
 
 
 class TestLineFormat:
-    """The shape log_bridge's kPattern is written to reproduce."""
+    """The shape log_bridge's kFilePattern is written to reproduce."""
 
     def _render(self, level: int, message: str, args) -> str:
         record = logging.LogRecord(

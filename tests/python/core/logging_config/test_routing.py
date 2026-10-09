@@ -17,6 +17,7 @@ import stat
 
 import pytest
 from conftest import (
+    CPP_CONSOLE_LINE_RE,
     LINE_RE,
     capture_logs,
     clean_env,
@@ -104,7 +105,9 @@ class TestStandaloneCpp:
         assert match["pid"].isdigit()
 
         # Diagnostics go to stderr, so `tool > data.txt` keeps both intact.
-        assert LINE_RE.fullmatch(line_with(result.stderr, "standalone speaking"))
+        assert CPP_CONSOLE_LINE_RE.fullmatch(
+            line_with(result.stderr, "standalone speaking")
+        )
         assert result.stdout == ""
 
     def test_the_console_threshold_comes_from_the_environment(self, tmp_path):

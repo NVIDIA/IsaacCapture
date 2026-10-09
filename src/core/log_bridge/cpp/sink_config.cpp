@@ -45,8 +45,10 @@ namespace
 
 constexpr std::size_t kFileMaxBytes = 10 * 1024 * 1024; // 10 MiB
 constexpr std::size_t kFileBackupCount = 5;
-// Match Python's LINE_FORMAT; %* renders Python-style level names.
-constexpr const char* kPattern = "[%H:%M:%S.%e] [%*] [%n] [pid:%P] %v";
+// Match Python's LINE_FORMAT; %* renders Python-style level names. Only the console
+// drops the date: log files need it across midnight, rotation and processes.
+constexpr const char* kFilePattern = "[%Y-%m-%d %H:%M:%S.%e] [%*] [%n] [pid:%P] %v";
+constexpr const char* kConsolePattern = "[%H:%M:%S.%e] [%*] [%n] [pid:%P] %v";
 
 // Map spdlog levels to Python's display names.
 std::string_view python_level_name(spdlog::level::level_enum level)
@@ -91,10 +93,10 @@ public:
 };
 
 // Each sink owns its formatter.
-std::unique_ptr<spdlog::pattern_formatter> make_formatter()
+std::unique_ptr<spdlog::pattern_formatter> make_formatter(const char* pattern)
 {
     auto formatter = std::make_unique<spdlog::pattern_formatter>();
-    formatter->add_flag<PythonLevelFormatter>('*').set_pattern(kPattern);
+    formatter->add_flag<PythonLevelFormatter>('*').set_pattern(pattern);
     return formatter;
 }
 
@@ -337,7 +339,7 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
         {
             auto console = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
             console->set_level(spdlog::level::trace);
-            console->set_formatter(make_formatter());
+            console->set_formatter(make_formatter(kConsolePattern));
             return std::vector<spdlog::sink_ptr>{ console };
         }
 
@@ -352,7 +354,7 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
         // Build the infallible stderr sink before optional file setup.
         auto console = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
         console->set_level(console_level());
-        console->set_formatter(make_formatter());
+        console->set_formatter(make_formatter(kConsolePattern));
 
         auto dir = log_dir();
 #ifndef _WIN32
@@ -399,7 +401,7 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
             auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
                 filename.string(), kFileMaxBytes, kFileBackupCount, false, events);
             file->set_level(spdlog::level::trace); // always captures everything.
-            file->set_formatter(make_formatter());
+            file->set_formatter(make_formatter(kFilePattern));
             return std::vector<spdlog::sink_ptr>{ console, file };
         }
         catch (const spdlog::spdlog_ex&)

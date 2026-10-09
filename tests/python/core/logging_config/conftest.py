@@ -43,6 +43,12 @@ CONTRACT_ENV_VARS = (
 #: What ``LINE_FORMAT`` renders, whichever half rendered it. ``test_routing``
 #: holds this against a line from each.
 LINE_RE = re.compile(
+    r"^\[(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.(?P<msecs>\d{3})\] "
+    r"\[(?P<level>[A-Z]+ *)\] \[(?P<name>[^]]+)\] \[pid:(?P<pid>\d+)\] (?P<message>.*)$"
+)
+
+#: A C++ console line: ``LINE_FORMAT`` without the date, which only files keep.
+CPP_CONSOLE_LINE_RE = re.compile(
     r"^\[(?P<time>\d{2}:\d{2}:\d{2})\.(?P<msecs>\d{3})\] "
     r"\[(?P<level>[A-Z]+ *)\] \[(?P<name>[^]]+)\] \[pid:(?P<pid>\d+)\] (?P<message>.*)$"
 )
