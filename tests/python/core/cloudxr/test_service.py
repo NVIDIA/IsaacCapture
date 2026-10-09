@@ -468,9 +468,9 @@ class TestWssProxyStartup:
         # The thread outlives the timeout; stop() is what reaps it.
         service._stop_wss_proxy()
 
-    @pytest.mark.parametrize("defer_connect", [False, True])
+    @pytest.mark.parametrize("defer_oob_connect", [False, True])
     def test_headset_connection_is_explicit_only_when_deferred(
-        self, tmp_path, defer_connect
+        self, tmp_path, defer_oob_connect
     ):
         from cloudxr_py_test_ns.wss import _wait_for_connect
 
@@ -487,9 +487,11 @@ class TestWssProxyStartup:
             _stub_wss(proxy),
             patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
         ):
-            service = CloudXRService(setup_oob=True, defer_connect=defer_connect)
+            service = CloudXRService(
+                setup_oob=True, defer_oob_connect=defer_oob_connect
+            )
             try:
-                if defer_connect:
+                if defer_oob_connect:
                     assert not connected.wait(0.05)
                     service.connect_headset()
                     service.connect_headset()  # Releasing the same gate is harmless.
@@ -512,7 +514,7 @@ class TestWssProxyStartup:
             _stub_wss(proxy),
             patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
         ):
-            service = CloudXRService(setup_oob=True, defer_connect=True)
+            service = CloudXRService(setup_oob=True, defer_oob_connect=True)
             thread = service._wss_thread
             service._stop_wss_proxy()
             assert not thread.is_alive()

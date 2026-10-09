@@ -144,8 +144,8 @@ class TestAttach:
         "options", [{}, {"run_embedded": True}, {"setup_oob": True}]
     )
     def test_deferred_connect_requires_an_owned_oob_service(self, options):
-        with pytest.raises(ValueError, match="defer_connect requires"):
-            CloudXRLauncher(defer_connect=True, **options)
+        with pytest.raises(ValueError, match="defer_oob_connect requires"):
+            CloudXRLauncher(defer_oob_connect=True, **options)
 
     def test_deferred_connect_delegates_to_embedded_service(self):
         with (
@@ -153,9 +153,9 @@ class TestAttach:
             patch("isaaccapture.cloudxr.launcher.CloudXRService") as service,
         ):
             launcher = CloudXRLauncher(
-                run_embedded=True, setup_oob=True, defer_connect=True
+                run_embedded=True, setup_oob=True, defer_oob_connect=True
             )
-            assert service.call_args.kwargs["defer_connect"] is True
+            assert service.call_args.kwargs["defer_oob_connect"] is True
             launcher.connect_headset()
             service.return_value.connect_headset.assert_called_once_with()
 
