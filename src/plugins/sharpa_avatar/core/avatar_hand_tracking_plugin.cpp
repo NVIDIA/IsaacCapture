@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -35,7 +36,7 @@ namespace
 {
 
 constexpr size_t kJointFlatbufferSize = 4096;
-constexpr auto kAvatarDataTimeout = std::chrono::seconds(10);
+constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
 constexpr auto kGloveWaitLogInterval = std::chrono::seconds(10);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
@@ -256,6 +257,7 @@ void GloveState::reset() noexcept
     robot_frame = {};
     device.reset();
     last_successful_fetch.reset();
+    last_sample_stamp = {};
 }
 
 AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(config)), m_sdk(m_config.sdk_config_path)
@@ -421,22 +423,31 @@ void AvatarTracker::refresh_data()
         {
             continue;
         }
-        if (!state.device->get_device_info().online)
-        {
-            state.reset();
-            continue;
-        }
+        // Liveness comes from fetched data, not get_device_info().online: the SDK
+        // leaves that flag false on a glove first discovered offline and powered on later.
+        // A haptic-only glove still fetches RAW so the data timeout below can drop a dead handle.
+        const bool probe_raw = !m_config.human && !m_config.raw && !m_config.robot;
 
-        const bool expects_data = m_config.human || m_config.raw || m_config.robot;
+        // fetch_data() keeps returning a silent glove's last sample, so only a newer
+        // sample stamp counts as data for the timeout below.
         bool fetched_any = false;
+        const auto note_stamp = [&state, &fetched_any](const ::avatar::Stamp& stamp)
+        {
+            if (std::tie(stamp.sec, stamp.nanosec) >
+                std::tie(state.last_sample_stamp.sec, state.last_sample_stamp.nanosec))
+            {
+                state.last_sample_stamp = stamp;
+                fetched_any = true;
+            }
+        };
         if (m_config.human)
         {
             ::avatar::AvatarDataFrame frame;
             const bool fetched =
                 state.device->fetch_data(frame, ::avatar::DeviceDataCategory::HUMAN) == ::avatar::ErrorCode::SUCCESS;
-            fetched_any = fetched_any || fetched;
             if (fetched)
             {
+                note_stamp(frame.skeleton.header.stamp);
                 state.landmarks = std::move(frame.skeleton.landmark);
             }
             else
@@ -446,16 +457,16 @@ void AvatarTracker::refresh_data()
         }
         for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
         {
-            if (!dataset_enabled(category))
+            if (!dataset_enabled(category) && !(probe_raw && category == ::avatar::DeviceDataCategory::RAW))
             {
                 continue;
             }
             ::avatar::AvatarDataFrame frame;
             const bool fetched = state.device->fetch_data(frame, category) == ::avatar::ErrorCode::SUCCESS;
-            fetched_any = fetched_any || fetched;
             ::avatar::AvatarDataFrame& cached = cached_joint_frame(state, category);
             if (fetched)
             {
+                note_stamp(hand_payload(frame, category).header.stamp);
                 cached = std::move(frame);
             }
             else
@@ -463,17 +474,14 @@ void AvatarTracker::refresh_data()
                 cached = {};
             }
         }
-        if (expects_data)
+        const auto now = std::chrono::steady_clock::now();
+        if (fetched_any)
         {
-            const auto now = std::chrono::steady_clock::now();
-            if (fetched_any)
-            {
-                state.last_successful_fetch = now;
-            }
-            else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
-            {
-                state.reset();
-            }
+            state.last_successful_fetch = now;
+        }
+        else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
+        {
+            state.reset();
         }
     }
 }
