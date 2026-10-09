@@ -61,7 +61,8 @@ from .teleop_state_manager_types import teleop_control_states
 
 logger = logging.getLogger(__name__)
 
-_MONITORED_PLUGIN_NAME = "manus_hand_plugin"
+# Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
+_MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse"})
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
@@ -1265,7 +1266,7 @@ class TeleopSession:
         for plugin_config in self.config.plugins:
             if (
                 not plugin_config.enabled
-                or plugin_config.plugin_name != _MONITORED_PLUGIN_NAME
+                or plugin_config.plugin_name not in _MONITORED_PLUGIN_NAMES
             ):
                 continue
 

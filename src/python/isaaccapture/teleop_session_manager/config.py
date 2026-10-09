@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
+import isaaccapture
 from isaaccapture.retargeting_engine.deviceio_source_nodes import IDeviceIOSink
 from isaaccapture.retargeting_engine.interface.retargeter_core_types import (
     GraphExecutable,
@@ -272,6 +273,19 @@ class RetargetingExecutionConfig:
     def __post_init__(self) -> None:
         self.mode = RetargetingExecutionMode(self.mode)
         self.pacing = _coerce_pacing_config(self.pacing)
+
+
+def _bundled_plugins_dir(package_roots: Sequence[str]) -> Path:
+    """The first ``plugins/`` under the package roots, else the first root's."""
+    # An editable install splits isaaccapture between the source tree (authored .py, this
+    # module) and the install tree (build products, the plugins), so search every root.
+    dirs = [Path(root) / "plugins" for root in package_roots]
+    return next((d for d in dirs if d.is_dir()), dirs[0])
+
+
+# Plugins bundled with the isaaccapture package (isaaccapture/plugins/<name>/), so a wheel install
+# can start them: pass it as a PluginConfig search path.
+BUNDLED_PLUGINS_DIR = _bundled_plugins_dir(isaaccapture.__path__)
 
 
 @dataclass
