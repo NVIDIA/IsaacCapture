@@ -1,0 +1,160 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+full_plan_template: ../device-plan.template.yaml
+copy_into_plan: "Populate all seven nodes; mark unused stages not_applicable instead of removing them."
+
+device: {name: example_vector_sensor, direction: input}
+stream:
+  name: measured_vector
+  contract:
+    semantics: "Device-frame calibrated vector with per-sample quality"
+    units: "metres per second squared"
+    frame: device
+    timestamp: {source: device, clock: monotonic, units: microseconds}
+    consumer: ExampleVectorSource
+  decision:
+    route: new_schema_push
+    plugin_required: true
+    schema: {action: create, table: ExampleVectorOutput, record: ExampleVectorOutputRecord}
+    tracker: {mechanism: manifest_generated, collection_id: example_vector}
+    rationale: "No current contract preserves meaning, frame, quality, and timing."
+
+plugins:
+  - required: true
+    name: example_vector_sensor
+    root_id: example_vector_sensor
+    args: []
+    search_paths: [install/plugins, plugins]
+    folder: src/plugins/example_vector_sensor
+    target: example_vector_sensor_plugin
+    manifest_file: src/plugins/example_vector_sensor/plugin.yaml
+    manifest_command: ./example_vector_sensor_plugin
+    install_path: plugins/example_vector_sensor
+    collection_ids: [example_vector]
+
+pipeline:
+  node0_acquire:
+    action: create
+    reason: "The device needs a decoder that preserves its vector, quality, and timestamp evidence."
+    reference_file: "src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp"
+    files:
+      - CMakeLists.txt
+      - src/plugins/example_vector_sensor/CMakeLists.txt
+      - src/plugins/example_vector_sensor/example_vector_sensor_plugin.cpp
+      - src/plugins/example_vector_sensor/plugin.yaml
+    verify:
+      action: create
+      reference_file: null
+      files:
+        - tests/cpp/plugins/CMakeLists.txt
+        - tests/cpp/plugins/example_vector_sensor/CMakeLists.txt
+        - tests/cpp/plugins/example_vector_sensor/test_example_vector_decode.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target test_example_vector_decode &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^example_vector_decode$'
+      expected: ["Device-specific cases derived from cited evidence prove the approved acquisition contract without hardware."]
+
+  node1_schema:
+    action: create
+    reason: "No existing schema preserves the vector's device frame, quality, and timestamp contract losslessly."
+    reference_file: "src/core/schema/fbs/joint_state.fbs"
+    files: ["src/core/schema/fbs/example_vector.fbs"]
+    verify:
+      action: create
+      reference_file: "tests/cpp/core/schema/test_se3_tracker.cpp"
+      files:
+        - tests/cpp/core/schema/CMakeLists.txt
+        - tests/cpp/core/schema/test_example_vector.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target schema_tests &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R 'ExampleVector|example_vector'
+      expected: ["Schema round trips preserve vector values, frame-defined slots, quality, absence, and Record timestamp."]
+
+  node2_tracker:
+    action: modify
+    reason: "The new table needs one manifest entry so the standard generator emits its tracker surfaces."
+    reference_file: "src/core/deviceio_trackers/trackers.toml"
+    files: ["src/core/deviceio_trackers/trackers.toml"]
+    verify:
+      action: modify
+      reference_file: "tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"
+      files: ["tests/cpp/core/replay_deviceio_session/test_replay_session.cpp"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target replay_deviceio_session_tests &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^ReplaySession: example vector tracker round-trip$'
+      expected: ["The generated tracker compiles and its collection, values, replay order, and absence contract pass."]
+
+  node3_bindings:
+    action: create
+    reason: "The new schema needs its explicit Python binding and package export."
+    reference_file: "src/core/schema/python/joint_state_bindings.h"
+    files:
+      - src/core/schema/python/example_vector_bindings.h
+      - src/core/schema/python/schema_module.cpp
+      - src/core/schema/python/CMakeLists.txt
+      - src/python/isaacteleop/schema/__init__.py
+    verify:
+      action: create
+      reference_file: "tests/python/core/schema/test_se3_tracker.py"
+      files: ["tests/python/core/schema/test_example_vector.py"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target python_package &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^schema_test_example_vector$'
+      expected: ["Python imports, construction, fields, serialization, absence, and Record timestamps work."]
+
+  node4_source:
+    action: create
+    reason: "The approved consumer needs a source that maps the new tracked payload to its tensor contract."
+    reference_file: "src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/joint_state_source.py"
+    files: ["src/python/isaacteleop/retargeting_engine/deviceio_source_nodes/example_vector_source.py"]
+    verify:
+      action: create
+      reference_file: "tests/python/core/retargeting_engine/test_joint_state_source.py"
+      files: ["tests/python/core/retargeting_engine/test_example_vector_source.py"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target python_package &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_example_vector_source$'
+      expected: ["Source tests prove mapping, units, inactivity, quality, and freshness behavior."]
+
+  node5_boundary:
+    action: modify
+    reason: "The quality-bearing vector requires a typed boundary and stable generated indices."
+    reference_file: "src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py"
+    files:
+      - src/python/isaacteleop/retargeting_engine/tensor_types/standard_types.py
+      - src/python/isaacteleop/retargeting_engine/tensor_types/indices.py
+      - src/python/isaacteleop/retargeting_engine/tensor_types/__init__.py
+    verify:
+      action: create
+      reference_file: "tests/python/core/retargeting_engine/test_tensor_group.py"
+      files: ["tests/python/core/retargeting_engine/test_example_vector_types.py"]
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target python_package &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^retargeting_test_example_vector_types$'
+      expected: ["Boundary tests prove field order, shapes, dtypes, quality, and generated indices."]
+
+  node6_robot_step:
+    action: not_applicable
+    reason: "This example selects ExampleVectorSource but no robot-command consumer."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Robot-step verification is bypassed because no downstream robot behavior is selected."]

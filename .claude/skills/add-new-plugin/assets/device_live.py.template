@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Stream and verify values from one required device plugin.
+
+Fill the plugin settings, timing, and three device hooks, then run:
+
+    python replace_me_live.py live --no-launch-cloudxr-runtime
+    timeout -s INT -k 5s <guard>s python replace_me_live.py test
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from isaacteleop.cloudxr import CloudXRLauncher
+from isaacteleop.teleop_session_manager import (
+    PluginConfig,
+    TeleopSession,
+    TeleopSessionConfig,
+)
+
+PLUGIN_NAME = "replace_me"
+PLUGIN_ROOT_ID = "replace_me"
+PLUGIN_ARGS: tuple[str, ...] = ()
+PLUGIN_SEARCH_PATHS: tuple[str, ...] = ("install/plugins", "plugins")
+TEST_DURATION_S = 5.0
+# Observation/printing interval only; this is not the device or plugin update-rate contract.
+POLL_INTERVAL_S = 0.05
+Value = Any
+
+
+# Keep device adaptation in these three hooks so the stream loop stays readable.
+def build_pipeline() -> Any:
+    raise NotImplementedError("build the approved pipeline from device.spec.yaml")
+
+
+def read_value(outputs: dict[str, Any]) -> Value | None:
+    """Return a copied device value, or None while it is unavailable."""
+    raise NotImplementedError("extract the approved output from session.step()")
+
+
+def verify(values: list[Value]) -> None:
+    """Raise when collected values violate the device contract."""
+    raise NotImplementedError("check only requirements from device.spec.yaml")
+
+
+def _session_config() -> TeleopSessionConfig:
+    base = Path(__file__).resolve().parents[3]
+    search_paths = [(base / path).resolve() for path in PLUGIN_SEARCH_PATHS]
+    return TeleopSessionConfig(
+        app_name=f"{PLUGIN_NAME}Live",
+        pipeline=build_pipeline(),
+        plugins=[
+            PluginConfig(
+                plugin_name=PLUGIN_NAME,
+                plugin_root_id=PLUGIN_ROOT_ID,
+                search_paths=search_paths,
+                plugin_args=list(PLUGIN_ARGS),
+                required=True,
+            )
+        ],
+    )
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=("live", "test"))
+    parser.add_argument(
+        "--launch-cloudxr-runtime",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="attach to or start CloudXR (default: false; requires authorization)",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_live(session: TeleopSession) -> None:
+    print("[live] streaming; press Ctrl+C to stop")
+    try:
+        while True:
+            value = read_value(session.step())
+            if value is not None:
+                print(f"[live] {value}", flush=True)
+            time.sleep(POLL_INTERVAL_S)
+    except KeyboardInterrupt:
+        print("\n[live] stopped")
+
+
+def _run_test(session: TeleopSession) -> int:
+    values: list[Value] = []
+    deadline = time.monotonic() + TEST_DURATION_S
+    while time.monotonic() < deadline:
+        value = read_value(session.step())
+        if value is not None:
+            values.append(value)
+            print(f"[test] {value}", flush=True)
+        time.sleep(POLL_INTERVAL_S)
+
+    if not values:
+        raise RuntimeError(f"no device values received in {TEST_DURATION_S:.1f}s")
+    verify(values)
+    return len(values)
+
+
+def main(argv: list[str]) -> int:
+    args = _parse_args(argv)
+    observation_count: int | None = None
+    with CloudXRLauncher.launch_context(args):
+        with TeleopSession(_session_config()) as session:
+            if args.mode == "live":
+                _run_live(session)
+            else:
+                observation_count = _run_test(session)
+
+    if observation_count is not None:
+        print(f"[test] PASS: {observation_count} values", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
