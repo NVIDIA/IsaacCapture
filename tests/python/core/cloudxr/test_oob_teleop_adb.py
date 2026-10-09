@@ -36,6 +36,7 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
     require_adb_on_path,
     require_coturn_available,
     run_adb_headset_bookmark,
+    run_oob_connect,
 )
 
 
@@ -1348,6 +1349,40 @@ async def test_find_and_click_teleop_tab_no_tab_found_raises() -> None:
                 deadline=time.monotonic() + 1.5,
                 timeout=1.5,
             )
+
+
+async def test_run_oob_connect_calls_find_tab_with_real_signature() -> None:
+    """Regression test: run_oob_connect() must call the real (not mocked)
+    _find_and_click_teleop_tab() with a signature it actually accepts. A prior revision
+    passed on_client_loaded to a _find_and_click_teleop_tab() that didn't declare it,
+    which a mocked helper can't catch since the mock accepts any arguments."""
+    script = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(script) as ws_url:
+        tabs = [
+            {
+                "id": "teleop-1",
+                "url": "https://headset.local/?oobEnable=1",
+                "webSocketDebuggerUrl": ws_url,
+            }
+        ]
+        with (
+            _fake_cdp_server(tabs),
+            patch.object(adb_module, "_close_stale_teleop_tabs", return_value=0),
+            patch.object(adb_module, "run_adb_headset_bookmark", return_value=(0, "")),
+            patch.object(
+                adb_module, "_discover_devtools_socket", return_value="socket"
+            ),
+            patch.object(adb_module, "_adb_forward_cdp"),
+            patch.object(adb_module, "_adb_forward_remove"),
+            patch.object(adb_module, "_monitor_teleop_error_banner"),
+        ):
+            monitor_task = await run_oob_connect(
+                resolved_port=48322,
+                timeout=5,
+                on_client_loaded=lambda: None,
+            )
+    assert monitor_task is not None
+    monitor_task.cancel()
 
 
 # ============================================================================

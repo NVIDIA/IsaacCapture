@@ -1839,6 +1839,8 @@ async def attach_existing_oob_tab(
             try:
                 await forward_task
             except Exception:
+                # Only draining forward_task to settle it before the `raise` below
+                # propagates the real cancellation - a failure here must not replace it.
                 pass
             raise
         tabs = await asyncio.to_thread(_cdp_list_tabs, _CDP_LOCAL_PORT)
@@ -1888,7 +1890,8 @@ async def _find_and_click_teleop_tab(
     usb_local: bool = False,
     host_client: bool = False,
     refresh_static_assets: bool = False,
-    on_dispatched: Callable[[], None] | None = None,
+    on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
+    on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> str:
     """Find the teleop tab (freshly opened or navigated by ``am start``) via the CDP forward
     already up on ``_CDP_LOCAL_PORT``, then click CONNECT on it.
@@ -2028,6 +2031,7 @@ async def _find_and_click_teleop_tab(
         ws_url,
         refresh_static_assets=refresh_static_assets,
         on_dispatched=on_dispatched,
+        on_client_loaded=on_client_loaded,
     )
     return ws_url
 
