@@ -41,16 +41,51 @@ OpenXrSession::OpenXrSession(const std::string& app_name,
 
 OpenXrSession::~OpenXrSession()
 {
-    // Explicit xrEndSession before unique_ptr's xrDestroySession.
-    // Best-effort — dtor can't throw.
-    if (session_ && session_running_)
+    // End the session before unique_ptr's xrDestroySession. Best-effort — dtor can't throw.
+    try
     {
-        (void)xrEndSession(session_.get());
-        session_running_ = false;
+        end_session();
+    }
+    catch (const std::exception& e)
+    {
+        std::fprintf(stderr, "OpenXrSession: end_session failed during teardown: %s\n", e.what());
     }
     // Member destruction order is reverse declaration: view_space →
     // reference_space → session → instance. Each unique_ptr's deleter
     // runs xrDestroy* in the right order.
+}
+
+bool OpenXrSession::end_session(std::chrono::milliseconds timeout)
+{
+    if (!session_ || !session_running_)
+    {
+        return true;
+    }
+    // xrEndSession is only valid in STOPPING, which the runtime enters after an exit request;
+    // poll_events() then ends the session from its STOPPING handler.
+    const XrResult r = xrRequestExitSession(session_.get());
+    if (XR_FAILED(r))
+    {
+        std::fprintf(stderr, "OpenXrSession: xrRequestExitSession failed: XrResult=%d\n", static_cast<int>(r));
+        return false;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        poll_events();
+        if (!session_running_)
+        {
+            return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            std::fprintf(
+                stderr, "OpenXrSession: runtime did not report STOPPING within %lld ms; destroying the session anyway\n",
+                static_cast<long long>(timeout.count()));
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 }
 
 void OpenXrSession::create_instance(const std::string& app_name, const std::vector<std::string>& extra_extensions)
@@ -447,7 +482,11 @@ void OpenXrSession::handle_session_state_change(XrSessionState new_state)
     case XR_SESSION_STATE_STOPPING:
         if (session_running_)
         {
-            (void)xrEndSession(session_.get());
+            const XrResult r = xrEndSession(session_.get());
+            if (XR_FAILED(r))
+            {
+                std::fprintf(stderr, "OpenXrSession: xrEndSession failed: XrResult=%d\n", static_cast<int>(r));
+            }
             session_running_ = false;
         }
         break;
