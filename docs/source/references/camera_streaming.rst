@@ -403,7 +403,15 @@ Loopback
 Loopback is a testing / debugging aid, not a deployment mode: ``./camera_viz.sh loopback
 configs/v4l2.yaml`` runs the sender and viewer together on ``127.0.0.1`` — the quickest way to
 smoke-test the RTP path on one machine. It also works camera-free with a mono ``type: video``
-entry (set ``width`` / ``height`` / ``fps``).
+entry: ``./camera_viz.sh loopback configs/replay.yaml`` runs as shipped.
+
+Two things to know when running it:
+
+- Use the config that matches the attached camera. ``configs/v4l2.yaml`` is a ZED Mini template
+  (``/dev/video0``, 2560x720); on any other camera it fails to open and the viewer reports
+  ``submit/s 0.0``. For a RealSense, run ``configs/realsense.yaml``.
+- ``loopback`` does not forward ``--mode``, so it opens in the YAML's ``display.mode`` (``xr`` by
+  default). Set ``display.mode: window`` in the YAML for a desktop window.
 
 Configuration
 -------------
