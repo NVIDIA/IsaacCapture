@@ -569,6 +569,27 @@ class OobLifecycle:
                     "Owned ADB mapping cleanup failed: %s", command, exc_info=True
                 )
 
+    async def _close_teleop_tab(self) -> None:
+        """Close the headset's teleop tab on shutdown so it leaves the CloudXR session.
+
+        Without this the page treats the vanished server as a dropped stream and keeps
+        retrying inside the XR session.
+        """
+        if not self.selected:
+            return
+        try:
+            closed = await asyncio.shield(
+                asyncio.to_thread(adb._close_stale_teleop_tabs)
+            )
+        except Exception:
+            log.debug("Teleop tab close on shutdown failed", exc_info=True)
+            return
+        if closed:
+            oob_progress(
+                "usb-local" if self.usb_local else "setup-oob",
+                f"closed {closed} teleop tab(s) on the headset; session ended",
+            )
+
     async def _shielded_cleanup(self) -> None:
         task = asyncio.create_task(self._cleanup_owned_rules())
         await asyncio.shield(task)
@@ -2045,6 +2066,7 @@ class OobLifecycle:
             ):
                 self._record_usb_wait("STOPPED", "stopped_before_checks")
             await self._stop_monitor()
+            await self._close_teleop_tab()
             await self._shielded_cleanup()
             if self.coturn is not None:
                 await asyncio.to_thread(adb.stop_coturn, self.coturn)

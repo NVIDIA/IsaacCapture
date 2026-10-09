@@ -1978,7 +1978,8 @@ async def test_quick_cable_flap_repairs_transport_without_browser_automation():
     assert lifecycle.browser_client == "surviving-page"
     automate.assert_not_called()
     run_oob_connect.assert_not_called()
-    close_tabs.assert_not_called()
+    # The repair closes no tab; the one call is run()'s shutdown close.
+    close_tabs.assert_called_once_with()
     navigate.assert_not_called()
 
 
