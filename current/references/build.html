@@ -485,7 +485,11 @@
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
 <p>After building, install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>isaaccapture<span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Install the wheel by path so a newer release on the index cannot win over the local build</span>
+<span class="c1"># (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.</span>
+<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>-t<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
+<span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 
 <span class="c1"># or</span>
 pip<span class="w"> </span>install<span class="w"> </span>install/wheels/isaaccapture-*.whl
