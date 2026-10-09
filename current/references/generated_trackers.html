@@ -356,6 +356,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/soma.html">SOMA Pose Transport</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
@@ -515,6 +516,22 @@ the built module.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">se3_tracker</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">Se3Tracker</span></code></p></td>
 <td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code>; the default would give <code class="docutils literal notranslate"><span class="pre">Se3TrackerTracker</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_body_joint_rotations</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SomaBodyJointRotationsTracker</span></code></p></td>
+<td><p>Keyed SOMA body rotations for up to 77 controls of the 78-joint skeleton; defined against SOMA-X v0.3.1</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SomaBodyJointPosesTracker</span></code></p></td>
+<td><p>Keyed evaluated SOMA positions and orientations for up to 77 public joints</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_hand_joint_rotations</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SomaHandJointRotationsTracker</span></code></p></td>
+<td><p>Keyed SOMA hand rotations for up to 25 controls; defined against SOMA-X v0.3.1</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SomaHandJointPosesTracker</span></code></p></td>
+<td><p>Keyed evaluated SOMA positions and orientations for up to 25 joints</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">oglo_tactile</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code></p></td>
