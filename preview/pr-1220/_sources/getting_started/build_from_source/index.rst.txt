@@ -343,16 +343,17 @@ based on the Python version.  Note that ``pip`` and ``uv pip`` has slightly diff
 
 With ``uv pip``, ``--find-links`` still consults the package index and installs the highest
 version it finds, so a newer published ``isaaccapture`` there silently wins over your local build.
-Passing ``--no-index`` alone is not enough, because the wheel's dependencies are not in
-``./install/wheels/``. Install in two steps instead:
+``--no-index`` is not a fix either: the wheel's dependencies are not in ``./install/wheels/``, so
+the install fails. Install the local wheel by path instead. That always selects your build, while
+the index stays available for its dependencies:
 
 .. code-block:: bash
 
-   # 1. Install the dependencies (resolved from the package index).
-   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/
+   # Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).
+   WHEEL=$(ls ./install/wheels/isaaccapture-*-cp312-*.whl)
 
-   # 2. Replace isaaccapture itself with the local build, using only ./install/wheels/.
-   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --reinstall-package isaaccapture
+   # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
+   uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --reinstall-package isaaccapture
 
 Check that the installed version ends in ``+local`` with ``uv pip list | grep isaaccapture``.
 

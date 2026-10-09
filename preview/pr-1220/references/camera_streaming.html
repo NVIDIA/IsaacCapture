@@ -895,7 +895,15 @@ errors, and network blips.</p>
 <p>Loopback is a testing / debugging aid, not a deployment mode: <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span>
 <span class="pre">configs/v4l2.yaml</span></code> runs the sender and viewer together on <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> — the quickest way to
 smoke-test the RTP path on one machine. It also works camera-free with a mono <code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>
-entry (set <code class="docutils literal notranslate"><span class="pre">width</span></code> / <code class="docutils literal notranslate"><span class="pre">height</span></code> / <code class="docutils literal notranslate"><span class="pre">fps</span></code>).</p>
+entry: <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span> <span class="pre">configs/replay.yaml</span></code> runs as shipped.</p>
+<p>Two things to know when running it:</p>
+<ul class="simple">
+<li><p>Use the config that matches the attached camera. <code class="docutils literal notranslate"><span class="pre">configs/v4l2.yaml</span></code> is a ZED Mini template
+(<code class="docutils literal notranslate"><span class="pre">/dev/video0</span></code>, 2560x720); on any other camera it fails to open and the viewer reports
+<code class="docutils literal notranslate"><span class="pre">submit/s</span> <span class="pre">0.0</span></code>. For a RealSense, run <code class="docutils literal notranslate"><span class="pre">configs/realsense.yaml</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">loopback</span></code> does not forward <code class="docutils literal notranslate"><span class="pre">--mode</span></code>, so it opens in the YAML’s <code class="docutils literal notranslate"><span class="pre">display.mode</span></code> (<code class="docutils literal notranslate"><span class="pre">xr</span></code> by
+default). Set <code class="docutils literal notranslate"><span class="pre">display.mode:</span> <span class="pre">window</span></code> in the YAML for a desktop window.</p></li>
+</ul>
 </section>
 </section>
 <section id="configuration">

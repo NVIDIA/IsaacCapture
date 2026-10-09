@@ -781,13 +781,14 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaa
 </div>
 <p>With <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code>, <code class="docutils literal notranslate"><span class="pre">--find-links</span></code> still consults the package index and installs the highest
 version it finds, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> there silently wins over your local build.
-Passing <code class="docutils literal notranslate"><span class="pre">--no-index</span></code> alone is not enough, because the wheel’s dependencies are not in
-<code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>. Install in two steps instead:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Install the dependencies (resolved from the package index).</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
+<code class="docutils literal notranslate"><span class="pre">--no-index</span></code> is not a fix either: the wheel’s dependencies are not in <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>, so
+the install fails. Install the local wheel by path instead. That always selects your build, while
+the index stays available for its dependencies:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).</span>
+<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="k">)</span>
 
-<span class="c1"># 2. Replace isaaccapture itself with the local build, using only ./install/wheels/.</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--no-index<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
+<span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">[retargeters,cloudxr,ui]"</span><span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
 <p>Check that the installed version ends in <code class="docutils literal notranslate"><span class="pre">+local</span></code> with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">list</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">isaaccapture</span></code>.</p>
