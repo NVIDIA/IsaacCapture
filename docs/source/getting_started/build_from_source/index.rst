@@ -354,7 +354,8 @@ the index stays available for its dependencies:
    WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
-   uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --reinstall-package isaaccapture
+   # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
+   uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
 Check that the installed version ends in ``+local`` with ``uv pip list | grep isaaccapture``.
 

@@ -64,7 +64,8 @@ After building, install the wheels with ``uv`` or ``pip``:
    # Install the wheel by path so a newer release on the index cannot win over the local build
    # (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.
    WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
-   uv pip install "${WHEEL}" --reinstall-package isaaccapture
+   # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
+   uv pip install "${WHEEL}" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
    pip install install/wheels/isaaccapture-*.whl
