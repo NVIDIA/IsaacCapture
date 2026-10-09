@@ -300,6 +300,14 @@ detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.
 
+A launcher requesting ``--setup-oob`` or ``--usb-local`` checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.
+
 .. code-block:: text
 
    ./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.

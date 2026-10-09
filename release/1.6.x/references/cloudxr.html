@@ -770,6 +770,13 @@ the launcher starts a service. When attaching, the launcher recovers the
 detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.</p>
+<p>A launcher requesting <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> or <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
   NV_DEVICE_PROFILE: auto-native requested, Quest3 in effect
   Restart the service to apply it:

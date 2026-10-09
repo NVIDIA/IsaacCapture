@@ -997,13 +997,20 @@ mode supports WiFi setup only; the launcher rejects the
 combination at startup.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code></p></td>
-<td><p>Pin a specific adb device when more than one is connected. The
-lifecycle waits if multiple devices are ready before its first
-selection. Once selected, every device command uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
-If the selected serial disappears, becomes offline, or is unauthorized,
-the service waits for it and ignores other devices. When it returns,
-recovery resumes even if the other devices remain connected. Without
-<code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code>, exactly one ready device is required for selection.</p></td>
+<td><p>Pin the intended headset before starting OOB when more than one ADB
+transport is visible. Without it, the first observation must contain
+exactly one serial; that serial is pinned even while <code class="docutils literal notranslate"><span class="pre">unauthorized</span></code>
+or <code class="docutils literal notranslate"><span class="pre">offline</span></code>. An ambiguous first observation fails with a restart
+instruction, rather than selecting by list order or by which device
+becomes ready first. Every device command then uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
+If the selected serial disappears or loses authorization, the service
+waits for it and ignores later devices. Once accessible, the selected
+device must identify as a Meta Quest or PICO headset through Android
+manufacturer/brand and a nonempty model property. Connect a supported
+HMD and set <code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code> if the wrong device was selected.
+Before each new browser launch, ADB must confirm
+<code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; wear or unlock the headset (or cover its
+proximity sensor) when the service reports that it is asleep.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
