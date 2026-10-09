@@ -158,6 +158,7 @@ class OobLifecycle:
         self._transport_disruption_signature: tuple | None = None
         self._handled_terminal_events: set[str] = set()
         self._soft_click_keys: set[str] = set()
+        self._same_tab_wake_blocked = False
         # Set by _on_cdp_terminal_error (passed to the monitor as on_terminal_error),
         # consumed once per run() iteration by _handle_cdp_terminal_error - see that
         # method's doc comment for why the monitor itself never acts on this.
@@ -346,6 +347,7 @@ class OobLifecycle:
     async def _remember_transport_loss(self) -> None:
         """Drop transport-owned state while preserving the prior browser intent."""
         self._usb_waiting_for_awake = False
+        self._same_tab_wake_blocked = False
         if self._usb_wake_confirmed is not None:
             self._usb_wake_confirmed = None
             if self._usb_health_report is not None:
@@ -913,6 +915,7 @@ class OobLifecycle:
     async def _automate(self) -> None:
         await self._stop_monitor()
         self._pending_cdp_terminal_error = None
+        self._same_tab_wake_blocked = False
         self._transport_lost = False
         self._restore_existing_browser = False
         self._repair_started_at = None
@@ -1005,8 +1008,8 @@ class OobLifecycle:
             return False
         return True
 
-    async def _same_tab_connect(self, key: str) -> bool:
-        """Dispatch at most one trusted CONNECT click for a terminal/grace event."""
+    async def _same_tab_connect(self, key: str) -> bool | None:
+        """Dispatch CONNECT once, or defer without consuming the key while asleep."""
         if key in self._soft_click_keys:
             return False
         self._soft_click_keys.add(key)
@@ -1055,10 +1058,25 @@ class OobLifecycle:
                 host_client=self.host_client,
                 on_terminal_error=self._on_cdp_terminal_error,
             )
+        except adb.HeadsetNotAwakeError:
+            self.monitor = None
+            self.connect_dispatched = False
+            self._soft_click_keys.discard(key)
+            self._same_tab_wake_blocked = True
+            await self._publish(
+                "degraded",
+                "WAITING_FOR_AWAKE",
+                "Selected headset must be Awake before CONNECT; wear or unlock it",
+                adbReady=True,
+                networkPresent=True,
+            )
+            return None
         except adb.OobAdbError:
             self.monitor = None
             self.connect_dispatched = False
+            self._same_tab_wake_blocked = False
             return False
+        self._same_tab_wake_blocked = False
         if not self.connect_dispatched:
             await on_dispatched()
         self._client_grace_deadline = self._bounded_client_grace_deadline()
@@ -1100,7 +1118,8 @@ class OobLifecycle:
                     turnPrerequisitesReady=True,
                 )
                 return
-            if await self._same_tab_connect(f"grace:{self.generation}"):
+            click = await self._same_tab_connect(f"grace:{self.generation}")
+            if click is None or click:
                 return
             # No usable tab survived the bounded grace. Only now perform the
             # destructive close/navigate/bootstrap path.
@@ -1166,8 +1185,11 @@ class OobLifecycle:
             )
             return
         if terminal_event and terminal_event not in self._handled_terminal_events:
+            click = await self._same_tab_connect(f"terminal:{terminal_event}")
+            if click is None:
+                return
             self._handled_terminal_events.add(terminal_event)
-            if await self._same_tab_connect(f"terminal:{terminal_event}"):
+            if click:
                 return
         if (
             phase == "terminal"
@@ -1183,7 +1205,8 @@ class OobLifecycle:
             and phase != "terminal"
             and not self.connect_dispatched
         ):
-            if await self._same_tab_connect(f"grace:{self.generation}"):
+            click = await self._same_tab_connect(f"grace:{self.generation}")
+            if click is None or click:
                 return
             # The control client survived, but without an attachable CDP tab
             # there is nowhere to dispatch the one trusted same-tab click.
@@ -1355,7 +1378,11 @@ class OobLifecycle:
                 adb_ready=True,
                 network_present=True,
             )
-        if not await self._same_tab_connect(key):
+        click = await self._same_tab_connect(key)
+        if click is None:
+            self._pending_cdp_terminal_error = banner
+            return
+        if not click:
             self._transport_lost = True
             self._restore_existing_browser = True
             self._repair_started_at = time.time()
@@ -1409,8 +1436,11 @@ class OobLifecycle:
                     adb_ready=True,
                     network_present=True,
                 )
+            click = await self._same_tab_connect(f"terminal:{terminal_event}")
+            if click is None:
+                return
             self._handled_terminal_events.add(terminal_event)
-            if not await self._same_tab_connect(f"terminal:{terminal_event}"):
+            if not click:
                 # Continue the bounded existing-browser path without rebuilding
                 # transport that is already healthy. At grace expiry this may
                 # bootstrap only if no usable CDP tab can be recovered.
@@ -1694,6 +1724,7 @@ class OobLifecycle:
                     self._prerequisite_signature = signature
                 if (
                     preserving_browser
+                    and not self._same_tab_wake_blocked
                     and self.clock() >= self.episode_start + self.config.timeout_sec
                 ):
                     if self._repair_started_at is not None:

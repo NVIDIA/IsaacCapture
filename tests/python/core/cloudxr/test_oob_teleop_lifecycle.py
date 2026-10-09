@@ -51,6 +51,7 @@ def immediate_to_thread(monkeypatch):
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
     )
     monkeypatch.setattr(adb, "assert_supported_headset", lambda: None)
+    monkeypatch.setattr(adb, "assert_headset_awake", lambda **_kwargs: None)
 
 
 @pytest.mark.parametrize(
@@ -2578,6 +2579,74 @@ async def test_same_tab_connect_publishes_dispatch_before_monitor_returns():
     ):
         assert await lifecycle._same_tab_connect("terminal:1")
     await lifecycle._stop_monitor()
+
+
+async def test_asleep_same_tab_attempt_keeps_key_for_retry_after_wake():
+    hub = FakeHub()
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    lifecycle.selected = "original"
+    attempts = []
+
+    async def attach(*, on_dispatched, **_kwargs):
+        attempts.append("attach")
+        if len(attempts) == 1:
+            raise adb.HeadsetNotAwakeError("not Awake")
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
+        return asyncio.create_task(asyncio.Event().wait())
+
+    with patch.object(adb, "attach_existing_oob_tab", side_effect=attach):
+        assert await lifecycle._same_tab_connect("terminal:1") is None
+        assert lifecycle._same_tab_wake_blocked is True
+        assert "terminal:1" not in lifecycle._soft_click_keys
+        assert hub.statuses[-1]["state"] == "WAITING_FOR_AWAKE"
+        assert lifecycle.connect_dispatched is False
+        assert await lifecycle._same_tab_connect("terminal:1") is True
+    assert attempts == ["attach", "attach"]
+    assert lifecycle._same_tab_wake_blocked is False
+    assert lifecycle.connect_dispatched is True
+    await lifecycle._stop_monitor()
+
+
+async def test_terminal_event_is_not_consumed_while_same_tab_click_waits_for_wake():
+    hub = FakeHub()
+    event = {
+        "clientId": "surviving-page",
+        "streaming": False,
+        "lastMetricsAt": None,
+        "streamPhase": "terminal",
+        "terminalEventId": "terminal-1",
+    }
+    hub.get_snapshot = lambda: asyncio.sleep(0, result={"headsets": [event]})
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_client = "surviving-page"
+    lifecycle.browser_ready = True
+    with (
+        patch.object(lifecycle, "_attach_existing_monitor", return_value=True),
+        patch.object(lifecycle, "_same_tab_connect", side_effect=[None, True]) as click,
+    ):
+        await lifecycle._observe_stream()
+        assert "terminal-1" not in lifecycle._handled_terminal_events
+        assert lifecycle._restore_existing_browser is False
+        await lifecycle._observe_stream()
+    assert [c.args[0] for c in click.await_args_list] == [
+        "terminal:terminal-1",
+        "terminal:terminal-1",
+    ]
+    assert "terminal-1" in lifecycle._handled_terminal_events
 
 
 async def test_grace_recovery_without_hub_report_publishes_loaded_before_connect():

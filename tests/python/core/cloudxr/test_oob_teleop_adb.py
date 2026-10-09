@@ -63,6 +63,11 @@ def _clear_adb_device_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANDROID_SERIAL", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _awake_for_cdp_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adb_module, "assert_headset_awake", lambda **_kwargs: None)
+
+
 @pytest.mark.parametrize(
     ("manufacturer", "brand", "model"),
     [("Meta", "oculus", "Quest 3"), ("PICO", "PICO", "PICO 4")],
@@ -1315,6 +1320,25 @@ async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_click
     assert click_index > dispatch_index
 
 
+async def test_cdp_connect_waits_for_awake_before_mouse_dispatch() -> None:
+    asleep = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(asleep) as ws_url:
+        with patch.object(
+            adb_module,
+            "assert_headset_awake",
+            side_effect=adb_module.HeadsetNotAwakeError("not Awake"),
+        ) as wake:
+            with pytest.raises(adb_module.HeadsetNotAwakeError, match="not Awake"):
+                await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in asleep.calls]
+    wake.assert_called_once_with(timeout=10.0, require_awake=True)
+
+    awake = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(awake) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" in [m for m, _ in awake.calls]
+
+
 async def test_cdp_session_click_connect_failed_capability_check_raises() -> None:
     script = _CdpScript(
         interstitial=False,
@@ -1417,7 +1441,7 @@ async def test_cdp_tab_url_logs_hide_credentials(
             "id": "teleop-1",
             "url": current,
             "webSocketDebuggerUrl": "ws://cdp.test",
-            "title": "Teleop",
+            "title": "https://headset.local/?controlToken=title-control-canary&turnCredential=title-turn-canary",
         }
     ]
     with (
@@ -1433,6 +1457,8 @@ async def test_cdp_tab_url_logs_hide_credentials(
     assert "cdp-control-canary" not in caplog.text
     assert "cdp-turn-canary" not in caplog.text
     assert "old-control-canary" not in caplog.text
+    assert "title-control-canary" not in caplog.text
+    assert "title-turn-canary" not in caplog.text
     assert "controlToken=<REDACTED>" in caplog.text
     assert "turnCredential=<REDACTED>" in caplog.text
 

@@ -56,6 +56,10 @@ class OobAdbError(Exception):
     """``--setup-oob`` adb step failed; ``str(exception)`` is formatted for users (print without traceback)."""
 
 
+class HeadsetNotAwakeError(OobAdbError):
+    """A CONNECT or browser launch must wait for confirmed headset wakefulness."""
+
+
 SELECTED_ADB_SERIAL: ContextVar[str | None] = ContextVar(
     "selected_adb_serial", default=None
 )
@@ -388,7 +392,7 @@ def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) 
         "aborting USB transfer" if require_awake else "continuing anyway",
     )
     if require_awake:
-        raise OobAdbError("Headset wakefulness was not confirmed as Awake")
+        raise HeadsetNotAwakeError("Headset wakefulness was not confirmed as Awake")
 
 
 def adb_device_state() -> str:
@@ -1754,6 +1758,8 @@ async def _cdp_session_click_connect(
         #    but does not fire React's onClick handler (touch-first routing).
         #    By running inside the user-activation window opened in phase 1,
         #    requestSession() still sees activation when onClick runs.
+        # Both fresh-page and same-tab recovery reach this boundary.
+        await asyncio.to_thread(assert_headset_awake, timeout=10.0, require_awake=True)
         x, y = val["x"], val["y"]
         log.info("CDP: clicking CONNECT at (%.0f, %.0f)", x, y)
         for event_type in ("mousePressed", "mouseReleased"):
@@ -1990,7 +1996,7 @@ async def _find_and_click_teleop_tab(
                 ws_url = tab["webSocketDebuggerUrl"]
                 log.info(
                     "CDP: new tab %r url=%s",
-                    tab.get("title"),
+                    redact_control_token(str(tab.get("title") or "")),
                     redact_control_token(current_url),
                 )
                 break
@@ -2001,7 +2007,7 @@ async def _find_and_click_teleop_tab(
                 ws_url = tab["webSocketDebuggerUrl"]
                 log.info(
                     "CDP: navigated tab %r url=%s (was %s)",
-                    tab.get("title"),
+                    redact_control_token(str(tab.get("title") or "")),
                     redact_control_token(current_url),
                     redact_control_token(old_url) if old_url else "<new>",
                 )
@@ -2017,7 +2023,7 @@ async def _find_and_click_teleop_tab(
                 ws_url = tab["webSocketDebuggerUrl"]
                 log.info(
                     "CDP: existing teleop tab %r url=%s (snapshot already current)",
-                    tab.get("title"),
+                    redact_control_token(str(tab.get("title") or "")),
                     redact_control_token(current_url),
                 )
                 break
