@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Read-only access to SpaceMouse HID nodes for the spacemouse plugin. Install with install_udev_rules.sh.
+
+# 3Dconnexion devices (SpaceMouse Compact, SpaceMouse Wireless, Universal Receiver, ...)
+KERNEL=="hidraw*", ATTRS{idVendor}=="256f", MODE:="0444"
+# SpaceNavigator and SpaceNavigator for Notebooks (Logitech vendor ID)
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c626", MODE:="0444"
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c628", MODE:="0444"
