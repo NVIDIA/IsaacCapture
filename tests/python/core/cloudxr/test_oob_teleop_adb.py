@@ -1563,9 +1563,9 @@ import contextlib  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from conftest import (  # noqa: E402
-    _free_tcp_port,
     cdp_evaluate,
     real_browser_adb,
+    real_browser_env,
     real_chrome,
     real_wss_proxy,
     static_webxr_build,
@@ -1583,30 +1583,17 @@ async def test_run_oob_connect_real_browser_end_to_end(
     _cdp_session_click_connect polls the real client's readiness state machine
     (real IWER capability checks) and clicks the real CONNECT button.
     """
-    client_port = _free_tcp_port()
-    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
-    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
-
-    wss_port = _free_tcp_port()
-    backend_port = _free_tcp_port()
-    user_data_dir = tmp_path / "chrome-profile"
-    user_data_dir.mkdir()
-    install_dir = tmp_path / "cxr-install"
-
     with (
-        static_webxr_build(
-            client_port,
-            npm_build_script="build:app-mock",
-            build_dir_name="build-app-mock",
-        ),
-        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_env(tmp_path, monkeypatch) as env,
+        static_webxr_build(env.client_port),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=env.user_data_dir) as chrome,
         real_browser_adb(chrome) as fake_adb,
     ):
         async with real_wss_proxy(
-            install_dir, proxy_port=wss_port, backend_port=backend_port
+            env.install_dir, proxy_port=env.wss_port, backend_port=env.backend_port
         ):
             task = await run_oob_connect(
-                resolved_port=wss_port, timeout=30.0, usb_local=True
+                resolved_port=env.wss_port, timeout=30.0, usb_local=True
             )
 
         # A real task, not None: the click genuinely succeeded and
@@ -1641,36 +1628,21 @@ async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
     matching what a real launch produces.
 
     Proves the crash-trigger mechanism itself — a real, real-DOM error banner
-    appears on demand — ahead of reusing it to test
-    ``_find_and_click_teleop_tab``'s actual recovery once this test infra is
-    merged onto ``gmorgan/oob-error-relaunch`` (that branch's monitor is
-    repair-capable; this branch's is not, so this test only proves the crash
-    signal is real and detectable, not that anything recovers from it).
+    appears on demand — independent of whether anything recovers from it; see
+    :func:`test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch`
+    for the recovery assertion.
     """
-    client_port = _free_tcp_port()
-    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
-    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
-
-    wss_port = _free_tcp_port()
-    backend_port = _free_tcp_port()
-    user_data_dir = tmp_path / "chrome-profile"
-    user_data_dir.mkdir()
-    install_dir = tmp_path / "cxr-install"
-
     with (
-        static_webxr_build(
-            client_port,
-            npm_build_script="build:app-mock",
-            build_dir_name="build-app-mock",
-        ),
-        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_env(tmp_path, monkeypatch) as env,
+        static_webxr_build(env.client_port),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=env.user_data_dir) as chrome,
         real_browser_adb(chrome),
     ):
         async with real_wss_proxy(
-            install_dir, proxy_port=wss_port, backend_port=backend_port
+            env.install_dir, proxy_port=env.wss_port, backend_port=env.backend_port
         ):
             task = await run_oob_connect(
-                resolved_port=wss_port, timeout=30.0, usb_local=True
+                resolved_port=env.wss_port, timeout=30.0, usb_local=True
             )
             assert isinstance(task, asyncio.Task)
 
@@ -1680,7 +1652,6 @@ async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
             assert len(teleop_tabs) == 1
             ws_url = teleop_tabs[0]["webSocketDebuggerUrl"]
 
-            # code in the 0xc0f22300-0xc0f223ff (server-disconnect) range: a
             # code in the 0xc0f22300-0xc0f223ff (server-disconnect) range: a
             # code-less failure is "recoverable" per
             # helpers/streamingErrorClassification.ts's isRecoverable(), and
@@ -1739,44 +1710,23 @@ async def test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch(
     """A real client-side terminal error should trigger a real auto-relaunch:
     a second real ``am start``, a second real tab, clicked back to CONNECT-ready.
 
-    Anticipatory, like ``test_build_teleop_url_forwards_reliability_config_from_env``
-    above: gmorgan/oob-error-relaunch (#1146) adds this behavior
-    (``_find_and_click_teleop_tab``, a repair-capable ``_monitor_teleop_error_banner``)
-    and hasn't merged here yet, so this currently fails - not on an ImportError of a
-    private function (deliberately not imported here at all, so this stays correct
-    across internal refactors), but on the black-box assertions below: today's
-    monitor only logs the banner this test triggers, it never relaunches anything, so
-    no second tab/``am start`` ever appears and the wait below times out. Exercising
-    exactly what #1146 promises - a genuine crash recovered by genuine ADB+CDP
-    automation, not a scripted stand-in for either - is exactly what the real-browser
-    infrastructure in this module exists to prove, unlike
-    ``test_build_teleop_url_forwards_reliability_config_from_env``'s plain
-    env-var/string check.
+    Exercises the repair-capable ``_monitor_teleop_error_banner`` added by
+    gmorgan/oob-error-relaunch (#1146): a genuine crash recovered by genuine
+    ADB+CDP automation, not a scripted stand-in for either. Asserts on
+    black-box observables only (a second ``am start``/tab), not on any
+    private function, so it stays correct across internal refactors.
     """
-    client_port = _free_tcp_port()
-    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
-    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
-
-    wss_port = _free_tcp_port()
-    backend_port = _free_tcp_port()
-    user_data_dir = tmp_path / "chrome-profile"
-    user_data_dir.mkdir()
-    install_dir = tmp_path / "cxr-install"
-
     with (
-        static_webxr_build(
-            client_port,
-            npm_build_script="build:app-mock",
-            build_dir_name="build-app-mock",
-        ),
-        real_chrome(_CDP_LOCAL_PORT, user_data_dir=user_data_dir) as chrome,
+        real_browser_env(tmp_path, monkeypatch) as env,
+        static_webxr_build(env.client_port),
+        real_chrome(_CDP_LOCAL_PORT, user_data_dir=env.user_data_dir) as chrome,
         real_browser_adb(chrome) as fake_adb,
     ):
         async with real_wss_proxy(
-            install_dir, proxy_port=wss_port, backend_port=backend_port
+            env.install_dir, proxy_port=env.wss_port, backend_port=env.backend_port
         ):
             task = await run_oob_connect(
-                resolved_port=wss_port, timeout=30.0, usb_local=True
+                resolved_port=env.wss_port, timeout=30.0, usb_local=True
             )
             assert isinstance(task, asyncio.Task)
 
@@ -1791,8 +1741,8 @@ async def test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch(
 
             # Same retry-until-it-lands approach as the crash-banner test above:
             # triggerFailure() no-ops until MockCloudXR's session actually exists.
-            # 15s: once #1146 lands, a relaunch has no cold-launch devtools-socket
-            # wait (browser's already running) - just am start + tab discovery +
+            # 15s: a relaunch has no cold-launch devtools-socket wait (browser's
+            # already running) - just am start + tab discovery +
             # click, which the initial launch above already does in ~5s.
             relaunched = False
             deadline = asyncio.get_running_loop().time() + 15.0
@@ -1819,8 +1769,8 @@ async def test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch(
 
             assert relaunched, (
                 "expected a second real `am start` and a second real tab after "
-                "a terminal client error - today's (pre-#1146) monitor only logs "
-                "the banner, it never relaunches anything"
+                "a terminal client error - the monitor should relaunch, not just "
+                "log the banner"
             )
 
             task.cancel()

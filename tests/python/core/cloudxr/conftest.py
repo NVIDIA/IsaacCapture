@@ -26,6 +26,7 @@ import types
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -408,10 +409,17 @@ def real_chrome(cdp_port: int, *, user_data_dir: Path):
 
 
 @contextmanager
-def static_webxr_build(port: int, *, npm_build_script: str, build_dir_name: str):
-    """Build webxr_client once via a real ``npm run <npm_build_script>`` production
-    build (no dev-server, no HMR), then serve the resulting static directory with a
-    plain HTTP server for the block's duration.
+def static_webxr_build(port: int):
+    """Build webxr_client once via a real ``npm run build:app-mock`` production build
+    (no dev-server, no HMR), then serve the resulting static directory with a plain
+    HTTP server for the block's duration.
+
+    Always the mock build (``@nvidia/cloudxr`` aliased to ``MockCloudXR``, same
+    ``App.tsx``/``CloudXRComponent.tsx`` UI): the real SDK genuinely tries to stream
+    against whatever's on ``backend_port``, which is unpredictable and uncontrollable
+    to assert against. ``MockCloudXR`` exposes ``window.__mockCloudXRFail(message?,
+    code?)`` globally for a deterministic, controllable mid-session failure — see
+    :func:`cdp_evaluate` — and opens no socket of its own.
 
     Deliberately never a dev-server: webpack's hot-module-replacement re-executes a
     module's top-level code on live-reload, creating a *second* instance of it
@@ -422,27 +430,12 @@ def static_webxr_build(port: int, *, npm_build_script: str, build_dir_name: str)
     build has no live-reload runtime at all, so this class of bug is structurally
     impossible, not just avoided by luck.
 
-    *npm_build_script*/*build_dir_name* pairs (see ``package.json``/the matching
-    ``webpack.*.js``). Always use the ``build:app-mock`` pair for a real-browser
-    test: the real SDK genuinely tries to stream against whatever's on
-    ``backend_port``, which is unpredictable and uncontrollable to assert against.
-
-    * ``"build"`` / ``"build"`` — the real production client against the real
-      ``@nvidia/cloudxr`` SDK. Not for tests — kept only as a manual sanity
-      build; see the warning above.
-    * ``"build:app-mock"`` / ``"build-app-mock"`` — the identical ``App.tsx`` /
-      ``CloudXRComponent.tsx`` UI (same ``#startButton``/``#errorMessageBox``
-      DOM), but with ``@nvidia/cloudxr`` aliased to ``MockCloudXR``, which exposes
-      ``window.__mockCloudXRFail(message?, code?)`` globally so a CDP
-      ``Runtime.evaluate`` call can force a deterministic, controllable
-      mid-session failure — see :func:`cdp_evaluate`. ``MockCloudXR`` opens no
-      socket of its own, so nothing needs to stand in for a CloudXR runtime at
-      all.
-
     Always rebuilds (mirrors ``cloudxr-js``'s ``global-setup.js``: a stale bundle
     from a previous branch must never silently pass) rather than reusing whatever
     happens to be on disk or already listening on *port*.
     """
+    npm_build_script = "build:app-mock"
+    build_dir_name = "build-app-mock"
     webxr_client_dir = repo_root() / "deps" / "cloudxr" / "webxr_client"
     # webpack.common.js turns on persistent filesystem caching
     # (cache: {type: 'filesystem'}), keyed only on the config file
@@ -486,6 +479,40 @@ def static_webxr_build(port: int, *, npm_build_script: str, build_dir_name: str)
         thread.join(timeout=5)
 
 
+@dataclass
+class RealBrowserTestEnv:
+    """Ports/dirs shared by every real-browser ``run_oob_connect()`` test — see
+    :func:`real_browser_env`."""
+
+    client_port: int
+    wss_port: int
+    backend_port: int
+    user_data_dir: Path
+    install_dir: Path
+
+
+@contextmanager
+def real_browser_env(tmp_path: Path, monkeypatch):
+    """Allocate the ports/dirs every real-browser ``run_oob_connect()`` test needs
+    (client static-build port, wss proxy port, unused CloudXR backend port, a fresh
+    Chrome profile dir, a fresh install dir) and point ``TELEOP_WEB_CLIENT_BASE`` at
+    the client port, for the block's duration."""
+    client_port = _free_tcp_port()
+    monkeypatch.setenv("TELEOP_WEB_CLIENT_BASE", f"http://localhost:{client_port}")
+    monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+
+    user_data_dir = tmp_path / "chrome-profile"
+    user_data_dir.mkdir()
+
+    yield RealBrowserTestEnv(
+        client_port=client_port,
+        wss_port=_free_tcp_port(),
+        backend_port=_free_tcp_port(),
+        user_data_dir=user_data_dir,
+        install_dir=tmp_path / "cxr-install",
+    )
+
+
 async def cdp_evaluate(ws_url: str, expression: str) -> dict:
     """Open a one-shot CDP session to *ws_url* and evaluate *expression*.
 
@@ -526,6 +553,7 @@ async def real_wss_proxy(install_dir: Path, *, proxy_port: int, backend_port: in
     """
     from cloudxr_py_test_ns.wss import run as wss_run  # noqa: PLC0415
 
+    prev_install_dir = os.environ.get("CXR_INSTALL_DIR")
     os.environ["CXR_INSTALL_DIR"] = str(install_dir)
     prev_hub_only = os.environ.get("TELEOP_OOB_HUB_ONLY")
     os.environ["TELEOP_OOB_HUB_ONLY"] = "1"
@@ -557,6 +585,10 @@ async def real_wss_proxy(install_dir: Path, *, proxy_port: int, backend_port: in
             os.environ.pop("TELEOP_OOB_HUB_ONLY", None)
         else:
             os.environ["TELEOP_OOB_HUB_ONLY"] = prev_hub_only
+        if prev_install_dir is None:
+            os.environ.pop("CXR_INSTALL_DIR", None)
+        else:
+            os.environ["CXR_INSTALL_DIR"] = prev_install_dir
 
 
 class RealBrowserAdb(FakeAdb):
@@ -580,20 +612,25 @@ class RealBrowserAdb(FakeAdb):
         self._chrome = chrome
 
     def __call__(self, args: list[str], **kwargs) -> subprocess.CompletedProcess:
-        if args[:2] == ["adb", "shell"] and any("am start" in a for a in args):
+        def result(
+            rc: int, stdout: str = "", stderr: str = ""
+        ) -> subprocess.CompletedProcess:
             self.calls.append(list(args))
+            completed = subprocess.CompletedProcess(args, rc, stdout, stderr)
+            if kwargs.get("check", False):
+                completed.check_returncode()
+            return completed
+
+        if args[:2] == ["adb", "shell"] and any("am start" in a for a in args):
             if self.am_start_rc != 0:
-                return subprocess.CompletedProcess(
-                    args, self.am_start_rc, "", "am start failed"
-                )
+                return result(self.am_start_rc, stderr="am start failed")
             shell_cmd = args[2]
             tokens = shlex.split(shell_cmd)
             url = tokens[tokens.index("-d") + 1]
             self._chrome.open_url(url)
-            return subprocess.CompletedProcess(args, 0, "", "")
+            return result(0)
         if args[:2] == ["adb", "forward"] and "--remove" not in args:
-            self.calls.append(list(args))
-            return subprocess.CompletedProcess(args, self.forward_rc, "", "")
+            return result(self.forward_rc)
         return super().__call__(args, **kwargs)
 
 
