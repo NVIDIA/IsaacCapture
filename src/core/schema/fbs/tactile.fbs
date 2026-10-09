@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Internal only, not a public schema. Ask Lotus Li (lotusl@nvidia.com) before using it.
+
+include "pose.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+// Four XrHandJointEXT ordinals (HandJoint in hand.fbs), one per skinning slot 0..3.
+struct TaxelJointIndices {
+  joints: [uint32:4];
+}
+
+// Four skinning weights; weights[k] pairs with TaxelJointIndices.joints[k].
+struct TaxelJointWeights {
+  weights: [float:4];
+}
+
+// Hand skeleton and taxel layout at the reference bind pose. Sent once per device.
+// Joint vectors are indexed by XrHandJointEXT ordinal; taxel vectors here and in
+// TactileData hold one entry per taxel, in the same order.
+table TactileShape {
+  // Joint pose in hand-root space. Position in meters, unit quaternion.
+  joint_bind_poses: [Pose] (id: 0);
+
+  // Parent joint ordinal; the root holds 0x7FFFFFFF (XR_HAND_JOINT_MAX_ENUM_EXT).
+  // The hierarchy is acyclic.
+  joint_parents: [uint32] (id: 1);
+
+  // Hand-root space: positions in meters; unit normals; unit tangents perpendicular
+  // to their normal.
+  taxel_positions: [Point] (id: 2);
+  taxel_normals: [Point] (id: 3);
+  taxel_tangents: [Point] (id: 4);
+
+  // Linear blend skinning. Every slot names a valid joint, zero-weight slots included.
+  // Weights are finite and nonnegative, 1-4 of them nonzero, summing to 1. A taxel moves as
+  //   p_current = sum_k w_k * T_current[j_k] * inverse(T_bind[j_k]) * p_bind
+  // with T_bind from joint_bind_poses and T_current the current joint-to-hand-root
+  // transform, both rigid. It blends transformed points, not poses.
+  taxel_joint_indices: [TaxelJointIndices] (id: 5);
+  taxel_joint_weights: [TaxelJointWeights] (id: 6);
+}
+
+// Per-frame tactile reading.
+table TactileData {
+  // Force vector per taxel, in TactileShape taxel order.
+  taxel_force: [Point] (id: 0);
+}
+
+// MCAP recording wrapper. Record types are the root types written to MCAP
+// channels; trackers serialize into Record types in serialize_all().
+table TactileDataRecord {
+  data: TactileData (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type TactileDataRecord;
