@@ -34,6 +34,7 @@ def _service_for_status(tmp_path):
     service._runtime_proc.pid = os.getpid()
     service._runtime_proc.poll.return_value = None
     service._wss_thread = None
+    service._connect_requested = None
     return service
 
 

@@ -276,6 +276,53 @@ container that way.
 Setting ``CI`` skips the interactive pause described under `Configuration`_,
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
+.. _cloudxr-deferred-oob-connect:
+
+Connect the OOB headset after application startup
+-------------------------------------------------
+
+Applications that need their OpenXR session and renderer ready before the
+headset connects can pass ``defer_oob_connect=True``. This Python option
+requires ``setup_oob=True`` and, for ``CloudXRLauncher``, ``run_embedded=True``.
+It is also available directly on ``CloudXRService``. The default is ``False``,
+so existing applications still connect immediately.
+
+The runtime and WSS listener start immediately, but OOB automation and backend
+WebSocket signaling wait for ``connect_headset()``. This also holds signaling
+from an already-open headset page; the OOB control hub remains available.
+Call ``connect_headset()`` after application initialization, then keep servicing
+the application's frame loop: the call is non-blocking and does not wait for
+the headset to finish connecting. Repeated calls are harmless. Stopping the
+service before releasing the gate cancels the wait without launching the client.
+
+In this example, ``start_app()`` is an application-provided context manager
+that creates the OpenXR session and waits for renderer initialization. Its
+``app.run()`` method runs the frame loop, and context exit stops rendering
+and destroys the session before CloudXR stops:
+
+.. code-block:: python
+
+   from isaaccapture.cloudxr import CloudXRLauncher
+
+   def run_with_cloudxr(start_app):
+       with CloudXRLauncher(
+           run_embedded=True,
+           setup_oob=True,
+           usb_local=True,
+           defer_oob_connect=True,
+           env_config="cloudxr.env",
+           accept_eula=True,
+       ) as cloudxr:
+           with start_app() as app:
+               cloudxr.connect_headset()
+               app.run()
+
+Set a fixed ``NV_DEVICE_PROFILE`` matching the headset in ``cloudxr.env``
+(for example, ``NV_DEVICE_PROFILE=Quest3``). An ``auto*`` profile requires a
+connected client to discover the device and cannot support this startup order.
+The gate applies to an embedded service; it cannot defer connections on an
+already-running detached service.
+
 Configuration
 -------------
 
