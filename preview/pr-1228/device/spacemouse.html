@@ -490,20 +490,35 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </section>
 <section id="usage">
 <h2><a class="toc-backref" href="#id4" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">#</a></h2>
-<p>A pipeline that uses <code class="docutils literal notranslate"><span class="pre">SpaceMouseSource</span></code> needs nothing else: a live <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> starts the
-plugin bundled with <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> (wheel installs included), as
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/spacemouse_printer_example.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/spacemouse_printer_example.py</a> shows:</p>
+<p>Start the plugin with the session through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.plugins</span></code>, from the copy bundled
+with <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> (wheel installs included), and read it with <code class="docutils literal notranslate"><span class="pre">SpaceMouseSource</span></code>, as
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/examples/teleop/python/spacemouse_printer_example.py" rel="noopener noreferrer" target="_blank">examples/teleop/python/spacemouse_printer_example.py</a> does:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">SpaceMouseSource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BUNDLED_PLUGINS_DIR</span><span class="p">,</span>
+    <span class="n">PluginConfig</span><span class="p">,</span>
+    <span class="n">TeleopSessionConfig</span><span class="p">,</span>
+<span class="p">)</span>
 
-<span class="n">source</span> <span class="o">=</span> <span class="n">SpaceMouseSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"spacemouse"</span><span class="p">)</span>                <span class="c1"># discover the device</span>
-<span class="n">source</span> <span class="o">=</span> <span class="n">SpaceMouseSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"spacemouse"</span><span class="p">,</span> <span class="n">device_path</span><span class="o">=</span><span class="s2">"/dev/hidraw3"</span><span class="p">)</span>
+<span class="n">config</span> <span class="o">=</span> <span class="n">TeleopSessionConfig</span><span class="p">(</span>
+    <span class="n">app_name</span><span class="o">=</span><span class="s2">"MyApp"</span><span class="p">,</span>
+    <span class="n">pipeline</span><span class="o">=</span><span class="n">pipeline_reading</span><span class="p">(</span><span class="n">SpaceMouseSource</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"spacemouse"</span><span class="p">)),</span>
+    <span class="n">plugins</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">PluginConfig</span><span class="p">(</span>
+            <span class="n">plugin_name</span><span class="o">=</span><span class="s2">"spacemouse"</span><span class="p">,</span>
+            <span class="n">plugin_root_id</span><span class="o">=</span><span class="s2">"spacemouse"</span><span class="p">,</span>
+            <span class="n">search_paths</span><span class="o">=</span><span class="p">[</span><span class="n">BUNDLED_PLUGINS_DIR</span><span class="p">],</span>
+            <span class="n">plugin_args</span><span class="o">=</span><span class="p">[],</span>  <span class="c1"># e.g. ["--device=/dev/hidraw3"]</span>
+        <span class="p">)</span>
+    <span class="p">],</span>
+<span class="p">)</span>
 </pre></div>
 </div>
-<p>Without a device path the plugin opens the first validated model under <code class="docutils literal notranslate"><span class="pre">/sys/class/hidraw</span></code> and
+<p>Without <code class="docutils literal notranslate"><span class="pre">--device</span></code> the plugin opens the first validated model under <code class="docutils literal notranslate"><span class="pre">/sys/class/hidraw</span></code> and
 finds it again after it is unplugged. For a Universal Receiver at an explicit path, add
-<code class="docutils literal notranslate"><span class="pre">combined_report=True</span></code>.</p>
-<p>To run the plugin yourself instead (for example on another machine pushing to the same runtime),
-pass <code class="docutils literal notranslate"><span class="pre">launch_plugin=False</span></code> and start it next to any reader of the same collection:</p>
+<code class="docutils literal notranslate"><span class="pre">--combined-report</span></code>.</p>
+<p>The plugin can also run on its own, for example on another machine pushing to the same runtime,
+next to any reader of the same collection:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/spacemouse/spacemouse_plugin
 ./install/plugins/spacemouse/spacemouse_plugin<span class="w"> </span>--device<span class="o">=</span>/dev/hidraw3
 </pre></div>

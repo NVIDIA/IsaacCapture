@@ -57,23 +57,38 @@ Linux only. The plugin builds with the default plugin set:
 Usage
 -----
 
-A pipeline that uses ``SpaceMouseSource`` needs nothing else: a live ``TeleopSession`` starts the
-plugin bundled with ``isaaccapture`` (wheel installs included), as
-:code-file:`examples/teleop/python/spacemouse_printer_example.py` shows:
+Start the plugin with the session through ``TeleopSessionConfig.plugins``, from the copy bundled
+with ``isaaccapture`` (wheel installs included), and read it with ``SpaceMouseSource``, as
+:code-file:`examples/teleop/python/spacemouse_printer_example.py` does:
 
 .. code-block:: python
 
    from isaaccapture.retargeting_engine.deviceio_source_nodes import SpaceMouseSource
+   from isaaccapture.teleop_session_manager import (
+       BUNDLED_PLUGINS_DIR,
+       PluginConfig,
+       TeleopSessionConfig,
+   )
 
-   source = SpaceMouseSource(name="spacemouse")                # discover the device
-   source = SpaceMouseSource(name="spacemouse", device_path="/dev/hidraw3")
+   config = TeleopSessionConfig(
+       app_name="MyApp",
+       pipeline=pipeline_reading(SpaceMouseSource(name="spacemouse")),
+       plugins=[
+           PluginConfig(
+               plugin_name="spacemouse",
+               plugin_root_id="spacemouse",
+               search_paths=[BUNDLED_PLUGINS_DIR],
+               plugin_args=[],  # e.g. ["--device=/dev/hidraw3"]
+           )
+       ],
+   )
 
-Without a device path the plugin opens the first validated model under ``/sys/class/hidraw`` and
+Without ``--device`` the plugin opens the first validated model under ``/sys/class/hidraw`` and
 finds it again after it is unplugged. For a Universal Receiver at an explicit path, add
-``combined_report=True``.
+``--combined-report``.
 
-To run the plugin yourself instead (for example on another machine pushing to the same runtime),
-pass ``launch_plugin=False`` and start it next to any reader of the same collection:
+The plugin can also run on its own, for example on another machine pushing to the same runtime,
+next to any reader of the same collection:
 
 .. code-block:: bash
 
