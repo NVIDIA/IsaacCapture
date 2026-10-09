@@ -679,12 +679,13 @@ async def run(
                 initial,
             )
 
-        async def handler(ws):
-            """Route an incoming WebSocket to the OOB hub or the backend proxy."""
+        async def handler(ws) -> None:
+            """Route to the hub or proxy; WebSocket handlers do not return a value."""
             if hub is not None:
                 path = _normalize_request_path(ws.request.path or "/")
                 if path == OOB_WS_PATH:
-                    return await hub.handle_connection(ws)
+                    await hub.handle_connection(ws)
+                    return
             # An already-open headset page may reconnect before ADB automation.
             if await _wait_for_connect(connect_requested, stop_future):
                 await proxy_handler(ws, backend_host, backend_port)
