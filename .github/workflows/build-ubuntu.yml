@@ -25,7 +25,7 @@ env:
   # commit only needs to be recent enough to contain that baseline. Update the
   # commit and its release-date comment together.
   VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc  # 2026.05.25
-  NO_GPU_ARM: "1"
+  NO_GPU_ARM: "0"
 
 jobs:
   build-ubuntu:
