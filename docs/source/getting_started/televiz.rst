@@ -352,8 +352,11 @@ because the quad is the only layer that can be drawn either way:
        compositor. On Jetson Orin in XR, set ``False`` (see :ref:`Jetson Orin, XR <orin-openxr-composition>`).
        See `Composition model`_.
 
-Its placement is a ``QuadLayerPlacement`` — a ``pose`` plus ``size_meters``. It is optional:
-a quad with no placement fills the window in window mode.
+Its placement is a ``QuadLayerPlacement`` — a ``pose`` plus ``size_meters``. In window mode it
+is optional: a quad with no placement fills the window. In XR it is **required**: set it in the
+config or with ``set_placement()`` before a submitted frame is rendered, or ``render()`` raises
+``RuntimeError: ... requires Config::placement to be set``. ``add_quad_layer()`` does not reject
+a missing placement, so a placement strategy can set it after the layer is created.
 
 .. code-block:: python
 
