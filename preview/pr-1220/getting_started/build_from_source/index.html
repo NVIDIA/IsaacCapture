@@ -785,7 +785,8 @@ version it finds, so a newer published <code class="docutils literal notranslate
 the install fails. Install the local wheel by path instead. That always selects your build, while
 the index stays available for its dependencies:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).</span>
-<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="k">)</span>
+<span class="c1"># -t sorts by modification time so head -1 selects the most recent build if older wheels remain.</span>
+<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>-t<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
 
 <span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">[retargeters,cloudxr,ui]"</span><span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
