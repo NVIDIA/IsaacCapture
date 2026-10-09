@@ -350,7 +350,8 @@ the index stays available for its dependencies:
 .. code-block:: bash
 
    # Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).
-   WHEEL=$(ls ./install/wheels/isaaccapture-*-cp312-*.whl)
+   # -t sorts by modification time so head -1 selects the most recent build if older wheels remain.
+   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --reinstall-package isaaccapture
