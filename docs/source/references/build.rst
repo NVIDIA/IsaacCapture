@@ -61,7 +61,9 @@ After building, install the wheels with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   uv pip install isaaccapture --find-links=./install/wheels/ --reinstall
+   # The second command makes sure the local build wins over a newer release on the index.
+   uv pip install isaaccapture --find-links=./install/wheels/
+   uv pip install isaaccapture --find-links=./install/wheels/ --no-index --reinstall-package isaaccapture
 
    # or
    pip install install/wheels/isaaccapture-*.whl

@@ -341,10 +341,20 @@ based on the Python version.  Note that ``pip`` and ``uv pip`` has slightly diff
    # Pass --force-reinstall to replace an existing install.
    pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --force-reinstall
 
+With ``uv pip``, ``--find-links`` still consults the package index and installs the highest
+version it finds, so a newer published ``isaaccapture`` there silently wins over your local build.
+Passing ``--no-index`` alone is not enough, because the wheel's dependencies are not in
+``./install/wheels/``. Install in two steps instead:
+
 .. code-block:: bash
 
-   # Pass --reinstall to replace an existing install.
-   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall
+   # 1. Install the dependencies (resolved from the package index).
+   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/
+
+   # 2. Replace isaaccapture itself with the local build, using only ./install/wheels/.
+   uv pip install "isaaccapture[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --no-index --reinstall-package isaaccapture
+
+Check that the installed version ends in ``+local`` with ``uv pip list | grep isaaccapture``.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
