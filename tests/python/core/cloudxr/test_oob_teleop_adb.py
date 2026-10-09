@@ -1542,6 +1542,19 @@ async def test_run_oob_connect_calls_find_tab_with_real_signature() -> None:
     monitor_task.cancel()
 
 
+async def test_run_oob_connect_preserves_browser_wake_failure() -> None:
+    with (
+        patch.object(adb_module, "_close_stale_teleop_tabs", return_value=0),
+        patch.object(
+            adb_module,
+            "run_adb_headset_bookmark",
+            return_value=(99, adb_module.HEADSET_NOT_AWAKE_DIAGNOSTIC),
+        ),
+    ):
+        with pytest.raises(adb_module.HeadsetNotAwakeError, match="wakefulness"):
+            await run_oob_connect(resolved_port=48322)
+
+
 # ============================================================================
 # _monitor_teleop_error_banner: error-banner tracking, reported via on_terminal_error.
 # The monitor is diagnostic-only (see its own doc comment) - it never closes, navigates,

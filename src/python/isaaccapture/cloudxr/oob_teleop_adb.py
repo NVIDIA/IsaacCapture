@@ -60,6 +60,9 @@ class HeadsetNotAwakeError(OobAdbError):
     """A CONNECT or browser launch must wait for confirmed headset wakefulness."""
 
 
+HEADSET_NOT_AWAKE_DIAGNOSTIC = "Headset wakefulness was not confirmed as Awake"
+
+
 SELECTED_ADB_SERIAL: ContextVar[str | None] = ContextVar(
     "selected_adb_serial", default=None
 )
@@ -392,7 +395,7 @@ def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) 
         "aborting USB transfer" if require_awake else "continuing anyway",
     )
     if require_awake:
-        raise HeadsetNotAwakeError("Headset wakefulness was not confirmed as Awake")
+        raise HeadsetNotAwakeError(HEADSET_NOT_AWAKE_DIAGNOSTIC)
 
 
 def adb_device_state() -> str:
@@ -2157,7 +2160,10 @@ async def run_oob_connect(
     )
     if rc != 0:
         hint = adb_automation_failure_hint(diag)
-        raise OobAdbError(oob_adb_automation_message(rc, diag, hint))
+        message = oob_adb_automation_message(rc, diag, hint)
+        if diag == HEADSET_NOT_AWAKE_DIAGNOSTIC:
+            raise HeadsetNotAwakeError(message)
+        raise OobAdbError(message)
     log.info("ADB: am start completed")
     oob_progress(
         "setup-oob",

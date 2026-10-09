@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import time
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -102,6 +102,70 @@ async def test_absent_headset_keeps_observing_after_episode_expires(monkeypatch)
     assert sleeps == [5] * 5
     assert len(hub.statuses) >= 5
     assert all(status["health"] != "fatal" for status in hub.statuses)
+
+
+@pytest.mark.parametrize("usb_local", [False, True])
+@pytest.mark.parametrize("failure", ["wake", "deadline"])
+async def test_fresh_browser_wake_wait_retries_after_expiry_without_transport_change(
+    usb_local, failure
+):
+    hub = FakeHub()
+    now = [0.0]
+    sleeps = []
+    launches = []
+    wake_polls = []
+    devices = AdbDevices((("pinned-headset", "device"),))
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+        if now[0] > 30:
+            raise AssertionError("Recovery failed to resume after wake")
+
+    async def automate():
+        launches.append(now[0])
+        if now[0] < 25:
+            if failure == "wake":
+                raise adb.HeadsetNotAwakeError("headset remains asleep")
+            raise TimeoutError
+        raise asyncio.CancelledError
+
+    def wakefulness():
+        wake_polls.append(now[0])
+        return "Awake" if now[0] >= 25 else "Asleep"
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=usb_local,
+        host_client=False,
+        config=RecoveryConfig(timeout_sec=10, interval_sec=5),
+        clock=lambda: now[0],
+        sleep=sleep,
+        usb_health_policy="off",
+    )
+    with (
+        patch.object(adb, "enumerate_adb_devices", return_value=devices),
+        patch.object(
+            adb,
+            "probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch.object(adb, "headset_wakefulness", side_effect=wakefulness),
+        patch.object(lifecycle, "_prepare_device", new_callable=AsyncMock),
+        patch.object(lifecycle, "_rebuild_usb", new_callable=AsyncMock),
+        patch.object(lifecycle, "_automate", side_effect=automate),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    assert launches == [5.0, 10.0, 25.0]
+    assert sleeps == [5] * 5
+    assert wake_polls == (
+        [5.0, 10.0, 15.0, 20.0, 25.0] if failure == "deadline" else [15.0, 20.0, 25.0]
+    )
+    assert any(status["state"] == "WAITING_FOR_AWAKE" for status in hub.statuses)
+    assert lifecycle._browser_waiting_for_awake is False
 
 
 async def test_replug_repair_observes_after_deadline_until_topology_changes():

@@ -128,6 +128,8 @@ class OobLifecycle:
         self._usb_wake_confirmed: bool | None = None
         # Only a failed strict wake check permits polling after episode expiry.
         self._usb_waiting_for_awake = False
+        # A failed new-page launch also needs wake polling in WiFi mode.
+        self._browser_waiting_for_awake = False
         self._usb_link: dict | None = None
         self._usb_transfer: dict | None = None
 
@@ -347,6 +349,7 @@ class OobLifecycle:
     async def _remember_transport_loss(self) -> None:
         """Drop transport-owned state while preserving the prior browser intent."""
         self._usb_waiting_for_awake = False
+        self._browser_waiting_for_awake = False
         self._same_tab_wake_blocked = False
         if self._usb_wake_confirmed is not None:
             self._usb_wake_confirmed = None
@@ -1782,7 +1785,7 @@ class OobLifecycle:
                     and not self.browser_ready
                     and not self.connect_dispatched
                 ):
-                    waiting_for_awake = (
+                    waiting_for_awake = self._browser_waiting_for_awake or (
                         self.usb_local
                         and self.usb_health_policy != "off"
                         and self._usb_waiting_for_awake
@@ -1794,12 +1797,14 @@ class OobLifecycle:
                             raise
                         except Exception:
                             log.debug(
-                                "Passive USB wake observation failed", exc_info=True
+                                "Passive headset wake observation failed", exc_info=True
                             )
                             wake = ""
                         if wake == "Awake":
+                            if self._usb_waiting_for_awake:
+                                self._record_usb_event("USB_WAKE_OBSERVED")
                             self._usb_waiting_for_awake = False
-                            self._record_usb_event("USB_WAKE_OBSERVED")
+                            self._browser_waiting_for_awake = False
                             self._restart_episode()
                             continue
                     wait_state = (
@@ -1841,6 +1846,7 @@ class OobLifecycle:
                     else:
                         # PREPARING_DEVICE wakes, rebuilds only in USB-local mode, then automates.
                         self.attempts += 1
+                        self._browser_waiting_for_awake = False
                         await self._publish(
                             "degraded",
                             "PREPARING_DEVICE",
@@ -1910,6 +1916,9 @@ class OobLifecycle:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    fresh_bootstrap = (
+                        not self.browser_ready and not self.connect_dispatched
+                    )
                     await self._stop_monitor()
                     self.browser_ready = False
                     self.browser_client = None
@@ -1924,6 +1933,16 @@ class OobLifecycle:
                         await self.sleep(self.config.interval_sec)
                         continue
                     self.connect_dispatched = False
+                    if isinstance(exc, adb.HeadsetNotAwakeError):
+                        self._browser_waiting_for_awake = True
+                    elif fresh_bootstrap and isinstance(exc, TimeoutError):
+                        # The episode timer can cancel a strict wake poll before it
+                        # raises its typed error. Preserve wake observation then.
+                        try:
+                            wake = await asyncio.to_thread(adb.headset_wakefulness)
+                        except Exception:
+                            wake = ""
+                        self._browser_waiting_for_awake = wake != "Awake"
                     reason = (
                         "Recovery attempt timed out"
                         if isinstance(exc, TimeoutError)
@@ -1931,7 +1950,9 @@ class OobLifecycle:
                     )
                     await self._publish(
                         "degraded",
-                        "DEGRADED",
+                        "WAITING_FOR_AWAKE"
+                        if self._browser_waiting_for_awake
+                        else "DEGRADED",
                         reason[:300],
                         adbReady=True,
                         networkPresent=True,
