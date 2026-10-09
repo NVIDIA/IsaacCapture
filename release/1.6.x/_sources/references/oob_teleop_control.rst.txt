@@ -590,12 +590,14 @@ Environment variables
        early enough to leave one retry interval for a bounded fallback.
    * - ``TELEOP_OOB_RETRY_INTERVAL_SEC``
      - Positive finite retry and observation interval in seconds (default ``5``).
-   * - ``TELEOP_CLIENT_RECONNECT_ENABLED``
-     - Enable the WebXR client's stream reconnect loop (default ``true``).
-       The OOB lifecycle waits for this client-owned loop before taking over.
    * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
      - Non-negative number of browser-local reconnect attempts (default ``10``).
-       The value is also included in the generated headset URL.
+       The WebXR client's stream reconnect loop is opt-in — off unless an
+       explicit ``reconnectEnabled=true`` URL param or the 2D debug UI's
+       checkbox turns it on — and OOB has no way to know which, so the host
+       always waits out this budget before taking over, whether or not the
+       client is actually retrying. The value is also included in the
+       generated headset URL.
    * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
      - Non-negative delay between browser-local attempts in milliseconds
        (default ``3000``). The host derives its bounded recovery grace from
