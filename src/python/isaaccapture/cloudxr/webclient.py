@@ -32,6 +32,7 @@ from .oob_teleop_adb import (
     adb_automation_failure_hint,
     assert_exactly_one_adb_device,
     assert_headset_awake,
+    assert_supported_headset,
     build_teleop_url,
     headset_browser_package,
     oob_adb_automation_message,
@@ -194,7 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.print_only:
             require_adb_on_path()
             token = SELECTED_ADB_SERIAL.set(assert_exactly_one_adb_device())
-            assert_headset_awake()
+            assert_supported_headset()
+            assert_headset_awake(require_awake=True)
     except (OobAdbError, RuntimeError, ValueError) as exc:
         if token is not None:
             SELECTED_ADB_SERIAL.reset(token)

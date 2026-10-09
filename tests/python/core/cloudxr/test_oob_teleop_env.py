@@ -595,6 +595,22 @@ def test_print_oob_hub_startup_banner(
     assert OOB_WS_PATH in out
 
 
+def test_startup_banner_hides_control_and_turn_credentials(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setenv("CONTROL_TOKEN", "control-canary-123")
+    monkeypatch.setattr(
+        oob_teleop_env_under_test, "USB_TURN_CREDENTIAL", "turn-canary-456"
+    )
+
+    print_oob_hub_startup_banner(lan_host="127.0.0.1", usb_local=True)
+    out = capsys.readouterr().out
+    assert "control-canary-123" not in out
+    assert "turn-canary-456" not in out
+    assert "controlToken=<REDACTED>" in out
+    assert "turnCredential=<REDACTED>" in out
+
+
 # Host preflight (H5) ------------------------------------------------------
 
 
@@ -729,3 +745,20 @@ def test_print_hosted_client_line_prints_url(clear_teleop_env: None) -> None:
     print_hosted_client_line(url, file=buf)
     assert url in buf.getvalue()
     assert "web client:" in buf.getvalue()
+
+
+def test_print_hosted_client_line_hides_credentials() -> None:
+    from io import StringIO
+
+    buf = StringIO()
+    url = (
+        "https://host.test/client?controlToken=control-canary-123"
+        "&turnCredential=turn-canary-456&port=48322"
+    )
+    print_hosted_client_line(url, file=buf)
+    out = buf.getvalue()
+    assert "control-canary-123" not in out
+    assert "turn-canary-456" not in out
+    assert "controlToken=<REDACTED>" in out
+    assert "turnCredential=<REDACTED>" in out
+    assert "port=48322" in out

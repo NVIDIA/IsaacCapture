@@ -131,9 +131,10 @@ class OobLifecycle:
         self._usb_link: dict | None = None
         self._usb_transfer: dict | None = None
 
-        # Headset selection remains pinned after the first successful choice.
+        # Pin the first sole transport, including one awaiting authorization.
         self.selected = os.environ.get("ANDROID_SERIAL", "").strip() or None
         self.explicit_serial = self.selected is not None
+        self._identity_verified = False
         self.ignored_serials: tuple[str, ...] = ()
         self._cache_cleared = False
 
@@ -402,6 +403,7 @@ class OobLifecycle:
         *,
         adb_ready: bool,
         network_present: bool,
+        adb_diagnostic: str = "",
     ) -> None:
         """Preserve browser intent and publish one USB-loss transition."""
         await self._remember_transport_loss()
@@ -415,6 +417,7 @@ class OobLifecycle:
             reason,
             adbReady=adb_ready,
             networkPresent=network_present,
+            adbDiagnostic=redact_control_token(adb_diagnostic),
         )
 
     def _transport_retry_interval(self) -> float:
@@ -557,7 +560,10 @@ class OobLifecycle:
         self._prerequisite_signature = None
 
     async def _prepare_device(self) -> None:
-        """Wake the selected headset and clear stale browser state once."""
+        """Validate the pinned headset and clear stale browser state once."""
+        if not self._identity_verified:
+            await asyncio.to_thread(adb.assert_supported_headset)
+            self._identity_verified = True
         await asyncio.to_thread(adb.assert_headset_awake, timeout=10.0)
         if not self._cache_cleared:
             try:
@@ -1521,8 +1527,16 @@ class OobLifecycle:
                 # WAITING_FOR_ADB: select once, then wait only for that headset.
                 devices = await asyncio.to_thread(adb.enumerate_adb_devices)
                 ready = devices.ready
-                if self.selected is None and len(ready) == 1:
-                    self.selected = ready[0]
+                if self.selected is None and len(devices.devices) > 1:
+                    serials = ", ".join(
+                        _display_serials(tuple(s for s, _ in devices.devices))
+                    )
+                    raise adb.OobAdbError(
+                        f"Multiple ADB devices observed ({serials}). Set ANDROID_SERIAL "
+                        "to the intended headset serial and restart OOB setup."
+                    )
+                if self.selected is None and len(devices.devices) == 1:
+                    self.selected = devices.devices[0][0]
                     token = adb.SELECTED_ADB_SERIAL.set(self.selected)
                     self._ensure_usb_report()
                 self.ignored_serials = (
@@ -1573,9 +1587,7 @@ class OobLifecycle:
                 if not selected_ready:
                     self._ready_count = 0
                     states = dict(devices.devices)
-                    if len(ready) > 1 and self.selected is None:
-                        reason = "Multiple ready devices; unplug extras or set ANDROID_SERIAL"
-                    elif self.selected and states.get(self.selected) == "unauthorized":
+                    if self.selected and states.get(self.selected) == "unauthorized":
                         reason = "Selected headset unauthorized; accept the USB debugging prompt"
                     elif self.selected and states.get(self.selected) == "offline":
                         reason = "Selected headset offline; reconnect the USB cable"
@@ -1588,9 +1600,7 @@ class OobLifecycle:
                     else:
                         reason = devices.diagnostic or "Waiting for selected headset"
                     wait_code = (
-                        "ambiguous_devices"
-                        if self.selected is None and len(ready) > 1
-                        else "unauthorized"
+                        "unauthorized"
                         if selected_state == "unauthorized"
                         else "offline"
                         if selected_state == "offline"
@@ -1604,6 +1614,7 @@ class OobLifecycle:
                         "WAITING_FOR_ADB",
                         adb_ready=False,
                         network_present=False,
+                        adb_diagnostic=devices.diagnostic,
                     )
                     await self.sleep(self._transport_retry_interval())
                     continue

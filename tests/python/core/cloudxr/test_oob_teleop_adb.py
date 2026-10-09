@@ -13,7 +13,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from typing import ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -61,6 +61,60 @@ def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None
 def _clear_adb_device_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make device-selection tests independent of the developer's shell env."""
     monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+
+
+@pytest.mark.parametrize(
+    ("manufacturer", "brand", "model"),
+    [("Meta", "oculus", "Quest 3"), ("PICO", "PICO", "PICO 4")],
+)
+def test_assert_supported_headset_accepts_hmd(
+    manufacturer: str, brand: str, model: str
+) -> None:
+    properties = {
+        "ro.product.manufacturer": manufacturer,
+        "ro.product.brand": brand,
+        "ro.product.model": model,
+    }
+    with patch.object(adb_module, "_adb_getprop", side_effect=properties.get):
+        adb_module.assert_supported_headset()
+
+
+@pytest.mark.parametrize(
+    ("manufacturer", "brand", "model"),
+    [("Samsung", "samsung", "Galaxy S24"), ("unknown", "unknown", "device")],
+)
+def test_assert_supported_headset_rejects_other_android_devices(
+    manufacturer: str, brand: str, model: str
+) -> None:
+    properties = {
+        "ro.product.manufacturer": manufacturer,
+        "ro.product.brand": brand,
+        "ro.product.model": model,
+    }
+    with (
+        patch.object(adb_module, "_adb_getprop", side_effect=properties.get),
+        pytest.raises(OobAdbError, match="not a supported Meta Quest or PICO headset"),
+    ):
+        adb_module.assert_supported_headset()
+
+
+def test_open_url_on_headset_requires_confirmed_wakefulness() -> None:
+    with (
+        patch.object(adb_module, "assert_adb_device_online"),
+        patch.object(
+            adb_module,
+            "assert_headset_awake",
+            side_effect=OobAdbError("Headset wakefulness was not confirmed as Awake"),
+        ) as awake,
+        patch.object(adb_module, "headset_browser_package") as browser,
+        patch.object(adb_module, "_adb_run") as run_adb,
+    ):
+        rc, diagnostic = adb_module.open_url_on_headset("https://host.test/client")
+    assert rc == 99
+    assert "not confirmed as Awake" in diagnostic
+    awake.assert_called_once_with(timeout=10.0, require_awake=True)
+    browser.assert_not_called()
+    run_adb.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -396,7 +450,8 @@ def test_run_adb_headset_bookmark_success(
     mock_lan: MagicMock, mock_run: MagicMock, _mock_state: MagicMock
 ) -> None:
     mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    rc, diag = run_adb_headset_bookmark(resolved_port=48322)
+    with patch.object(adb_module, "headset_wakefulness", return_value="Awake"):
+        rc, diag = run_adb_headset_bookmark(resolved_port=48322)
     assert rc == 0
     assert diag == ""
     args = mock_run.call_args[0][0]
@@ -417,7 +472,8 @@ def test_run_adb_headset_bookmark_failure(
     mock_run.return_value = MagicMock(
         returncode=1, stdout="", stderr="no devices/emulators found"
     )
-    rc, diag = run_adb_headset_bookmark(resolved_port=48322)
+    with patch.object(adb_module, "headset_wakefulness", return_value="Awake"):
+        rc, diag = run_adb_headset_bookmark(resolved_port=48322)
     assert rc == 1
     assert "no devices" in diag
 
@@ -1051,14 +1107,24 @@ def test_close_stale_teleop_tabs_closes_only_oob_tabs(
     mock_discover: MagicMock,
     mock_forward: MagicMock,
     mock_remove: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     mock_discover.return_value = "chrome_devtools_remote"
     tabs = [
-        {"id": "stale-1", "url": "https://headset.local/?oobEnable=1"},
+        {
+            "id": "stale-1",
+            "url": "https://headset.local/?oobEnable=1&controlToken=stale-control-canary",
+        },
         {"id": "unrelated", "url": "https://headset.local/some-other-page"},
-        {"id": "stale-2", "url": "https://headset.local/?oobEnable=1&codec=av1"},
+        {
+            "id": "stale-2",
+            "url": "https://headset.local/?oobEnable=1&turnCredential=stale-turn-canary",
+        },
     ]
-    with _fake_cdp_server(tabs) as handler:
+    with (
+        _fake_cdp_server(tabs) as handler,
+        caplog.at_level("INFO", logger=adb_module.log.name),
+    ):
         closed = _close_stale_teleop_tabs()
         # Read the port while the fixture's patch is still active - it's restored to the
         # real _CDP_LOCAL_PORT once this block exits.
@@ -1068,6 +1134,10 @@ def test_close_stale_teleop_tabs_closes_only_oob_tabs(
     assert sorted(handler.closed_ids) == ["stale-1", "stale-2"]
     mock_forward.assert_called_once_with("chrome_devtools_remote", patched_port)
     mock_remove.assert_called_once_with(patched_port)
+    assert "stale-control-canary" not in caplog.text
+    assert "stale-turn-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
@@ -1262,10 +1332,26 @@ async def test_cdp_session_click_connect_failed_capability_check_raises() -> Non
     assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
 
 
-async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> None:
-    script = _CdpScript(interstitial=True, interstitial_url="https://headset.local/")
+async def test_cdp_session_click_connect_cert_interstitial_primary_bypass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = (
+        "https://headset.local/?controlToken=cert-control-canary"
+        "&turnCredential=cert-turn-canary"
+    )
+    script = _CdpScript(interstitial=True, interstitial_url=url)
     async with _fake_cdp_ws(script) as ws_url:
-        await _cdp_session_click_connect(ws_url)
+        with caplog.at_level("INFO", logger=adb_module.log.name):
+            await _cdp_session_click_connect(ws_url)
+    assert any(
+        params.get("url") == url
+        for method, params in script.calls
+        if method == "Page.navigate"
+    )
+    assert "cert-control-canary" not in caplog.text
+    assert "cert-turn-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
     methods = [m for m, _ in script.calls]
     fallback_clicks = [
         p.get("expression")
@@ -1276,12 +1362,18 @@ async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> N
     assert fallback_clicks == []
 
 
-async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> None:
+async def test_cdp_session_click_connect_cert_interstitial_dom_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     script = _CdpScript(
-        interstitial=True, interstitial_url="chrome-error://chromewebdata/"
+        interstitial=True,
+        interstitial_url="chrome-error://chromewebdata/?controlToken=fallback-control-canary",
     )
     async with _fake_cdp_ws(script) as ws_url:
-        await _cdp_session_click_connect(ws_url)
+        with caplog.at_level("WARNING", logger=adb_module.log.name):
+            await _cdp_session_click_connect(ws_url)
+    assert "fallback-control-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
     methods = [m for m, _ in script.calls]
     fallback_clicks = [
         p.get("expression")
@@ -1304,6 +1396,45 @@ async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> Non
 import time  # noqa: E402
 
 from cloudxr_py_test_ns.oob_teleop_adb import _find_and_click_teleop_tab  # noqa: E402
+
+
+@pytest.mark.parametrize("case", ["new", "navigated", "existing"])
+async def test_cdp_tab_url_logs_hide_credentials(
+    case: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    current = (
+        "https://headset.local/?oobEnable=1&controlToken=cdp-control-canary"
+        "&turnCredential=cdp-turn-canary"
+    )
+    old = "https://headset.local/?oobEnable=1&controlToken=old-control-canary"
+    before = (
+        []
+        if case == "new"
+        else [{"id": "teleop-1", "url": old if case == "navigated" else current}]
+    )
+    after = [
+        {
+            "id": "teleop-1",
+            "url": current,
+            "webSocketDebuggerUrl": "ws://cdp.test",
+            "title": "Teleop",
+        }
+    ]
+    with (
+        patch.object(adb_module, "_cdp_list_tabs", side_effect=[before, after]),
+        patch.object(adb_module, "_cdp_session_click_connect", new_callable=AsyncMock),
+        patch.object(adb_module, "oob_progress"),
+        caplog.at_level("INFO", logger=adb_module.log.name),
+    ):
+        found = await _find_and_click_teleop_tab(
+            resolved_port=48322, deadline=time.monotonic() + 5, timeout=5
+        )
+    assert found == "ws://cdp.test"
+    assert "cdp-control-canary" not in caplog.text
+    assert "cdp-turn-canary" not in caplog.text
+    assert "old-control-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
 
 
 async def test_find_and_click_teleop_tab_finds_already_navigated_tab() -> None:
@@ -1419,7 +1550,14 @@ async def test_monitor_reports_terminal_error_without_touching_the_tab(capsys) -
     """A terminal banner is reported via on_terminal_error and logged - the monitor itself
     never calls any of the relaunch-capable helpers (closing/navigating/re-clicking is
     exclusively the caller's decision now)."""
-    script = _MonitorScript(banners=["", "Stream did not attach within 500ms"])
+    script = _MonitorScript(
+        banners=[
+            "",
+            "Stream did not attach within 500ms at "
+            "https://host.test/?controlToken=error-control-canary"
+            "&turnCredential=error-turn-canary",
+        ]
+    )
     reported: list[str] = []
     async with _fake_cdp_ws(script) as ws_url:
         with (
@@ -1446,12 +1584,20 @@ async def test_monitor_reports_terminal_error_without_touching_the_tab(capsys) -
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-    assert reported == ["Stream did not attach within 500ms"]
+    assert len(reported) == 1
+    assert "error-control-canary" not in reported[0]
+    assert "error-turn-canary" not in reported[0]
+    assert "controlToken=<REDACTED>" in reported[0]
+    assert "turnCredential=<REDACTED>" in reported[0]
     close_tabs.assert_not_called()
     bookmark.assert_not_called()
     find_tab.assert_not_called()
     out = capsys.readouterr().err
     assert "Stream did not attach within 500ms" in out
+    assert "error-control-canary" not in out
+    assert "error-turn-canary" not in out
+    assert "controlToken=<REDACTED>" in out
+    assert "turnCredential=<REDACTED>" in out
 
 
 async def test_monitor_dedupes_identical_banner_then_reports_a_change() -> None:

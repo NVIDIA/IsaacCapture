@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from conftest import mock_service_deps
+from isaaccapture.cloudxr.background import AlreadyServingError
 from isaaccapture.cloudxr.launcher import (
     DEFAULT_DEVICE_PROFILE,
     CloudXRLauncher,
@@ -164,6 +165,66 @@ class TestAttach:
         with _live():
             with pytest.raises(RuntimeError, match="environment file is missing"):
                 CloudXRLauncher(install_dir=str(tmp_path))
+
+    @pytest.mark.parametrize(
+        ("requested_oob", "requested_usb", "flags", "expected"),
+        [
+            (True, False, [], "running without OOB"),
+            (True, False, ["--setup-oob", "--usb-local"], "running USB-local OOB"),
+            (True, True, ["--setup-oob"], "running OOB without USB-local"),
+            (True, True, ["--setup-oob", "--usb-local"], None),
+            (True, False, ["--setup-oob"], None),
+        ],
+    )
+    def test_requested_oob_mode_matches_existing_runtime(
+        self, tmp_path, monkeypatch, requested_oob, requested_usb, flags, expected
+    ):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        monkeypatch.delenv("XR_RUNTIME_JSON", raising=False)
+        with (
+            _live(),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=42),
+            patch("isaaccapture.cloudxr.background.read_run_flags", return_value=flags),
+        ):
+            if expected:
+                with pytest.raises(RuntimeError, match=expected) as error:
+                    CloudXRLauncher(
+                        install_dir=install,
+                        setup_oob=requested_oob,
+                        usb_local=requested_usb,
+                    )
+                assert "service stop --cloudxr-install-dir" in str(error.value)
+                assert os.environ.get("XR_RUNTIME_JSON") != "/x/openxr.json"
+            else:
+                CloudXRLauncher(
+                    install_dir=install,
+                    setup_oob=requested_oob,
+                    usb_local=requested_usb,
+                )
+
+    def test_requested_oob_mode_fails_when_service_flags_are_unknown(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with (
+            _live(),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=None),
+        ):
+            with pytest.raises(RuntimeError, match=r"Cannot verify.*OOB/USB mode"):
+                CloudXRLauncher(install_dir=install, setup_oob=True)
+
+    def test_startup_race_validates_winning_runtime_mode(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with (
+            _live(False),
+            patch("isaaccapture.cloudxr.launcher.check_eula"),
+            patch(
+                "isaaccapture.cloudxr.background.start_and_wait",
+                side_effect=AlreadyServingError(),
+            ),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=42),
+            patch("isaaccapture.cloudxr.background.read_run_flags", return_value=[]),
+        ):
+            with pytest.raises(RuntimeError, match="running without OOB"):
+                CloudXRLauncher(install_dir=install, setup_oob=True)
 
 
 class TestDivergenceWarnings:

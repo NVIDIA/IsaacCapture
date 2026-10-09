@@ -50,6 +50,7 @@ def immediate_to_thread(monkeypatch):
         "_adb_run",
         lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
     )
+    monkeypatch.setattr(adb, "assert_supported_headset", lambda: None)
 
 
 @pytest.mark.parametrize(
@@ -355,10 +356,36 @@ async def test_explicit_serial_waits_without_ever_adopting_other(monkeypatch):
     assert hub.statuses[-1]["ignoredSerials"] == ["other"]
 
 
-async def test_implicit_selection_waits_for_exactly_one_ready(monkeypatch):
+async def test_implicit_selection_requires_serial_for_ambiguous_first_observation(
+    monkeypatch,
+):
+    monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    with patch.object(
+        adb,
+        "enumerate_adb_devices",
+        return_value=AdbDevices((("one", "unauthorized"), ("two", "device"))),
+    ):
+        with pytest.raises(adb.OobAdbError, match="Set ANDROID_SERIAL"):
+            await lifecycle.run()
+    assert lifecycle.selected is None
+
+
+async def test_first_unauthorized_serial_stays_pinned_when_other_becomes_ready(
+    monkeypatch,
+):
     monkeypatch.delenv("ANDROID_SERIAL", raising=False)
     hub = FakeHub()
-    observations = [AdbDevices((("one", "device"), ("two", "device")))] * 2
+    observations = [
+        AdbDevices((("first", "unauthorized"),)),
+        AdbDevices((("first", "unauthorized"), ("later", "device"))),
+    ]
 
     async def sleep(_):
         if not observations:
@@ -377,9 +404,10 @@ async def test_implicit_selection_waits_for_exactly_one_ready(monkeypatch):
     ):
         with pytest.raises(asyncio.CancelledError):
             await lifecycle.run()
-    assert lifecycle.selected is None
-    assert hub.statuses[-1]["ignoredSerials"] == []
-    assert "Multiple ready devices" in hub.statuses[-1]["reason"]
+    assert lifecycle.selected == "first"
+    assert hub.statuses[-1]["selectedSerial"] == "first"
+    assert hub.statuses[-1]["ignoredSerials"] == ["later"]
+    assert "unauthorized" in hub.statuses[-1]["reason"]
 
 
 async def test_adb_enumeration_reorder_does_not_restart_recovery(monkeypatch, caplog):

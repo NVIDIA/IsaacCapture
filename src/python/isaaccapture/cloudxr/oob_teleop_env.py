@@ -325,10 +325,15 @@ def print_hosted_client_line(
     prefix: str = "web client:        ",
     file=None,
 ) -> None:
-    """Print ``prefix`` + *url* (cyan when *file* is a TTY)."""
+    """Print ``prefix`` + a credential-safe *url* (cyan when *file* is a TTY)."""
     out = sys.stdout if file is None else file
     use_color = bool(getattr(out, "isatty", lambda: False)())
-    left = f"{prefix}\033[36m{url}\033[0m" if use_color else f"{prefix}{url}"
+    display_url = redact_control_token(url)
+    left = (
+        f"{prefix}\033[36m{display_url}\033[0m"
+        if use_color
+        else f"{prefix}{display_url}"
+    )
     print(left, file=out)
 
 
@@ -534,13 +539,13 @@ def build_headset_bookmark_url(
 
 
 def redact_control_token(text: str) -> str:
-    """Mask ``controlToken`` and ``token`` query values in display or log text.
+    """Mask credential query values in display or log text.
 
     Shared by every path that surfaces a credential-bearing URL, including
     the OOB WSS failure log and service status diagnostic.
     """
     return re.sub(
-        r"(?<![\w])((?:controlToken|token)=)[^&\s'\"#]+",
+        r"(?<![\w])((?:controlToken|turnCredential|token)=)[^&\s'\"#]+",
         r"\1<REDACTED>",
         text,
         flags=re.IGNORECASE,
@@ -632,9 +637,8 @@ def print_oob_hub_startup_banner(
         control_token=None,
     )
     if token:
-        bookmark_display = redact_control_token(
-            f"{bookmark_display}&controlToken={token}"
-        )
+        bookmark_display = f"{bookmark_display}&controlToken={token}"
+    bookmark_display = redact_control_token(bookmark_display)
     wss_primary = f"wss://{primary_host}:{port}{OOB_WS_PATH}"
 
     bar = "=" * 72
