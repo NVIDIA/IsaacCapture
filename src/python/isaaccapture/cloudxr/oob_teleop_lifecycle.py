@@ -1169,6 +1169,7 @@ class OobLifecycle:
                 "Selected headset must be Awake before CONNECT; wear or unlock it",
                 adbReady=True,
                 networkPresent=True,
+                streaming=False,
             )
             return None
         except adb.OobAdbError:

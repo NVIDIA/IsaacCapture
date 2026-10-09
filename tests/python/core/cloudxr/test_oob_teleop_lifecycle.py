@@ -917,6 +917,36 @@ async def test_same_tab_connect_announces_the_stream_it_replaces(monkeypatch):
     ]
 
 
+async def test_same_tab_connect_blocked_by_sleep_announces_the_stream_it_replaces(
+    monkeypatch,
+):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+
+    with patch(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+        side_effect=adb.HeadsetNotAwakeError(adb.HEADSET_NOT_AWAKE_DIAGNOSTIC),
+    ):
+        assert await lifecycle._same_tab_connect("terminal:1") is None
+
+    assert announced == [
+        "headset connected; streaming",
+        "headset disconnected: Selected headset must be Awake before CONNECT; "
+        "wear or unlock it",
+    ]
+
+
 async def test_cdp_monitor_loss_does_not_announce_a_usb_stream_that_kept_running(
     monkeypatch,
 ):
