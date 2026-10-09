@@ -61,9 +61,9 @@ After building, install the wheels with ``uv`` or ``pip``:
 
 .. code-block:: bash
 
-   # The second command makes sure the local build wins over a newer release on the index.
-   uv pip install isaaccapture --find-links=./install/wheels/
-   uv pip install isaaccapture --find-links=./install/wheels/ --no-index --reinstall-package isaaccapture
+   # Install the wheel by path so a newer release on the index cannot win over the local build
+   # (cp312 = Python 3.12). --reinstall-package replaces an already-installed isaaccapture.
+   uv pip install ./install/wheels/isaaccapture-*-cp312-*.whl --reinstall-package isaaccapture
 
    # or
    pip install install/wheels/isaaccapture-*.whl
