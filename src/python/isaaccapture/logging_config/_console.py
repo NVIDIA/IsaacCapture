@@ -51,7 +51,10 @@ _ANSI_RESET = "\033[0m"
 _SGR_ESCAPE = re.compile(r"(?:\x1b\[[0-9;]*m)+")
 
 # Exact logger name to ANSI emphasis.
-_logger_colors: dict[str, str] = {}
+_logger_colors: dict[str, str] = {
+    # cloudxr.oob_teleop_env contains [setup-oob] / [usb-local] progress.
+    "isaaccapture.cloudxr.oob_teleop_env": "\033[36m",
+}
 
 
 #: Color only WARNING and ERROR+ so severity remains distinctive.

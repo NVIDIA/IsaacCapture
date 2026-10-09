@@ -773,6 +773,286 @@ async def test_ignored_serial_display_is_bounded_and_safe(monkeypatch):
     assert "\n" not in status["selectedSerial"]
 
 
+async def test_stale_metrics_do_not_announce_a_headset_disconnect(monkeypatch):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    confirmed = "Stream and fresh metrics confirmed"
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+    # Metrics went stale while the browser still reports streaming.
+    stale = "Browser ready; waiting for stream or fresh metrics"
+    await lifecycle._publish("browser_ready", "ACTIVE", stale, streaming=True)
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+    # The stream itself stopped.
+    retrying = "Browser is retrying the stream"
+    await lifecycle._publish("browser_ready", "ACTIVE", retrying, streaming=False)
+    await lifecycle._publish("active", "ACTIVE", confirmed, streaming=True)
+
+    assert announced == [
+        "headset connected; streaming",
+        f"headset disconnected: {retrying}",
+        "headset reconnected; streaming resumed",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("usb_local", "adb_ready", "network_present", "lost"),
+    [
+        (False, False, False, False),  # Wi-Fi carries the stream; ADB loss is moot.
+        (False, True, False, True),  # A headset with no network has no stream.
+        (True, False, False, True),  # USB-local streams over the lost transport.
+    ],
+)
+async def test_transport_loss_announces_a_disconnect_only_when_it_carries_the_stream(
+    monkeypatch, usb_local, adb_ready, network_present, lost
+):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=usb_local,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+    await lifecycle._enter_transport_recovery(
+        "transport lost",
+        "WAITING_FOR_ADB",
+        adb_ready=adb_ready,
+        network_present=network_present,
+    )
+
+    assert announced[1:] == (["headset disconnected: transport lost"] if lost else [])
+
+
+async def test_reopening_the_browser_announces_the_wifi_stream_it_ends(monkeypatch):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+    await lifecycle._enter_transport_recovery(
+        "Selected headset offline; reconnect the USB cable",
+        "WAITING_FOR_ADB",
+        adb_ready=False,
+        network_present=False,
+    )
+
+    async def connect(**_kwargs):
+        return asyncio.create_task(asyncio.Event().wait())
+
+    async def noop():
+        return None
+
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.run_oob_connect",
+            side_effect=connect,
+        ),
+        patch.object(lifecycle, "_verify_browser", new=noop),
+    ):
+        await lifecycle._automate()
+    await lifecycle._stop_monitor()
+
+    assert announced == [
+        "headset connected; streaming",
+        "headset disconnected: Opening browser and dispatching CONNECT",
+    ]
+
+
+async def test_same_tab_connect_announces_the_stream_it_replaces(monkeypatch):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    lifecycle = OobLifecycle(
+        hub=FakeHub(),
+        resolved_port=48322,
+        usb_local=False,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+
+    async def attach(*, click_connect, on_dispatched=None, **_kwargs):
+        dispatched = on_dispatched()
+        if asyncio.iscoroutine(dispatched):
+            await dispatched
+        return asyncio.create_task(asyncio.Event().wait())
+
+    lifecycle.client_loaded = True
+    with patch(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.attach_existing_oob_tab",
+        side_effect=attach,
+    ):
+        assert await lifecycle._same_tab_connect("terminal:1")
+    await lifecycle._stop_monitor()
+
+    assert announced == [
+        "headset connected; streaming",
+        "headset disconnected: Existing browser CONNECT dispatched; "
+        "waiting for fresh stream evidence",
+    ]
+
+
+async def test_cdp_monitor_loss_does_not_announce_a_usb_stream_that_kept_running(
+    monkeypatch,
+):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    client = {
+        "clientId": "surviving-page",
+        "streaming": True,
+        "lastMetricsAt": time.time() * 1000,
+        "streamPhase": "streaming",
+        "terminalEventId": None,
+    }
+    hub = FakeHub()
+    hub.get_snapshot = lambda: asyncio.sleep(0, result={"headsets": [client]})
+    # The first probe after the repair predates the browser's next metrics report.
+    reports = iter([client])
+    hub.probe_browser = lambda *_args, **_kwargs: asyncio.sleep(
+        0, result=next(reports, {**client, "lastMetricsAt": time.time() * 1000})
+    )
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise asyncio.CancelledError
+
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=True,
+        turn_port=3478,
+        config=RecoveryConfig(),
+        sleep=sleep,
+        host_listener_probe=lambda _port: True,
+    )
+    ready = AdbDevices((("original", "device"),))
+    lifecycle.selected = "original"
+    lifecycle._ready_count = 2
+    lifecycle._last_observation = (ready.devices, ready.diagnostic)
+    lifecycle.last_network_state = HeadsetNetworkState.NETWORK_PRESENT
+    lifecycle.browser_ready = True
+    lifecycle.browser_client = "surviving-page"
+    lifecycle.last_stream_at = time.time()
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+    # The CDP monitor cannot reattach once, while the hub still reports streaming.
+    attaches = iter([False])
+
+    async def attach_monitor():
+        return next(attaches, True)
+
+    async def no_coturn_restart():
+        return False
+
+    async def command(_command, *, timeout):
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    rules = "\n".join(
+        f"original tcp:{port} tcp:{port}" for port in (48322, 49100, 3478)
+    )
+    with (
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.enumerate_adb_devices",
+            return_value=ready,
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_headset_network",
+            return_value=HeadsetNetworkProbe(HeadsetNetworkState.NETWORK_PRESENT),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb.probe_adb_reverse_rules",
+            return_value=AdbReverseProbe(True, ()),
+        ),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._run_adb",
+            return_value=rules,
+        ),
+        patch("isaaccapture.cloudxr.oob_teleop_lifecycle.adb.assert_headset_awake"),
+        patch.object(lifecycle, "_ensure_coturn", new=no_coturn_restart),
+        patch.object(lifecycle, "_run_adb_command", new=command),
+        patch.object(lifecycle, "_attach_existing_monitor", new=attach_monitor),
+        patch.object(lifecycle, "_automate") as automate,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run()
+
+    automate.assert_not_called()
+    assert lifecycle.snapshot["health"] == "active"
+    assert announced == ["headset connected; streaming"]
+
+
+@pytest.mark.parametrize(
+    ("reported", "lost"),
+    [
+        ({"streaming": True, "streamPhase": "streaming"}, False),
+        ({"streaming": False, "streamPhase": "retrying"}, True),
+        ({"streaming": False, "streamPhase": "terminal"}, True),
+        (None, True),  # The browser's control client is gone.
+    ],
+)
+async def test_verified_usb_transport_defers_to_the_browser_stream_report(
+    monkeypatch, reported, lost
+):
+    announced = []
+    monkeypatch.setattr(
+        "isaaccapture.cloudxr.oob_teleop_lifecycle.oob_progress",
+        lambda _stage, message: announced.append(message),
+    )
+    headsets = [] if reported is None else [{"clientId": "page", **reported}]
+    hub = FakeHub()
+    hub.get_snapshot = lambda: asyncio.sleep(0, result={"headsets": headsets})
+    lifecycle = OobLifecycle(
+        hub=hub,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=False,
+        config=RecoveryConfig(),
+    )
+    lifecycle.browser_client = "page"
+    await lifecycle._publish("active", "ACTIVE", "confirmed", streaming=True)
+    await lifecycle._enter_transport_recovery(
+        "observation failed",
+        "REBUILDING_USB",
+        adb_ready=True,
+        network_present=True,
+        transport_verified=True,
+    )
+
+    assert announced[1:] == (
+        ["headset disconnected: observation failed"] if lost else []
+    )
+
+
 async def test_cleanup_commands_stay_on_selected_serial_when_it_is_absent(monkeypatch):
     monkeypatch.setenv("ANDROID_SERIAL", "original")
     hub = FakeHub()

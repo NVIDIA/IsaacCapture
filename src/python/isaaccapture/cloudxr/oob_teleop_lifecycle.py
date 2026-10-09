@@ -23,6 +23,7 @@ from . import usb_health
 from .oob_teleop_env import (
     USB_TURN_CREDENTIAL,
     USB_TURN_USER,
+    oob_progress,
     redact_control_token,
     usb_backend_port,
 )
@@ -187,6 +188,9 @@ class OobLifecycle:
         self._last_health: str | None = None
         self._readiness_stage: str | None = None
         self._readiness_since: float | None = None
+        # Whether the operator was told the headset streams now, and ever did.
+        self._streaming = False
+        self._streamed = False
         self._prerequisite_signature: tuple | None = None
         self.snapshot: dict = {}
 
@@ -260,6 +264,23 @@ class OobLifecycle:
             self._restart_episode()
         self._last_health = health
         reason = re.sub(r"https?://\S+", "<URL>", redact_control_token(reason))[:300]
+        # The operator sees the headset connect once ACTIVE confirms the stream, and
+        # disconnect only on an explicit streaming=False: stale metrics drop health
+        # below ACTIVE while the browser still streams, and a publication that omits
+        # the flag does not know. The explicit False matches the snapshot default but
+        # is what announces the loss. Other transitions stay on this module's logger.
+        stage = "usb-local" if self.usb_local else "setup-oob"
+        if health == "active" and not self._streaming:
+            oob_progress(
+                stage,
+                "headset reconnected; streaming resumed"
+                if self._streamed
+                else "headset connected; streaming",
+            )
+            self._streaming = self._streamed = True
+        elif self._streaming and flags.get("streaming") is False:
+            oob_progress(stage, f"headset disconnected: {reason}")
+            self._streaming = False
         snapshot = {
             "schemaVersion": 1,
             "generation": self.generation,
@@ -458,8 +479,21 @@ class OobLifecycle:
         adb_ready: bool,
         network_present: bool,
         adb_diagnostic: str = "",
+        transport_verified: bool = False,
     ) -> None:
-        """Preserve browser intent and publish one USB-loss transition."""
+        """Preserve browser intent and publish one USB-loss transition.
+
+        *transport_verified* means this iteration's USB transport checks passed, so
+        the disruption came from observing the browser, not from the stream's path.
+        """
+        # USB-local streams over this transport; once it is verified, only the
+        # browser's own report shows the stream lost. Over Wi-Fi only a headset that
+        # ADB reports without a network has certainly lost its stream. Read the
+        # report before the browser client is forgotten below.
+        stream_lost = (adb_ready and not network_present) or (
+            self.usb_local
+            and not (transport_verified and await self._browser_reports_streaming())
+        )
         await self._remember_transport_loss()
         if self._transport_lost:
             self._invalidate_completed_repair(
@@ -472,6 +506,17 @@ class OobLifecycle:
             adbReady=adb_ready,
             networkPresent=network_present,
             adbDiagnostic=redact_control_token(adb_diagnostic),
+            **({"streaming": False} if stream_lost else {}),
+        )
+
+    async def _browser_reports_streaming(self) -> bool:
+        """Whether this lifecycle's browser still reports a running stream to the hub."""
+        state = await self.hub.get_snapshot()
+        return any(
+            headset["clientId"] == self.browser_client
+            and headset.get("streaming")
+            and headset.get("streamPhase") == "streaming"
+            for headset in state["headsets"]
         )
 
     def _transport_retry_interval(self) -> float:
@@ -989,6 +1034,7 @@ class OobLifecycle:
             networkPresent=True,
             reverseRulesVerified=self.usb_local,
             turnPrerequisitesReady=self.usb_local,
+            streaming=False,
         )
 
         async def on_client_loaded() -> None:
@@ -1078,6 +1124,7 @@ class OobLifecycle:
                 networkPresent=True,
                 reverseRulesVerified=self.usb_local,
                 turnPrerequisitesReady=self.usb_local,
+                streaming=False,
             )
 
         def on_dispatched() -> Awaitable[None]:
@@ -1096,6 +1143,7 @@ class OobLifecycle:
                     reverseRulesVerified=self.usb_local,
                     turnPrerequisitesReady=self.usb_local,
                     connectDispatched=True,
+                    streaming=False,
                 )
 
             return publish()
@@ -1290,7 +1338,8 @@ class OobLifecycle:
             turnPrerequisitesReady=True,
             browserRegistered=True,
             healthProbeAcknowledged=True,
-            streaming=False,
+            # Unconfirmed is not lost: announce only if the browser stopped streaming.
+            **({} if report.get("streaming") else {"streaming": False}),
             clientMetricsFresh=False,
             streamPhase=phase,
             terminalEventId=terminal_event,
@@ -1859,10 +1908,12 @@ class OobLifecycle:
                     )
                     await self.sleep(self.config.interval_sec)
                     continue
+                transport_verified = False
                 try:
                     # In USB-local mode, ACTIVE/VERIFYING_BROWSER revalidate USB first.
                     if self.browser_ready or self.connect_dispatched:
                         await self._check_usb_prerequisites()
+                        transport_verified = True
                     # Checked after prerequisites (a genuine USB/ADB/network failure keeps
                     # priority) but before per-state dispatch below, so a CDP-observed
                     # terminal error is handled the same way regardless of which state
@@ -1943,6 +1994,7 @@ class OobLifecycle:
                         "REBUILDING_USB",
                         adb_ready=exc.adb_ready,
                         network_present=exc.network_present,
+                        transport_verified=transport_verified,
                     )
                     continue
                 except asyncio.CancelledError:
