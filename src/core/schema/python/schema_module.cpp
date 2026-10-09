@@ -26,6 +26,7 @@
 #include "soma_common_bindings.h"
 #include "soma_hand_joint_poses_bindings.h"
 #include "soma_hand_joint_rotations_bindings.h"
+#include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
 #include "timestamp_bindings.h"
 
@@ -71,6 +72,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind steering wheel types (SteeringWheelOutput table).
     core::bind_steering_wheel(m);
+
+    // Bind SpaceMouse types (SpaceMouseOutput table).
+    core::bind_spacemouse(m);
 
     // Bind message channel types (MessageChannelMessages table).
     core::bind_message_channel(m);
