@@ -374,9 +374,8 @@ def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) 
         pass
 
     log.warning(
-        "Headset appears asleep (wakefulness=%s). If oob is enabled, "
-        "it will automatically wake up and connect. Otherwise, "
-        "put it on or cover the proximity sensor; waiting up to %.0fs for it to wake.",
+        "Headset appears asleep (wakefulness=%s). Put it on or cover the "
+        "proximity sensor; waiting up to %.0fs for it to wake.",
         wake or "?",
         timeout,
     )
