@@ -23,13 +23,13 @@ cameras:
     type: video
     path: ../test_data/recording.mp4   # relative to this YAML's dir
     loop: true                  # rewind at end of file (false = hold last frame)
-    fps: 0                      # 0 = the file's native rate. With source: rtp,
-                                # set this explicitly — the sender's encode loop
-                                # paces at fps (default 30) regardless of the file.
-    # width/height default to the file's native size (per eye when stereo);
-    # set both to resize each frame on the CPU before upload.
-    # width: 1280
-    # height: 720
+    fps: 30                     # 0 = the file's native rate, but source: rtp (loopback)
+                                # needs fps > 0, and width/height below.
+    # Pinned to the shipped clip's size so ``loopback`` works as-is; without
+    # them width/height default to the file's native size (per eye when stereo).
+    # Set both to resize each frame on the CPU before upload.
+    width: 1280
+    height: 720
     stereo: false               # true = replay a side-by-side recording as
                                 # stereo, splitting each frame into left/right
                                 # eyes. Supported in direct mode only; the RTP
