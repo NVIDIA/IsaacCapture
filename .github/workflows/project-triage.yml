@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Refresh PR triage
+
+on:
+  schedule:
+    - cron: "43 16 * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Update Project fields (otherwise preview only)
+        type: boolean
+        default: false
+      notify:
+        description: Post eligible PR reminders (requires apply)
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/scripts/project_triage.py
+      - .github/workflows/project-triage.yml
+      - tests/python/automation/**
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Test PR triage policy
+        run: python3 -m unittest discover -s tests/python/automation -v
+
+  refresh:
+    needs: test
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.repository == 'NVIDIA/IsaacCapture' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: read
+      statuses: read
+    concurrency:
+      group: project-triage-322
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Refresh Project metrics and reminders
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_WRITE_TOKEN }}
+          REPO_TOKEN: ${{ github.token }}
+          APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+          NOTIFY: ${{ github.event_name == 'schedule' || inputs.notify }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--report "$RUNNER_TEMP/triage-report.json")
+          if [[ "$APPLY" == true ]]; then args+=(--apply); fi
+          if [[ "$NOTIFY" == true ]]; then args+=(--notify); fi
+          python3 .github/scripts/project_triage.py "${args[@]}"
+      - name: Summarize run
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/triage-report.json" ]]; then
+            jq '{checked_at,applied,notifications_enabled,processed:(.items|length),failed:(.failures|length)}' \
+              "$RUNNER_TEMP/triage-report.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
