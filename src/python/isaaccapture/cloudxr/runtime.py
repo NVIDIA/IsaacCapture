@@ -47,28 +47,40 @@ _CLOUDXR_NATIVE_SUBDIR = "native"
 _CLOUDXR_RUNTIME_LIB = "libcloudxr.so"
 
 
-def _is_tegra_t234() -> bool:
-    """Return True on Jetson Orin-class platforms (T234 / CHIPID 0x23)."""
-    boot = Path("/etc/nv_boot_control.conf")
-    if boot.is_file():
-        try:
-            text = boot.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            text = ""
-        for line in text.splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "TEGRA_CHIPID" and value.strip() == "0x23":
-                return True
+_TEGRA_T234_CHIP_ID = 0x23
+_TEGRA_T234_JEP106_ID = "jep106:036b:0234"  # Arm SMCCC SoC ID: NVIDIA JEDEC ID + part
+_SOC_DEVICES = Path("/sys/bus/soc/devices")
+_DEVICE_TREE_COMPATIBLE = Path("/proc/device-tree/compatible")
 
-    compatible = Path("/proc/device-tree/compatible")
-    if compatible.is_file():
-        try:
-            data = compatible.read_bytes().decode("utf-8", errors="ignore")
-        except OSError:
-            data = ""
-        if "tegra234" in data:
+
+def _read_text(path: Path) -> str:
+    """Return the file contents, or "" if it is missing or unreadable."""
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def _is_tegra_t234() -> bool:
+    """Return True on Jetson Orin-class platforms (T234 / CHIPID 0x23).
+
+    Only the sysfs SoC devices are visible inside Docker, which masks
+    /sys/firmware (hence /proc/device-tree). The ``socN`` index depends on probe
+    order, so scan them all.
+    """
+    for soc in sorted(_SOC_DEVICES.glob("soc*")):
+        family = _read_text(soc / "family").strip()
+        soc_id = _read_text(soc / "soc_id").strip()
+        if (
+            family == "Tegra"
+            and soc_id.isdigit()
+            and int(soc_id) == _TEGRA_T234_CHIP_ID
+        ):
             return True
-    return False
+        if soc_id == _TEGRA_T234_JEP106_ID:
+            return True
+
+    return "tegra234" in _read_text(_DEVICE_TREE_COMPATIBLE)
 
 
 def _should_use_exp() -> bool:
