@@ -46,6 +46,27 @@ def comment(when, user=PERSON, body="An update"):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_field_creation_uses_custom_field_enum(self):
+        api = triage.GitHub("not-a-real-token")
+        project = {"id": "project", "fields": {"nodes": []}}
+        with patch.object(
+            api,
+            "graphql",
+            side_effect=lambda query, **variables: {
+                "createProjectV2Field": {
+                    "projectV2Field": {
+                        "id": variables["name"],
+                        "name": variables["name"],
+                        "dataType": variables["type"],
+                    }
+                }
+            },
+        ) as call:
+            self.assertEqual(
+                len(triage.ensure_fields(api, project, True)), len(triage.FIELDS)
+            )
+            self.assertIn("$type:ProjectV2CustomFieldType!", call.call_args.args[0])
+
     def test_age_threshold_is_strict_and_not_idle(self):
         self.assertEqual(
             triage.reasons(pr(createdAt=triage.iso(NOW - timedelta(days=14))), {}, NOW),

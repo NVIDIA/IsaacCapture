@@ -218,7 +218,8 @@ def ensure_fields(api, project, apply):
                 raise RuntimeError(f"Unexpected type for {name}")
         elif apply:
             field = api.graphql(
-                """mutation($project:ID!,$name:String!,$type:ProjectV2FieldType!) {
+                # Creation accepts CustomFieldType; FieldType also includes built-ins.
+                """mutation($project:ID!,$name:String!,$type:ProjectV2CustomFieldType!) {
               createProjectV2Field(input:{projectId:$project,name:$name,dataType:$type}) {
                 projectV2Field { ... on ProjectV2Field { id name dataType } }
               }
