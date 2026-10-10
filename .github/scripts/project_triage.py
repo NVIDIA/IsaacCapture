@@ -192,7 +192,7 @@ def project_data(api, org, number):
             """query($id:ID!,$cursor:String) {
           node(id:$id) { ... on ProjectV2 { items(first:100,after:$cursor) {
             pageInfo { hasNextPage endCursor } nodes {
-              id isArchived content { ... on PullRequest { number repository { nameWithOwner } } }
+              id isArchived content { ... on PullRequest { number state repository { nameWithOwner } } }
               fieldValues(first:100) { nodes {
                 ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2Field { name } } }
                 ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2Field { name } } }
@@ -376,6 +376,7 @@ def main():
         content = item.get("content") or {}
         if (
             item["isArchived"]
+            or content.get("state") != "OPEN"
             or content.get("repository", {}).get("nameWithOwner") != args.repo
         ):
             continue
