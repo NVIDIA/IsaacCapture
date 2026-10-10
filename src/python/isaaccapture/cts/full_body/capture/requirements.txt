@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The panel's renderer, plus what reading the take back needs. isaaccapture itself is
+# the locally built wheel, which setup_env.sh installs by path.
+# 1.1 for gui.add_command, which binds the space bar.
+viser>=1.1.0
+mcap
+# Paired with the flatc the checker's setup_env.sh downloads; the generated bindings
+# this reads the recording through were emitted by that version.
+flatbuffers==24.3.25
