@@ -267,6 +267,18 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    3. Click **Connect** to begin teleoperation.
 
    .. note::
+
+      Typing an IP address and port with a VR keyboard is slow and error-prone.
+      If you opened ``https://<your-ip>:48322/`` directly in the headset browser
+      to accept the certificate, select **Using VR without ADB? Open connection
+      helper** on the **Certificate Accepted** page, then **Open NVIDIA-hosted
+      client**. The client opens with the server address and port already
+      filled in, so you can click **Connect** without typing.
+
+      If a client tab is already open, return to it instead. For ADB or USB
+      connections, use the client link printed by the launcher.
+
+   .. note::
       For advanced usage and troubleshooting of CloudXR, see the `CloudXR documentation`_ for more
       details.
 
