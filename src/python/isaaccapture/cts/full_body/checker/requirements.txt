@@ -1,0 +1,5 @@
+# Pinned because ../oracle/fixtures_index.json records each fixture's size_bytes and the
+# fixtures themselves are not in git: a writer that changed its chunking or summary
+# section would move every one of them.
+mcap==1.4.0
+flatbuffers==24.3.25

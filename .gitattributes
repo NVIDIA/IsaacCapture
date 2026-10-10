@@ -21,6 +21,9 @@
 # Video assets are tracked by default.
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 
+# Audio assets are tracked by default.
+*.wav filter=lfs diff=lfs merge=lfs -text
+
 #
 # Exceptions for small source SVGs (webpack-inlined; not binary assets).
 deps/cloudxr/webxr_client/src/icons/*.svg -filter -diff -merge text
