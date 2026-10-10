@@ -10,9 +10,10 @@ Minimal boilerplate - just configure and run!
 
 import argparse
 import sys
-import time
 from pathlib import Path
 import isaaccapture.deviceio as deviceio
+
+from _example_loop import add_duration_argument, run_example_loop
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeters import (
@@ -35,6 +36,7 @@ PLUGIN_ROOT_ID = "synthetic_hands"
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     CloudXRLauncher.add_launcher_arguments(parser)
+    add_duration_argument(parser)
     args = parser.parse_args()
 
     # ==================================================================
@@ -93,9 +95,9 @@ def main():
         print("Gripper Retargeting - Squeeze triggers to control grippers")
         print("=" * 60 + "\n")
 
-        start_time = time.time()
+        print("Gripper command: +1.00 = open, -1.00 = closed (trigger > 0.5).")
 
-        while time.time() - start_time < 20.0:
+        def step():
             # Run one iteration (updates trackers + executes pipeline)
             result = session.step()
 
@@ -107,8 +109,9 @@ def main():
                 elapsed = session.get_elapsed_time()
                 print(f"[{elapsed:5.1f}s] Right: {right:.2f}")
 
-            time.sleep(0.016)  # ~60 FPS
+        run_example_loop(step, args.duration)
 
+    print("Session closed.")
     return 0
 
 
