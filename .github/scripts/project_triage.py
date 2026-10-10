@@ -262,15 +262,16 @@ def update_field(api, project_id, item_id, field, value):
 def show_age(api, project, fields):
     views = api.graphql(
         """query($id:ID!) { node(id:$id) { ... on ProjectV2 {
-      views(first:100) { nodes { id layout fields(first:100) { nodes {
+      views(first:100) { nodes { id layout configuration { visibleFields(first:100) { nodes {
         ... on ProjectV2Field { id } ... on ProjectV2SingleSelectField { id }
         ... on ProjectV2IterationField { id }
-      } } } }
+      } } } } }
     } } }""",
         id=project["id"],
     )["node"]["views"]["nodes"]
     for view in views:
-        visible = [f["id"] for f in view["fields"]["nodes"]]
+        # view.fields uses project-wide order, not the user's configured column order.
+        visible = [f["id"] for f in view["configuration"]["visibleFields"]["nodes"]]
         idle, age = fields["Idle"]["id"], fields["Age"]["id"]
         if view["layout"] != "TABLE_LAYOUT" or idle not in visible or age in visible:
             continue

@@ -46,6 +46,31 @@ def comment(when, user=PERSON, body="An update"):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_age_visibility_preserves_configured_column_order(self):
+        api = triage.GitHub("not-a-real-token")
+        view = {
+            "id": "view",
+            "layout": "TABLE_LAYOUT",
+            "configuration": {
+                "visibleFields": {
+                    "nodes": [
+                        {"id": "custom-first"},
+                        {"id": "idle"},
+                        {"id": "custom-last"},
+                    ]
+                }
+            },
+        }
+        fields = {"Idle": {"id": "idle"}, "Age": {"id": "age"}}
+        with patch.object(
+            api, "graphql", side_effect=[{"node": {"views": {"nodes": [view]}}}, {}]
+        ) as call:
+            triage.show_age(api, {"id": "project"}, fields)
+            self.assertEqual(
+                call.call_args.kwargs["fields"],
+                ["custom-first", "idle", "age", "custom-last"],
+            )
+
     def test_field_creation_uses_custom_field_enum(self):
         api = triage.GitHub("not-a-real-token")
         project = {"id": "project", "fields": {"nodes": []}}
