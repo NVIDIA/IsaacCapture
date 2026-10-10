@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Verify Project triage update
+on:
+  push:
+    branches: [codex/verify-project-triage]
+    paths: [.github/workflows/verify-project-triage.yml]
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: project-triage-322
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests/python/automation -v
+      - name: Update Project fields without posting reminders
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_WRITE_TOKEN }}
+          REPO_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/project_triage.py --apply --report "$RUNNER_TEMP/triage-report.json"
+      - name: Summarize
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/triage-report.json" ]]; then
+            jq '{checked_at,applied,notifications_enabled,processed:(.items|length),failed:(.failures|length)}' \
+              "$RUNNER_TEMP/triage-report.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
