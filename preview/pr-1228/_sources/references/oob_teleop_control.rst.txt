@@ -576,13 +576,20 @@ Environment variables
        mode supports WiFi setup only; the launcher rejects the
        combination at startup.
    * - ``ANDROID_SERIAL``
-     - Pin a specific adb device when more than one is connected. The
-       lifecycle waits if multiple devices are ready before its first
-       selection. Once selected, every device command uses ``-s <serial>``.
-       If the selected serial disappears, becomes offline, or is unauthorized,
-       the service waits for it and ignores other devices. When it returns,
-       recovery resumes even if the other devices remain connected. Without
-       ``ANDROID_SERIAL``, exactly one ready device is required for selection.
+     - Pin the intended headset before starting OOB when more than one ADB
+       transport is visible. Without it, the first observation must contain
+       exactly one serial; that serial is pinned even while ``unauthorized``
+       or ``offline``. An ambiguous first observation fails with a restart
+       instruction, rather than selecting by list order or by which device
+       becomes ready first. Every device command then uses ``-s <serial>``.
+       If the selected serial disappears or loses authorization, the service
+       waits for it and ignores later devices. Once accessible, the selected
+       device must identify as a Meta Quest or PICO headset through Android
+       manufacturer/brand and a nonempty model property. Connect a supported
+       HMD and set ``ANDROID_SERIAL`` if the wrong device was selected.
+       Before each new browser launch, ADB must confirm
+       ``mWakefulness=Awake``; wear or unlock the headset (or cover its
+       proximity sensor) when the service reports that it is asleep.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host. If this is

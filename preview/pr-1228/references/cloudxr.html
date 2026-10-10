@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -725,6 +725,13 @@ the launcher starts a service. When attaching, the launcher recovers the
 detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.</p>
+<p>A launcher requesting <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> or <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
   NV_DEVICE_PROFILE: auto-native requested, Quest3 in effect
   Restart the service to apply it:
@@ -956,7 +963,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 09, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 10, 2026.
       <br/>
     
   </p>

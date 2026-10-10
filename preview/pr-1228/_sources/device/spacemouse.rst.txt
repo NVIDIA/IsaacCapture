@@ -41,6 +41,12 @@ Device access
 
    ./src/plugins/spacemouse/install_udev_rules.sh
 
+From a wheel install, run the copy bundled with the plugin:
+
+.. code-block:: bash
+
+   "$(python -c 'from isaaccapture.teleop_session_manager import BUNDLED_PLUGINS_DIR; print(BUNDLED_PLUGINS_DIR)')"/spacemouse/install_udev_rules.sh
+
 The rule (:code-file:`src/plugins/spacemouse/70-spacemouse.rules`) makes SpaceMouse HID nodes
 read-only for all users. No group membership is needed.
 
@@ -107,7 +113,8 @@ it; match it in ``SpaceMouseSource`` / ``SpaceMouseTracker``):
 
 While no device is open the plugin keeps pushing with ``connected`` false and zero axes, so a
 reader never holds the last deflection of an unplugged device; ``SpaceMouseSource`` then reports
-its outputs as absent. Recordings use MCAP channels ``spacemouse`` and ``spacemouse_tracked``.
+its outputs as absent. An open device that stops reporting for 250 ms while deflected has its
+axes zeroed. Recordings use MCAP channels ``spacemouse`` and ``spacemouse_tracked``.
 
 Retargeters
 -----------

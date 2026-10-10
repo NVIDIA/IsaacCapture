@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -477,6 +477,10 @@ in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blo
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/spacemouse/install_udev_rules.sh
 </pre></div>
 </div>
+<p>From a wheel install, run the copy bundled with the plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'from isaaccapture.teleop_session_manager import BUNDLED_PLUGINS_DIR; print(BUNDLED_PLUGINS_DIR)'</span><span class="k">)</span><span class="s2">"</span>/spacemouse/install_udev_rules.sh
+</pre></div>
+</div>
 <p>The rule (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/spacemouse/70-spacemouse.rules" rel="noopener noreferrer" target="_blank">src/plugins/spacemouse/70-spacemouse.rules</a>) makes SpaceMouse HID nodes
 read-only for all users. No group membership is needed.</p>
 </section>
@@ -535,7 +539,8 @@ it; match it in <code class="docutils literal notranslate"><span class="pre">Spa
 </ul>
 <p>While no device is open the plugin keeps pushing with <code class="docutils literal notranslate"><span class="pre">connected</span></code> false and zero axes, so a
 reader never holds the last deflection of an unplugged device; <code class="docutils literal notranslate"><span class="pre">SpaceMouseSource</span></code> then reports
-its outputs as absent. Recordings use MCAP channels <code class="docutils literal notranslate"><span class="pre">spacemouse</span></code> and <code class="docutils literal notranslate"><span class="pre">spacemouse_tracked</span></code>.</p>
+its outputs as absent. An open device that stops reporting for 250 ms while deflected has its
+axes zeroed. Recordings use MCAP channels <code class="docutils literal notranslate"><span class="pre">spacemouse</span></code> and <code class="docutils literal notranslate"><span class="pre">spacemouse_tracked</span></code>.</p>
 </section>
 <section id="retargeters">
 <h2><a class="toc-backref" href="#id6" role="doc-backlink">Retargeters</a><a class="headerlink" href="#retargeters" title="Link to this heading">#</a></h2>
@@ -709,7 +714,7 @@ reconnecting through a FIFO standing in for the device node.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 09, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 10, 2026.
       <br/>
     
   </p>
