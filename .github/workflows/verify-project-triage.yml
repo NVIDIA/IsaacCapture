@@ -4,7 +4,9 @@ name: Verify Project triage update
 on:
   push:
     branches: [codex/verify-project-triage]
-    paths: [.github/workflows/verify-project-triage.yml]
+    paths:
+      - .github/workflows/verify-project-triage.yml
+      - .github/scripts/project_triage.py
 permissions:
   contents: read
   pull-requests: read
