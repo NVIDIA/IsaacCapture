@@ -4,6 +4,7 @@
 
 import importlib.util
 import json
+import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -156,6 +157,67 @@ class PolicyTests(unittest.TestCase):
             triage.iso(NOW + timedelta(days=3)),
         )
 
+    def test_invalid_stored_state_is_discarded(self):
+        valid = {
+            "head": "abc",
+            "since": triage.iso(NOW - timedelta(days=8)),
+            "observed": triage.iso(NOW - timedelta(days=1)),
+        }
+        self.assertEqual(triage.read_state(json.dumps(valid)), valid)
+        invalid = [
+            None,
+            "{",
+            "null",
+            "[]",
+            "42",
+            '"text"',
+            "{}",
+            json.dumps(dict(valid, since=42)),
+            json.dumps(dict(valid, observed="invalid")),
+            json.dumps(dict(valid, since="2026-10-01T00:00:00")),
+            json.dumps(dict(valid, since=triage.iso(NOW))),
+        ]
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assertEqual(triage.read_state(value), {})
+
+    def test_invalid_stored_state_does_not_block_metrics(self):
+        item = {
+            "id": "item",
+            "content": {"number": 42},
+            "fieldValues": {
+                "nodes": [{"field": {"name": "Triage state"}, "text": "[]"}]
+            },
+        }
+        api = triage.GitHub("not-a-real-token")
+        fields = {key: {"name": key} for key in triage.FIELDS}
+        with (
+            patch.object(triage, "pr_commits", return_value=[]),
+            patch.object(triage, "snapshot", return_value=pr()),
+            patch.object(api, "pages", return_value=[]),
+            patch.object(triage, "update_field") as update,
+        ):
+            result = triage.process(
+                api,
+                api,
+                {"id": "project"},
+                fields,
+                item,
+                "example/repo",
+                NOW,
+                True,
+                False,
+            )
+            self.assertEqual(result["age"], 20)
+            self.assertEqual(result["idle"], 20)
+            self.assertEqual(result["ready_days"], 0)
+            state = next(
+                call.args[4]
+                for call in update.call_args_list
+                if call.args[3]["name"] == "Triage state"
+            )
+            self.assertEqual(json.loads(state)["since"], triage.iso(NOW))
+
     def test_bot_and_reminder_do_not_reset_idle(self):
         old = NOW - timedelta(days=10)
         comments = [
@@ -172,8 +234,8 @@ class PolicyTests(unittest.TestCase):
         inline = [comment(NOW - timedelta(days=3))]
         commits = [
             {
-                "author": PERSON,
-                "commit": {"committer": {"date": triage.iso(NOW - timedelta(days=2))}},
+                "author": {"user": PERSON},
+                "committedDate": triage.iso(NOW - timedelta(days=2)),
             }
         ]
         self.assertEqual(
@@ -212,10 +274,73 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(len(api.pages("example")), 101)
             self.assertIn("page=2", call.call_args.args[0])
 
+    def test_commit_history_includes_activity_after_250_commits(self):
+        old = {
+            "author": {"user": PERSON},
+            "committedDate": triage.iso(NOW - timedelta(days=19)),
+        }
+        recent = dict(old, committedDate=triage.iso(NOW))
+        pages = []
+        for index, commits in enumerate(
+            ([old] * 100, [old] * 100, [old] * 50 + [recent])
+        ):
+            pages.append(
+                {
+                    "repository": {
+                        "pullRequest": {
+                            "commits": {
+                                "nodes": [{"commit": commit} for commit in commits],
+                                "pageInfo": {
+                                    "hasNextPage": index < 2,
+                                    "endCursor": str(index),
+                                },
+                            }
+                        }
+                    }
+                }
+            )
+        api = triage.GitHub("not-a-real-token")
+        with patch.object(api, "graphql", side_effect=pages) as query:
+            commits = triage.pr_commits(api, "example", "repo", 42)
+            self.assertEqual(len(commits), 251)
+            self.assertEqual(triage.latest_activity(pr(), [], [], [], commits), NOW)
+            self.assertEqual(
+                [call.kwargs["cursor"] for call in query.call_args_list],
+                [None, "0", "1"],
+            )
+
+    def test_bot_and_unlinked_commits_do_not_reset_idle(self):
+        commits = [
+            {
+                "author": {"user": BOT},
+                "committer": None,
+                "committedDate": triage.iso(NOW),
+            },
+            {
+                "author": None,
+                "committer": {"user": None},
+                "committedDate": triage.iso(NOW),
+            },
+        ]
+        self.assertEqual(
+            triage.latest_activity(pr(), [], [], [], commits),
+            triage.timestamp(pr()["createdAt"]),
+        )
+
+    def test_timeout_is_a_reportable_api_failure_without_retry(self):
+        api = triage.GitHub("not-a-real-token")
+        with patch.object(
+            triage.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 90)
+        ) as run:
+            with self.assertRaisesRegex(RuntimeError, "GitHub request timed out"):
+                api.call("repos/example/repo/issues/42/comments", {"body": "reminder"})
+            run.assert_called_once()
+
     def test_dry_run_has_no_mutations(self):
         item = {"id": "item", "content": {"number": 42}, "fieldValues": {"nodes": []}}
         api = triage.GitHub("not-a-real-token")
         with (
+            patch.object(triage, "pr_commits", return_value=[]),
             patch.object(triage, "snapshot", return_value=pr()),
             patch.object(api, "pages", return_value=[]),
             patch.object(api, "call") as call,
@@ -231,6 +356,7 @@ class PolicyTests(unittest.TestCase):
         api = triage.GitHub("not-a-real-token")
         fields = {key: {} for key in triage.FIELDS}
         with (
+            patch.object(triage, "pr_commits", return_value=[]),
             patch.object(triage, "snapshot", side_effect=[pr(), pr(isDraft=True)]),
             patch.object(api, "pages", return_value=[]),
             patch.object(triage, "update_field"),
@@ -254,11 +380,12 @@ class PolicyTests(unittest.TestCase):
         api = triage.GitHub("not-a-real-token")
         fields = {key: {} for key in triage.FIELDS}
         with (
+            patch.object(triage, "pr_commits", return_value=[]),
             patch.object(triage, "snapshot", return_value=pr()),
             patch.object(
                 api,
                 "pages",
-                side_effect=[[], [], [], [], [comment(NOW, BOT, triage.MARKER)]],
+                side_effect=[[], [], [], [comment(NOW, BOT, triage.MARKER)]],
             ),
             patch.object(triage, "update_field"),
             patch.object(api, "call") as call,
@@ -281,6 +408,7 @@ class PolicyTests(unittest.TestCase):
         api = triage.GitHub("not-a-real-token")
         fields = {key: {} for key in triage.FIELDS}
         with (
+            patch.object(triage, "pr_commits", return_value=[]),
             patch.object(triage, "snapshot", return_value=pr()),
             patch.object(api, "pages", return_value=[]),
             patch.object(triage, "update_field"),
@@ -320,6 +448,7 @@ class PolicyTests(unittest.TestCase):
         fields = {key: {} for key in triage.FIELDS}
         detail = {"state": "open", "draft": False, "assignees": [PERSON]}
         with (
+            patch.object(triage, "pr_commits", return_value=[]),
             patch.object(triage, "snapshot", return_value=pr()),
             patch.object(api, "pages", return_value=[]),
             patch.object(triage, "update_field"),

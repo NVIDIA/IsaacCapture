@@ -9,3 +9,4 @@ SPDX-License-Identifier: Apache-2.0
 - Derive merge readiness from the PR's checks, reviews and mergeability, not a manually maintained Project status.
 - Keep elapsed PR age distinct from inactivity and observed merge-readiness duration.
 - Public PR comments and workflow summaries must not expose private Project notes or fields.
+- Automation documentation describes current behavior and operation; omit development history, machine-specific details and board snapshots.

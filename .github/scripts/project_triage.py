@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Refresh PR age/idle fields and send bounded, public-data-only reminders."""
+"""Update PR triage metrics and post weekly reminders."""
 
 import argparse
 import json
@@ -21,7 +21,7 @@ FIELDS = {
 }
 PR_QUERY = """query($owner:String!,$repo:String!,$number:Int!) {
   repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
-    number url state isDraft createdAt closedAt headRefOid
+    state isDraft createdAt headRefOid
     mergeable mergeStateStatus reviewDecision
     commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
   } }
@@ -57,8 +57,10 @@ def latest_activity(pr, comments, reviews, inline, commits):
         if human(review.get("user")) and review.get("submitted_at"):
             dates.append(timestamp(review["submitted_at"]))
     for commit in commits:
-        if human(commit.get("author")) or human(commit.get("committer")):
-            dates.append(timestamp(commit["commit"]["committer"]["date"]))
+        if human((commit.get("author") or {}).get("user")) or human(
+            (commit.get("committer") or {}).get("user")
+        ):
+            dates.append(timestamp(commit["committedDate"]))
     return max(dates)
 
 
@@ -73,6 +75,22 @@ def ready(pr):
         and pr["reviewDecision"] == "APPROVED"
         and checks.get("state") == "SUCCESS"
     )
+
+
+def read_state(value):
+    # Project text fields are editable; invalid state must restart observation.
+    try:
+        state = json.loads(value or "{}")
+        if not isinstance(state, dict) or not all(
+            isinstance(state.get(key), str) for key in ("head", "since", "observed")
+        ):
+            return {}
+        since, observed = timestamp(state["since"]), timestamp(state["observed"])
+        if since.tzinfo is None or observed.tzinfo is None or since > observed:
+            return {}
+        return state
+    except (ValueError, TypeError):
+        return {}
 
 
 def ready_state(pr, previous, now):
@@ -139,15 +157,18 @@ class GitHub:
             args += ["--method", method]
         if payload is not None:
             args += ["--input", "-"]
-        proc = subprocess.run(
-            args,
-            input=json.dumps(payload) if payload is not None else None,
-            text=True,
-            capture_output=True,
-            env=self.env,
-            check=False,
-            timeout=90,
-        )
+        try:
+            proc = subprocess.run(
+                args,
+                input=json.dumps(payload) if payload is not None else None,
+                text=True,
+                capture_output=True,
+                env=self.env,
+                check=False,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(f"GitHub request timed out: {endpoint}") from error
         if proc.returncode:
             raise RuntimeError(
                 f"GitHub request failed: {endpoint}: {proc.stderr.strip()}"
@@ -293,6 +314,32 @@ def snapshot(api, owner, repo, number):
     ]
 
 
+def pr_commits(api, owner, repo, number):
+    # REST pull-request commits stop at 250; this connection supports the full history.
+    result, cursor = [], None
+    while True:
+        page = api.graphql(
+            """query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
+          repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
+            commits(first:100,after:$cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes { commit {
+                committedDate author { user { login } } committer { user { login } }
+              } }
+            }
+          } }
+        }""",
+            owner=owner,
+            repo=repo,
+            number=number,
+            cursor=cursor,
+        )["repository"]["pullRequest"]["commits"]
+        result.extend(node["commit"] for node in page["nodes"])
+        if not page["pageInfo"]["hasNextPage"]:
+            return result
+        cursor = page["pageInfo"]["endCursor"]
+
+
 def process(project_api, repo_api, meta, fields, item, repo, now, apply, notify):
     owner, name = repo.split("/")
     number = item["content"]["number"]
@@ -303,14 +350,14 @@ def process(project_api, repo_api, meta, fields, item, repo, now, apply, notify)
     comments = repo_api.pages(f"{root}/issues/{number}/comments")
     reviews = repo_api.pages(f"{root}/pulls/{number}/reviews")
     inline = repo_api.pages(f"{root}/pulls/{number}/comments")
-    commits = repo_api.pages(f"{root}/pulls/{number}/commits")
+    commits = pr_commits(repo_api, owner, name, number)
     existing = {}
     for value in item["fieldValues"]["nodes"]:
         if value.get("field", {}).get("name") in FIELDS:
             existing[value["field"]["name"]] = next(
                 value[k] for k in ("number", "date", "text") if k in value
             )
-    previous = json.loads(existing.get("Triage state") or "{}")
+    previous = read_state(existing.get("Triage state"))
     state = ready_state(pr, previous, now)
     idle = days(now, latest_activity(pr, comments, reviews, inline, commits))
     updates = {
