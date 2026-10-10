@@ -35,7 +35,7 @@ interface RecorderComponentProps {
 }
 
 export function RecorderComponent({ isConnected, showTrace }: RecorderComponentProps) {
-  const { recorder, onFrameRecord } = useRecorder();
+  const { recorder, onFrameRecord, onFrameState } = useRecorder();
   const tickRef = useRef(0);
 
   useFrame(state => {
@@ -54,6 +54,8 @@ export function RecorderComponent({ isConnected, showTrace }: RecorderComponentP
       isConnected && isVisible,
       showTrace && isVisible
     );
+
+    onFrameState();
 
     if (recorder.mode === 'recording') {
       tickRef.current++;

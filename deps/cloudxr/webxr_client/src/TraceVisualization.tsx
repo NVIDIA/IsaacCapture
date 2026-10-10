@@ -128,15 +128,25 @@ export function TraceVisualization({ showTrace }: { showTrace: boolean }) {
   );
 
   useFrame(() => {
-    if (!showTrace) {
+    const frame = recorder.currentFrame;
+    if (!showTrace || !frame) {
       channels.forEach(channel => {
         channel.points.visible = false;
       });
       return;
     }
 
-    const frame = recorder.currentFrame;
-    if (!frame) return;
+    // Transform the whole trail so origin resets also move its earlier samples.
+    const alignment = recorder.replaySceneAlignment;
+    for (const { points } of channels) {
+      points.position.set(alignment?.px ?? 0, alignment?.py ?? 0, alignment?.pz ?? 0);
+      points.quaternion.set(
+        alignment?.ox ?? 0,
+        alignment?.oy ?? 0,
+        alignment?.oz ?? 0,
+        alignment?.ow ?? 1
+      );
+    }
     updateChannel(channels[0], frame.poses.leftGrip);
     updateChannel(channels[1], frame.poses.rightGrip);
     updateChannel(channels[2], frame.handJoints.left.wrist);
