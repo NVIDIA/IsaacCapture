@@ -57,6 +57,10 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
 
+### Check a Device Integration
+
+The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.
+
 
 ### Install & Run Isaac Lab
 

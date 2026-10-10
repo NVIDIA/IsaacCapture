@@ -1,0 +1,18 @@
+{
+  "voice": "en_GB-alba-medium",
+  "length_scale": "1.25",
+  "text_sha1": {
+    "flat_on_table_open": "efa80bc328165f69",
+    "fist": "ef1bfebddea6a67b",
+    "pinch_index": "795b6da135be78ec",
+    "pinch_middle": "38c2c62b379985bc",
+    "pinch_ring": "33578170b22ee4d6",
+    "pinch_little": "4a640d00b81e7f38",
+    "palms_together": "deb4cfb518cb3d2a",
+    "tips_together": "b15bfe0f8e6973a4",
+    "right_tip_roll": "9f7ab0842bea5d89",
+    "left_tip_roll": "9b47986542966209",
+    "flat_on_table_close": "8973894ce8b24b5a",
+    "closing": "5b9a4c18a75801ef"
+  }
+}

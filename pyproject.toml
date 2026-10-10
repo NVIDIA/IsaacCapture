@@ -143,6 +143,7 @@ install.components = ["isaacteleop_wheel", "isaacteleop_binaries"]
 # TODO(1.9): drop the isaacteleop entry.
 [tool.scikit-build.wheel]
 packages = { isaaccapture = "src/python/isaaccapture", "isaacteleop.py" = "src/compat/isaacteleop.py" }
+exclude = ["isaaccapture/cts/**"]
 
 # `rebuild = false`: no recompile on import, so build products (.so, .pyi, py.typed,
 # the vendored CloudXR runtime) are frozen until a rebuild + re-install. Authored .py
