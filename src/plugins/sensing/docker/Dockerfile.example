@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# A container that can reach the SENSING cameras. Built and started by
+# run_docker_example.sh; the point is to be read, then borrowed from.
+#
+# Two things go in the image, and only two:
+#   - the runtime libraries nvsipl_camera links against but the NVIDIA container
+#     runtime does not inject (it carries the BSP, not the base OS)
+#   - the group membership, via image_setup.sh
+#
+# Everything else -- driver mounts, device access, the NVIDIA capabilities --
+# is a container-create option and lives in run_docker_example.sh.
+#
+# No SIPL drivers are installed here. They are bind-mounted from the host, so
+# a vendor update on the host needs no rebuild.
+
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+
+# nvsipl_camera needs EGL: NvBufSurfaceMapEglImage is how a SIPL buffer reaches
+# CUDA, so EGL is on the path even with nothing on screen. Absent, it fails at
+# load with "libEGL.so.1: cannot open shared object file".
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libegl1 libgles2 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Host gids owning /dev/i2c-*, /dev/gpiochip* and /dev/nvmap. Defaults are this
+# rig's; run_docker_example.sh passes the real ones, read off the nodes.
+# No --group-add is needed at run time: Docker resolves supplementary groups
+# from this /etc/group, which covers PID 1 and `docker exec` alike.
+ARG SENSING_USER=root
+ARG SENSING_GIDS="114:i2c 985:gpio 44:video"
+RUN --mount=type=bind,source=image_setup.sh,target=/tmp/image_setup.sh \
+    /tmp/image_setup.sh "${SENSING_USER}" ${SENSING_GIDS}
