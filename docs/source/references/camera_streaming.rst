@@ -12,7 +12,7 @@ data <recorded-camera-streaming>` — a video file replayed in place of a live c
 to a desktop window instead of the headset.
 
 The sample lives at :code-dir:`examples/camera_viz/ <examples/camera_viz>`. This page walks you
-from setup and a hardware-free first run to real cameras and the robot → workstation split mode.
+from setup and a camera-free first run to real cameras and the robot → workstation split mode.
 For the exact command surface and flags, see the
 :code-file:`README <examples/camera_viz/README.md>`.
 
@@ -35,12 +35,20 @@ Requirements
 - For Jetson platforms:
 
   - **Orin:** `JetPack 6.2.x <https://developer.nvidia.com/embedded/jetpack-sdk-62>`__ or
-    `7.2.x <https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.2>`__
+    `7.2.1 <https://docs.nvidia.com/jetson/agx-orin-devkit/user-guide/latest/setup_jetpack.html>`__
   - **Thor:** `JetPack 7.x <https://developer.nvidia.com/embedded/jetpack>`__
 - For the default XR mode, a headset to connect as the CloudXR client — follow the
   :doc:`quick start </getting_started/quick_start>` step :ref:`connect-xr-headset`. The viewer
   launches the CloudXR runtime itself; nothing to start separately. No headset handy?
   ``--mode window`` renders to a desktop window instead.
+
+- **CUDA development components:** matching runtime, NVRTC, and headers for CuPy kernels.
+  JetPack 7.2.1 uses CUDA 13.2; see :ref:`camera-streaming-jetson-cuda`.
+- **Camera — optional, recommended:** USB / UVC, OAK-D, or supported ZED camera for a live feed.
+  A recording or synthetic pattern works without a camera; ZED SDK capture needs ``setup --with-zed``.
+- **XR controllers — optional:** for adjusting the view with :ref:`camera-streaming-controls`.
+- **CloudXR setup:** see Quick Start for :ref:`first-launch requirements <run-cloudxr-server>`
+  and :ref:`firewall configuration <whitelist-firewall-ports>`.
 
 Setup
 -----
@@ -53,15 +61,18 @@ run the sample's one-time setup:
    examples/camera_viz/camera_viz.sh setup
    source examples/camera_viz/.venv/bin/activate
 
+On Jetson, add ``--jetson``. If CUDA components are missing, see
+:ref:`camera-streaming-jetson-cuda` below.
+
 There is no need to install the ``isaaccapture`` pip package yourself. ``setup`` builds the
 sample's own environment: ``isaaccapture[cloudxr]`` — the ``cloudxr`` extra is not optional here,
 since XR is the default display mode and the viewer launches the runtime itself — plus every
-other Python dependency, into ``.venv/`` via ``uv``. It resolves a version new enough for the
-sample on its own, falling back to a release candidate and then, after asking, to a source build
-of the surrounding checkout (:code-file:`scripts/_install_deps.sh
-<examples/camera_viz/scripts/_install_deps.sh>` holds the minimum; ``--wheel`` and
-``--build-from-source`` override the choice). Finally it probes the system packages it needs and
-prints the exact ``apt-get`` line to approve — declining, or a non-interactive run, aborts.
+other Python dependency, into ``.venv/`` via ``uv``. It resolves a release matching the checkout's
+major/minor version, falling back to a release candidate and then, after asking, to a source build
+of the surrounding checkout (see :code-file:`scripts/_install_deps.sh
+<examples/camera_viz/scripts/_install_deps.sh>`; ``--wheel`` and ``--build-from-source`` override
+the choice). When required system packages are missing, it prints the exact ``apt-get`` line
+to approve — declining, or a non-interactive run, aborts.
 
 Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
 ``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
@@ -91,9 +102,10 @@ needs. Flags trim or extend that:
    * - ``--sender-only``
      - Split mode only — robot-side install of just the sender's dependencies.
    * - ``--jetson``
-     - Split mode only — extra CUDA wiring JetPack images need on the robot.
+     - Enable Jetson CUDA library discovery for direct or split mode. With RTP enabled, also
+       check for the matching NVRTC package.
    * - ``--venv PATH``
-     - Install into an existing virtual environment instead of creating ``.venv/``.
+     - Use ``PATH`` for the environment and link the sample's ``.venv`` to it; see below.
    * - ``--wheel PATH``
      - Install a locally built ``isaaccapture`` wheel instead of resolving one from the index — for
        developing Isaac Teleop itself.
@@ -101,6 +113,42 @@ needs. Flags trim or extend that:
      - Skip the package index and build ``isaaccapture`` from the surrounding checkout without
        prompting — a full C++ / CUDA / Vulkan build (see
        :doc:`/getting_started/build_from_source/index`).
+
+.. _camera-streaming-external-venv:
+
+Using an external virtual environment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To reuse a Python 3.12 environment, run from the repository root:
+
+.. code-block:: bash
+
+   examples/camera_viz/camera_viz.sh setup --venv /absolute/path/to/venv
+
+Setup installs dependencies there and links ``examples/camera_viz/.venv`` to it. Move an existing
+``.venv`` directory aside first. The wrapper uses ``.venv/bin/python`` regardless of the active
+shell environment; activation is optional. Add ``--jetson`` on Jetson.
+
+.. _camera-streaming-jetson-cuda:
+
+Jetson CUDA prerequisites
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+CuPy compiles GPU kernels at runtime using NVRTC and CUDA headers
+(`CuPy requirements <https://docs.cupy.dev/en/stable/install.html#cupy-always-raises-nvrtc-error-compilation-6>`__).
+**If these components are already installed, skip this step.**
+
+On JetPack 7.2.1 / CUDA 13.2, the `JetPack CUDA development package
+<https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_jetpack.html#install-specific-jetpack-components>`__
+provides them. With the matching NVIDIA repositories configured:
+
+.. code-block:: bash
+
+   sudo apt update
+   sudo apt install nvidia-cuda-dev
+
+Use the CUDA toolkit matching your JetPack. ``--jetson`` configures library discovery. A separate ``nvcc`` compiler is needed for CUDA source builds, such as the native
+RTP codec, rather than ordinary CuPy kernel execution.
 
 .. _recorded-camera-streaming:
 
@@ -111,7 +159,13 @@ The recorded-camera source (``type: video``) replays a video file through exactl
 source → layer → Televiz path a live camera uses. It is the supported way to stream recorded
 camera data, it needs no extra setup, and it is the quickest end-to-end check. A test clip ships
 with the repo, and :code-file:`configs/replay.yaml <examples/camera_viz/configs/replay.yaml>`
-already points at it:
+already points at it. Fetch the clip with Git LFS if your checkout contains only its pointer:
+
+.. code-block:: bash
+
+   git lfs pull --include="examples/camera_viz/test_data/recording.mp4"
+
+Keep OpenCV installed for replay (``--no-v4l2`` skips it). From the repository root:
 
 .. code-block:: bash
 
@@ -120,8 +174,11 @@ already points at it:
    ./camera_viz.sh run configs/replay.yaml --mode window   # desktop window instead
 
 In XR mode the viewer first brings up the CloudXR runtime (accept the EULA on first launch, or
-pass ``--accept-eula``), then **you should see** the terminal report the session and the source
-coming up::
+pass ``--accept-eula``). Open the printed client URL in your headset browser, accept the host's
+certificate, and click **Connect**, following :ref:`connect-xr-headset`. On Jetson Orin, select
+**H.264** in the client's **Video Codec** setting before connecting.
+
+**You should see** the terminal report the session and the source coming up::
 
    camera_viz: source=local, mode=xr, xr=True, shapes=quad, 1 layer(s)
    [video] opening...
@@ -130,6 +187,26 @@ coming up::
 
 and the clip looping on a plane in the headset once it connects — or in a desktop window
 (``mode=window, xr=False``) with the ``--mode window`` override, which starts no runtime.
+
+.. _camera-streaming-first-session:
+
+First-session checklist
+^^^^^^^^^^^^^^^^^^^^^^^
+
+With the default ``replay.yaml``:
+
+- **Playback:** one plane is visible and the clip loops.
+- **Head movement:** small turns and leaning change your viewpoint; the plane stays anchored.
+- **Lazy recentering:** look more than 45° away for about a second; the plane moves smoothly
+  back in front of you.
+- **Image quality:** no freezing, flicker, torn regions, or unexpected colors while still or
+  moving. This mono clip should show the same source image in both eyes.
+- **Controllers, if available:** right-stick click recenters; ``A`` changes lock mode;
+  ``Y`` restores the config.
+- **Restart:** press ``Ctrl+C``, rerun, and reconnect if needed; playback resumes.
+
+In window mode, check playback, image quality, and restart. If a check fails, see
+:ref:`camera-streaming-troubleshooting`.
 
 Replaying your own recording
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -164,6 +241,8 @@ rejected, since the sender needs per-eye streams. A mono recording is otherwise 
 side for :ref:`split mode <split-mode>` and for ``loopback``, which exercises the whole
 encode → UDP → decode path with no camera attached.
 
+.. _camera-streaming-sources:
+
 Supported sources
 -----------------
 
@@ -187,13 +266,17 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
        :ref:`recorded-camera-streaming`.
    * - ``synthetic``
-     - Debugging tool — GPU-generated test pattern, no hardware or file.
+     - Debugging tool — GPU-generated test pattern, no camera or file required.
+
+.. _camera-streaming-live-camera:
 
 Running with a real camera
 --------------------------
 
 Attach the camera to the machine that runs the viewer, keep ``source: local`` in the config, and
-run with the matching config:
+run with the matching config. First edit its device, resolution, and frame rate to match your
+camera. In particular, ``v4l2.yaml`` defaults to a ZED Mini's 2560×720 UVC mode; a regular webcam
+needs values it supports (inspect them with ``v4l2-ctl --list-formats-ext``):
 
 .. code-block:: bash
 
@@ -235,6 +318,8 @@ In XR, how a plane follows the operator's head is the per-camera ``lock_mode`` u
 
 Lazy-mode knobs live under ``placements.<name>``: ``look_away_angle_deg``,
 ``reposition_distance``, ``reposition_delay_s``, ``transition_duration_s``.
+
+.. _camera-streaming-controls:
 
 Controller bindings
 ^^^^^^^^^^^^^^^^^^^
@@ -483,6 +568,8 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
 See the :code-dir:`configs/ <examples/camera_viz/configs>` directory for a complete, commented
 YAML per source kind.
 
+.. _camera-streaming-troubleshooting:
+
 Troubleshooting
 ---------------
 
@@ -499,8 +586,17 @@ Troubleshooting
   you're sitting at, or use a video-capable remote desktop.
 - **"video source: no such file"** — relative ``path:`` values resolve against the YAML's
   directory (``configs/``), not the directory you launched from.
-- **A source fails asking for CuPy / CUDA** — check ``nvidia-smi`` works and setup completed;
-  all sources allocate their frame buffers on the GPU.
+- **A source fails asking for CuPy / CUDA** — check the matching CUDA headers, NVRTC, and
+  ``/usr/local/cuda`` target (:ref:`camera-streaming-jetson-cuda` on Jetson), then rerun setup.
+  ``nvidia-smi`` checks driver support, not installed headers. To test GPU execution,
+  run from ``examples/camera_viz`` and expect ``[1 2 3 4]``:
+
+  .. code-block:: bash
+
+     .venv/bin/python -c 'import cupy as cp; print((cp.arange(4) + 1).get())'
+
+- **Python cannot find dependencies** — use the sample's ``.venv/bin/python``, or select an
+  environment with :ref:`setup --venv <camera-streaming-external-venv>`.
 - **No video on Orin.** When the CloudXR runtime runs on Jetson Orin, set
   **Video Codec** to **H.264** in the CloudXR web client. See
   :ref:`connect-xr-headset`.
@@ -599,3 +695,13 @@ extensions and forwards the handles through ``TeleopSessionConfig.oxr_handles``:
 See the *Sharing the XR session* section of :doc:`/getting_started/televiz` for the full pattern
 (imports, frame loop, and how the two sessions' lifecycles relate), and
 :doc:`/getting_started/teleop_session` for the ``TeleopSession`` side.
+
+Next steps
+----------
+
+- :ref:`Connect a live camera <camera-streaming-live-camera>` or
+  :ref:`replay your own recording <recorded-camera-streaming>`.
+- :ref:`Adjust the view <camera-streaming-controls>` and save placement settings in YAML.
+- :ref:`Stream from a robot <split-mode>` when capture and viewing run on separate machines.
+- :ref:`Share the XR session with teleoperation <sharing-the-xr-session>` and map inputs with
+  the :doc:`retargeting interface </references/retargeting/index>`.
