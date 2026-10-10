@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Check Project token access
+on:
+  push:
+    branches: [codex/check-project-token]
+    paths: [.github/workflows/check-project-token.yml]
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify Project access without changing data
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_WRITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || { echo '::error::PROJECT_WRITE_TOKEN is missing'; exit 1; }
+          result="$(gh api graphql -f query='query { organization(login:"NVIDIA") { projectV2(number:322) { viewerCanUpdate field(name:"Idle") { ... on ProjectV2Field { dataType } } } } }')"
+          jq -e '.data.organization.projectV2 | .viewerCanUpdate == true and .field.dataType == "NUMBER"' <<< "$result" > /dev/null
+          echo 'Project access verified: viewerCanUpdate=true; Idle is a NUMBER field.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Read-only verification; no Project mutations were performed.' >> "$GITHUB_STEP_SUMMARY"
