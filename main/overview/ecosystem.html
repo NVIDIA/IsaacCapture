@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -414,6 +414,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spacemouse.html">SpaceMouse Plugin</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -492,8 +493,8 @@ teleoperation data.</p></li>
 <li><p><strong>Teams building on Isaac Teleop</strong> — Robot makers shipping teleoperation in their own
 product, and labs collecting data.</p></li>
 </ul>
-<section class="eco-section" id="supported-devices-12">
-<span id="supported-devices"></span><h2>Supported Devices <span class="eco-count">12</span><a class="headerlink" href="#supported-devices-12" title="Link to this heading">#</a></h2>
+<section class="eco-section" id="supported-devices-13">
+<span id="supported-devices"></span><h2>Supported Devices <span class="eco-count">13</span><a class="headerlink" href="#supported-devices-13" title="Link to this heading">#</a></h2>
 <p>A standardized device interface removes custom integrations and their maintenance. Input
 modes determine which retargeters and control schemes are available.
 <a class="reference internal" href="../device/add_device.html"><span class="doc">Add a new device →</span></a></p>
@@ -718,6 +719,25 @@ modes determine which retargeters and control schemes are available.
 <p class="device-panel-foot"><span class="device-since"><span class="device-since-label">Since</span><a class="device-since-branch reference external" href="https://github.com/NVIDIA/IsaacTeleop/releases/tag/v1.0.191" rel="noopener noreferrer" target="_blank">v1.0.191</a></span>
 </p>
 </div>
+<p class="device-name"><a class="reference external" href="https://3dconnexion.com/product/spacemouse-compact/" rel="noopener noreferrer" target="_blank">3Dconnexion SpaceMouse<span class="eco-link-external-label"> (external)</span></a></p>
+<p class="device-modes" data-label="Input modes">6-DoF end effector, base velocity</p>
+<div class="device-action"><details class="device-disclosure" name="isaac-teleop-device"><summary aria-controls="device-spacemouse-details" class="device-toggle"><span class="device-toggle-label">Details</span><span class="device-toggle-label is-open">Close</span></summary>
+</details>
+</div>
+<div class="device-panel" id="device-spacemouse-details"><div class="device-panel-col"><h4 class="device-panel-heading">Set up</h4>
+<p class="device-panel-line"><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/spacemouse" rel="noopener noreferrer" target="_blank">SpaceMouse Plugin</a></p>
+<p class="device-panel-line"><a class="reference internal" href="../device/spacemouse.html"><span class="doc">SpaceMouse docs</span></a></p>
+</div>
+<div class="device-panel-col"><h4 class="device-panel-heading">Requirements</h4>
+<p class="device-panel-line">Linux workstation with USB or the 3Dconnexion Universal Receiver</p>
+<p class="device-panel-line">Plugin udev rule installed on the host</p>
+</div>
+<div class="device-panel-col"><h4 class="device-panel-heading">Acquire</h4>
+<p class="device-panel-line"><a class="reference external" href="https://3dconnexion.com/" rel="noopener noreferrer" target="_blank">3dconnexion.com<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg><span class="eco-link-external-label"> (external)</span></a></p>
+</div>
+<p class="device-panel-foot"><span class="device-since"><a class="device-since-branch is-main reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main" rel="noopener noreferrer" target="_blank">main</a></span>
+</p>
+</div>
 <p class="device-name"><a class="reference external" href="https://shop.luxonis.com/products/oak-d" rel="noopener noreferrer" target="_blank">OAK-D Camera<span class="eco-link-external-label"> (external)</span></a></p>
 <p class="device-modes" data-label="Input modes">Offline data recording</p>
 <div class="device-action"><details class="device-disclosure" name="isaac-teleop-device"><summary aria-controls="device-oak-d-camera-details" class="device-toggle"><span class="device-toggle-label">Details</span><span class="device-toggle-label is-open">Close</span></summary>
@@ -874,7 +894,7 @@ rolling basis and will be in touch if we see an opportunity to work more closely
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-devices-12">Supported Devices <span class="eco-count">12</span></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-devices-13">Supported Devices <span class="eco-count">13</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-factory-3">Data Factory <span class="eco-count">3</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloud-infrastructure-1">Cloud Infrastructure <span class="eco-count">1</span></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#become-part-of-isaac-teleop">Become Part of Isaac Teleop</a></li>

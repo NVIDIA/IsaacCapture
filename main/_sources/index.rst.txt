@@ -72,6 +72,7 @@ Table of Contents
    device/wuji_glove
    device/sharpa_avatar
    device/haptikos
+   device/spacemouse
 
 .. toctree::
    :maxdepth: 2

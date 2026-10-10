@@ -113,6 +113,9 @@ Generated today
    * - ``frame_metadata_oak``
      - ``FrameMetadataTrackerOak``
      - Overrides ``class`` and ``header`` (file stem ``frame_metadata_tracker_oak``)
+   * - ``spacemouse``
+     - ``SpaceMouseTracker``
+     - Overrides ``class`` and ``traits``; the defaults would spell ``Spacemouse``
 
 Still hand-written
 ------------------
