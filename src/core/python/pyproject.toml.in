@@ -61,7 +61,8 @@ include = [
 ]
 
 [tool.setuptools.package-data]
-isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed"]
+# plugins/: device plugins bundled so wheel installs can start them (BUNDLED_PLUGINS_DIR); not packages.
+isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed", "plugins/*/*"]
 "isaaccapture.deviceio" = ["*.so", "*.pyd", "*.pyi"]
 # CHROMIUM_LICENSE: the notice for the key table compiled into _deviceio_trackers.
 "isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi", "CHROMIUM_LICENSE"]

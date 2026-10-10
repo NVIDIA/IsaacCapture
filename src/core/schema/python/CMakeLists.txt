@@ -25,6 +25,7 @@ pybind11_add_module(schema_py
     soma_hand_joint_poses_bindings.h
     soma_hand_joint_rotations_bindings.h
     schema_module.cpp
+    spacemouse_bindings.h
     steering_wheel_bindings.h
 )
 

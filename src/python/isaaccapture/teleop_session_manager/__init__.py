@@ -8,6 +8,7 @@ from .async_retarget_runner import (
 from .config import (
     DeadlinePacingConfig,
     ImmediatePacingConfig,
+    BUNDLED_PLUGINS_DIR,
     PluginConfig,
     RetargetingExecutionConfig,
     RetargetingExecutionMode,
@@ -50,6 +51,7 @@ __all__ = [
     "DeviceState",
     "DeviceStatus",
     "ImmediatePacingConfig",
+    "BUNDLED_PLUGINS_DIR",
     "PluginConfig",
     "ProviderState",
     "ProviderStatus",

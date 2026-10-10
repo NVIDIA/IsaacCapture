@@ -10,6 +10,7 @@ the whole tree -- from the wheel with no error at all.
 from __future__ import annotations
 
 import os
+import sys
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
@@ -101,3 +102,22 @@ def test_transition_replaces_the_legacy_distribution_without_owning_code() -> No
     assert set(metadata[ALIAS].get_all("Provides-Extra", [])) == set(
         metadata[DIST].get_all("Provides-Extra", [])
     )
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="the plugin is Linux only"
+)
+def test_spacemouse_plugin_ships_runnable_for_teleop_session() -> None:
+    """Apps start the bundled plugin from BUNDLED_PLUGINS_DIR; wheel users install its udev rule from there."""
+    bundle = f"{DIST}/plugins/spacemouse"
+    with zipfile.ZipFile(_wheel()) as archive:
+        names = set(archive.namelist())
+        executables = [
+            archive.getinfo(f"{bundle}/{name}")
+            for name in ("spacemouse_plugin", "install_udev_rules.sh")
+        ]
+    assert {f"{bundle}/plugin.yaml", f"{bundle}/70-spacemouse.rules"} <= names
+    for info in executables:
+        assert (info.external_attr >> 16) & 0o111, (
+            f"{info.filename} lost its executable bit"
+        )

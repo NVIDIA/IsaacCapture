@@ -98,3 +98,11 @@ name = "steering_wheel"
 table = "SteeringWheelOutput"
 max_flatbuffer_size = 1024
 python_accessor = "get_wheel_data"
+
+[[tracker]]
+name = "spacemouse"
+table = "SpaceMouseOutput"
+class = "SpaceMouseTracker"
+traits = "SpaceMouseRecordingTraits"
+max_flatbuffer_size = 256
+python_accessor = "get_spacemouse_data"

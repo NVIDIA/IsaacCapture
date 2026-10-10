@@ -41,6 +41,9 @@ from ._schema import (
     # Steering wheel types.
     SteeringWheelOutput,
     SteeringWheelOutputRecord,
+    # SpaceMouse types.
+    SpaceMouseOutput,
+    SpaceMouseOutputRecord,
     # Keyboard types (held keys plus ordered key events).
     KeyAction,
     KeyEvent,
@@ -166,6 +169,9 @@ __all__ = [
     # Steering wheel types.
     "SteeringWheelOutput",
     "SteeringWheelOutputRecord",
+    # SpaceMouse types.
+    "SpaceMouseOutput",
+    "SpaceMouseOutputRecord",
     # Keyboard types (held keys plus ordered key events).
     "KeyAction",
     "KeyEvent",

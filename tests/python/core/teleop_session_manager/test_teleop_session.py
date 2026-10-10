@@ -49,6 +49,7 @@ from isaaccapture.teleop_session_manager.config import (
     RetargetingExecutionMode,
     SessionMode,
     TeleopSessionConfig,
+    _bundled_plugins_dir,
 )
 from isaaccapture.teleop_session_manager.async_retarget_runner import (
     AsyncRetargetRunner,
@@ -1560,7 +1561,40 @@ class TestPluginInitialization:
 
 
 class TestStatusMonitoringIntegration:
-    """Test Manus-only inventory, refresh, and provider failure integration."""
+    """Test monitored-plugin inventory, refresh, and provider failure integration."""
+
+    def test_spacemouse_plugin_is_monitored(self, tmp_path):
+        manager = MockPluginManager(plugin_names=["spacemouse"])
+        manager.get_plugin_info = MagicMock(
+            return_value=SimpleNamespace(
+                name="spacemouse",
+                devices=(
+                    SimpleNamespace(
+                        path="/spacemouse", type="spacemouse", description="SpaceMouse"
+                    ),
+                ),
+            )
+        )
+        config = make_config(
+            MockPipeline(leaf_nodes=[]),
+            plugins=[
+                PluginConfig(
+                    plugin_name="spacemouse",
+                    plugin_root_id="spacemouse",
+                    search_paths=[tmp_path],
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "isaaccapture.deviceio_trackers.PluginDeviceStatusTracker"
+            ) as tracker_cls,
+            mock_session_dependencies(mock_pm=manager, collected_trackers=[]),
+        ):
+            with TeleopSession(config) as session:
+                tracker_cls.assert_called_once_with("spacemouse/device_status")
+                assert session.get_device_status("spacemouse/spacemouse") is not None
 
     def test_only_manus_is_monitored_and_plugin_launch_order_is_preserved(
         self, tmp_path
@@ -3602,3 +3636,14 @@ class TestOutputSinks:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_bundled_plugins_dir_finds_the_root_that_holds_the_plugins(tmp_path):
+    # An editable install puts the authored source root, which has no plugins/, beside the install root.
+    source_root, install_root = tmp_path / "src", tmp_path / "site"
+    source_root.mkdir()
+    (install_root / "plugins").mkdir(parents=True)
+
+    roots = [str(source_root), str(install_root)]
+    assert _bundled_plugins_dir(roots) == install_root / "plugins"
+    assert _bundled_plugins_dir(roots[:1]) == source_root / "plugins"
