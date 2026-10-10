@@ -47,8 +47,12 @@ mkdir -p generated build/bfbs
 toolchain/flatc --cpp --cpp-ptr-type std::shared_ptr --gen-object-api --gen-mutable \
   --schema --bfbs-gen-embed --reflect-names --gen-name-strings -b \
   -I "$FBS" -o build/bfbs "$FBS/hand.fbs"
-cmp build/bfbs/hand.bfbs "$REPO/src/core/schema/golden/hand.bfbs" \
-  && echo "bfbs matches the repo golden"
+if cmp build/bfbs/hand.bfbs "$REPO/src/core/schema/golden/hand.bfbs"; then
+  echo "bfbs matches the repo golden"
+else
+  echo "bfbs differs from the repo golden" >&2
+  exit 1
+fi
 
 # Generated modules import `core.X`; generated/ must be on sys.path.
 toolchain/flatc --python --gen-object-api --gen-mutable -I "$FBS" -o generated \

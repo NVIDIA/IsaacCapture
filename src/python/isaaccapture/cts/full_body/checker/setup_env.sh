@@ -48,8 +48,12 @@ mkdir -p generated build/bfbs
 toolchain/flatc --cpp --cpp-ptr-type std::shared_ptr --gen-object-api --gen-mutable \
   --schema --bfbs-gen-embed --reflect-names --gen-name-strings -b \
   -I "$FBS" -o build/bfbs "$FBS/full_body.fbs"
-cmp build/bfbs/full_body.bfbs "$REPO/src/core/schema/golden/full_body.bfbs" \
-  && echo "bfbs matches the repo golden"
+if cmp build/bfbs/full_body.bfbs "$REPO/src/core/schema/golden/full_body.bfbs"; then
+  echo "bfbs matches the repo golden"
+else
+  echo "bfbs differs from the repo golden" >&2
+  exit 1
+fi
 
 toolchain/flatc --python --gen-object-api --gen-mutable -I "$FBS" -o generated \
   "$FBS/full_body.fbs" "$FBS/pose.fbs" "$FBS/point.fbs" "$FBS/quaternion.fbs" \
