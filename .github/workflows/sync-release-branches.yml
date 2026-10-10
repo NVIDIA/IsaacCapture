@@ -23,7 +23,7 @@ jobs:
       matrix:
         branch:
           # Add or remove release branches here to control which ones track main
-          - release/1.6.x
+          - release/1.7.x
     steps:
       - name: Checkout
         uses: actions/checkout@v6
