@@ -54,7 +54,9 @@ How each step runs
    closes it. The capture panel shows **listen**, **get into position** (3, 2, 1), **hold**.
 
 - **Audio is optional.** The capture panel shows each cue as text, with the count. To hear
-  the cues, connect speakers to the workstation; they do not play in the headset.
+  the cues, connect speakers to the workstation; they do not play in the headset. Without
+  speakers, keep the capture panel in the performer's view or have the helper read each cue
+  aloud; the beep is the moment the panel switches to **hold**.
 - **Be in the pose by the beep, then keep still.** Move during the cue and count-in.
 - **The first 40% of each hold is ignored**, so a slightly late arrival is fine.
 - **The two rolls are measured whole, from beep to tick.** The cue's "at the tone" means
@@ -245,7 +247,9 @@ the wrist pose from, go on the same command line.
 
    src/python/isaaccapture/cts/hand/capture/record.sh glovex --plugin glove_x_plugin
 
-``--note TEXT`` and ``--plugin-version NAME=VERSION`` are stored with the take. Then:
+``--note TEXT``, ``--plugin-version NAME=VERSION`` and ``--wrist-source SOURCE`` (where a
+glove's wrist pose comes from, such as ``hand_tracking`` or ``controller``) are stored with the
+take. Then:
 
 #. Open the capture panel at http://localhost:8081, or ``http://<host>:8081`` from the
    headset's browser. If the port was taken, use the URL the run prints.
@@ -325,14 +329,15 @@ The viewer needs the checker environment set up with ``--panel`` (:doc:`setup`):
    src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel \
        ~/isaaccapture-cts/<take>/<take>-hand.mcap
 
-It prints the same report and serves http://127.0.0.1:8080 (``--host 0.0.0.0`` to reach
-it from another machine). The viewer replays both hands with the current step and lists the
-checks, the deciding ones first; invalid joints show red. Its **package for submission**
-button builds the archive you send: see :doc:`submit`.
+It prints the same report and the address it serves, http://127.0.0.1:8080 by default
+(``--host 0.0.0.0`` to reach it from another machine). The viewer replays both hands with the
+current step and lists the checks, the deciding ones first; invalid joints show red. Its
+**package for submission** button builds the archive you send: see :doc:`submit`.
 
 .. figure:: /_static/cts/hand-checker-panel.png
    :alt: The hand viewer: both hands lying flat on a table grid, and a sidebar with a green
-         PASS banner, playback controls and the checks that decide the take.
+         PASS banner, playback controls, a Submission folder with the package for submission
+         button, and the checks that decide the take.
    :width: 100%
 
    The viewer on a synthetic reference take, during step 1.
@@ -358,8 +363,10 @@ Troubleshooting
      - Install ``alsa-utils`` and record again.
    * - ``… is a Git LFS pointer, not audio`` at startup
      - Install ``git-lfs`` and run ``git lfs pull``.
-   * - ``usage: …/record.sh DEVICE``
-     - The device name is required and goes first.
+   * - *the session did not open: … Required plugin … was not discovered*, or ``--plugin given
+       but no plugins/ or install/plugins/ in the repo``
+     - ``--plugin`` must match the ``name:`` in an installed ``plugin.yaml``. Run
+       ``cmake --install build`` (:doc:`setup`), then record again.
 
 More in :code-file:`hand/README.md <src/python/isaaccapture/cts/hand/README.md>`
 (recording) and

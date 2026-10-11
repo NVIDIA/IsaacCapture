@@ -17,6 +17,14 @@ cue WAVs or an oracle's motion changes.
 | `docs/source/_static/cts/full_body/NN-<label>.gif` (640×640, 12.5 fps) | same |
 | `docs/source/conformance/hand-rehearsal.mp3` | `rehearsal_audio.py` |
 
+Not generated here, so update them by hand:
+
+- `hand-checker-panel.png`, `full-body-checker-panel.png`: screenshots (1400×910) of each
+  checker viewer on its oracle's golden take. Retake one
+  when that viewer's sidebar changes.
+- `hand-pacing.svg`, `full-body-pacing.svg`, `verdicts.svg`: hand-drawn. Edit them when
+  `STEPS` durations, the pacing or the verdict rules change.
+
 ## Prerequisites
 
 The committed files were made on macOS with these versions; other versions can shift

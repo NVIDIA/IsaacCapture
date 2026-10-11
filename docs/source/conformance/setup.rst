@@ -168,6 +168,10 @@ Troubleshooting
    * - The client loads but CONNECT does nothing
      - Accept the certificate at ``https://<host>:48322/`` first. Check that the headset is on the
        same network and the firewall allows the CloudXR ports.
+   * - ``No module named 'cryptography'`` when the CloudXR service starts
+     - The capture environment lacks the CloudXR extras that create the certificate. Run
+       ``uv pip install --python $PY 'cryptography>=3.0' 'websockets>=14'``, then start the
+       service again.
    * - A second CloudXR service will not start
      - One is already running. ``$PY -m isaaccapture.cloudxr.service status`` reports it;
        ``service stop`` ends a detached one, Ctrl+C a foreground one.

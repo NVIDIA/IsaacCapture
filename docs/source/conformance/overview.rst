@@ -10,8 +10,9 @@ Device Conformance Testing
 
 You have integrated a device that publishes hand or full-body poses into Isaac Teleop. The
 Conformance Test Suite (CTS) produces the evidence that the integration works: you record one
-scripted take, a checker reads only that recording and returns a verdict, and you submit the take
-with your pull request. This page explains the process, the two suites and what a verdict means.
+scripted take, a checker reads only that recording and returns a verdict, and you send the take
+through the submission form for your pull request. This page explains the process, the two suites
+and what a verdict means.
 
 How it works
 ------------
@@ -179,9 +180,10 @@ What you need
 - A Linux workstation with the repository built for Python 3.12.
 - An XR headset connected through CloudXR, even when your device produces the joints.
 - Your device's plugin built and installed, if it has one.
-- Optional: speakers on the workstation to hear the spoken cues. The capture panel also shows
-  every cue as text.
+- ``aplay`` (``alsa-utils``) installed. Speakers are optional: the capture panel also shows every
+  cue as text.
 - Room for the script (a table and chair for hand, standing space for full body), and ideally a
   second person at the screen.
+- A Google account to sign in to the submission form.
 
 Start with :doc:`setup`.
