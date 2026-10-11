@@ -133,15 +133,15 @@ browser — so it lands on the machine you will send it from, even when the pane
 viewed over `--host`. Right-click the link it offers for *Save as…* to choose where.
 
 ```text
-pico4u_2026-03-04_101530-body.retake.zip           the take and the verdict, so a mailbox
-└── pico4u_2026-03-04_101530-body.retake/          of these can be triaged unopened
-    ├── report.json                                verdict, checks, groups, per-frame
-    │                                              series, input hashes, tool commit
-    ├── report.txt                                 the same report, for reading
-    ├── pico4u_2026-03-04_101530-body.mcap         the recording, byte for byte
-    ├── pico4u_2026-03-04_101530-body.labels.json  motion-step windows
-    ├── pico4u_2026-03-04_101530-body.json         capture provenance
-    └── pico4u_2026-03-04_101530-body.log          recorder log
+mydevice_2026-03-04_101530-body.retake.zip           the take and the verdict, so a mailbox
+└── mydevice_2026-03-04_101530-body.retake/          of these can be triaged unopened
+    ├── report.json                                  verdict, checks, groups, per-frame
+    │                                                series, input hashes, tool commit
+    ├── report.txt                                   the same report, for reading
+    ├── mydevice_2026-03-04_101530-body.mcap         the recording, byte for byte
+    ├── mydevice_2026-03-04_101530-body.labels.json  motion-step windows
+    ├── mydevice_2026-03-04_101530-body.json         capture provenance
+    └── mydevice_2026-03-04_101530-body.log          recorder log
 ```
 
 The name is the take's own, which already carries the device and the moment it was

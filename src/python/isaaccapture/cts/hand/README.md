@@ -316,15 +316,15 @@ files beside the recording, so start the viewer on the take in its own directory
 `~/isaaccapture-cts/`, as above.
 
 ```text
-manus_2026-03-04_101530-hand.retake.zip           the take and the verdict, so a mailbox
-└── manus_2026-03-04_101530-hand.retake/          of these can be triaged unopened
-    ├── report.json                               verdict, checks, groups, per-hand
-    │                                             series, input hashes, tool commit
-    ├── report.txt                                the same report, for reading
-    ├── manus_2026-03-04_101530-hand.mcap         the recording, byte for byte
-    ├── manus_2026-03-04_101530-hand.labels.json  one window per step
-    ├── manus_2026-03-04_101530-hand.json         what produced it
-    └── manus_2026-03-04_101530-hand.log          the panel's output
+mydevice_2026-03-04_101530-hand.retake.zip           the take and the verdict, so a mailbox
+└── mydevice_2026-03-04_101530-hand.retake/          of these can be triaged unopened
+    ├── report.json                                  verdict, checks, groups, per-hand
+    │                                                series, input hashes, tool commit
+    ├── report.txt                                   the same report, for reading
+    ├── mydevice_2026-03-04_101530-hand.mcap         the recording, byte for byte
+    ├── mydevice_2026-03-04_101530-hand.labels.json  one window per step
+    ├── mydevice_2026-03-04_101530-hand.json         what produced it
+    └── mydevice_2026-03-04_101530-hand.log          the panel's output
 ```
 
 The name is the take's own, which already carries the device and the moment it was
