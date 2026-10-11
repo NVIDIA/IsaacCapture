@@ -34,19 +34,11 @@ that references it. Stage new artwork with a plain `git add` before running pre-
 
 ## Device pages stand alone
 
-Keep `:code-file:` targets as repository file paths without `#section`
-fragments; the documentation reference hook validates the whole target as a file.
-
 `docs/source/device/*.rst` is what the public site renders. A `:code-file:`
 link to a plugin README is extra, not a substitute. Write the same class of
 page as Wuji or Manus: what the hardware is, data flow, install, run,
 published collections, and troubleshooting. Keep volatile operator detail
 in the plugin README; do not shrink the site page to a stub.
-
-Describe current plugin behavior without making universal hardware claims.
-Do not present one test device's PID, firmware, or measured link speed as
-compatibility requirements; keep development and acceptance history out of
-public device introductions.
 
 ## Never wrap styled layout in `.. container::`
 

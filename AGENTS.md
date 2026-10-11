@@ -179,9 +179,6 @@ measurement, a trap someone already paid for. They are not a place to narrate.
   is fine; whole sentences in caps are noise once every third comment has them.
 - **One statement of a fact, in one place.** If a constraint is already in the
   code, the test name, or an adjacent doc, do not restate it.
-- **Follow shared example structure for device additions:** use the existing
-  device table, setup flags, and configuration list, with links to detailed
-  device workflows. Keep common viewer controls in the shared viewer section.
 
 This applies to `#`/`//` comments, docstrings, and comment blocks in
 `CMakeLists.txt`, `pyproject.toml`, YAML data files and scene XML.
@@ -229,9 +226,8 @@ pre-commit install --hook-type commit-msg
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.
   Stage first (`git add -A`), then run the hooks.
-- When reconciling upstream updates, distinguish RST title adornments from Git
-  conflict markers. Verify the index has no unmerged entries and rerun the full
-  hook set after finalizing the merge; keep valid RST headings unchanged.
+- Format touched Python source with `ruff format` before staging. If the
+  pre-commit hook rewrites a file, restage it and rerun the hooks.
 - **REUSE:** files covered by the REUSE hook need **`SPDX-FileCopyrightText`** and **`SPDX-License-Identifier`** in the form the repo already uses (for example the HTML comment block at the top of `README.md` also applies to **`AGENTS.md`** and similar docs).
 - **C++ formatting is enforced by CI, not pre-commit.** The hook set runs `ruff` for Python but does **not** run `clang-format`; CI (`build-ubuntu.yml`) installs **`clang-format-14`** and rejects unformatted C++ as `-Wclang-format-violations`. Before pushing, format touched C++ with the system `clang-format` (match CI's version 14) and verify:
 

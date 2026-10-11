@@ -29,6 +29,38 @@ max_flatbuffer_size = 256
 facade_tensor_constant = true
 
 [[tracker]]
+name = "soma_body_joint_rotations"
+table = "SomaBodyJointRotations"
+schema = "soma_body_joint_rotations"
+class = "SomaBodyJointRotationsTracker"
+traits = "SomaBodyJointRotationsRecordingTraits"
+max_flatbuffer_size = 2048
+
+[[tracker]]
+name = "soma_body_joint_poses"
+table = "SomaBodyJointPoses"
+schema = "soma_body_joint_poses"
+class = "SomaBodyJointPosesTracker"
+traits = "SomaBodyJointPosesRecordingTraits"
+max_flatbuffer_size = 4096
+
+[[tracker]]
+name = "soma_hand_joint_rotations"
+table = "SomaHandJointRotations"
+schema = "soma_hand_joint_rotations"
+class = "SomaHandJointRotationsTracker"
+traits = "SomaHandJointRotationsRecordingTraits"
+max_flatbuffer_size = 1024
+
+[[tracker]]
+name = "soma_hand_joint_poses"
+table = "SomaHandJointPoses"
+schema = "soma_hand_joint_poses"
+class = "SomaHandJointPosesTracker"
+traits = "SomaHandJointPosesRecordingTraits"
+max_flatbuffer_size = 2048
+
+[[tracker]]
 name = "oglo_tactile"
 table = "OgloGloveSample"
 channel = "oglo"

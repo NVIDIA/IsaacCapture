@@ -143,16 +143,11 @@ TEST_CASE("OpenXrSession time conversion throws when extension is unavailable", 
 namespace
 {
 
-struct Stage1Resources
-{
-    // The graphics device must outlive its attached OpenXR session.
-    std::unique_ptr<viz::VkContext> vk;
-    std::unique_ptr<viz::OpenXrSession> sess;
-};
-
 // Build stage-1 OpenXrSession + XR-bound VkContext, or SKIP if either
-// piece isn't available on the host.
-Stage1Resources make_stage1(const char* app_name)
+// piece isn't available on the host. The pair destroys its second member first,
+// so the session goes before the VkContext it renders with; the other order
+// crashes in xrDestroySession on a connected runtime.
+std::pair<std::unique_ptr<viz::VkContext>, std::unique_ptr<viz::OpenXrSession>> make_stage1(const char* app_name)
 {
     std::unique_ptr<viz::OpenXrSession> sess;
     try
@@ -205,6 +200,32 @@ TEST_CASE("OpenXrSession attach_graphics constructs session + spaces + view conf
     {
         sess->poll_events();
     }
+}
+
+// end_session(): xrRequestExitSession -> STOPPING -> xrEndSession, no
+// XR_ERROR_SESSION_NOT_STOPPING. Needs a connected headset to reach a running session.
+TEST_CASE("OpenXrSession::end_session stops a running session and is idempotent", "[xr][viz_xr]")
+{
+    auto [vk, sess] = make_stage1("viz_xr_test_end_session");
+    sess->attach_graphics(*vk);
+
+    // Never ran: nothing to end.
+    CHECK(sess->end_session());
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!sess->session_running() && std::chrono::steady_clock::now() < deadline)
+    {
+        sess->poll_events();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!sess->session_running())
+    {
+        SKIP("runtime did not start the session (no headset connected)");
+    }
+
+    CHECK(sess->end_session());
+    CHECK_FALSE(sess->session_running());
+    CHECK(sess->end_session()); // idempotent
 }
 
 // VIEW space + near/far Z plumbing.

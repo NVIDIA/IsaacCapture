@@ -117,6 +117,26 @@ from ._schema import (
     BodyJoints,
     FullBodyPose,
     FullBodyPoseRecord,
+    # Shared SOMA types.
+    SomaHandedness,
+    # SOMA body joint-rotation types.
+    SomaBodyJoint,
+    SomaBodyJointRotation,
+    SomaBodyJointRotations,
+    SomaBodyJointRotationsRecord,
+    # SOMA evaluated body joint-pose types.
+    SomaBodyJointPose,
+    SomaBodyJointPoses,
+    SomaBodyJointPosesRecord,
+    # SOMA hand joint-rotation types.
+    SomaHandJoint,
+    SomaHandJointRotation,
+    SomaHandJointRotations,
+    SomaHandJointRotationsRecord,
+    # SOMA evaluated hand joint-pose types.
+    SomaHandJointPose,
+    SomaHandJointPoses,
+    SomaHandJointPosesRecord,
 )
 
 # Deprecated aliases, resolved lazily via __getattr__ so accessing them emits a
@@ -255,4 +275,24 @@ __all__ = [
     "BodyJoints",
     "FullBodyPose",
     "FullBodyPoseRecord",
+    # Shared SOMA types.
+    "SomaHandedness",
+    # SOMA body joint-rotation types.
+    "SomaBodyJoint",
+    "SomaBodyJointRotation",
+    "SomaBodyJointRotations",
+    "SomaBodyJointRotationsRecord",
+    # SOMA evaluated body joint-pose types.
+    "SomaBodyJointPose",
+    "SomaBodyJointPoses",
+    "SomaBodyJointPosesRecord",
+    # SOMA hand joint-rotation types.
+    "SomaHandJoint",
+    "SomaHandJointRotation",
+    "SomaHandJointRotations",
+    "SomaHandJointRotationsRecord",
+    # SOMA evaluated hand joint-pose types.
+    "SomaHandJointPose",
+    "SomaHandJointPoses",
+    "SomaHandJointPosesRecord",
 ]

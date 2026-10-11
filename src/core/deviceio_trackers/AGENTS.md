@@ -42,13 +42,6 @@ starts at the tracker layer, not the schema layer); `head`, `hand`, `controller`
 owns `KeyboardInputState` that host-side `KeyboardProvider`s feed, and the live impl uses no
 OpenXR extension; neither fits a generated shape).
 
-EGO camera and IMU readers also stay hand-written: their configured stream lists span
-multiple tensor collections and MCAP channels. EGO audio, calibration, and device-state
-readers use the manifest.
-
-- Use `Ego` / `ego` / `EGO` for EGO product APIs, schema types, and authored paths. Keep
-  Orbbec SDK identifiers, SDK-owned paths, and copyright holders unchanged.
-
 ## No OpenXR dependency
 
 - **`deviceio_trackers`** must **not** link **`OpenXR::headers`**, **`oxr::oxr_utils`**, or vendor extension targets, and must **not** `#include` OpenXR headers. Public API stays schema + **`deviceio_base`** only.

@@ -12,6 +12,7 @@ import pytest
 
 from cloudxr_py_test_ns.oob_teleop_env import redact_control_token
 from cloudxr_py_test_ns.webclient import (
+    OobAdbError,
     _parse_args,
     main,
     print_summary,
@@ -107,6 +108,15 @@ def test_redact_oob_query_token_masks_value() -> None:
     assert "mode=1" in masked
 
 
+def test_redact_turn_credential_masks_value() -> None:
+    masked = redact_control_token(
+        "https://x.test/?turnCredential=turn-canary-456&port=48322"
+    )
+    assert "turn-canary-456" not in masked
+    assert "turnCredential=<REDACTED>" in masked
+    assert "port=48322" in masked
+
+
 def test_redact_token_noop_without_token() -> None:
     url = "https://x.test/?oobEnable=1&port=48322"
     assert redact_control_token(url) == url
@@ -115,7 +125,8 @@ def test_redact_token_noop_without_token() -> None:
 def test_summary_hides_token_but_url_keeps_it() -> None:
     """A pasted OOB URL can carry a token; it must not reach the terminal."""
     url, source = resolve_client_url(
-        "https://x.test/?oobEnable=1&controlToken=sup3rs3cret&serverIP=10.0.0.9&port=48322"
+        "https://x.test/?oobEnable=1&controlToken=sup3rs3cret"
+        "&turnCredential=turn-canary-456&serverIP=10.0.0.9&port=48322"
     )
     assert "sup3rs3cret" in url
 
@@ -128,7 +139,9 @@ def test_summary_hides_token_but_url_keeps_it() -> None:
     )
     printed = buf.getvalue()
     assert "sup3rs3cret" not in printed
+    assert "turn-canary-456" not in printed
     assert "controlToken=<REDACTED>" in printed
+    assert "turnCredential=<REDACTED>" in printed
 
 
 # Pretty output --------------------------------------------------------------
@@ -204,11 +217,13 @@ def test_parse_args_positional_and_flag() -> None:
 def test_main_print_only_skips_adb(_mock_lan: MagicMock, capsys) -> None:
     with (
         patch("cloudxr_py_test_ns.webclient.require_adb_on_path") as req,
+        patch("cloudxr_py_test_ns.webclient.assert_supported_headset") as identity,
         patch("cloudxr_py_test_ns.webclient.open_url_on_headset") as opener,
     ):
         rc = main(["--print-only"])
     assert rc == 0
     req.assert_not_called()
+    identity.assert_not_called()
     opener.assert_not_called()
     assert "serverIP=10.0.0.1" in capsys.readouterr().out
 
@@ -218,6 +233,7 @@ def test_main_opens_resolved_url(_mock_lan: MagicMock, capsys) -> None:
     with (
         patch("cloudxr_py_test_ns.webclient.require_adb_on_path"),
         patch("cloudxr_py_test_ns.webclient.assert_exactly_one_adb_device"),
+        patch("cloudxr_py_test_ns.webclient.assert_supported_headset"),
         patch("cloudxr_py_test_ns.webclient.assert_headset_awake"),
         patch(
             "cloudxr_py_test_ns.webclient.headset_browser_package",
@@ -242,6 +258,7 @@ def test_main_reports_adb_failure_with_hint(_mock_lan: MagicMock, capsys) -> Non
     with (
         patch("cloudxr_py_test_ns.webclient.require_adb_on_path"),
         patch("cloudxr_py_test_ns.webclient.assert_exactly_one_adb_device"),
+        patch("cloudxr_py_test_ns.webclient.assert_supported_headset"),
         patch("cloudxr_py_test_ns.webclient.assert_headset_awake"),
         patch(
             "cloudxr_py_test_ns.webclient.headset_browser_package", return_value=None
@@ -256,6 +273,27 @@ def test_main_reports_adb_failure_with_hint(_mock_lan: MagicMock, capsys) -> Non
     captured = capsys.readouterr()
     assert "no devices/emulators found" in captured.err
     assert "No adb device" in captured.err
+
+
+def test_main_rejects_non_headset_before_opening(capsys) -> None:
+    with (
+        patch("cloudxr_py_test_ns.webclient.require_adb_on_path"),
+        patch(
+            "cloudxr_py_test_ns.webclient.assert_exactly_one_adb_device",
+            return_value="phone-serial",
+        ),
+        patch(
+            "cloudxr_py_test_ns.webclient.assert_supported_headset",
+            side_effect=OobAdbError("Selected ADB device is not a supported headset"),
+        ),
+        patch("cloudxr_py_test_ns.webclient.assert_headset_awake") as awake,
+        patch("cloudxr_py_test_ns.webclient.open_url_on_headset") as opener,
+    ):
+        rc = main([])
+    assert rc == 1
+    assert "not a supported headset" in capsys.readouterr().err
+    awake.assert_not_called()
+    opener.assert_not_called()
 
 
 def test_main_reports_preflight_failure_without_traceback() -> None:

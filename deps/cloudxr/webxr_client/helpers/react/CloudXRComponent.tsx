@@ -338,6 +338,12 @@ export default function CloudXRComponent({
   // the effect's re-arm logic below tell "waiting for warm-up to begin" apart from "warm-up
   // began, waiting for it to end".
   const warmupBegunRef = useRef(false);
+  // Set around each watchdog's own disconnect() call below. The SDK (and MockCloudXR, matching
+  // it) can invoke onStreamStopped(undefined) synchronously as a side effect of disconnect() -
+  // without this guard that clean-stop call reaches onStreamStopped first, reports 'Disconnected'
+  // (App.tsx's default autoRefreshMode reloads the page on that status), and never reaches the
+  // synthetic-error call right after it that was supposed to drive the bounded retry.
+  const suppressNextCleanStopRef = useRef(false);
 
   /**
    * Arms (or re-arms) the passthrough-only stream-attach timer for *cxrSession*: if
@@ -362,10 +368,13 @@ export default function CloudXRComponent({
           `CloudXR stream did not attach within ${attachTimeoutMs}ms ` +
             `(attempt ${attemptForThisTimer + 1})`
         );
+        suppressNextCleanStopRef.current = true;
         try {
           cxrSession.disconnect();
         } catch {
           // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        } finally {
+          suppressNextCleanStopRef.current = false;
         }
         cloudXRDelegatesRef.current?.onStreamStopped?.({
           message: `Stream did not attach within ${attachTimeoutMs}ms`,
@@ -394,10 +403,13 @@ export default function CloudXRComponent({
       warmupBeginTimerRef.current = setTimeout(() => {
         warmupBeginTimerRef.current = null;
         console.warn(`CloudXR decoder warm-up did not begin within ${timeoutMs}ms`);
+        suppressNextCleanStopRef.current = true;
         try {
           cxrSession.disconnect();
         } catch {
           // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        } finally {
+          suppressNextCleanStopRef.current = false;
         }
         cloudXRDelegatesRef.current?.onStreamStopped?.({
           message: `Decoder warm-up did not begin within ${timeoutMs}ms`,
@@ -421,10 +433,13 @@ export default function CloudXRComponent({
       warmupEndTimerRef.current = setTimeout(() => {
         warmupEndTimerRef.current = null;
         console.warn(`CloudXR decoder warm-up did not complete within ${timeoutMs}ms`);
+        suppressNextCleanStopRef.current = true;
         try {
           cxrSession.disconnect();
         } catch {
           // Ignore errors from disconnect() - best effort, matching the connect()-catch block.
+        } finally {
+          suppressNextCleanStopRef.current = false;
         }
         cloudXRDelegatesRef.current?.onStreamStopped?.({
           message: `Decoder warm-up did not complete within ${timeoutMs}ms`,
@@ -730,6 +745,14 @@ export default function CloudXRComponent({
               onStatusChange?.(true, 'Connected');
             },
             onStreamStopped: (error?: CloudXR.StreamingError) => {
+              // disconnect() can invoke this delegate synchronously (error=undefined) before the
+              // caller below gets to make its own, deliberate call with a synthetic error. Only a
+              // watchdog's own disconnect() sets this; that spurious clean-stop call is not the
+              // real stream event and must not short-circuit the retry the watchdog is about to
+              // request.
+              if (!error && suppressNextCleanStopRef.current) {
+                return;
+              }
               // A real stream-stop (including the synthetic ones the attach/warmup timers below
               // dispatch through this same delegate) means we're no longer "waiting to attach" or
               // "warming up" - clear any pending timer so it can't fire again after this attempt

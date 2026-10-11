@@ -720,6 +720,12 @@ async def run(
                         turn_port=usb_turn_port() if usb_local else None,
                         config=recovery_config or resolve_oob_recovery_config(),
                         on_status=on_oob_status,
+                        usb_health_logs_dir=(
+                            Path(log_file_path).parent
+                            if log_file_path is not None
+                            else None
+                        ),
+                        web_client_static_dir=_host_client_static_dir,
                     )
                     lifecycle_task = asyncio.create_task(
                         lifecycle.run(), name="cloudxr-oob-lifecycle"

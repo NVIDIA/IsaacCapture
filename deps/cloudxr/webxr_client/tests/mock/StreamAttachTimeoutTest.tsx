@@ -186,10 +186,9 @@ function Scene() {
         }}
         onSessionReady={session => {
           activeSession = session as MockCloudXR | null;
-          // Only consume a queue entry for a real new session - onSessionReady(null) fires
-          // multiple times per retry (MockCloudXR.disconnect()'s own onStreamStopped(undefined),
-          // then the synthetic-error retry path), and shifting on those would silently drain
-          // the queue before the next real attempt ever sees its config.
+          // Only consume a queue entry for a real new session - a null onSessionReady is not
+          // the start of an attempt, and shifting on one would silently drain the queue before
+          // the next real attempt ever sees its config.
           if (activeSession) {
             const attemptConfig = attemptConfigQueue.shift();
             if (attemptConfig) {

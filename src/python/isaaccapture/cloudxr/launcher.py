@@ -178,13 +178,15 @@ class CloudXRLauncher:
 
         Every other argument is forwarded to :class:`CloudXRService` and only
         applies when this process owns it.  When attaching they describe a
-        runtime that already exists, so a mismatch is reported rather than
-        applied.  ``host_client`` is recovered from the detached service's
-        command line when that is available.
+        runtime that already exists.  Requested OOB/USB mode must match the
+        detached service; other mismatches are reported rather than applied.
+        ``host_client`` is recovered from the detached service's command line
+        when that is available.
 
         Raises:
-            RuntimeError: If the runtime fails to start or come up, or if
-                *run_embedded* is set while a runtime is already serving.
+            RuntimeError: If the runtime fails to start or come up, if
+                *run_embedded* is set while a runtime is already serving, or
+                if the requested OOB/USB mode cannot be verified or matched.
         """
         if start_wss_proxy is not None:
             self._warn_start_wss_proxy_deprecated()
@@ -208,6 +210,7 @@ class CloudXRLauncher:
             return
 
         if is_runtime_live(self._run_dir):
+            self._validate_requested_mode(setup_oob, usb_local)
             self._attach(device_profile, env_config, host_client)
             self.oob_status()
             return
@@ -224,6 +227,8 @@ class CloudXRLauncher:
         # Skip mismatch reports for settings this call just applied.  A
         # runtime that beat us to it did not get them, so that one is reported
         # like any other attach.
+        if not started:
+            self._validate_requested_mode(setup_oob, usb_local)
         self._attach(
             device_profile,
             None if started else env_config,
@@ -343,6 +348,35 @@ class CloudXRLauncher:
         print_hosted_client_line(
             url, prefix=_STARTED_HOST_CLIENT_PREFIX, file=sys.stderr
         )
+
+    def _validate_requested_mode(self, setup_oob: bool, usb_local: bool) -> None:
+        """Require a verifiable matching mode when attaching for OOB teleop."""
+        if not setup_oob and not usb_local:
+            return
+        stop = self._service_stop_invocation()
+        if background.read_pid(self._run_dir) is None:
+            raise RuntimeError(
+                "Cannot verify the existing CloudXR runtime's OOB/USB mode: "
+                "its detached service flags are unavailable. "
+                f"Stop it with `{stop}`, then start it with the requested mode."
+            )
+        flags = background.read_run_flags(self._run_dir)
+        running_oob = "--setup-oob" in flags
+        running_usb = "--usb-local" in flags
+        if (setup_oob and not running_oob) or (running_usb != usb_local):
+            requested = "USB-local OOB" if usb_local else "OOB without USB-local"
+            running = (
+                "USB-local OOB"
+                if running_usb
+                else "OOB without USB-local"
+                if running_oob
+                else "without OOB"
+            )
+            raise RuntimeError(
+                f"Requested {requested} mode, but the existing CloudXR runtime "
+                f"is running {running}. Stop it with `{stop}`, then start it "
+                "with the requested mode."
+            )
 
     def _attach(
         self,

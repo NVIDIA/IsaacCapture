@@ -23,6 +23,11 @@
 #include "plugin_device_status_bindings.h"
 #include "pose_bindings.h"
 #include "se3_tracker_bindings.h"
+#include "soma_body_joint_poses_bindings.h"
+#include "soma_body_joint_rotations_bindings.h"
+#include "soma_common_bindings.h"
+#include "soma_hand_joint_poses_bindings.h"
+#include "soma_hand_joint_rotations_bindings.h"
 #include "steering_wheel_bindings.h"
 #include "timestamp_bindings.h"
 
@@ -85,4 +90,11 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind full body types (BodyJointPose, BodyJoints structs, FullBodyPose table).
     core::bind_full_body(m);
+
+    // Bind shared SOMA primitives, then the body and hand pose contracts.
+    core::bind_soma_common(m);
+    core::bind_soma_body_joint_rotations(m);
+    core::bind_soma_body_joint_poses(m);
+    core::bind_soma_hand_joint_rotations(m);
+    core::bind_soma_hand_joint_poses(m);
 }

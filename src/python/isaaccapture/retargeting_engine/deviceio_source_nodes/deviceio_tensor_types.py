@@ -22,6 +22,10 @@ from isaaccapture.schema import (
     KeyboardOutput,
     JointStateOutput,
     FullBodyPose,
+    SomaBodyJointPoses,
+    SomaBodyJointRotations,
+    SomaHandJointPoses,
+    SomaHandJointRotations,
     MessageChannelMessagesTracked,
 )
 
@@ -113,6 +117,30 @@ class FullBodyPoseTrackedType(_PayloadTensorType):
     """
 
     _payload_cls = FullBodyPose
+
+
+class SomaBodyJointRotationsTrackedType(_PayloadTensorType):
+    """SomaBodyJointRotations payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointRotations
+
+
+class SomaBodyJointPosesTrackedType(_PayloadTensorType):
+    """SomaBodyJointPoses payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointPoses
+
+
+class SomaHandJointRotationsTrackedType(_PayloadTensorType):
+    """SomaHandJointRotations payload from a generated SOMA hand tracker."""
+
+    _payload_cls = SomaHandJointRotations
+
+
+class SomaHandJointPosesTrackedType(_PayloadTensorType):
+    """SomaHandJointPoses payload from a generated SOMA hand tracker."""
+
+    _payload_cls = SomaHandJointPoses
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -212,6 +240,38 @@ def DeviceIOFullBodyPoseTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_full_body_pose",
         [FullBodyPoseTrackedType("full_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointRotationsTracked() -> TensorGroupType:
+    """SOMA body controls, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_rotations",
+        [SomaBodyJointRotationsTrackedType("soma_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA body poses, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_poses",
+        [SomaBodyJointPosesTrackedType("soma_body_tracked")],
+    )
+
+
+def DeviceIOSomaHandJointRotationsTracked() -> TensorGroupType:
+    """SOMA hand controls, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_hand_joint_rotations",
+        [SomaHandJointRotationsTrackedType("soma_hand_tracked")],
+    )
+
+
+def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA hand poses, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_hand_joint_poses",
+        [SomaHandJointPosesTrackedType("soma_hand_tracked")],
     )
 
 

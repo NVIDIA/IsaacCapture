@@ -62,6 +62,7 @@ Table of Contents
 
    device/trackers
    device/add_device
+   device/soma
    device/joint_space
    device/body_tracking
    device/haptic_feedback
