@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The full-body panel's own HTML; the status lists are ``cts_common.panel.render``."""
+"""The full-body panel's own HTML; the shared pieces are ``cts_common.panel.render``."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from cts_common.panel.render import (
     facts,
     group_body,
     group_heading,
+    package_failed,
+    packaged,
     result_rows,
     verdict_banner,
 )
@@ -34,23 +36,6 @@ __all__ = [
     "result_rows",
     "verdict_banner",
 ]
-
-
-def packaged(filename: str, size_bytes: int, digest: str) -> str:
-    """What was just handed to the browser, with the hash to quote when sending it."""
-    return (
-        f'<div style="font-size:11px;padding:3px 0">'
-        f'<span style="font-family:monospace">{escape(filename)}</span><br>'
-        f'<span style="opacity:0.75">{size_bytes / 1e6:.1f} MB &middot; sha256 '
-        f"{escape(digest[:12])}…</span></div>"
-    )
-
-
-def package_failed(reason: object) -> str:
-    return (
-        f'<div style="font-size:11px;padding:3px 0;color:#b0342c">'
-        f"could not package: {escape(str(reason))}</div>"
-    )
 
 
 def playhead(

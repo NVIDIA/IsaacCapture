@@ -11,8 +11,8 @@ before editing here. A change here reaches every schema's checker, so also read 
 
 `cts_common` is what the per-schema checkers share: file-order MCAP reading by
 schema name, the accumulator model, the envelope and payload checks, verdict
-aggregation, `Mark`, the label sidecar, and the viewer's `Sample`, `Track`, `Skeleton`
-and status-list HTML.
+aggregation, `Mark`, the label sidecar, and the viewer's `Sample`, `Track`, `Skeleton`,
+status-list HTML and submission archive.
 
 - **Schema-agnostic.** No record type, joint table, profile or check group lives here;
   `tests/test_boundaries.py` rejects the names. A shared check carries no `group` — each
@@ -22,6 +22,13 @@ and status-list HTML.
 - **The oracles import nothing from here.** Their quaternion arithmetic is duplicated on
   purpose; the full-body and hand `test_boundaries.py` assert it.
 - **Changing a shared check changes two verdicts.** Run both checkers' suites.
+- **The submission archive (`panel/bundle.py`) takes the schema's parts as arguments**:
+  each schema's `panel/bundle.py` passes the result groups, the frame series and its own
+  package for `tool`. The archive carries the inputs that cannot be regenerated, above
+  all the labels sidecar. Keep `inputs` (file hashes, labels, `tool.commit`) apart from
+  outputs; the packed report is a cache and the recording wins. A missing companion goes
+  in `inputs.missing`, not an error. It is a zip so `report.json` reads without
+  decompressing the recording.
 - **After moving code in or out of here, run pre-commit, not only the tests.** Under
   `from __future__ import annotations` a name used only in a type hint is never
   evaluated, so a dropped import passes every test and fails ruff (F821).

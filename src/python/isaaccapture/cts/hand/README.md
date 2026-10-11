@@ -309,10 +309,37 @@ need the whole recording, so a result taken mid-playback would mean nothing.
 
 ## Send a take
 
-Send the **whole take directory**: the recording, its labels, the provenance file and the
-log. There is no packaging step; compress the directory however you like
-(`tar czf <take>.tar.gz <take>`). Without the labels the window checks cannot be
-answered.
+**`package for submission`** in the viewer builds one archive and downloads it through the
+browser, so it lands on the machine you will send it from, even when the viewer is reached
+over `--host`. Right-click the link it offers for *Save as…* to choose where. It packs the
+files beside the recording, so start the viewer on the take in its own directory under
+`~/isaaccapture-cts/`, as above.
+
+```text
+manus_2026-03-04_101530-hand.retake.zip           the take and the verdict, so a mailbox
+└── manus_2026-03-04_101530-hand.retake/          of these can be triaged unopened
+    ├── report.json                               verdict, checks, groups, per-hand
+    │                                             series, input hashes, tool commit
+    ├── report.txt                                the same report, for reading
+    ├── manus_2026-03-04_101530-hand.mcap         the recording, byte for byte
+    ├── manus_2026-03-04_101530-hand.labels.json  one window per step
+    ├── manus_2026-03-04_101530-hand.json         what produced it
+    └── manus_2026-03-04_101530-hand.log          the panel's output
+```
+
+The name is the take's own, which already carries the device and the moment it was
+recorded, so two devices recording at once cannot collide.
+
+`report.json` is a superset of `--json` and reads out of the archive without
+decompressing the recording. Each check in it carries its **`mark`** and its group, and
+`series` holds each hand's frame rate and valid-joint count against time, under `left`
+and `right`.
+
+The recording and its sidecars are the evidence; the packed report is a convenience, and
+re-running the checker on the archive at the same commit (`tool.commit`) reproduces the
+verdict. **The labels sidecar cannot be regenerated** from the recording: without it the
+window checks go unanswered, which is why the archive holds more than one file. A
+companion that was never there is not an error; `inputs.missing` names it.
 
 ## If something goes wrong
 

@@ -9,7 +9,7 @@ import math
 
 from cts_common.vectors import multiply, rotate
 
-from hand_cts.frames import Frame, JointPose
+from hand_cts.frames import SCHEMA_NAME, Frame, JointPose, SourceMetadata
 
 KNUCKLES = {
     7: (-0.024, 0.0, -0.094),
@@ -107,3 +107,29 @@ def take(count: int, side: str = "right", transform=None, **kwargs) -> list[Fram
             local = transform(local)
         frames.append(frame(tick, side, local=local, **kwargs))
     return frames
+
+
+def both_hands(count: int) -> list[Frame]:
+    """``take(count)`` for each hand, interleaved left then right."""
+    left = take(count, "left")
+    right = take(count, "right")
+    return [item for pair in zip(left, right) for item in pair]
+
+
+class StubSource:
+    """A FrameSource over frames held in memory."""
+
+    def __init__(self, frames):
+        self._frames = frames
+        self.metadata = SourceMetadata(
+            schema_name=SCHEMA_NAME,
+            schema_encoding="flatbuffer",
+            schema_data=None,
+            message_encoding="flatbuffer",
+            topic="hands/left_hand",
+            profile=None,
+            channel_found=True,
+        )
+
+    def __iter__(self):
+        return iter(self._frames)

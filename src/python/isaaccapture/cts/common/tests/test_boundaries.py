@@ -54,7 +54,7 @@ def test_everything_else_imports_with_viser_blocked():
         "import cts_common.report, cts_common.labels,"
         " cts_common.mcap_reader, cts_common.panel.sample,"
         " cts_common.panel.track, cts_common.panel.status,"
-        " cts_common.panel.render;"
+        " cts_common.panel.render, cts_common.panel.bundle;"
         "import cts_common.checks.continuity, cts_common.checks.coverage,"
         " cts_common.checks.quaternion, cts_common.checks.rate,"
         " cts_common.checks.schema, cts_common.checks.timestamps,"

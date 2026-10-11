@@ -111,6 +111,7 @@ Prints the same report, then serves a viewer on `http://127.0.0.1:8080`. Options
 | **Frame rate and valid joints** | Per hand: rate over the last 8 s, valid joints over the whole take, and the valid count at the playhead. |
 | **Grid** | At the table height the flat steps measured, or on the stage floor when no flat step was held. |
 | **Results** | The verdict banner, the checks that decide the take, then the four groups below, worst result first. |
+| **Submission** | `package for submission` zips the recording, its sidecars and this report into `<take>-hand.<verdict>.zip` and downloads it through the browser; [`../README.md`](../README.md#send-a-take) shows what is inside. |
 
 `play` runs the take at its own rate; `speed` and the `time s` slider move the playhead.
 The list always shows the **final** result of every check, because the window checks need

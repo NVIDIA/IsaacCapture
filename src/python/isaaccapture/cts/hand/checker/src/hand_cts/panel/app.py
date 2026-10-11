@@ -9,8 +9,10 @@ result of every check, never a partial one.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from html import escape
+from pathlib import Path
 
 import numpy as np
 import viser
@@ -21,9 +23,10 @@ from cts_common.panel.skeleton import HELD_JOINT_COLOUR, Skeleton
 from cts_common.panel.track import Track
 from cts_common.report import Mark
 
+from ..labels import StepTimeline
 from ..profile import CHAINS, HAND, JOINT_NAMES, METACARPALS
 from ..report import Report
-from . import status
+from . import bundle, status
 from .track import SIDES, centre
 
 NUM_JOINTS = len(JOINT_NAMES)
@@ -31,6 +34,8 @@ RATE_WINDOW_S = 8.0
 PLOT_PERIOD_S = 0.2
 TICK_S = 1.0 / 60.0
 SPEEDS = {"0.25x": 0.25, "0.5x": 0.5, "1x": 1.0, "2x": 2.0}
+# How long the package button stays disabled after the transfer call returns, seconds.
+REENABLE_DELAY_S = 3.0
 # Per-side colours, greys.
 COLOURS = {"left": "#1f2937", "right": "#9ca3af"}
 POINT_SIZE = 0.008
@@ -71,11 +76,18 @@ def _legend() -> str:
 
 class Panel:
     def __init__(
-        self, server: viser.ViserServer, report: Report, tracks: dict[str, Track]
+        self,
+        server: viser.ViserServer,
+        report: Report,
+        tracks: dict[str, Track],
+        recording: Path | None = None,
+        timeline: StepTimeline | None = None,
     ) -> None:
         self._server = server
         self._report = report
         self._tracks = tracks
+        self._recording = recording
+        self._timeline = timeline
         self._duration_s = max((t.duration_s for t in tracks.values()), default=0.0)
         self._playhead_s = 0.0
 
@@ -158,6 +170,9 @@ class Panel:
                 self._playhead_s = float(self._scrub.value)
                 self._draw()
 
+        if self._recording is not None:
+            self._build_submission(gui)
+
         with gui.add_folder("Decides the take"):
             gui.add_html(render.result_rows(status.decisive(report)))
             self._rate_plot = self._add_rate_plot(gui)
@@ -169,6 +184,51 @@ class Panel:
                 expand_by_default=group.mark is not Mark.PASS,
             ):
                 gui.add_html(render.group_body(group))
+
+    def _build_submission(self, gui: viser.GuiApi) -> None:
+        with gui.add_folder("Submission"):
+            self._package_button = gui.add_button(
+                "package for submission",
+                hint="zip the recording, its sidecars and this report, then download",
+            )
+            self._package_bar = gui.add_progress_bar(0.0, visible=False)
+            self._package_note = gui.add_html("")
+
+            @self._package_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                self.package(event.client)
+
+    def package(self, client: viser.ClientHandle | None) -> None:
+        """Build the bundle and hand it to the client that asked for it."""
+        if client is None or self._recording is None:
+            return
+        self._package_button.disabled = True
+        self._package_bar.value = 0.0
+        self._package_bar.visible = True
+        try:
+            name, data = bundle.build(
+                self._report,
+                self._tracks,
+                self._recording,
+                self._timeline,
+                on_progress=self._package_progress,
+            )
+            self._package_bar.animated = True
+            client.send_file_download(name, data)
+            self._package_note.content = render.packaged(
+                name, len(data), hashlib.sha256(data).hexdigest()
+            )
+        except OSError as unreadable:
+            # The take moved or became unreadable since the panel started.
+            self._package_note.content = render.package_failed(unreadable)
+        finally:
+            time.sleep(REENABLE_DELAY_S)
+            self._package_bar.animated = False
+            self._package_bar.visible = False
+            self._package_button.disabled = False
+
+    def _package_progress(self, fraction: float) -> None:
+        self._package_bar.value = 100.0 * fraction
 
     def _series(self, label: str) -> tuple[uplot.Series, ...]:
         return (uplot.Series(label="s"),) + tuple(
@@ -287,11 +347,13 @@ class Panel:
 def serve(
     report: Report,
     tracks: dict[str, Track],
+    recording: Path | None = None,
+    timeline: StepTimeline | None = None,
     host: str = "127.0.0.1",
     port: int = 8080,
 ) -> None:
     server = viser.ViserServer(host=host, port=port)
-    panel = Panel(server, report, tracks)
+    panel = Panel(server, report, tracks, recording, timeline)
     print(f"[panel] http://localhost:{server.get_port()} — Ctrl+C to stop")
     try:
         panel.run()

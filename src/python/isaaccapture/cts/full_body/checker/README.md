@@ -199,7 +199,8 @@ src/full_body_cts/
   panel/           the viewer; app.py is the only module here that imports viser
 ../../common/src/cts_common/
                    shared with every schema: file-order MCAP reading, the accumulator
-                   contract, the envelope checks, verdicts and Mark, the sidecar reader
+                   contract, the envelope checks, verdicts and Mark, the sidecar reader,
+                   the submission archive
 tests/
   synth.py               builds MCAPs in memory
   known_deviations.py    where this checker knowingly disagrees with the fixture index

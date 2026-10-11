@@ -88,11 +88,9 @@ constants on the check class.
 - **Do not substitute a local clock** for a missing sample time (`_stamp` in
   `cts_common/panel/track.py`); it measures delivery jitter, not the device. Live frames
   carry no `DeviceDataTimestamp`, so time-dependent checks stay unanswerable there.
-- **`panel/bundle.py` holds no viser.** The archive carries the inputs that cannot be
-  regenerated, above all the labels sidecar. Keep `inputs` (file hashes, labels,
-  `tool.commit`) apart from outputs; the packed report is a cache and the recording wins.
-  A missing companion goes in `inputs.missing`, not an error. It is a zip so
-  `report.json` reads without decompressing the recording.
+- **The submission archive is `cts_common/panel/bundle.py`**; `panel/bundle.py` here only
+  passes it the full-body groups and series. Its rules are in
+  [`../../common/AGENTS.md`](../../common/AGENTS.md).
 
 ## Architecture
 

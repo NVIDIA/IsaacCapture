@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""HTML for the panels' status lists."""
+"""HTML for the panels' status lists and package notes."""
 
 from __future__ import annotations
 
@@ -91,3 +91,20 @@ def facts(pairs: Sequence[tuple[str, str]]) -> str:
         for label, value in pairs
     )
     return f'<table style="border-collapse:collapse">{rows}</table>'
+
+
+def packaged(filename: str, size_bytes: int, digest: str) -> str:
+    """What was just handed to the browser, with the hash to quote when sending it."""
+    return (
+        f'<div style="font-size:11px;padding:3px 0">'
+        f'<span style="font-family:monospace">{escape(filename)}</span><br>'
+        f'<span style="opacity:0.75">{size_bytes / 1e6:.1f} MB &middot; sha256 '
+        f"{escape(digest[:12])}…</span></div>"
+    )
+
+
+def package_failed(reason: object) -> str:
+    return (
+        f'<div style="font-size:11px;padding:3px 0;color:#b0342c">'
+        f"could not package: {escape(str(reason))}</div>"
+    )
