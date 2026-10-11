@@ -25,4 +25,4 @@ cameras:
     height: 1300
     fps: 30
     format: h264
-    gpu_id: 0
+    gpu_id: 0  # Auto: follow the renderer's CUDA GPU; nonzero pins must match it.

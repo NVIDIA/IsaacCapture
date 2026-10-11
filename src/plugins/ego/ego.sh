@@ -40,9 +40,12 @@ Common record options:
   --device-uid UID                Select one enumerated device.
   --reconnect-timeout SECONDS     Wait for the same physical device after disconnect (default: 30; 0 disables).
   --reconnect-interval-ms MS      Device re-enumeration interval (default: 1000).
-  --no-imu --no-audio             Do not request optional sensors.
+  --no-imu                       Disable IMU (requested by default when available).
+  --audio                        Request optional audio (default: off; synchronization remains unverified).
+  --no-audio                     Disable audio, overriding an audio-enabled configuration.
   --preview                       Enable the plugin's SDL preview (requires a --preview build).
   --mcap-media MODE               metadata-only (default) or embedded.
+  --record-device-diagnostics=on|off  Save detailed diagnostics in MCAP (default on).
   --keep-media-sidecars           Retain H.264/H.265/MJPEG and WAV beside embedded MCAP.
   --preset NAME --plugin PATH     Select a build tree or override the executable.
 
@@ -119,7 +122,7 @@ resolve_exporter() {
             || die "Cannot resolve plugin directory: $requested_plugin"
         for candidate in \
                 "$plugin_dir/ego_mcap_export_media" \
-                "$plugin_dir/../export_media/ego_mcap_export_media"; do
+                "$plugin_dir/../mcap/export_media_tool/ego_mcap_export_media"; do
             if [[ -x "$candidate" ]]; then
                 echo "$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"
                 return 0
@@ -400,9 +403,11 @@ write_requested_profile_manifest() {
     local width="$3"
     local height="$4"
     local fps="$5"
+    local diagnostics="$6"
     printf '%s\n' \
         '{' \
         '  "version": 1,' \
+        "  \"record_device_diagnostics\": \"$diagnostics\"," \
         '  "streams": {' \
         "    \"ColorLeft\": {\"format\": \"$format\", \"width\": $width, \"height\": $height, \"fps\": $fps}," \
         "    \"ColorRight\": {\"format\": \"$format\", \"width\": $width, \"height\": $height, \"fps\": $fps}" \
@@ -443,10 +448,12 @@ command_record() {
     local reconnect_timeout=30
     local reconnect_interval_ms=1000
     local request_imu=1
-    local request_audio=1
+    # Optional audio must be requested explicitly, not enabled by sensor discovery.
+    local request_audio=0
     local preview=0
     local media_mode="metadata-only"
     local keep_sidecars=0
+    local record_diagnostics=on
     local -a passthrough=()
     local -a original_args=("$@")
     local config_file=""
@@ -474,6 +481,11 @@ command_record() {
     set -- "${config_args[@]}" "${original_args[@]}"
     while (( $# )); do
         case "$1" in
+            --config|--duration|--output|--format|--width|--height|--fps|--device-uid|--reconnect-timeout|--reconnect-interval-ms|--record-device-diagnostics|--mcap-media|--preset|--plugin|--plugin-option)
+                (( $# >= 2 )) && [[ -n "$2" ]] || record_usage_error "$1 requires a value"
+                ;;
+        esac
+        case "$1" in
             --) shift; passthrough+=("$@"); break ;;
             --config) shift 2 ;;
             --duration) duration="${2:-}"; shift 2 ;;
@@ -491,6 +503,8 @@ command_record() {
             --no-audio) request_audio=0; shift ;;
             --preview) preview=1; shift ;;
             --no-preview) preview=0; shift ;;
+            --record-device-diagnostics=*) record_diagnostics="${1#*=}"; shift ;;
+            --record-device-diagnostics) record_diagnostics="${2:-}"; shift 2 ;;
             --mcap-media) media_mode="${2:-}"; shift 2 ;;
             --keep-media-sidecars) keep_sidecars=1; shift ;;
             --no-keep-media-sidecars) keep_sidecars=0; shift ;;
@@ -514,6 +528,17 @@ command_record() {
         record_usage_error "--keep-media-sidecars is only valid with embedded media"
     fi
 
+    # Native passthrough arguments win; record the effective policy, not the wrapper default.
+    local option
+    for option in "${passthrough[@]}"; do
+        [[ "$option" != --record-device-diagnostics=* ]] || record_diagnostics="${option#*=}"
+    done
+    case "$record_diagnostics" in
+        on|true|1) record_diagnostics=on ;;
+        off|false|0) record_diagnostics=off ;;
+        *) record_usage_error "--record-device-diagnostics must be on or off" ;;
+    esac
+
     local plugin
     plugin="$(resolve_plugin "$preset" "$plugin_path")"
     local output_base="$SOURCE_ROOT"
@@ -528,7 +553,7 @@ command_record() {
     if [[ "$media_mode" == "metadata-only" ]] || (( keep_sidecars )); then
         mkdir -p "$run_dir/raw"
     fi
-    write_requested_profile_manifest "$run_dir/requested_profile.json" "$format" "$width" "$height" "$fps"
+    write_requested_profile_manifest "$run_dir/requested_profile.json" "$format" "$width" "$height" "$fps" "$record_diagnostics"
 
     local capabilities_file="$run_dir/capabilities.txt"
     echo "Inspecting connected device before recording..."
@@ -558,6 +583,7 @@ command_record() {
     local -a plugin_args=(
         "--mcap-filename=$run_dir/metadata.mcap"
         "--mcap-media=$media_mode"
+        "--record-device-diagnostics=$record_diagnostics"
         "--calibration-output=$run_dir/calibration.json"
         "--reconnect-timeout=$reconnect_timeout"
         "--reconnect-interval-ms=$reconnect_interval_ms"
@@ -588,7 +614,7 @@ command_record() {
 
     echo "Recording directory: $run_dir"
     echo "Requested exact stereo profile: ${width}x${height}@${fps} ${format}; no profile fallback will be attempted."
-    echo "Stop with Ctrl-C once; the plugin will finalize WAV and MCAP files."
+    echo "Stop with Ctrl-C once; the plugin will finalize media and MCAP files."
     local capture_status
     local -a pipeline_statuses=()
     set +e
@@ -649,11 +675,26 @@ check_capture_health_log() {
     fi
 }
 
+checked_media_command() {
+    local errors
+    errors="$(mktemp "$run_dir/.verify_media.XXXXXX")" || die "Could not create media check log"
+    if "$@" 2>"$errors"; then
+        if [[ ! -s "$errors" ]]; then
+            rm -f -- "$errors"
+            return 0
+        fi
+    fi
+    # FFmpeg can emit a decoder error yet exit zero; its stderr is part of the result.
+    cat "$errors" >&2
+    rm -f -- "$errors"
+    die "Media check failed: $1"
+}
+
 video_signature() {
     local media_file="$1"
     local -a input_args=()
     [[ "$media_file" == *.mjpg ]] && input_args=(-f mjpeg)
-    ffprobe -v error "${input_args[@]}" -select_streams v:0 \
+    checked_media_command ffprobe -v error "${input_args[@]}" -select_streams v:0 \
         -show_entries stream=codec_name,width,height,r_frame_rate \
         -of csv=p=0 "$media_file"
 }
@@ -662,16 +703,21 @@ video_frame_count() {
     local media_file="$1"
     local -a input_args=()
     [[ "$media_file" == *.mjpg ]] && input_args=(-f mjpeg)
-    ffprobe -v error "${input_args[@]}" -count_frames -select_streams v:0 \
+    checked_media_command ffprobe -v error "${input_args[@]}" -count_frames -select_streams v:0 \
         -show_entries stream=nb_read_frames -of default=noprint_wrappers=1:nokey=1 "$media_file"
 }
 
 decode_video() {
     local stream_name="$1"
     local media_file="$2"
+    local progress
     local -a input_args=()
     [[ "$media_file" == *.mjpg ]] && input_args=(-f mjpeg)
-    ffmpeg -v error -xerror -err_detect explode "${input_args[@]}" -i "$media_file" -f null -
+    progress="$(checked_media_command ffmpeg -v error -xerror -err_detect explode \
+        "${input_args[@]}" -i "$media_file" -progress pipe:1 -nostats -f null -)" || return 1
+    decoded_video_frame_count="$(awk -F= '$1 == "frame" { count = $2 } END { print count }' <<< "$progress")"
+    [[ "$decoded_video_frame_count" =~ ^[1-9][0-9]*$ ]] || die "No complete decoded $stream_name frames"
+    grep -Fx 'progress=end' <<< "$progress" >/dev/null || die "Incomplete $stream_name decode"
     echo "$stream_name complete decode: OK"
 }
 
@@ -738,7 +784,7 @@ command_verify_impl() {
     fi
     [[ "$mode" == "metadata-only" || "$mode" == "embedded" ]] || die "Unknown MCAP media mode '$mode'"
 
-    local -a topic_check_args=("$mcap" "$mode")
+    local -a topic_check_args=("$mcap" "$mode" "--requested-profile=$run_dir/requested_profile.json")
     (( expect_imu )) && topic_check_args+=(--expect-imu)
     (( expect_audio )) && topic_check_args+=(--expect-audio)
     python3 "$SCRIPT_DIR/tools/verify_sensor_topics.py" "${topic_check_args[@]}"
@@ -774,9 +820,12 @@ command_verify_impl() {
         cmp -s "$right" "$retained_right" || die "Embedded and retained ColorRight media differ"
         echo "Embedded video matches retained media sidecars: OK"
     fi
+    local decoded_video_frame_count left_frames right_frames
     decode_video ColorLeft "$left"
+    left_frames="$decoded_video_frame_count"
     decode_video ColorRight "$right"
-    local left_signature right_signature left_frames right_frames
+    right_frames="$decoded_video_frame_count"
+    local left_signature right_signature left_probed_frames right_probed_frames
     left_signature="$(video_signature "$left")"
     right_signature="$(video_signature "$right")"
     [[ -n "$left_signature" ]] || die "ffprobe found no ColorLeft video stream: $left"
@@ -789,10 +838,10 @@ command_verify_impl() {
     else
         warn "No requested_profile.json exists; exact requested-versus-recorded profile checks were skipped for this legacy run."
     fi
-    left_frames="$(video_frame_count "$left")"
-    right_frames="$(video_frame_count "$right")"
-    [[ "$left_frames" =~ ^[1-9][0-9]*$ ]] || die "Could not count decoded ColorLeft frames: $left_frames"
-    [[ "$right_frames" =~ ^[1-9][0-9]*$ ]] || die "Could not count decoded ColorRight frames: $right_frames"
+    left_probed_frames="$(video_frame_count "$left")"
+    right_probed_frames="$(video_frame_count "$right")"
+    [[ "$left_probed_frames" == "$left_frames" ]] || die "ColorLeft FFprobe count differs from complete decode: $left_probed_frames versus $left_frames"
+    [[ "$right_probed_frames" == "$right_frames" ]] || die "ColorRight FFprobe count differs from complete decode: $right_probed_frames versus $right_frames"
     echo "Stereo elementary-stream profile (codec,width,height,ffprobe_rate): $left_signature"
     echo "Decoded frames: ColorLeft=$left_frames ColorRight=$right_frames"
     if [[ "$left_frames" != "$right_frames" ]]; then
@@ -813,7 +862,7 @@ command_verify_impl() {
     fi
     if [[ -s "$wav" ]]; then
         local wav_signature
-        wav_signature="$(ffprobe -v error \
+        wav_signature="$(checked_media_command ffprobe -v error \
             -show_entries stream=codec_name,sample_rate,channels,bits_per_sample \
             -of default=noprint_wrappers=1 "$wav")"
         echo "$wav_signature"
@@ -863,6 +912,7 @@ command_verify() {
     local working_report="$run_dir/.verification_report.txt.inprogress"
     local -a pipeline_status
 
+    rm -f -- "$report" || die "Could not invalidate the previous success report: $report"
     set +e
     {
         set -e

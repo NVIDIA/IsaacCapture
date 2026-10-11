@@ -3,12 +3,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <flatbuffers/flatbuffers.h>
+#include <flatbuffers/idl.h>
 #include <schema/ego_audio_generated.h>
 #include <schema/ego_calibration_generated.h>
 #include <schema/ego_camera_generated.h>
-#include <schema/ego_device_state_generated.h>
+#include <schema/ego_device_state_bfbs_generated.h>
+#include <schema/ego_device_state_utils.hpp>
 #include <schema/ego_imu_generated.h>
+#include <schema/serialized.hpp>
 #include <schema/timestamp_generated.h>
+#include <schema_compat/schema_compat.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -25,6 +29,44 @@ static_assert(core::EgoFrameMetadata::VT_ENCODED_BYTES == VT(6));
 static_assert(core::EgoFrameMetadata::VT_SDK_METADATA == VT(7));
 static_assert(core::EgoFrameMetadata::VT_CAPTURE_EPOCH == VT(8));
 static_assert(core::EgoPixelFormat_Mjpg == 0);
+static_assert(core::EgoAudioChunk::VT_TIMING == VT(9));
+static_assert(core::EgoPcmAudioChunk::VT_TIMING == VT(8));
+static_assert(core::EgoCalibration::VT_TIME_ALIGNMENT == VT(11));
+
+TEST_CASE("EGO timing tables preserve optional provenance through record serialization", "[unit][ego][schema]")
+{
+    core::EgoCalibrationT calibration;
+    CHECK(core::pack<core::EgoCalibration>(calibration)->time_alignment() == nullptr);
+    calibration.time_alignment = std::make_shared<core::EgoTimeAlignmentT>();
+    calibration.time_alignment->json = "{\"version\":1,\"status\":\"unverified\"}";
+    const auto encoded = core::pack<core::EgoCalibration>(calibration);
+    REQUIRE(encoded->time_alignment());
+    CHECK(encoded->time_alignment()->json()->str() == calibration.time_alignment->json);
+
+    core::EgoAudioChunkT audio;
+    CHECK(core::pack<core::EgoAudioChunk>(audio)->timing() == nullptr);
+    audio.timing = std::make_shared<core::EgoAudioTimingT>();
+    audio.timing->segment_id = 42;
+    audio.timing->first_sample_index = 1ULL << 40;
+    audio.timing->discontinuity = true;
+    // Schema tests use native records; pack_record belongs to the separate MCAP module.
+    core::EgoAudioChunkRecordT native_record;
+    native_record.data = std::make_shared<core::EgoAudioChunkT>(audio);
+    native_record.timestamp = std::make_shared<core::DeviceDataTimestamp>(30, 20, 10);
+    const auto record = core::pack<core::EgoAudioChunkRecord>(native_record);
+    REQUIRE(record->data()->timing());
+    CHECK(record->data()->timing()->segment_id() == 42);
+    CHECK(record->data()->timing()->first_sample_index() == (1ULL << 40));
+    CHECK_FALSE(record->data()->timing()->continuity_known());
+    CHECK(record->data()->timing()->discontinuity());
+    CHECK(record->timestamp()->sample_time_raw_device_clock() == 10);
+
+    core::EgoPcmAudioChunkT pcm;
+    pcm.timing = audio.timing;
+    const auto pcm_encoded = core::pack<core::EgoPcmAudioChunk>(pcm);
+    REQUIRE(pcm_encoded->timing());
+    CHECK(pcm_encoded->timing()->first_sample_index() == audio.timing->first_sample_index);
+}
 
 TEST_CASE("EGO camera metadata round trips", "[unit][ego][schema]")
 {
@@ -98,30 +140,6 @@ TEST_CASE("EGO auxiliary schemas round trip", "[unit][ego][schema]")
     flatbuffers::GetRoot<core::EgoCalibration>(calibration_builder.GetBufferPointer())->UnPackTo(&restored_calibration);
     CHECK(restored_calibration.device_uid == "ego");
     CHECK(restored_calibration.capture_epoch == 2);
-
-    core::EgoDeviceStateT state;
-    state.sequence_number = 7;
-    state.temperature_c = 31.5f;
-    state.capture_health = core::EgoCaptureHealth_Warning;
-    state.failure_reason = "queue warning";
-    state.queue_capacity = 4096;
-    state.queue_peak = 3482;
-    state.capture_epoch = 2;
-    state.connection_state = core::EgoConnectionState_Recovered;
-    state.reconnect_attempt = 4;
-    state.properties.emplace_back(279, 8'000'000);
-    flatbuffers::FlatBufferBuilder state_builder;
-    state_builder.Finish(core::EgoDeviceState::Pack(state_builder, &state));
-    core::EgoDeviceStateT restored_state;
-    flatbuffers::GetRoot<core::EgoDeviceState>(state_builder.GetBufferPointer())->UnPackTo(&restored_state);
-    CHECK(restored_state.temperature_c == 31.5f);
-    CHECK(restored_state.capture_health == core::EgoCaptureHealth_Warning);
-    CHECK(restored_state.failure_reason == "queue warning");
-    CHECK(restored_state.queue_capacity == 4096);
-    CHECK(restored_state.capture_epoch == 2);
-    CHECK(restored_state.connection_state == core::EgoConnectionState_Recovered);
-    CHECK(restored_state.reconnect_attempt == 4);
-    REQUIRE(restored_state.properties.size() == 1);
 }
 
 TEST_CASE("EGO camera record retains timestamp", "[unit][ego][schema]")
@@ -172,4 +190,106 @@ TEST_CASE("EGO embedded media schemas round trip", "[unit][ego][schema]")
     flatbuffers::GetRoot<core::EgoPcmAudioChunk>(audio_builder.GetBufferPointer())->UnPackTo(&restored_audio);
     CHECK(restored_audio.pcm_data == audio.pcm_data);
     CHECK(restored_audio.capture_epoch == 2);
+}
+
+TEST_CASE("EGO diagnostic events preserve typed payloads and optional zero", "[unit][ego][schema]")
+{
+    core::EgoDeviceStateT native;
+    native.diagnostic_version = core::EGO_DIAGNOSTIC_VERSION;
+    native.device_uid = "test-device";
+    native.capture_epoch = 2;
+    native.observed_at_ns = 100;
+    SECTION("SDK report keeps a real zero error clear")
+    {
+        core::EgoSdkReportT report;
+        report.sequence_number = UINT64_MAX;
+        report.error_flags = 0;
+        native.event.Set(report);
+        const auto state = core::pack<core::EgoDeviceState>(native);
+        CHECK_NOTHROW(core::validate_ego_diagnostic(*state));
+        CHECK(state->event_as_EgoSdkReport()->sequence_number() == UINT64_MAX);
+        CHECK(state->event_as_EgoSdkReport()->error_flags() == 0);
+        CHECK(state->event_as_EgoRecoveryEvent() == nullptr);
+    }
+    SECTION("final summary keeps cumulative losses")
+    {
+        core::EgoCaptureSummaryT summary;
+        summary.capture_health = core::EgoCaptureHealth_Incomplete;
+        summary.reason = "dropped video";
+        summary.queue_capacity = 4096;
+        summary.queue_peak = 99;
+        summary.dropped_video_frame_sets = 3;
+        summary.is_final = true;
+        native.event.Set(summary);
+        auto state = core::pack<core::EgoDeviceState>(native);
+        CHECK_NOTHROW(core::validate_ego_diagnostic(*state));
+        auto retained = state.narrow(state->event_as_EgoCaptureSummary());
+        state.reset();
+        CHECK(retained->dropped_video_frame_sets() == 3);
+        CHECK(retained->is_final());
+        CHECK(retained->reason()->str() == "dropped video");
+    }
+    SECTION("recovery carries only its transition")
+    {
+        core::EgoRecoveryEventT recovery;
+        recovery.stage = core::EgoRecoveryStage_Recovered;
+        recovery.reconnect_attempt = 4;
+        native.event.Set(recovery);
+        const auto state = core::pack<core::EgoDeviceState>(native);
+        CHECK_NOTHROW(core::validate_ego_diagnostic(*state));
+        CHECK(state->capture_epoch() == 2);
+        CHECK(state->event_as_EgoRecoveryEvent()->reconnect_attempt() == 4);
+    }
+    SECTION("unavailable and zero temperature differ on the wire")
+    {
+        core::EgoDeviceSnapshotT snapshot;
+        snapshot.properties.emplace_back(279, 0);
+        native.event.Set(snapshot);
+        const auto missing = core::pack<core::EgoDeviceState>(native);
+        CHECK_NOTHROW(core::validate_ego_diagnostic(*missing));
+        CHECK_FALSE(missing->event_as_EgoDeviceSnapshot()->imu_temperature_c().has_value());
+        snapshot.imu_temperature_c = 0.0f;
+        native.event.Set(snapshot);
+        const auto measured = core::pack<core::EgoDeviceState>(native);
+        const auto temperature = measured->event_as_EgoDeviceSnapshot()->imu_temperature_c();
+        REQUIRE(temperature.has_value());
+        CHECK(*temperature == 0.0f);
+        CHECK(measured->event_as_EgoDeviceSnapshot()->properties()->Get(0)->value() == 0);
+    }
+}
+
+TEST_CASE("EGO diagnostics reject missing events and unsupported versions", "[unit][ego][schema]")
+{
+    core::EgoDeviceStateT native;
+    native.device_uid = "test-device";
+    native.observed_at_ns = 100;
+    native.diagnostic_version = core::EGO_DIAGNOSTIC_VERSION;
+    CHECK_THROWS_AS(core::validate_ego_diagnostic(*core::pack<core::EgoDeviceState>(native)), std::invalid_argument);
+    native.event.Set(core::EgoSdkReportT{});
+    native.diagnostic_version = 1;
+    CHECK_THROWS_AS(core::validate_ego_diagnostic(*core::pack<core::EgoDeviceState>(native)), std::invalid_argument);
+    native.diagnostic_version = core::EGO_DIAGNOSTIC_VERSION;
+    auto state = core::pack<core::EgoDeviceState>(native);
+    auto bytes = std::vector<uint8_t>(state.buffer().begin(), state.buffer().end());
+    auto* mutable_state = flatbuffers::GetMutableRoot<core::EgoDeviceState>(bytes.data());
+    // The generated verifier accepts unknown union tags; the EGO consumer rejects them.
+    auto* table = reinterpret_cast<flatbuffers::Table*>(mutable_state);
+    REQUIRE(table->SetField<uint8_t>(core::EgoDeviceState::VT_EVENT_TYPE, 99));
+    CHECK_THROWS_AS(core::validate_ego_diagnostic(*mutable_state), std::invalid_argument);
+}
+
+TEST_CASE("EGO event protocol intentionally rejects the former diagnostic layout", "[unit][ego][schema]")
+{
+    flatbuffers::Parser old;
+    REQUIRE(old.Parse(R"(
+        namespace core;
+        table EgoDeviceState { sequence_number: uint64 (id: 0); device_uid: string (id: 1); }
+        table EgoDeviceStateRecord { data: EgoDeviceState (id: 0); }
+        root_type EgoDeviceStateRecord;
+    )"));
+    old.Serialize();
+    const auto current = core::EgoDeviceStateRecordBinarySchema::data();
+    const auto result = core::check_schema_compat({ old.builder_.GetBufferPointer(), old.builder_.GetSize() },
+                                                  { current, core::EgoDeviceStateRecordBinarySchema::size() });
+    CHECK(result.status == core::SchemaCompat::Incompatible);
 }

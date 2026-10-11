@@ -16,8 +16,13 @@ from isaaccapture.schema import (
     EgoCameraIntrinsics,
     EgoCameraStream,
     EgoCaptureHealth,
-    EgoConnectionState,
+    EgoRecoveryStage,
     EgoDevicePropertyValue,
+    EgoDiagnosticEvent,
+    EgoSdkReport,
+    EgoCaptureSummary,
+    EgoRecoveryEvent,
+    EgoDeviceSnapshot,
     EgoDeviceState,
     EgoDeviceStateRecord,
     EgoEncodedVideoFrame,
@@ -89,18 +94,16 @@ def test_auxiliary_payloads_and_nested_calibration():
     assert EgoCalibration().color_left is None
 
     state = EgoDeviceState(
-        capture_health=EgoCaptureHealth.Warning,
-        failure_reason="queue warning",
-        queue_capacity=4096,
-        capture_epoch=2,
-        connection_state=EgoConnectionState.Recovered,
-        reconnect_attempt=4,
-        properties=[EgoDevicePropertyValue(279, 8_000_000)],
+        "ego",
+        2,
+        100,
+        EgoCaptureSummary(
+            EgoCaptureHealth.Warning, "queue warning", 4096, 3482, 0, 0, False
+        ),
     )
-    assert state.properties[0].property_id == 279
-    assert state.capture_health == EgoCaptureHealth.Warning
-    assert state.connection_state == EgoConnectionState.Recovered
-    assert state.reconnect_attempt == 4
+    assert state.event.capture_health == EgoCaptureHealth.Warning
+    assert not hasattr(state.event, "properties")
+    assert not hasattr(state.event, "stage")
 
 
 def test_embedded_video_and_pcm_record_views():
@@ -144,7 +147,12 @@ def test_every_record_maps_absence_and_retains_immutable_payload(
 ):
     timestamp = DeviceDataTimestamp(100, 90, 80)
     assert record_type(None, timestamp).data is None
-    record = record_type(payload_type(capture_epoch=3), timestamp)
+    payload = (
+        payload_type("ego", 3, 90, EgoSdkReport(0, 0, 0, 0, 0))
+        if payload_type is EgoDeviceState
+        else payload_type(capture_epoch=3)
+    )
+    record = record_type(payload, timestamp)
     payload = record.data
     del record
     gc.collect()
@@ -152,3 +160,82 @@ def test_every_record_maps_absence_and_retains_immutable_payload(
     assert not hasattr(payload, "data")
     with pytest.raises(AttributeError):
         payload.capture_epoch = 4
+
+
+@pytest.mark.parametrize(
+    "payload,tag,field,value,absent",
+    [
+        (
+            EgoSdkReport(7, 2, 0, 0, 123),
+            EgoDiagnosticEvent.SdkReport,
+            "error_flags",
+            0,
+            "imu_temperature_c",
+        ),
+        (
+            EgoCaptureSummary(EgoCaptureHealth.Healthy, "", 4096, 1, 0, 0, True),
+            EgoDiagnosticEvent.CaptureSummary,
+            "dropped_events",
+            0,
+            "work_mode",
+        ),
+        (
+            EgoRecoveryEvent(EgoRecoveryStage.Recovered, "stream resumed", 4),
+            EgoDiagnosticEvent.RecoveryEvent,
+            "stage",
+            EgoRecoveryStage.Recovered,
+            "capture_health",
+        ),
+        (
+            EgoDeviceSnapshot(0.0, []),
+            EgoDiagnosticEvent.DeviceSnapshot,
+            "imu_temperature_c",
+            0.0,
+            "storage_free_bytes",
+        ),
+    ],
+)
+def test_typed_events_own_only_their_fields(payload, tag, field, value, absent):
+    state = EgoDeviceState("ego", 3, 100, payload)
+    assert state.diagnostic_version == 2
+    assert state.event_type == tag
+    assert state.observed_at_ns == 100
+    assert getattr(state.event, field) == value
+    assert not hasattr(state.event, absent)
+    assert not hasattr(state, "valid_fields")
+    with pytest.raises(AttributeError):
+        setattr(state.event, field, value)
+
+
+def test_snapshot_optional_temperature_and_retained_union_view():
+    snapshot = EgoDeviceSnapshot(None, [EgoDevicePropertyValue(279, 0)])
+    state = EgoDeviceState("ego", 2, 100, snapshot)
+    record = EgoDeviceStateRecord(state, DeviceDataTimestamp(110, 100, 0))
+    event = record.data.event
+    del record, state, snapshot
+    gc.collect()
+    assert event.imu_temperature_c is None
+    assert event.properties[0].value == 0
+    assert EgoDeviceSnapshot(0.0, []).imu_temperature_c == 0.0
+    assert EgoSdkReport(1, 0, 0, 17, 0).error_flags == 17
+    assert EgoSdkReport(2, 0, 0, 0, 0).error_flags == 0
+
+
+@pytest.mark.parametrize("temperature", [float("nan"), float("inf"), -float("inf")])
+def test_snapshot_rejects_nonfinite_temperature(temperature):
+    with pytest.raises(ValueError):
+        EgoDeviceSnapshot(temperature, [])
+
+
+def test_event_constructor_requires_its_observations():
+    for cls in (EgoSdkReport, EgoCaptureSummary, EgoRecoveryEvent, EgoDeviceSnapshot):
+        with pytest.raises(TypeError):
+            cls()
+    with pytest.raises(TypeError):
+        EgoDeviceState("ego", 0, 100, None)
+    with pytest.raises(TypeError):
+        EgoDeviceState("ego", 0, 100, EgoCalibration())
+    with pytest.raises(ValueError):
+        EgoDeviceState("ego", 0, 0, EgoSdkReport(0, 0, 0, 0, 0))
+    with pytest.raises(ValueError):
+        EgoDeviceState("", 0, 100, EgoSdkReport(0, 0, 0, 0, 0))

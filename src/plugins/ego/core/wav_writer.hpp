@@ -42,6 +42,7 @@ public:
         file_.open(path, std::ios::binary | std::ios::trunc);
         if (!file_)
             throw std::runtime_error("Unable to open WAV output: " + path);
+        data_bytes_ = 0;
         rate_ = rate;
         channels_ = channels;
         bits_ = bits;
@@ -52,6 +53,7 @@ public:
 
     uint64_t write(const std::vector<uint8_t>& bytes)
     {
+        check_capacity(bytes.size());
         const uint64_t offset = 44 + data_bytes_;
         file_.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         if (!file_)
@@ -69,8 +71,15 @@ public:
     {
         if (!file_.is_open())
             return;
-        if (data_bytes_ > std::numeric_limits<uint32_t>::max() - 36U)
-            detail::log_error() << "WAV exceeded RIFF 32-bit size; header is truncated" << std::endl;
+        try
+        {
+            check_capacity(0);
+        }
+        catch (...)
+        {
+            file_.close();
+            throw;
+        }
         file_.seekp(0);
         write_header(static_cast<uint32_t>(data_bytes_));
         file_.flush();
@@ -82,6 +91,14 @@ public:
     }
 
 private:
+    void check_capacity(uint64_t additional_bytes) const
+    {
+        // RIFF's size includes 36 header bytes; reject before writing so archive cleanup can abort.
+        constexpr uint64_t max_data_bytes = std::numeric_limits<uint32_t>::max() - 36U;
+        if (data_bytes_ > max_data_bytes || additional_bytes > max_data_bytes - data_bytes_)
+            throw std::runtime_error("Ego WAV exceeds RIFF 32-bit size limit");
+    }
+
     void le16(uint16_t value)
     {
         const uint8_t bytes[] = { static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8) };

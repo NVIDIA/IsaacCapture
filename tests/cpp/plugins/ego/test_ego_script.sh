@@ -54,7 +54,10 @@ grep -Fx -- "--device-uid=ego-test" "$MOCK_ARGS" >/dev/null
 RUN="$TMPDIR_TEST/recording"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN" -- --bitrate=8
 grep -Fx -- "--enable-imu" "$MOCK_ARGS" >/dev/null
-grep -Fx -- "--audio-output=$RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
+if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
+    echo "Default capture must not request audio" >&2
+    exit 1
+fi
 grep -Fx -- "--mcap-filename=$RUN/metadata.mcap" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-timeout=30" "$MOCK_ARGS" >/dev/null
 grep -Fx -- "--reconnect-interval-ms=1000" "$MOCK_ARGS" >/dev/null
@@ -70,12 +73,17 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     manifest = json.load(stream)
 assert manifest == {
     "version": 1,
+    "record_device_diagnostics": "on",
     "streams": {
         "ColorLeft": {"format": "h264", "width": 1600, "height": 1300, "fps": 30},
         "ColorRight": {"format": "h264", "width": 1600, "height": 1300, "fps": 30},
     },
 }
 PY
+
+AUDIO_RUN="$TMPDIR_TEST/audio_recording"
+expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$AUDIO_RUN" --audio
+grep -Fx -- "--audio-output=$AUDIO_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
 
 CONFIG_RUN="$TMPDIR_TEST/config_recording"
 CONFIG_FILE="$TMPDIR_TEST/record.toml"
@@ -98,6 +106,10 @@ keep_media_sidecars = true
 plugin = "$MOCK_PLUGIN"
 plugin_options = ["--bitrate=8", "--dynamic-bitrate=on"]
 EOF
+CONFIG_AUDIO_RUN="$TMPDIR_TEST/config_audio_recording"
+expect_failure "$SCRIPT" record --config "$CONFIG_FILE" --duration 1 --output "$CONFIG_AUDIO_RUN"
+grep -Fx -- "--audio-output=$CONFIG_AUDIO_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
+
 expect_failure "$SCRIPT" record --config "$CONFIG_FILE" --duration 1 \
     --output "$CONFIG_RUN" --format h264 --no-audio
 grep -Fx -- "--device-uid=ego-config" "$MOCK_ARGS" >/dev/null
@@ -111,6 +123,22 @@ if grep -Eq '^--enable-(imu|audio)$|^--audio-output=' "$MOCK_ARGS"; then
     echo "Config/CLI stream overrides were not applied" >&2
     exit 1
 fi
+
+CONFIG_NO_AUDIO_FILE="$TMPDIR_TEST/record_no_audio.toml"
+CONFIG_NO_AUDIO_RUN="$TMPDIR_TEST/config_no_audio_recording"
+sed 's/^audio = true$/audio = false/' "$CONFIG_FILE" > "$CONFIG_NO_AUDIO_FILE"
+expect_failure "$SCRIPT" record --config "$CONFIG_NO_AUDIO_FILE" --duration 1 \
+    --output "$CONFIG_NO_AUDIO_RUN"
+grep -Fx -- "--mcap-filename=$CONFIG_NO_AUDIO_RUN/metadata.mcap" "$MOCK_ARGS" >/dev/null
+if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
+    echo "Config with audio=false must not request audio" >&2
+    exit 1
+fi
+
+CONFIG_AUDIO_OVERRIDE_RUN="$TMPDIR_TEST/config_audio_override_recording"
+expect_failure "$SCRIPT" record --config "$CONFIG_NO_AUDIO_FILE" --duration 1 \
+    --output "$CONFIG_AUDIO_OVERRIDE_RUN" --audio
+grep -Fx -- "--audio-output=$CONFIG_AUDIO_OVERRIDE_RUN/Audio.wav" "$MOCK_ARGS" >/dev/null
 
 INVALID_CONFIG="$TMPDIR_TEST/invalid.toml"
 cat > "$INVALID_CONFIG" <<'EOF'
@@ -143,6 +171,15 @@ grep -F "Capture failed with status 7" <<< "$SIGNAL_OUTPUT" >/dev/null
 
 RUN_EMBEDDED="$TMPDIR_TEST/embedded"
 expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$RUN_EMBEDDED" --mcap-media embedded
+grep -Fx -- "--mcap-media=embedded" "$MOCK_ARGS" >/dev/null
+if grep -Eq '^--enable-audio$|^--audio-output=' "$MOCK_ARGS"; then
+    echo "Default embedded capture must not request audio" >&2
+    exit 1
+fi
+
+RUN_EMBEDDED_AUDIO="$TMPDIR_TEST/embedded_audio"
+expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 \
+    --output "$RUN_EMBEDDED_AUDIO" --mcap-media embedded --audio
 grep -Fx -- "--enable-audio" "$MOCK_ARGS" >/dev/null
 if grep -q '^--audio-output=' "$MOCK_ARGS"; then
     echo "Embedded capture must not request a WAV sidecar by default" >&2
@@ -201,7 +238,7 @@ expect_failure env PATH="$MOCK_BIN:$PATH" MOCK_EXPORTER_USED="$INSTALLED_EXPORTE
 grep -Fx "$PACKAGE_DIR/ego_mcap_export_media" "$INSTALLED_EXPORTER_USED" >/dev/null
 
 BUILD_PLUGIN_DIR="$TMPDIR_TEST/build/src/plugins/ego/app"
-BUILD_EXPORTER_DIR="$TMPDIR_TEST/build/src/plugins/ego/export_media"
+BUILD_EXPORTER_DIR="$TMPDIR_TEST/build/src/plugins/ego/mcap/export_media_tool"
 BUILD_VERIFY_RUN="$TMPDIR_TEST/build_verify"
 BUILD_EXPORTER_USED="$TMPDIR_TEST/build_exporter_used"
 mkdir -p "$BUILD_PLUGIN_DIR" "$BUILD_EXPORTER_DIR" "$BUILD_VERIFY_RUN"
@@ -242,6 +279,10 @@ cp "$MOCK_BIN/python3" "$VERIFY_BIN/"
 cat > "$VERIFY_BIN/ffmpeg" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >> "$VERIFY_FFMPEG_ARGS"
+if [[ "${VERIFY_ZERO_EXIT_ERROR:-0}" == 1 ]]; then
+    echo 'decoder error with a zero exit status' >&2
+fi
+printf '%s\n' 'frame=1' 'progress=end'
 exit 0
 EOF
 cat > "$VERIFY_BIN/ffprobe" <<'EOF'
@@ -269,6 +310,15 @@ PATH="$VERIFY_BIN:$PATH" MOCK_EXPORTER_USED="$VERIFY_EXPORTER_USED" \
     --plugin "$PACKAGE_DIR/ego_camera_plugin" >/dev/null 2>&1
 grep -Fx "$PACKAGE_DIR/ego_mcap_export_media" "$VERIFY_EXPORTER_USED" >/dev/null
 test -z "$(find "$VERIFY_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)"
+VERIFY_ZERO_ERROR_RUN="$TMPDIR_TEST/verify_zero_exit_error"
+cp -r "$VERIFY_RUN" "$VERIFY_ZERO_ERROR_RUN"
+expect_failure env PATH="$VERIFY_BIN:$PATH" MOCK_EXPORTER_USED="$VERIFY_EXPORTER_USED" \
+    VERIFY_FFMPEG_ARGS="$VERIFY_FFMPEG_ARGS" VERIFY_ZERO_EXIT_ERROR=1 \
+    "$SCRIPT" verify "$VERIFY_ZERO_ERROR_RUN" --media-mode embedded \
+    --plugin "$PACKAGE_DIR/ego_camera_plugin"
+[[ ! -e "$VERIFY_ZERO_ERROR_RUN/verification_report.txt" ]]
+grep -F 'decoder error with a zero exit status' "$VERIFY_ZERO_ERROR_RUN/verification_report.failed.txt" >/dev/null
+[[ -z "$(find "$VERIFY_ZERO_ERROR_RUN" -maxdepth 1 -name '.verify_export.*' -print -quit)" ]]
 test -s "$VERIFY_RUN/verification_report.txt"
 grep -F "Verification passed:" "$VERIFY_RUN/verification_report.txt" >/dev/null
 grep -E '^ColorLeft SHA-256: [0-9a-f]{64}$' "$VERIFY_RUN/verification_report.txt" >/dev/null
@@ -406,6 +456,12 @@ class _Reader:
     def __init__(self, stream):
         self.fixture = json.load(stream)
 
+    def iter_metadata(self):
+        return iter(())
+
+    def get_summary(self):
+        return None
+
     def iter_messages(self, log_time_order=False):
         del log_time_order
         scenario = self.fixture["scenario"]
@@ -492,6 +548,7 @@ PY
 
 cat > "$AUX_VERIFY_BIN/ffmpeg" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' 'frame=31' 'progress=end'
 exit 0
 EOF
 cat > "$AUX_VERIFY_BIN/ffprobe" <<'EOF'
@@ -632,3 +689,9 @@ grep -F "PCM byte count 0 does not match sample_count/profile" <<< "$AUX_EMPTY_P
 
 rm "$PACKAGE_DIR/ego_mcap_export_media"
 expect_failure env PATH="$MOCK_BIN:$PATH" "$PACKAGE_DIR/ego.sh" doctor
+
+DIAGNOSTIC_RUN="$TMPDIR_TEST/diagnostic_off"
+expect_failure "$SCRIPT" record --plugin "$MOCK_PLUGIN" --duration 1 --output "$DIAGNOSTIC_RUN" --record-device-diagnostics=off
+grep -Fx -- "--record-device-diagnostics=off" "$MOCK_ARGS" >/dev/null
+grep -F '"record_device_diagnostics": "off"' "$DIAGNOSTIC_RUN/requested_profile.json" >/dev/null
+expect_failure "$SCRIPT" record --record-device-diagnostics=invalid

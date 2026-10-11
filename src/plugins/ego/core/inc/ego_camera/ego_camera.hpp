@@ -70,11 +70,14 @@ struct CaptureConfig
     bool enable_audio = false;
     std::string audio_output;
     std::string collection_prefix;
+    std::string plugin_root_id;
+    bool record_device_diagnostics = true;
     std::string mcap_filename;
     std::string mcap_media_spool;
     McapMediaMode mcap_media_mode = McapMediaMode::MetadataOnly;
     bool keep_media_sidecars = false;
     std::string calibration_output;
+    std::string time_alignment;
     std::vector<PropertySetting> properties;
     bool persist_controls = false;
     uint32_t reconnect_timeout_seconds = 30;
@@ -94,6 +97,23 @@ struct CapturedFrame
     std::vector<uint8_t> encoded_data;
     int64_t sample_time_local_common_clock_ns = 0;
     int64_t sample_time_raw_device_clock_ns = 0;
+};
+
+// Facts are refreshed by the capture owner; a publishing thread cannot refresh their age.
+enum class CaptureAvailability
+{
+    Unknown,
+    Absent,
+    Starting,
+    Streaming,
+    Recovering,
+    Failed
+};
+struct CaptureStatus
+{
+    CaptureAvailability availability = CaptureAvailability::Unknown;
+    int64_t observed_at_ns = 0;
+    std::string error;
 };
 
 class IMetadataSink
@@ -119,6 +139,9 @@ public:
     {
     }
     virtual void on_device_state(const core::EgoDeviceStateT&, int64_t, int64_t)
+    {
+    }
+    virtual void on_capture_status(const CaptureStatus&)
     {
     }
     virtual void close()

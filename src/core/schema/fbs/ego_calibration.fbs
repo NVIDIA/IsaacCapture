@@ -21,6 +21,11 @@ table EgoExtrinsics {
   translation_mm: [float] (id: 1);
 }
 
+// Versioned EGO timing provenance/model transported by the existing calibration channel.
+table EgoTimeAlignment {
+  json: string (id: 0);
+}
+
 table EgoCalibration {
   device_uid: string (id: 0);
   color_left: EgoCameraIntrinsics (id: 1);
@@ -33,6 +38,7 @@ table EgoCalibration {
   raw_alignment_yaml: string (id: 8);
   raw_imu_yaml: string (id: 9);
   capture_epoch: uint32 (id: 10);
+  time_alignment: EgoTimeAlignment (id: 11);
 }
 
 table EgoCalibrationTracked { data: EgoCalibration (id: 0); }

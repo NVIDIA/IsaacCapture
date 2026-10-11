@@ -9,7 +9,7 @@ import pytest
 
 from isaaccapture import plugin_manager, teleop_session_manager
 from isaaccapture.deviceio_session import McapRecordingConfig
-from isaaccapture.ego import embedded_recording
+from isaaccapture.ego import configure_recording, embedded_recording
 from isaaccapture.ego import recording
 from isaaccapture.teleop_session_manager import (
     PluginConfig,
@@ -36,7 +36,10 @@ def setup(tmp_path, monkeypatch):
         ],
     )
     config = TeleopSessionConfig(
-        "test", object(), plugins=[plugin], mcap_config=McapRecordingConfig(str(final))
+        "test",
+        SimpleNamespace(get_leaf_nodes=list),
+        plugins=[plugin],
+        mcap_config=McapRecordingConfig(str(final)),
     )
     events = []
     state = SimpleNamespace(
@@ -198,3 +201,178 @@ def test_caught_interrupt_is_a_normal_stop(setup):
         except KeyboardInterrupt:
             pass
     assert setup.events == ["enter", "exit", "merge"]
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_configure_recording_normalizes_policy_without_changing_caller(setup, value):
+    original = list(setup.config.plugins[0].plugin_args)
+    setup.config.plugins[0].plugin_args += [
+        "--record-device-diagnostics=off",
+        "--record-device-diagnostics=on",
+    ]
+    copied = configure_recording(setup.config, record_device_diagnostics=value)
+    assert copied is not setup.config
+    assert copied.plugins[0] is not setup.config.plugins[0]
+    assert copied.plugins[0].plugin_args == original + [
+        f"--record-device-diagnostics={'on' if value else 'off'}"
+    ]
+    assert setup.config.plugins[0].plugin_args[-1] == "--record-device-diagnostics=on"
+
+
+def test_configure_recording_honors_effective_plugin_arguments(setup):
+    setup.config.plugins[0].plugin_args += ["--record-device-diagnostics=off"]
+    assert configure_recording(setup.config).plugins[0].plugin_args[-1].endswith("=off")
+    setup.config.plugins[0].plugin_args[-1] = "--record-device-diagnostics=invalid"
+    with pytest.raises(ValueError, match="on or off"):
+        configure_recording(setup.config)
+
+
+def test_off_rejects_explicit_diagnostic_recording_even_with_custom_topic(setup):
+    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+
+    tracker = EgoDeviceStateTracker("arbitrary/DeviceState")
+    setup.config.mcap_config = McapRecordingConfig(
+        str(setup.final), [(tracker, "renamed_diagnostics")]
+    )
+    with pytest.raises(ValueError, match="renamed_diagnostics"):
+        with embedded_recording(
+            setup.config, media_fragment=setup.fragment, record_device_diagnostics=False
+        ):
+            pytest.fail("Must reject before capture")
+    assert not setup.events
+
+
+@pytest.mark.parametrize("root", ["pipeline", "teleop_control_pipeline", "sinks"])
+def test_off_rejects_nv_automatic_recording_in_every_graph_root(
+    setup, monkeypatch, root
+):
+    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+    from isaaccapture.retargeting_engine import deviceio_source_nodes
+
+    class Source:
+        name = "diagnostic_side_effect"
+
+        def get_tracker(self):
+            return EgoDeviceStateTracker("ego/DeviceState")
+
+    monkeypatch.setattr(deviceio_source_nodes, "IDeviceIOSource", Source)
+    graph = SimpleNamespace(get_leaf_nodes=lambda: [Source()])
+    setattr(setup.config, root, [graph] if root == "sinks" else graph)
+    with pytest.raises(ValueError, match="automatically recorded"):
+        configure_recording(setup.config, record_device_diagnostics=False)
+    assert not setup.events
+
+
+def test_off_keeps_manual_live_tracker_and_embedded_recording_lifecycle(setup):
+    from isaaccapture.deviceio_trackers import (
+        EgoCalibrationTracker,
+        EgoDeviceStateTracker,
+    )
+
+    tracker = EgoDeviceStateTracker("ego/DeviceState")
+    setup.config.trackers = [tracker]
+    with embedded_recording(
+        setup.config, media_fragment=setup.fragment, record_device_diagnostics=False
+    ):
+        assert setup.session_config.trackers[0] is tracker
+        assert isinstance(setup.session_config.trackers[1], EgoCalibrationTracker)
+        assert setup.config.trackers == [tracker]
+        assert (
+            setup.session_config.plugins[0].plugin_args[-1]
+            == "--record-device-diagnostics=off"
+        )
+    assert setup.events == ["enter", "exit", "merge"]
+
+
+def test_recording_retains_calibration_without_mutating_caller(setup):
+    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+
+    copied = configure_recording(setup.config)
+    entries = copied.mcap_config.get_tracker_names()
+    assert len(entries) == 1
+    calibration, name = entries[0]
+    assert isinstance(calibration, EgoCalibrationTracker)
+    assert name == "ego_calibration"
+    assert copied.trackers == [calibration]
+    assert copied.mcap_config.filename == setup.config.mcap_config.filename
+    assert setup.config.mcap_config.get_tracker_names() == []
+    assert setup.config.trackers == []
+    repeated = configure_recording(copied)
+    assert repeated.mcap_config.get_tracker_names() == entries
+    assert repeated.trackers == [calibration]
+    assert not setup.events
+
+
+def test_recording_preserves_explicit_calibration_name_and_reference(setup):
+    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+
+    calibration = EgoCalibrationTracker("ego/Calibration")
+    setup.config.mcap_config = McapRecordingConfig(
+        str(setup.final), [(calibration, "custom_calibration")]
+    )
+    copied = configure_recording(setup.config)
+    assert copied.mcap_config.get_tracker_names() == [
+        (calibration, "custom_calibration")
+    ]
+    assert copied.trackers == [calibration]
+
+
+def test_recording_reuses_manual_calibration(setup):
+    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+
+    calibration = EgoCalibrationTracker("ego/Calibration")
+    setup.config.trackers = [calibration]
+    copied = configure_recording(setup.config)
+    assert copied.mcap_config.get_tracker_names() == [(calibration, "ego_calibration")]
+    assert copied.trackers == [calibration]
+
+
+def test_recording_does_not_duplicate_automatically_recorded_calibration(
+    setup, monkeypatch
+):
+    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+    from isaaccapture.retargeting_engine import deviceio_source_nodes
+
+    calibration = EgoCalibrationTracker("ego/Calibration")
+
+    class Source:
+        name = "custom_calibration"
+
+        def get_tracker(self):
+            return calibration
+
+    monkeypatch.setattr(deviceio_source_nodes, "IDeviceIOSource", Source)
+    setup.config.pipeline = SimpleNamespace(get_leaf_nodes=lambda: [Source()])
+    copied = configure_recording(setup.config)
+    assert copied.mcap_config.get_tracker_names() == []
+    assert copied.trackers == [calibration]
+
+
+def test_recording_rejects_calibration_name_collision_before_capture(setup):
+    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+
+    tracker = EgoDeviceStateTracker("ego/DeviceState")
+    setup.config.mcap_config = McapRecordingConfig(
+        str(setup.final), [(tracker, "ego_calibration")]
+    )
+    with pytest.raises(ValueError, match="already used"):
+        configure_recording(setup.config)
+    assert not setup.events
+
+
+def test_recording_requires_collection_prefix_for_automatic_calibration(setup):
+    setup.config.plugins[0].plugin_args = [
+        item
+        for item in setup.config.plugins[0].plugin_args
+        if not item.startswith("--collection-prefix=")
+    ]
+    with pytest.raises(ValueError, match="collection-prefix"):
+        configure_recording(setup.config)
+    assert not setup.events
+
+
+def test_configure_without_mcap_does_not_add_calibration(setup):
+    setup.config.mcap_config = None
+    copied = configure_recording(setup.config)
+    assert copied.mcap_config is None
+    assert copied.trackers == []

@@ -39,5 +39,51 @@ keep a viewer local. Replay viewers repeat until Ctrl+C; no loop flag is needed.
 `record_*` takes an optional duration in seconds and an optional output path.
 These recorders need a live OpenXR runtime; replay needs only the file.
 
+The EGO recording wrapper captures stereo video and available IMU streams by
+default. Audio is opt-in through `--audio` or `audio = true` in a TOML config;
+`--no-audio` overrides a config that enables it. Raw PCM capture, storage and
+export are supported, but the tested Ethernet path has an SDK audio timestamp
+cadence anomaly. Audio/video and five-stream physical synchronization have not
+passed acceptance. See [optional audio and synchronization limits](../../src/plugins/ego/README.md#optional-audio-and-synchronization-limits).
+
+The current `replay_ego` example requires an Audio channel alongside camera,
+IMU, calibration and any enabled diagnostic channels, so use it with an
+audio-enabled recording. A recording without audio is valid, but this example reports its
+missing Audio channel. Each tracker reads its next record according to the
+existing NV update behavior; one update need not represent one physical instant.
+
+For selected-stream sample association, install the built `isaaccapture` package
+with its `ego` extra and use the recommended four-stream offline audit:
+
+```bash
+uv pip install 'isaaccapture[ego]'
+python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
+  recordings/ego_run --required-streams left_rgb right_rgb accel gyro \
+  --output recordings/ego_run/sync_audit.json
+```
+
+Include `audio` only when the recording contains accessible audio media and an
+independently validated audio time model. Selecting it does not establish
+physical synchronization. A valid recorded time model is used by default; a
+later recording-bound model requires explicit `--alignment PATH`. Use
+`--reference-stream right_rgb`, `--epoch N`, `--start-time-ns N` and
+`--end-time-ns N` to select frame windows in aligned nanoseconds. The JSON
+contains an association index, coverage, gaps and declared validation evidence.
+It does not decode or play media, and an unverified/incomplete result exits
+nonzero while preserving its report.
+
+Fit a recording-bound model from independently annotated physical events:
+
+```bash
+python -m isaaccapture_examples.mcap_record_replay.calibrate_ego_sync \
+  recordings/ego_run/events.json --output recordings/ego_run/alignment.json
+```
+
+Both commands require a fresh output path. Calibration uses separate training
+and held-out events over at least 30 minutes, includes measurement uncertainty,
+and does not open a camera or detect events. See the
+[EGO time-alignment workflow](../../src/plugins/ego/README.md#sample-time-alignment-and-offline-reading)
+for the manifest/model contracts and the Python `iter_sync_windows` API.
+
 A C++ recorder lives in `cpp/`. Docs:
 `docs/source/references/mcap_record_replay.rst`.

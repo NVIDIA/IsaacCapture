@@ -9,6 +9,7 @@
 #include <array>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -44,6 +45,7 @@ struct Source
     std::unordered_map<mcap::ChannelId, mcap::ChannelPtr> channels;
     std::unordered_map<mcap::ChannelId, mcap::ChannelId> output_channels;
     Counts counts;
+    std::optional<bool> record_device_diagnostics;
 
     explicit Source(const std::filesystem::path& path, bool reject_observed = true)
     {
@@ -127,6 +129,18 @@ Counts scan(Source& source, mcap::McapWriter* output = nullptr)
     records.onMetadata = [&](const mcap::Metadata& metadata, auto)
     {
         ++counts.metadata;
+        if (metadata.name == "ego.recording")
+        {
+            const auto flag = metadata.metadata.find("record_device_diagnostics");
+            const auto version = metadata.metadata.find("diagnostic_version");
+            if (flag == metadata.metadata.end() || (flag->second != "on" && flag->second != "off") ||
+                version == metadata.metadata.end() || version->second != "2")
+                throw std::runtime_error("MCAP contains an unsupported EGO recording policy");
+            const bool enabled = flag->second == "on";
+            if (source.record_device_diagnostics && *source.record_device_diagnostics != enabled)
+                throw std::runtime_error("MCAP contains conflicting EGO recording policies");
+            source.record_device_diagnostics = enabled;
+        }
         if (output)
             check(output->write(metadata));
     };
@@ -249,6 +263,20 @@ void merge_recording(const std::filesystem::path& recording_path,
     Source media(media_file);
     recording.counts = scan(recording);
     media.counts = scan(media);
+    if (recording.record_device_diagnostics && media.record_device_diagnostics &&
+        recording.record_device_diagnostics != media.record_device_diagnostics)
+        throw std::runtime_error("Parent and fragment EGO recording policies disagree");
+    const auto policy =
+        media.record_device_diagnostics ? media.record_device_diagnostics : recording.record_device_diagnostics;
+    if (policy && !*policy)
+    {
+        // Match schema identity, including custom topic names and empty registered channels.
+        for (const Source* source : { &recording, &media })
+            for (const auto& [id, channel] : source->channels)
+                if (const auto schema = source->schema(*channel); schema && schema->name == "core.EgoDeviceStateRecord")
+                    throw std::runtime_error("Diagnostic recording is off but an input contains EgoDeviceState: " +
+                                             channel->topic);
+    }
     const auto conflicts = conflicting_topics(recording, media);
     if (recording.schemas.size() + media.schemas.size() > std::numeric_limits<mcap::SchemaId>::max() ||
         recording.channels.size() + media.channels.size() > std::numeric_limits<mcap::ChannelId>::max())

@@ -276,7 +276,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         is_xr = session.is_xr_mode()
 
         if source_mode == "local":
-            entries = config.build_local_entries(cfg, is_xr)
+            # NV resolves Vulkan/CUDA identity; EGO consumes the resulting CUDA ID.
+            entries = config.build_local_entries(
+                cfg, is_xr, renderer_cuda_device_id=session.cuda_device_id
+            )
         else:
             entries = config.build_rtp_entries(cfg, is_xr)
         entries = config.apply_stereo_debug(entries, stereo_debug)
@@ -360,8 +363,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         # neither may happen at all if a worker thread is still alive.
         if controls is not None:
             controls.__enter__()
-        runner.start()
         try:
+            # Source startup (including EGO GPU validation) needs the same teardown.
+            runner.start()
             runner.wait(
                 health_check=launcher.health_check if launcher is not None else None
             )

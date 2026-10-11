@@ -7,6 +7,7 @@ import pytest
 from mcap.writer import CompressionType, IndexType, Writer
 
 from isaaccapture_examples.mcap_record_replay import replay_ego
+from isaaccapture.schema import EgoRecoveryEvent, EgoRecoveryStage, EgoDiagnosticEvent
 
 TOPICS = {
     "ego_metadata/ColorLeft",
@@ -74,8 +75,10 @@ class Tracker:
             sample_count=480,
             byte_count=960,
             device_uid="ego",
-            connection_state="Connected",
-            reconnect_attempt=0,
+            event_type=EgoDiagnosticEvent.RecoveryEvent,
+            diagnostic_version=2,
+            observed_at_ns=100,
+            event=EgoRecoveryEvent(EgoRecoveryStage.Recovered, "recovered", 1),
         )
 
     def get_stream_data(self, session, _):
@@ -129,3 +132,59 @@ def test_recording_without_raw_topics_finishes_immediately(tmp_path, monkeypatch
     counts = replay_ego.replay(recording, 0)
     assert session.updates == 0
     assert set(counts.values()) == {0}
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_recorded_policy_controls_diagnostic_tracker_registration(
+    tmp_path, monkeypatch, enabled
+):
+    path = tmp_path / "policy.mcap"
+    with path.open("wb") as stream:
+        writer = Writer(stream, compression=CompressionType.NONE)
+        writer.start()
+        writer.add_metadata(
+            "ego.recording",
+            {
+                "record_device_diagnostics": "on" if enabled else "off",
+                "diagnostic_version": "2",
+            },
+        )
+        channel = writer.register_channel("ego_metadata/ColorLeft", "test", 0)
+        writer.add_message(channel, 1, b"test", 1)
+        writer.finish()
+    mock_trackers(monkeypatch)
+    counts = replay_ego.replay(path, 0)
+    assert ("DeviceState" in counts) == enabled
+
+
+def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
+    path = tmp_path / "conflict.mcap"
+    with path.open("wb") as stream:
+        writer = Writer(stream, compression=CompressionType.NONE)
+        writer.start()
+        writer.add_metadata(
+            "ego.recording",
+            {"record_device_diagnostics": "off", "diagnostic_version": "2"},
+        )
+        schema = writer.register_schema(
+            "core.EgoDeviceStateRecord", "flatbuffer", b"fixture"
+        )
+        writer.register_channel("custom/topic", "flatbuffer", schema)
+        writer.finish()
+    with pytest.raises(ValueError, match="channel exists"):
+        replay_ego.replay(path, 0)
+
+
+@pytest.mark.parametrize("version", ["0", "1", "99"])
+def test_unsupported_diagnostic_policy_is_rejected(tmp_path, version):
+    path = tmp_path / "unsupported.mcap"
+    with path.open("wb") as stream:
+        writer = Writer(stream, compression=CompressionType.NONE)
+        writer.start()
+        writer.add_metadata(
+            "ego.recording",
+            {"record_device_diagnostics": "on", "diagnostic_version": version},
+        )
+        writer.finish()
+    with pytest.raises(ValueError, match="Unsupported EGO"):
+        replay_ego.replay(path, 0)

@@ -61,7 +61,8 @@ from .teleop_state_manager_types import teleop_control_states
 
 logger = logging.getLogger(__name__)
 
-_MONITORED_PLUGIN_NAME = "manus_hand_plugin"
+# Only plugins implementing complete snapshots and the official heartbeat contract belong here.
+_MONITORED_PLUGIN_NAMES = {"manus_hand_plugin", "ego_camera"}
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
@@ -1261,11 +1262,11 @@ class TeleopSession:
         self._twin_teardown_clean = stopped and joined
 
     def _resolve_monitored_plugins(self) -> None:
-        """Resolve the initially supported Manus inventory and status reader."""
+        """Resolve supported plugin inventories and their official status readers."""
         for plugin_config in self.config.plugins:
             if (
                 not plugin_config.enabled
-                or plugin_config.plugin_name != _MONITORED_PLUGIN_NAME
+                or plugin_config.plugin_name not in _MONITORED_PLUGIN_NAMES
             ):
                 continue
 

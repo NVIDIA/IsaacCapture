@@ -7,7 +7,7 @@ version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
-dev = ["pytest", "numpy"]
+dev = ["pytest", "numpy", "mcap>=1.2,<2", "flatbuffers"]
 
 [tool.pytest.ini_options]
 python_files = ["test_*.py"]

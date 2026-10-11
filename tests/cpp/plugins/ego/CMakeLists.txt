@@ -4,6 +4,7 @@
 if(TARGET ego::camera_core)
     add_executable(ego_camera_tests
         test_ego_camera.cpp
+        test_time_alignment.cpp
     )
 
     target_link_libraries(ego_camera_tests

@@ -20,7 +20,13 @@ from isaaccapture.deviceio_trackers import (
     EgoDeviceStateTracker,
     EgoImuTracker,
 )
-from isaaccapture.schema import EgoCameraStream
+from isaaccapture.schema import (
+    EgoCameraStream,
+    EgoSdkReport,
+    EgoCaptureSummary,
+    EgoRecoveryEvent,
+    EgoDeviceSnapshot,
+)
 from mcap.reader import make_reader
 
 logger = logging.getLogger("isaaccapture.examples.mcap_record_replay.replay_ego")
@@ -49,7 +55,49 @@ def _update_count(path: Path, topics: set[str]) -> int:
     return max(counts.values(), default=0)
 
 
-def replay(path: Path, max_updates: int) -> dict[str, int]:
+def _diagnostic_policy(path: Path, expected: bool | None) -> bool:
+    policy = None
+    with path.open("rb") as stream:
+        reader = make_reader(stream)
+        for metadata in reader.iter_metadata():
+            if metadata.name != "ego.recording":
+                continue
+            value = metadata.metadata.get("record_device_diagnostics")
+            if (
+                value not in ("on", "off")
+                or metadata.metadata.get("diagnostic_version") != "2"
+            ):
+                raise ValueError("Unsupported EGO recording policy")
+            enabled = value == "on"
+            if policy is not None and policy != enabled:
+                raise ValueError("Conflicting EGO recording policies")
+            policy = enabled
+        if expected is not None and policy is not None and policy != expected:
+            raise ValueError("Requested and recorded diagnostic policies disagree")
+        enabled = policy if policy is not None else expected
+        if enabled is False:
+            summary = reader.get_summary()
+            if summary is None:
+                raise ValueError(
+                    "Diagnostics-off replay requires a complete channel inventory"
+                )
+            for channel in summary.channels.values():
+                schema = summary.schemas.get(channel.schema_id)
+                if schema is not None and schema.name == "core.EgoDeviceStateRecord":
+                    raise ValueError(
+                        f"Diagnostics off but channel exists: {channel.topic}"
+                    )
+        if policy is None:
+            logger.warning(
+                "No EGO recording policy; current diagnostic schema is still required"
+            )
+    return enabled is not False
+
+
+def replay(
+    path: Path, max_updates: int, *, record_device_diagnostics: bool | None = None
+) -> dict[str, int]:
+    diagnostics = _diagnostic_policy(path, record_device_diagnostics)
     frame_tracker = EgoFrameMetadataTracker(
         "ego_metadata",
         [EgoCameraStream.ColorLeft, EgoCameraStream.ColorRight],
@@ -63,7 +111,6 @@ def replay(path: Path, max_updates: int) -> dict[str, int]:
         (imu_tracker, "ego_imu"),
         (audio_tracker, "ego_audio"),
         (calibration_tracker, "ego_calibration"),
-        (state_tracker, "ego_device"),
     ]
     counts = {
         "ColorLeft": 0,
@@ -83,6 +130,11 @@ def replay(path: Path, max_updates: int) -> dict[str, int]:
         "ego_calibration/Calibration",
         "ego_device/DeviceState",
     }
+    if diagnostics:
+        trackers.append((state_tracker, "ego_device"))
+    else:
+        del counts["DeviceState"]
+        topics.remove("ego_device/DeviceState")
     # ReplaySession has no EOF accessor; payload-less records also return None.
     updates = _update_count(path, topics)
     if max_updates:
@@ -128,13 +180,22 @@ def replay(path: Path, max_updates: int) -> dict[str, int]:
                     f"device_uid={calibration.device_uid}"
                 )
 
-            state = state_tracker.get_data(session)
+            state = state_tracker.get_data(session) if diagnostics else None
             if state is not None:
                 counts["DeviceState"] += 1
+                event = state.event
+                if isinstance(event, EgoSdkReport):
+                    detail = f"seq={event.sequence_number} work_mode={event.work_mode} status_flags={event.status_flags} error_flags={event.error_flags} storage_free_bytes={event.storage_free_bytes}"
+                elif isinstance(event, EgoCaptureSummary):
+                    detail = f"health={event.capture_health} queue={event.queue_peak}/{event.queue_capacity} dropped_events={event.dropped_events} dropped_video_frame_sets={event.dropped_video_frame_sets} final={event.is_final} reason={event.reason}"
+                elif isinstance(event, EgoRecoveryEvent):
+                    detail = f"stage={event.stage} attempt={event.reconnect_attempt} reason={event.reason}"
+                elif isinstance(event, EgoDeviceSnapshot):
+                    detail = f"imu_temperature_c={event.imu_temperature_c} properties={len(event.properties)}"
+                else:
+                    raise ValueError("Unsupported EGO diagnostic event")
                 print(
-                    f"DeviceState: epoch={state.capture_epoch} seq={state.sequence_number} "
-                    f"connection={state.connection_state} reconnect_attempt={state.reconnect_attempt} "
-                    f"device_uid={state.device_uid}"
+                    f"DeviceState: event={state.event_type} version={state.diagnostic_version} epoch={state.capture_epoch} device_uid={state.device_uid} observed_at_ns={state.observed_at_ns} {detail}"
                 )
 
     return counts
@@ -149,13 +210,23 @@ def main() -> int:
         default=0,
         help="Stop after this many replay updates; 0 reads to end of file",
     )
+    parser.add_argument(
+        "--record-device-diagnostics",
+        choices=("on", "off"),
+        help="Expected policy; otherwise use MCAP Metadata (defaults to on when absent)",
+    )
     args = parser.parse_args()
     if not args.mcap.is_file():
         parser.error(f"MCAP file does not exist: {args.mcap}")
     if args.max_updates < 0:
         parser.error("--max-updates must be non-negative")
 
-    counts = replay(args.mcap, args.max_updates)
+    expected = (
+        None
+        if args.record_device_diagnostics is None
+        else args.record_device_diagnostics == "on"
+    )
+    counts = replay(args.mcap, args.max_updates, record_device_diagnostics=expected)
     print(
         "Replay counts: "
         + ", ".join(f"{name}={count}" for name, count in counts.items())

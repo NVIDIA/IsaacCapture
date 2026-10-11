@@ -10,6 +10,11 @@
 
 # Local hardware acceptance evidence
 /src/plugins/ego/ACCEPTANCE.md
+/src/plugins/ego/sync_acceptance.md
+
+# Local EGO agent guidance
+/src/plugins/ego/AGENTS.md
+/src/python/isaaccapture/ego/AGENTS.md
 
 # External Orbbec SDK downloads and extracts
 OrbbecSDK*/

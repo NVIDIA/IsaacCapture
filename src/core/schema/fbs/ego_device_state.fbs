@@ -5,33 +5,54 @@ include "timestamp.fbs";
 
 namespace core;
 
-// Append-only capture-health summary. Consumers can filter incomplete runs
-// without inferring state from a partially written media file.
 enum EgoCaptureHealth : byte { Healthy = 0, Warning = 1, Incomplete = 2 }
-enum EgoConnectionState : byte { Connected = 0, Recovering = 1, Recovered = 2, Failed = 3 }
+enum EgoRecoveryStage : byte { Started = 0, Recovered = 1, Failed = 2 }
 
 struct EgoDevicePropertyValue {
   property_id: int32;
   value: double;
 }
 
-table EgoDeviceState {
+table EgoSdkReport {
   sequence_number: uint64 (id: 0);
-  device_uid: string (id: 1);
-  work_mode: int32 (id: 2);
-  status_flags: uint64 (id: 3);
-  error_flags: uint64 (id: 4);
-  storage_free_bytes: uint64 (id: 5);
-  temperature_c: float (id: 6);
-  properties: [EgoDevicePropertyValue] (id: 7);
-  capture_health: EgoCaptureHealth = Healthy (id: 8);
-  failure_reason: string (id: 9);
-  queue_capacity: uint32 (id: 10);
-  queue_peak: uint32 (id: 11);
-  dropped_events: uint64 (id: 12);
-  capture_epoch: uint32 (id: 13);
-  connection_state: EgoConnectionState = Connected (id: 14);
-  reconnect_attempt: uint32 (id: 15);
+  work_mode: int32 (id: 1);
+  status_flags: uint64 (id: 2);
+  error_flags: uint64 (id: 3);
+  storage_free_bytes: uint64 (id: 4);
+}
+
+table EgoCaptureSummary {
+  capture_health: EgoCaptureHealth = Healthy (id: 0);
+  reason: string (id: 1);
+  queue_capacity: uint32 (id: 2);
+  queue_peak: uint32 (id: 3);
+  dropped_events: uint64 (id: 4);
+  dropped_video_frame_sets: uint64 (id: 5);
+  is_final: bool (id: 6);
+}
+
+table EgoRecoveryEvent {
+  stage: EgoRecoveryStage = Started (id: 0);
+  reason: string (id: 1);
+  reconnect_attempt: uint32 (id: 2);
+}
+
+table EgoDeviceSnapshot {
+  // Absence is a failed/unavailable read; zero is a measured temperature.
+  imu_temperature_c: float = null (id: 0);
+  // Successful reads only, not an inventory of every supported property.
+  properties: [EgoDevicePropertyValue] (id: 1);
+}
+
+// Each event carries only its own observations; never infer NV availability from it.
+union EgoDiagnosticEvent { EgoSdkReport, EgoCaptureSummary, EgoRecoveryEvent, EgoDeviceSnapshot }
+
+table EgoDeviceState {
+  device_uid: string (id: 0);
+  capture_epoch: uint32 (id: 1);
+  observed_at_ns: int64 (id: 2);
+  diagnostic_version: uint32 (id: 3);
+  event: EgoDiagnosticEvent (id: 5);
 }
 
 table EgoDeviceStateTracked { data: EgoDeviceState (id: 0); }

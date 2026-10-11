@@ -41,6 +41,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository
+    # Verify repository/workflow access and an online runner with all labels.
+    # A blocked or unassigned job provides no build or test result.
     runs-on: [self-hosted, linux, orbbec-sdk]
     timeout-minutes: 45
     env:

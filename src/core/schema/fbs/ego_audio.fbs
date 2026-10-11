@@ -7,6 +7,15 @@ namespace core;
 
 enum EgoAudioSampleFormat : byte { S16LE = 0 }
 
+// Indices count retained PCM frames per channel within a continuous segment.
+// continuity_known is false when the SDK cannot report physical sample loss.
+table EgoAudioTiming {
+  segment_id: uint64 (id: 0);
+  first_sample_index: uint64 (id: 1);
+  continuity_known: bool (id: 2);
+  discontinuity: bool (id: 3);
+}
+
 table EgoAudioChunk {
   sequence_number: uint64 (id: 0);
   sample_rate_hz: uint32 (id: 1);
@@ -17,6 +26,7 @@ table EgoAudioChunk {
   wav_data_offset: uint64 (id: 6);
   byte_count: uint32 (id: 7);
   capture_epoch: uint32 (id: 8);
+  timing: EgoAudioTiming (id: 9);
 }
 
 table EgoAudioChunkTracked { data: EgoAudioChunk (id: 0); }
@@ -38,6 +48,7 @@ table EgoPcmAudioChunk {
   sample_count: uint32 (id: 5);
   pcm_data: [ubyte] (id: 6);
   capture_epoch: uint32 (id: 7);
+  timing: EgoAudioTiming (id: 8);
 }
 
 table EgoPcmAudioChunkRecord {

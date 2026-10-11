@@ -37,6 +37,22 @@ The binding itself does not decode video on the GPU or render a window.
 OAK-D uses the external DepthAI Python binding, so it does not need an equivalent
 local SDK bridge in `camera_viz`.
 
+### GPU selection
+
+The viewer passes `VizSession.cuda_device_id` through the source factory.
+NVIDIA already matches Vulkan and CUDA devices by UUID; EGO uses that CUDA ID
+for both eye buffers, upload streams, and NVDEC decoders, including after a
+capture retry. A Vulkan `gpu_index` is not a CUDA device ID.
+
+For EGO, omitted `gpu_id` or `gpu_id: 0` means automatic selection, following
+the renderer. A nonzero `gpu_id` must match the renderer; a mismatch fails
+before allocating EGO GPU buffers or opening the camera. This does not change
+which GPU the renderer selects or enable cross-GPU copies.
+
+Standalone `EgoSource` callers can supply `renderer_cuda_device_id` as a
+keyword argument. Without it, `gpu_id: 0` follows the calling thread's current
+CUDA device at each start; a nonzero value selects that CUDA device directly.
+
 ## Build and import
 
 Install the external OrbbecSDK and its udev rules, then run from the repository
@@ -78,14 +94,27 @@ returns a dictionary with `left`/`right` payload bytes, `timestamp_ns`,
   skipped before conversion or copying.
 - SDK wait timeouts, missing eyes and null MJPEG conversions return `None`.
   Invalid converted RGB dimensions or payload size raise an exception.
+- Empty pairs check the SDK device list at most once per second. Disappearance
+  of the selected UID raises a disconnect exception and uses the source's
+  existing close/retry path. A confirmed removed instance releases SDK objects
+  through their destructors; ordinary pipeline-stop errors still propagate.
 - Payload bytes own their data after the SDK frame is released. GPU Frames
   refer to reusable source buffers and must be consumed through the viewer's
   existing FrameSource lifecycle.
 
 The source producer serializes reads and SDK close. Open failures retry;
 capture-read exceptions close/reopen the pipeline and reset encoded decoders.
-Other producer failures exit through SDK cleanup. `stop()` requests exit and
-waits up to five seconds; if the producer is still live, it retains the SDK
+Other producer failures are retained and raised by `latest()`, preserving the
+original exception. NVIDIA's `VizRunner.wait()` reports them to the main thread
+and the viewer runs its normal shutdown. The failure is visible before SDK
+cleanup completes; a second cleanup exception cannot replace the first error.
+Cleanup-only errors are logged and can reach `latest()` while it is still being
+polled. Errors arriving during normal shutdown follow the runner's existing
+cleanup policy. A fully stopped source resets errors and pending frames when
+started again.
+
+`stop()` requests exit and waits up to five seconds; if the producer is still
+live, it retains the SDK
 handle rather than closing a device still in use. Native waits, conversion and
 close release the Python GIL where needed for shutdown coordination.
 

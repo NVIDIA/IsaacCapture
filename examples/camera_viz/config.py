@@ -230,12 +230,16 @@ def _stereo_for(cam: dict, placements_cfg: dict) -> Tuple[bool, float]:
     return stereo, float(pspec.get("stereo_plane_distance_cm", 0.0))
 
 
-def build_local_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
+def build_local_entries(
+    cfg: dict, is_xr: bool, *, renderer_cuda_device_id: int | None = None
+) -> List[SourceEntry]:
     """source=local: open each enabled camera directly."""
     placements_cfg = cfg.get("display", {}).get("placements", {})
     entries: List[SourceEntry] = []
     for cam in _enabled_cameras(cfg):
-        cam_sources = build_local_camera(cam)
+        cam_sources = build_local_camera(
+            cam, renderer_cuda_device_id=renderer_cuda_device_id
+        )
         # Aspect comes from the built source's spec, not the YAML — video
         # sources may omit width/height and size themselves from the file.
         first = cam_sources[0].spec

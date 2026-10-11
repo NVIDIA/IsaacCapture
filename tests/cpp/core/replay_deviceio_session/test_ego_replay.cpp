@@ -123,8 +123,13 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
                 core::pack_record<core::EgoCalibrationRecord>(inactive ? nullptr : &calib, timestamp);
             calibration.write(0, calibration_record);
             core::EgoDeviceStateT device;
-            device.sequence_number = sequence;
-            device.capture_health = core::EgoCaptureHealth_Warning;
+            device.device_uid = "ego";
+            device.capture_epoch = 3;
+            device.observed_at_ns = sequence * 90;
+            device.diagnostic_version = 2;
+            core::EgoSdkReportT report;
+            report.sequence_number = sequence;
+            device.event.Set(report);
             const auto state_record =
                 core::pack_record<core::EgoDeviceStateRecord>(inactive ? nullptr : &device, timestamp);
             state.write(0, state_record);
@@ -187,7 +192,7 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
         REQUIRE(calibration.get_data(*session));
         CHECK(calibration.get_data(*session)->device_uid()->str() == "ego_" + std::to_string(sequence));
         REQUIRE(state.get_data(*session));
-        CHECK(state.get_data(*session)->sequence_number() == sequence);
+        CHECK(state.get_data(*session)->event_as_EgoSdkReport()->sequence_number() == sequence);
     }
     session->update();
     CHECK_FALSE(camera.get_stream_data(*session, 0));

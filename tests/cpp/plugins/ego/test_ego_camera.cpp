@@ -128,6 +128,59 @@ TEST_CASE("EGO FrameSink writes raw MJPEG and forwards metadata", "[ego][writer]
     std::filesystem::remove(output);
 }
 
+TEST_CASE("EGO capture refuses existing sidecars before creating sibling outputs", "[ego][writer]")
+{
+    const auto existing = std::filesystem::temp_directory_path() / "ego_existing_sidecar_test";
+    const auto sibling = std::filesystem::temp_directory_path() / "ego_new_sidecar_test";
+    {
+        std::ofstream file(existing);
+        file << "preserve";
+    }
+    plugins::ego::CaptureConfig config;
+    std::vector<plugins::ego::StreamConfig> streams{ { core::EgoCameraStream_ColorLeft, sibling.string() } };
+    SECTION("video")
+    {
+        streams.push_back({ core::EgoCameraStream_ColorRight, existing.string() });
+    }
+    SECTION("audio")
+    {
+        config.audio_output = existing.string();
+    }
+    SECTION("calibration")
+    {
+        config.calibration_output = existing.string();
+    }
+    REQUIRE_THROWS_AS(plugins::ego::create_frame_sink(streams, config), std::invalid_argument);
+    CHECK(read_bytes(existing) == std::vector<uint8_t>{ 'p', 'r', 'e', 's', 'e', 'r', 'v', 'e' });
+    CHECK_FALSE(std::filesystem::exists(sibling));
+    std::filesystem::remove(existing);
+}
+
+TEST_CASE("EGO capture rejects aliased outputs before creating files", "[ego][writer]")
+{
+    const auto output = std::filesystem::temp_directory_path() / "ego_aliased_output_test";
+    plugins::ego::CaptureConfig config;
+    std::vector<plugins::ego::StreamConfig> streams{ { core::EgoCameraStream_ColorLeft, output.string() } };
+    SECTION("two cameras")
+    {
+        streams.push_back({ core::EgoCameraStream_ColorRight, output.string() });
+    }
+    SECTION("audio")
+    {
+        config.audio_output = (output.parent_path() / "." / output.filename()).string();
+    }
+    SECTION("calibration")
+    {
+        config.calibration_output = output.string();
+    }
+    SECTION("archive")
+    {
+        config.mcap_filename = output.string();
+    }
+    REQUIRE_THROWS_AS(plugins::ego::create_frame_sink(streams, config), std::invalid_argument);
+    CHECK_FALSE(std::filesystem::exists(output));
+}
+
 TEST_CASE("EGO FrameSink preserves H264 and H265 elementary stream bytes", "[ego][writer]")
 {
     for (const auto format : { core::EgoPixelFormat_H264, core::EgoPixelFormat_H265 })
@@ -700,7 +753,15 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
     metadata->on_calibration(calibration, 123, 456);
     core::EgoDeviceStateT state;
     state.capture_epoch = 3;
-    metadata->on_device_state(state, 123, 456);
+    state.device_uid = "fixture";
+    state.observed_at_ns = 123;
+    state.diagnostic_version = 2;
+    core::EgoCaptureSummaryT summary;
+    summary.is_final = true;
+    summary.queue_capacity = 4096;
+    summary.queue_peak = 7;
+    state.event.Set(summary);
+    metadata->on_device_state(state, 123, 0);
     sink->close_media();
     sink->close_metadata();
     sink->commit_metadata();
@@ -712,6 +773,15 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
     {
         ++counts[view.channel->topic];
         CHECK(view.message.logTime > 0);
+        if (view.channel->topic == "ego_device/DeviceState")
+        {
+            const auto* record = flatbuffers::GetRoot<core::EgoDeviceStateRecord>(view.message.data);
+            const auto* event = record->data()->event_as_EgoCaptureSummary();
+            REQUIRE(event);
+            CHECK(event->is_final());
+            CHECK(event->queue_peak() == 7);
+            CHECK(record->data()->observed_at_ns() == record->timestamp()->sample_time_local_common_clock());
+        }
         if (view.channel->topic == "ego_metadata/ColorLeft" || view.channel->topic == "ego_metadata/ColorRight")
         {
             flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(view.message.data), view.message.dataSize);
@@ -779,3 +849,52 @@ TEST_CASE("EGO MCAP flush failures prevent final archive promotion", "[ego][mcap
     std::filesystem::remove(partial);
 }
 #endif
+
+TEST_CASE("EGO diagnostics off omits schema channel and messages but preserves sensors", "[ego][mcap]")
+{
+    const auto path = std::filesystem::temp_directory_path() / "ego_diagnostics_off_test.mcap";
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + ".partial");
+    plugins::ego::CaptureConfig config;
+    config.mcap_filename = path.string();
+    config.mcap_media_mode = plugins::ego::McapMediaMode::Embedded;
+    config.record_device_diagnostics = false;
+    auto sink = plugins::ego::create_frame_sink({ { core::EgoCameraStream_ColorLeft, "" } }, config);
+    core::EgoDeviceStateT diagnostic;
+    diagnostic.device_uid = "fixture";
+    diagnostic.observed_at_ns = 100;
+    diagnostic.diagnostic_version = 2;
+    diagnostic.event.Set(core::EgoSdkReportT{});
+    sink->metadata_sink()->on_device_state(diagnostic, 100, 0);
+    core::EgoCalibrationT calibration;
+    calibration.device_uid = "test";
+    sink->metadata_sink()->on_calibration(calibration, 100, 0);
+    sink->close_media();
+    sink->close_metadata();
+    sink->commit_metadata();
+    mcap::McapReader reader;
+    REQUIRE(reader.open(path.string()).ok());
+    REQUIRE(reader.readSummary(mcap::ReadSummaryMethod::NoFallbackScan).ok());
+    for (const auto& [id, schema] : reader.schemas())
+        CHECK(schema->name != "core.EgoDeviceStateRecord");
+    CHECK(reader.statistics()->messageCount == 1);
+    for (const auto& view : reader.readMessages())
+        CHECK(view.channel->topic == "ego_calibration/Calibration");
+    auto& data = *reader.dataSource();
+    mcap::TypedRecordReader records(data, sizeof(mcap::Magic), data.size() - sizeof(mcap::Magic));
+    unsigned policies = 0;
+    records.onMetadata = [&](const mcap::Metadata& metadata, auto)
+    {
+        if (metadata.name == "ego.recording")
+        {
+            ++policies;
+            CHECK(metadata.metadata.at("record_device_diagnostics") == "off");
+            CHECK(metadata.metadata.at("diagnostic_version") == "2");
+        }
+    };
+    while (records.next())
+        REQUIRE(records.status().ok());
+    CHECK(policies == 1);
+    reader.close();
+    std::filesystem::remove(path);
+}

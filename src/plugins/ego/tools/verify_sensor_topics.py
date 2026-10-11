@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import Counter
+import json
+import math
+from pathlib import Path
 import struct
 import sys
 from mcap.reader import make_reader
@@ -61,6 +64,56 @@ def vector_field(data, table, field_id, element_size, label):
     return count, begin
 
 
+def diagnostic_record(data, label):
+    table, _ = record_data(data, label)
+    version = scalar_field(data, table, 3, "<I")
+    kind = scalar_field(data, table, 4, "<B")
+    observed = scalar_field(data, table, 2, "<q")
+    payload_position = field_position(data, table, 5)
+    uid_length, _ = vector_field(data, table, 0, 1, f"{label} device UID")
+    if (
+        version != 2
+        or kind not in (1, 2, 3, 4)
+        or observed <= 0
+        or not uid_length
+        or payload_position is None
+    ):
+        raise SystemExit(
+            f"{label} requires diagnostic version 2, a known event, UID, and observation time"
+        )
+    offset = unpack_from("<I", data, payload_position, "diagnostic event offset")[0]
+    if not offset:
+        raise SystemExit(f"{label} has an empty diagnostic event")
+    payload = payload_position + offset
+    record = unpack_from("<I", data, 0, "record")[0]
+    timestamp = field_position(data, record, 1)
+    sampled = unpack_from("<qqq", data, timestamp, "timestamp")[1]
+    if observed != sampled:
+        raise SystemExit(
+            f"{label} diagnostic observation differs from sample timestamp"
+        )
+    if kind == 1:
+        for field_id, fmt in enumerate(("<Q", "<i", "<Q", "<Q", "<Q")):
+            scalar_field(data, payload, field_id, fmt)
+    elif kind == 2:
+        health = scalar_field(data, payload, 0, "<b")
+        if health not in (0, 1, 2):
+            raise SystemExit(f"{label} has invalid capture health")
+        if health == 2:
+            raise SystemExit(f"{label} reports incomplete capture")
+        if scalar_field(data, payload, 4, "<Q") or scalar_field(data, payload, 5, "<Q"):
+            raise SystemExit(f"{label} reports dropped capture data")
+    elif kind == 3:
+        if scalar_field(data, payload, 0, "<b") not in (0, 1, 2):
+            raise SystemExit(f"{label} has invalid recovery stage")
+    else:
+        temperature = scalar_field(data, payload, 0, "<f", None)
+        if temperature is not None and not math.isfinite(temperature):
+            raise SystemExit(f"{label} temperature must be finite or absent")
+        vector_field(data, payload, 1, 16, f"{label} successful properties")
+    return kind
+
+
 path, mode = sys.argv[1:3]
 expect_imu = "--expect-imu" in sys.argv
 expect_audio = "--expect-audio" in sys.argv
@@ -80,6 +133,53 @@ audio = {
     for topic in audio_topics
 }
 
+policy = None
+expected_policy = None
+for argument in sys.argv[3:]:
+    if argument.startswith("--requested-profile="):
+        manifest = Path(argument.split("=", 1)[1])
+        if manifest.is_file():
+            expected_policy = json.loads(manifest.read_text()).get(
+                "record_device_diagnostics"
+            )
+    elif argument.startswith("--record-device-diagnostics="):
+        expected_policy = argument.split("=", 1)[1]
+if expected_policy not in (None, "on", "off"):
+    raise SystemExit("Expected diagnostic recording policy must be on or off")
+diagnostic_count = 0
+with open(path, "rb") as stream:
+    reader = make_reader(stream)
+    for metadata in reader.iter_metadata():
+        if metadata.name != "ego.recording":
+            continue
+        value = metadata.metadata.get("record_device_diagnostics")
+        if (
+            value not in ("on", "off")
+            or metadata.metadata.get("diagnostic_version") != "2"
+        ):
+            raise SystemExit("Unsupported EGO recording policy")
+        if policy is not None and policy != value:
+            raise SystemExit("Conflicting EGO recording policies")
+        policy = value
+    if expected_policy is not None and policy != expected_policy:
+        raise SystemExit(
+            f"Expected diagnostic policy {expected_policy}, recorded {policy}"
+        )
+    summary = reader.get_summary()
+    if policy == "off":
+        if summary is None:
+            raise SystemExit(
+                "Diagnostics-off verification requires a complete channel inventory"
+            )
+        for channel in summary.channels.values():
+            schema = summary.schemas.get(channel.schema_id)
+            if schema is not None and schema.name == "core.EgoDeviceStateRecord":
+                raise SystemExit(f"Diagnostics off but channel exists: {channel.topic}")
+    if policy is None:
+        print(
+            "  No EGO recording policy: checking diagnostic events without a policy guarantee"
+        )
+
 with open(path, "rb") as stream:
     for _schema, channel, message in make_reader(stream).iter_messages(
         log_time_order=False
@@ -90,6 +190,12 @@ with open(path, "rb") as stream:
         if previous is not None and message.log_time < previous:
             non_monotonic.append(topic)
         last_log_time[topic] = message.log_time
+
+        if _schema is not None and _schema.name == "core.EgoDeviceStateRecord":
+            if policy == "off":
+                raise SystemExit(f"Diagnostics off but message exists: {topic}")
+            diagnostic_count += 1
+            diagnostic_record(message.data, topic)
 
         if topic == "ego_metadata/ColorLeft":
             table, timestamp = record_data(message.data, topic)
@@ -254,8 +360,9 @@ required = [
     "ego_metadata/ColorLeft",
     "ego_metadata/ColorRight",
     "ego_calibration/Calibration",
-    "ego_device/DeviceState",
 ]
+if policy == "on" and diagnostic_count == 0:
+    raise SystemExit("Diagnostics enabled but no EgoDeviceState records exist")
 if mode == "embedded":
     required += ["ego_media/ColorLeft", "ego_media/ColorRight"]
 if expect_imu:

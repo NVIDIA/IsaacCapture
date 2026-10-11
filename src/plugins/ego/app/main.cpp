@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <ego_camera/ego_camera.hpp>
+#include <ego_camera/time_alignment.hpp>
 #include <log_bridge/logger.hpp>
 
 #include <atomic>
@@ -126,16 +127,18 @@ void print_usage(const char* program)
               << "  --mcap-media=metadata-only|embedded (default metadata-only)\n"
               << "  --keep-media-sidecars           Keep raw video/WAV with embedded MCAP\n"
               << "  --mcap-media-spool=PATH         Embedded-media fragment for TeleopSession merger\n"
+              << "  --record-device-diagnostics=on|off  Save detailed diagnostics in local MCAP (default on)\n"
               << "Device controls:\n"
               << "  --exposure=N --gain=N --white-balance=N --brightness=N\n"
               << "  --sharpness=N --saturation=N --contrast=N --power-frequency=N\n"
               << "  --set-property=SDK_PROPERTY_NAME=VALUE [--persist-controls]\n"
               << "  --calibration-output=PATH.json --list-capabilities\n"
+              << "  --time-alignment=PATH          Validated EGO capture timing profile\n"
               << "Ego has no quality property; use bitrate/dynamic-bitrate. Ego exposes no Depth/IR/point cloud.\n"
               << "Advertised profiles are per sensor; capture validates the exact simultaneous combination without "
                  "fallback.\n"
               << "Encoded profiles above 30 FPS remain uncertified and are rejected after SDK profile resolution.\n"
-              << "  --plugin-root-id=ID            Accepted for PluginManager compatibility\n";
+              << "  --plugin-root-id=ID            PluginManager status collection identity\n";
 }
 
 } // namespace
@@ -208,6 +211,12 @@ try
             capture_config.mcap_media_spool = argument.substr(19);
         else if (argument.rfind("--calibration-output=", 0) == 0)
             capture_config.calibration_output = argument.substr(21);
+        else if (argument.rfind("--time-alignment=", 0) == 0)
+        {
+            capture_config.time_alignment = argument.substr(17);
+            if (capture_config.time_alignment.empty())
+                throw std::invalid_argument("--time-alignment requires a JSON profile path");
+        }
         else if (argument == "--persist-controls")
             capture_config.persist_controls = true;
         else if (argument == "--list-capabilities")
@@ -238,7 +247,9 @@ try
             capture_config.properties.push_back(
                 { "OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT", std::stod(argument.substr(18)) });
         else if (argument.rfind("--plugin-root-id=", 0) == 0)
-            continue;
+            capture_config.plugin_root_id = argument.substr(17);
+        else if (argument.rfind("--record-device-diagnostics=", 0) == 0)
+            capture_config.record_device_diagnostics = parse_on_off(argument.substr(28));
         else
         {
             std::cerr << "Unknown option: " << argument << std::endl;
@@ -290,6 +301,7 @@ try
         streams.push_back(std::move(stream));
     }
 
+    plugins::ego::validate_time_alignment_profile(capture_config.time_alignment);
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     capture_config.stop_requested = [] { return stop_requested.load(std::memory_order_relaxed); };

@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import fields
 from types import SimpleNamespace
 import sys
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -91,7 +92,13 @@ def test_ego_producer_closes_capture_after_normal_or_failed_exit(monkeypatch, fa
     assert source._capture is None
 
 
-def test_ego_default_gpu_follows_the_display_device(monkeypatch):
+@pytest.mark.parametrize(
+    "requested,renderer,current,expected",
+    [(0, 2, 0, 2), (0, 0, 2, 0), (2, 2, 0, 2), (0, None, 2, 2), (1, None, 2, 1)],
+)
+def test_ego_uses_renderer_gpu_or_standalone_selection(
+    monkeypatch, requested, renderer, current, expected
+):
     class Thread:
         def __init__(self, **kwargs):
             self.started = False
@@ -112,16 +119,50 @@ def test_ego_default_gpu_follows_the_display_device(monkeypatch):
             empty=np.empty,
             uint8=np.uint8,
             cuda=SimpleNamespace(
-                Device=device, runtime=SimpleNamespace(getDevice=lambda: 2)
+                Device=device, runtime=SimpleNamespace(getDevice=lambda: current)
             ),
         ),
     )
     monkeypatch.setitem(sys.modules, "ego_preview", SimpleNamespace(Capture=object))
     monkeypatch.setattr("sources.ego.threading.Thread", Thread)
-    (source,) = build_local_camera({"name": "ego", "type": "ego", "stereo": True})
+    cfg = {
+        "cameras": [{"name": "ego", "type": "ego", "stereo": True, "gpu_id": requested}]
+    }
+    (entry,) = config.build_local_entries(
+        cfg, is_xr=False, renderer_cuda_device_id=renderer
+    )
+    source = entry.source
     source.start()
-    assert devices == [2] and source._gpu_id == 2
+    assert devices == [expected] and source._gpu_id == expected
     assert source._thread.started
+
+
+@pytest.mark.parametrize("requested,renderer", [(1, 2), (2, 0), (-1, 0), (0, -1)])
+def test_ego_rejects_gpu_conflicts_before_imports_or_allocation(
+    monkeypatch, requested, renderer
+):
+    monkeypatch.setitem(sys.modules, "cupy", None)
+    monkeypatch.setitem(sys.modules, "ego_preview", None)
+    (source,) = build_local_camera(
+        {"name": "ego", "type": "ego", "stereo": True, "gpu_id": requested},
+        renderer_cuda_device_id=renderer,
+    )
+    with pytest.raises(ValueError, match="CUDA"):
+        source.start()
+    assert source._capture is None and source._thread is None
+    assert not source._buffers_left and not source._buffers_right
+
+
+def test_renderer_gpu_context_does_not_change_other_sources(monkeypatch):
+    # SyntheticSource allocates in __init__; factory tests must stay GPU-free.
+    constructor = MagicMock()
+    monkeypatch.setattr("sources.SyntheticSource", constructor)
+    spec = {"name": "synthetic", "type": "synthetic", "width": 4, "height": 2}
+    (source,) = build_local_camera(spec, renderer_cuda_device_id=2)
+    assert source is constructor.return_value
+    constructor.assert_called_once_with(
+        name="synthetic", width=4, height=2, fps=60.0, hue_speed_hz=0.25
+    )
 
 
 def test_ego_mjpeg_conversion_drop_keeps_stereo_publication_and_closes_sdk(monkeypatch):

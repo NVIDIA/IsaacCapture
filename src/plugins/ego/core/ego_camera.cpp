@@ -7,14 +7,17 @@
 
 #include "calibration.hpp"
 #include "device_controls.hpp"
+#include "device_diagnostics.hpp"
 #include "diagnostics.hpp"
 #include "inc/ego_camera/cancellation.hpp"
 #include "inc/ego_camera/ego_camera.hpp"
+#include "inc/ego_camera/time_alignment.hpp"
 #include "wav_writer.hpp"
 
 #include <libobsensor/ObSensor.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <schema/ego_limits.hpp>
+#include <schema/serialized.hpp>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +36,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -45,6 +49,23 @@ namespace plugins::ego
 
 namespace
 {
+
+// SDK 2.9 builds place EGO callbacks on Device or DataAcquisitionDevice.
+// Keep handle adoption and destruction matched to the selected SDK headers.
+#if __has_include(<libobsensor/hpp/DataAcquisitionDevice.hpp>)
+using EgoSdkDevice = ob::DataAcquisitionDevice;
+#else
+using EgoSdkDevice = ob::Device;
+#endif
+
+std::shared_ptr<EgoSdkDevice> adopt_ego_device(std::shared_ptr<ob::Device> device)
+{
+#if __has_include(<libobsensor/hpp/DataAcquisitionDevice.hpp>)
+    return EgoSdkDevice::fromDevice(std::move(device));
+#else
+    return device;
+#endif
+}
 
 const char* prepare_sdk_logging()
 {
@@ -261,8 +282,11 @@ std::shared_ptr<ob::Config> make_video_config(const ActiveProfiles& profiles, co
                                                       return stream.pixel_format == core::EgoPixelFormat_H264 ||
                                                              stream.pixel_format == core::EgoPixelFormat_H265;
                                                   });
-    config->setFrameAggregateOutputMode(has_interframe_video ? OB_FRAME_AGGREGATE_OUTPUT_COLOR_FRAME_REQUIRE :
-                                                               OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
+    // Single-eye capture must not wait for an unrequested color frame.
+    // MJPG capture must retain an available eye even when its stereo partner is absent.
+    config->setFrameAggregateOutputMode(profiles.size() == 1 ? OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION :
+                                        has_interframe_video ? OB_FRAME_AGGREGATE_OUTPUT_COLOR_FRAME_REQUIRE :
+                                                               OB_FRAME_AGGREGATE_OUTPUT_ANY_SITUATION);
     return config;
 }
 
@@ -288,6 +312,7 @@ class EgoCamera::Impl
 public:
     Impl(const CaptureConfig& config, const std::vector<StreamConfig>& streams, std::unique_ptr<FrameSink> sink)
         : config_(config),
+          time_alignment_(config.time_alignment),
           context_(std::make_unique<ob::Context>(prepare_sdk_logging())),
           streams_(streams),
           sink_(std::move(sink))
@@ -302,10 +327,14 @@ public:
 #if defined(__linux__) || defined(__ANDROID__)
         context_->setUvcBackendType(OB_UVC_BACKEND_TYPE_LIBUVC);
 #endif
+        publish_capture_status(CaptureAvailability::Unknown);
         check_cancelled();
         const auto devices = context_->queryDeviceList();
         if (devices->getCount() == 0)
+        {
+            publish_capture_status(CaptureAvailability::Absent);
             throw std::runtime_error("No Ego devices found. Check USB connection and udev permissions.");
+        }
 
         for (uint32_t index = 0; index < devices->getCount(); ++index)
         {
@@ -319,9 +348,9 @@ public:
                     supports_requested_streams && has_sensor(candidate, to_ob_sensor(stream.camera));
             if (supports_requested_streams)
             {
-                // Ego callbacks belong to DataAcquisitionDevice. Adopt the handle
-                // before creating pipelines because fromDevice moves its ownership.
-                device_ = ob::DataAcquisitionDevice::fromDevice(candidate);
+                // Adopt the EGO callback owner before pipelines; newer SDK
+                // wrappers transfer the base device handle.
+                device_ = adopt_ego_device(candidate);
                 break;
             }
         }
@@ -333,6 +362,7 @@ public:
         selected_device_vid_ = selected_info->getVid();
         selected_device_pid_ = selected_info->getPid();
         selected_firmware_ = selected_info->getFirmwareVersion();
+        publish_capture_status(CaptureAvailability::Starting);
 
         for (const auto& stream : streams_)
         {
@@ -340,6 +370,7 @@ public:
             active_profiles_.emplace(stream.camera, profile);
         }
         initial_profile_description_ = describe_profiles(active_profiles_);
+        configure_time_alignment();
         try
         {
             for (const auto& stream : streams_)
@@ -598,6 +629,7 @@ public:
                         device_removed_.store(true, std::memory_order_release);
                 });
             device_changed_callback_registered_ = true;
+            publish_capture_status(CaptureAvailability::Streaming);
             detail::log_info() << "Ego pipeline started for " << selected_device_uid_ << std::endl;
         }
         catch (...)
@@ -619,7 +651,19 @@ public:
         shutdown_noexcept(false);
     }
 
-    static std::string stop_pipeline_noexcept(std::unique_ptr<ob::Pipeline>& pipeline, bool& started, const char* name) noexcept
+    static bool is_removed_device_cleanup_error(const ob::Error& error, bool device_removal_confirmed) noexcept
+    {
+        // SDK 2.9 reports deactivated components as call-sequence errors. Only
+        // the removed capture instance may tolerate this during reconnect teardown.
+        return device_removal_confirmed && error.getStatus() == OB_ERROR_WRONG_API_CALL_SEQUENCE &&
+               error.getExceptionType() == OB_EXCEPTION_TYPE_WRONG_API_CALL_SEQUENCE && error.what() &&
+               std::string_view(error.what()).find("Device is deactivated/disconnected! DeviceComponentId:") == 0;
+    }
+
+    static std::string stop_pipeline_noexcept(std::unique_ptr<ob::Pipeline>& pipeline,
+                                              bool& started,
+                                              const char* name,
+                                              bool device_removal_confirmed = false) noexcept
     {
         if (!pipeline)
             return {};
@@ -630,6 +674,14 @@ public:
             try
             {
                 pipeline->stop();
+            }
+            catch (const ob::Error& error)
+            {
+                if (is_removed_device_cleanup_error(error, device_removal_confirmed))
+                    detail::log_info()
+                        << "Ego " << name << " pipeline already inactive after confirmed removal: " << error.what();
+                else
+                    failure = std::string("Ego ") + name + " pipeline stop failed: " + error.what();
             }
             catch (const std::exception& error)
             {
@@ -657,8 +709,9 @@ public:
         {
             try
             {
-                const auto candidate = devices->getDevice(index);
-                if (candidate && candidate->getDeviceInfo()->getUid() == uid)
+                // Read the removal snapshot without trying to open a disconnected device.
+                const auto* candidate_uid = devices->getUid(index);
+                if (candidate_uid && uid == candidate_uid)
                     return true;
             }
             catch (const std::exception&)
@@ -699,18 +752,29 @@ public:
         return nullptr;
     }
 
-    void publish_connection_state(core::EgoConnectionState connection_state, const std::string& reason)
+    void publish_capture_status(CaptureAvailability availability, const std::string& error = {}) noexcept
     {
-        core::EgoDeviceStateT state;
-        state.sequence_number = polled_state_sequence_++;
-        state.device_uid = selected_device_uid_;
-        state.capture_epoch = capture_epoch_;
-        state.connection_state = connection_state;
-        state.reconnect_attempt = auxiliary_stats_.reconnect_attempts;
-        state.capture_health = connection_state == core::EgoConnectionState_Failed ? core::EgoCaptureHealth_Incomplete :
-                                                                                     core::EgoCaptureHealth_Warning;
-        state.failure_reason = reason;
-        enqueue(DeviceStateEvent{ std::move(state), core::os_monotonic_now_ns() });
+        try
+        {
+            if (auto* metadata = sink_->metadata_sink())
+                metadata->on_capture_status({ availability, core::os_monotonic_now_ns(), error });
+        }
+        catch (const std::exception& failure)
+        {
+            detail::log_warning() << "Ego device status notification failed: " << failure.what();
+        }
+    }
+
+    DiagnosticOrigin diagnostic_origin(int64_t observed_at_ns) const
+    {
+        return { selected_device_uid_, capture_epoch_, observed_at_ns };
+    }
+
+    void publish_recovery_event(core::EgoRecoveryStage stage, const std::string& reason)
+    {
+        const auto now = core::os_monotonic_now_ns();
+        auto state = recovery_event(diagnostic_origin(now), stage, reason, auxiliary_stats_.reconnect_attempts);
+        enqueue(DeviceStateEvent{ std::move(state), now });
         drain_events();
     }
 
@@ -728,7 +792,7 @@ public:
         last_video_arrival_ns_.clear();
     }
 
-    void stop_capture_for_reconnect()
+    void stop_capture_for_reconnect(bool device_removal_confirmed = false)
     {
         accepting_callbacks_.store(false, std::memory_order_release);
         capture_active_.store(false, std::memory_order_release);
@@ -736,6 +800,20 @@ public:
         {
             if (device_)
                 device_->clearEgoStateCallback();
+        }
+        catch (const ob::Error& error)
+        {
+            if (is_removed_device_cleanup_error(error, device_removal_confirmed))
+            {
+                detail::log_info()
+                    << "Ego device-state callback already inactive after confirmed removal: " << error.what();
+            }
+            else
+            {
+                cleanup_error_ +=
+                    std::string("Ego device-state callback clear during reconnect failed: ") + error.what() + "; ";
+                detail::log_warning() << cleanup_error_;
+            }
         }
         catch (const std::exception& error)
         {
@@ -756,7 +834,7 @@ public:
                 detail::log_warning() << "Warning: " << error << std::endl;
             }
         };
-        report_stop_error(stop_pipeline_noexcept(pipeline_, video_pipeline_started_, "video"));
+        report_stop_error(stop_pipeline_noexcept(pipeline_, video_pipeline_started_, "video", device_removal_confirmed));
         if (audio_sensor_)
         {
             if (audio_started_)
@@ -771,6 +849,19 @@ public:
                                               .count()
                                        << " ms";
                 }
+                catch (const ob::Error& error)
+                {
+                    if (is_removed_device_cleanup_error(error, device_removal_confirmed))
+                    {
+                        detail::log_info()
+                            << "Ego audio sensor already inactive after confirmed removal: " << error.what();
+                    }
+                    else
+                    {
+                        cleanup_error_ += std::string("Ego audio stop during reconnect failed: ") + error.what() + "; ";
+                        detail::log_warning() << cleanup_error_;
+                    }
+                }
                 catch (const std::exception& error)
                 {
                     cleanup_error_ += std::string("Ego audio stop during reconnect failed: ") + error.what() + "; ";
@@ -780,7 +871,7 @@ public:
             audio_started_ = false;
             audio_sensor_.reset();
         }
-        report_stop_error(stop_pipeline_noexcept(imu_pipeline_, imu_pipeline_started_, "IMU"));
+        report_stop_error(stop_pipeline_noexcept(imu_pipeline_, imu_pipeline_started_, "IMU", device_removal_confirmed));
         drain_video_frames(false);
         flush_imu(core::EgoImuSensor_Accel);
         flush_imu(core::EgoImuSensor_Gyro);
@@ -792,21 +883,25 @@ public:
 
     void begin_recovery(const std::string& reason)
     {
+        publish_capture_status(device_removed_.load(std::memory_order_acquire) ? CaptureAvailability::Absent :
+                                                                                 CaptureAvailability::Recovering,
+                               reason);
         if (config_.reconnect_timeout_seconds == 0)
             throw RecoverableCaptureError(reason + "; automatic reconnect is disabled");
         if (recovering_)
             return;
         recovering_ = true;
+        recovery_device_present_ = !device_removed_.load(std::memory_order_acquire);
         recovery_reason_ = reason;
         recovery_last_error_.clear();
         const auto now = std::chrono::steady_clock::now();
         recovery_deadline_ = now + std::chrono::seconds(config_.reconnect_timeout_seconds);
         next_reconnect_attempt_ = now;
-        publish_connection_state(core::EgoConnectionState_Recovering, reason);
+        publish_recovery_event(core::EgoRecoveryStage_Started, reason);
         detail::log_error() << "Ego device serial=" << selected_device_serial_ << " uid=" << selected_device_uid_
                             << " disconnected; waiting up to " << config_.reconnect_timeout_seconds
                             << " seconds for the same physical device" << std::endl;
-        stop_capture_for_reconnect();
+        stop_capture_for_reconnect(device_removed_.load(std::memory_order_acquire));
     }
 
     void start_recovered_video(const std::shared_ptr<ob::Config>& pipeline_config)
@@ -946,7 +1041,7 @@ public:
                                  " seconds";
             if (!recovery_last_error_.empty())
                 reason += "; last restart error: " + recovery_last_error_;
-            publish_connection_state(core::EgoConnectionState_Failed, reason);
+            publish_recovery_event(core::EgoRecoveryStage_Failed, reason);
             throw std::runtime_error(reason);
         }
         if (now < next_reconnect_attempt_)
@@ -960,7 +1055,13 @@ public:
         {
             auto recovered_device = find_selected_device();
             if (!recovered_device)
+            {
+                recovery_device_present_ = false;
+                publish_capture_status(CaptureAvailability::Absent, recovery_reason_);
                 return;
+            }
+            recovery_device_present_ = true;
+            publish_capture_status(CaptureAvailability::Recovering, recovery_reason_);
             const auto recovered_info = recovered_device->getDeviceInfo();
             const auto recovered_uid = recovered_info->getUid();
             const auto firmware = recovered_info->getFirmwareVersion();
@@ -972,7 +1073,7 @@ public:
                     << "Ego device serial=" << selected_device_serial_
                     << " re-enumerated from uid=" << selected_device_uid_ << " to uid=" << recovered_uid << std::endl;
             }
-            device_ = ob::DataAcquisitionDevice::fromDevice(std::move(recovered_device));
+            device_ = adopt_ego_device(std::move(recovered_device));
             selected_device_uid_ = recovered_uid;
             for (const auto& stream : streams_)
             {
@@ -1014,7 +1115,8 @@ public:
             ++auxiliary_stats_.successful_reconnects;
             recovering_ = false;
             device_removed_.store(false, std::memory_order_release);
-            publish_connection_state(core::EgoConnectionState_Recovered, recovery_reason_);
+            publish_recovery_event(core::EgoRecoveryStage_Recovered, recovery_reason_);
+            publish_capture_status(CaptureAvailability::Streaming);
             detail::log_info() << "Ego device " << selected_device_uid_ << " recovered as capture epoch "
                                << capture_epoch_ << std::endl;
         }
@@ -1028,7 +1130,7 @@ public:
             try
             {
                 stop_capture_for_reconnect();
-                publish_connection_state(core::EgoConnectionState_Failed, recovery_last_error_);
+                publish_recovery_event(core::EgoRecoveryStage_Failed, recovery_last_error_);
             }
             catch (const std::exception& cleanup_error)
             {
@@ -1264,7 +1366,7 @@ public:
 
     void capture_device_snapshot()
     {
-        property_snapshot_.clear();
+        std::vector<core::EgoDevicePropertyValue> properties;
         for (int index = 0; index < device_->getSupportedPropertyCount(); ++index)
         {
             const auto item = device_->getSupportedProperty(static_cast<uint32_t>(index));
@@ -1275,24 +1377,30 @@ public:
             }
             try
             {
-                property_snapshot_.emplace_back(static_cast<int32_t>(item.id), read_property(device_, item));
+                properties.emplace_back(static_cast<int32_t>(item.id), read_property(device_, item));
             }
-            catch (const ob::Error&)
+            catch (const ob::Error& error)
             {
+                detail::log_warning() << "Ego property snapshot read failed for " << item.id << ": " << error.what();
             }
         }
-        temperature_snapshot_c_ = std::numeric_limits<float>::quiet_NaN();
+        std::optional<float> temperature_c;
         try
         {
             OBDeviceTemperature temperature{};
             uint32_t size = sizeof(temperature);
             device_->getStructuredData(OB_STRUCT_DEVICE_TEMPERATURE, reinterpret_cast<uint8_t*>(&temperature), &size);
             if (size >= sizeof(temperature))
-                temperature_snapshot_c_ = temperature.imuTemp;
+                temperature_c = temperature.imuTemp;
         }
-        catch (const ob::Error&)
+        catch (const ob::Error& error)
         {
+            detail::log_warning() << "Ego IMU temperature snapshot unavailable: " << error.what();
         }
+        // Publish at observation time; recovery never relabels these startup-only reads.
+        const auto now = core::os_monotonic_now_ns();
+        auto state = device_snapshot(diagnostic_origin(now), temperature_c, properties);
+        enqueue(DeviceStateEvent{ std::move(state), now });
     }
 
     void reacquire_device()
@@ -1304,7 +1412,7 @@ public:
             if (is_selected_physical_device(candidate->getDeviceInfo()))
             {
                 selected_device_uid_ = candidate->getDeviceInfo()->getUid();
-                device_ = ob::DataAcquisitionDevice::fromDevice(candidate);
+                device_ = adopt_ego_device(candidate);
                 return;
             }
         }
@@ -1461,6 +1569,12 @@ public:
                      device_.reset();
                      context_.reset();
                  });
+        // Aborted capture must not produce a healthy final summary, even if cleanup succeeds.
+        const auto final_diagnostic_error = !shutdown_error.empty() ? shutdown_error :
+                                            promote_metadata        ? std::string{} :
+                                                                      "Capture aborted before completion";
+        finalize("final diagnostic summary",
+                 [this, &final_diagnostic_error] { publish_periodic_device_state(final_diagnostic_error, true); });
         if (promote_metadata && shutdown_error.empty())
         {
             finalize("metadata close", [this] { sink_->close_metadata(); });
@@ -1524,8 +1638,29 @@ public:
 
     void update()
     {
+        try
+        {
+            update_capture();
+        }
+        catch (const CaptureCancelled&)
+        {
+            throw;
+        }
+        catch (const std::exception& error)
+        {
+            cleanup_error_ = error.what();
+            publish_capture_status(CaptureAvailability::Failed, error.what());
+            throw;
+        }
+    }
+
+    void update_capture()
+    {
         if (recovering_)
         {
+            publish_capture_status(
+                recovery_device_present_ ? CaptureAvailability::Recovering : CaptureAvailability::Absent,
+                recovery_reason_);
             attempt_reconnect();
             return;
         }
@@ -1544,6 +1679,7 @@ public:
             drain_video_frames();
             validate_video_liveness();
             validate_auxiliary_liveness();
+            publish_capture_status(CaptureAvailability::Streaming);
             if (std::chrono::steady_clock::now() - last_device_poll_ >= std::chrono::seconds(5))
                 publish_periodic_device_state();
             drain_events();
@@ -1645,10 +1781,11 @@ public:
                 if (frame->hasMetadata(metadata_type))
                     captured.metadata.sdk_metadata.emplace_back(type, frame->getMetadataValue(metadata_type));
             }
-            // Keep callback arrival time so queue draining cannot shift the sample timestamp.
-            captured.sample_time_local_common_clock_ns = arrival_time_local_common_clock_ns;
             captured.encoded_data.assign(frame->getData(), frame->getData() + frame->getDataSize());
-            captured.sample_time_raw_device_clock_ns = static_cast<int64_t>(frame->getTimeStampUs()) * 1000;
+            captured.sample_time_raw_device_clock_ns = sdk_timestamp_ns(frame->getTimeStampUs());
+            captured.sample_time_local_common_clock_ns = time_alignment_.sample_time(
+                stream.camera == core::EgoCameraStream_ColorLeft ? "left_rgb" : "right_rgb",
+                captured.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
             auto& stats = stats_[stream.camera];
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number <= stats.last_sequence)
             {
@@ -1664,12 +1801,17 @@ public:
                                          std::to_string(stats.last_device_timestamp_ns) +
                                          " current=" + std::to_string(captured.sample_time_raw_device_clock_ns));
             }
+            sink_->on_frame(captured,
+                            [this, arrival_time_local_common_clock_ns](const CapturedFrame& accepted)
+                            {
+                                if (accepted.metadata.stream == core::EgoCameraStream_ColorLeft)
+                                    time_alignment_.observe_left(
+                                        accepted.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
 #if defined(EGO_ENABLE_PREVIEW)
-            if (preview_)
-                sink_->on_frame(captured, [this](const CapturedFrame& accepted) { preview_->submit(accepted); });
-            else
+                                if (preview_)
+                                    preview_->submit(accepted);
 #endif
-                sink_->on_frame(captured);
+                            });
 
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number > stats.last_sequence + 1)
                 stats.sequence_gaps += captured.metadata.sequence_number - stats.last_sequence - 1;
@@ -1780,6 +1922,12 @@ public:
 
     void drain_events()
     {
+        if (last_calibration_ && time_alignment_.has_update())
+        {
+            auto value = *last_calibration_;
+            attach_time_alignment(value);
+            enqueue(CalibrationEvent{ std::move(value), core::os_monotonic_now_ns() });
+        }
         std::deque<PublishEvent> pending;
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -1813,6 +1961,10 @@ public:
                         chunk.capture_epoch = capture_epoch_;
                         const uint32_t bytes_per_sample = audio_channels_ * audio_bits_ / 8;
                         chunk.sample_count = bytes_per_sample == 0 ? 0 : chunk.byte_count / bytes_per_sample;
+                        if (bytes_per_sample == 0 || chunk.byte_count % bytes_per_sample != 0)
+                            throw std::runtime_error("EGO audio payload is not a whole number of PCM samples");
+                        chunk.timing = std::make_shared<core::EgoAudioTimingT>(
+                            time_alignment_.audio_timing(value.device_ns, chunk.sample_count, chunk.sample_rate_hz));
                         if (!config_.audio_output.empty())
                             chunk.wav_data_offset = wav_writer_.write(value.bytes);
                         auxiliary_stats_.audio_samples += chunk.sample_count;
@@ -1828,6 +1980,7 @@ public:
                             pcm.sample_count = chunk.sample_count;
                             pcm.pcm_data = std::move(value.bytes);
                             pcm.capture_epoch = capture_epoch_;
+                            pcm.timing = chunk.timing;
                             metadata->on_pcm_audio_chunk(pcm, value.local_ns, value.device_ns);
                         }
                     }
@@ -1856,12 +2009,14 @@ public:
     void add_imu_sample(core::EgoImuSensor sensor, const OBFloat3D& value, float temperature, uint64_t timestamp_us)
     {
         auto& pending = sensor == core::EgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
-        const int64_t local_ns = core::os_monotonic_now_ns();
-        const int64_t device_ns = static_cast<int64_t>(timestamp_us) * 1000;
+        const int64_t arrival_ns = core::os_monotonic_now_ns();
+        const int64_t device_ns = sdk_timestamp_ns(timestamp_us);
+        const int64_t local_ns =
+            time_alignment_.sample_time(sensor == core::EgoImuSensor_Accel ? "accel" : "gyro", device_ns, arrival_ns);
         if (pending.samples.empty())
-            pending.first_local_ns = local_ns;
+            pending.first_local_ns = arrival_ns;
         pending.samples.emplace_back(value.x, value.y, value.z, temperature, local_ns, device_ns);
-        if (pending.samples.size() < 32 && local_ns - pending.first_local_ns < 20'000'000)
+        if (pending.samples.size() < 32 && arrival_ns - pending.first_local_ns < 20'000'000)
             return;
         flush_imu(sensor);
     }
@@ -1967,7 +2122,7 @@ public:
                                      AudioEvent event;
                                      event.bytes.assign(frame->getData(), frame->getData() + frame->getDataSize());
                                      event.local_ns = arrival_ns;
-                                     event.device_ns = static_cast<int64_t>(frame->getTimeStampUs()) * 1000;
+                                     event.device_ns = sdk_timestamp_ns(frame->getTimeStampUs());
                                      enqueue(std::move(event));
                                      if (!active_audio_ready_.exchange(true, std::memory_order_acq_rel))
                                          auxiliary_readiness_wake_.notify_all();
@@ -2077,11 +2232,47 @@ public:
         return result;
     }
 
+    void configure_time_alignment()
+    {
+        if (active_profiles_.empty())
+            return;
+        const auto first = active_profiles_.begin()->second;
+        if (!config_.time_alignment.empty())
+        {
+            if (!active_profiles_.count(core::EgoCameraStream_ColorLeft))
+                throw std::invalid_argument("EGO capture timing profile requires the left reference camera");
+            for (const auto& [_, profile] : active_profiles_)
+                if (profile->getWidth() != first->getWidth() || profile->getHeight() != first->getHeight() ||
+                    profile->getFps() != first->getFps() || profile->getFormat() != first->getFormat())
+                    throw std::invalid_argument("EGO capture timing profile requires matching stereo profiles");
+        }
+        const std::string format = first->getFormat() == OB_FORMAT_H264 ? "h264" :
+                                   first->getFormat() == OB_FORMAT_H265 ? "h265" :
+                                                                          "mjpg";
+        const bool audio = config_.enable_audio || !config_.audio_output.empty();
+        time_alignment_.configure(
+            { selected_device_serial_, selected_firmware_,
+              std::to_string(ob::Version::getMajor()) + "." + std::to_string(ob::Version::getMinor()) + "." +
+                  std::to_string(ob::Version::getPatch()),
+              format, first->getWidth(), first->getHeight(), first->getFps(), config_.enable_imu ? config_.imu_rate : 0U,
+              audio ? 48000U : 0U, static_cast<uint16_t>(audio ? 1 : 0), static_cast<uint16_t>(audio ? 16 : 0),
+              active_profiles_.count(core::EgoCameraStream_ColorRight) != 0, loaded_sdk_binary_sha256() });
+    }
+
+    void attach_time_alignment(core::EgoCalibrationT& value)
+    {
+        value.time_alignment = std::make_shared<core::EgoTimeAlignmentT>();
+        value.time_alignment->json = time_alignment_.snapshot();
+        if (core::pack<core::EgoCalibration>(value).buffer().size() > core::EGO_MAX_FLATBUFFER_SIZE)
+            throw std::runtime_error("EGO calibration with timing provenance exceeds the 32 KiB transport limit");
+    }
+
     void publish_calibration(const std::shared_ptr<ob::Config>& pipeline_config)
     {
         core::EgoCalibrationT value;
         value.device_uid = device_->getDeviceInfo()->getUid();
         value.capture_epoch = capture_epoch_ + (recovering_ ? 1U : 0U);
+        time_alignment_.begin_epoch(value.capture_epoch);
         std::string sdk_calibration_error;
         try
         {
@@ -2138,6 +2329,8 @@ public:
                 detail::log_error() << "Structured calibration unavailable: " << sdk_calibration_error << std::endl;
         }
         const auto now = core::os_monotonic_now_ns();
+        attach_time_alignment(value);
+        last_calibration_ = value;
         if (!config_.calibration_output.empty())
         {
             const std::filesystem::path output(config_.calibration_output);
@@ -2191,7 +2384,8 @@ public:
             json << ",\n";
             write_extrinsics("gyro_to_left", value.gyro_to_left);
             json << ",\n  \"raw_alignment_yaml\": \"" << json_escape(value.raw_alignment_yaml)
-                 << "\",\n  \"raw_imu_yaml\": \"" << json_escape(value.raw_imu_yaml) << "\"\n}\n";
+                 << "\",\n  \"raw_imu_yaml\": \"" << json_escape(value.raw_imu_yaml)
+                 << "\",\n  \"time_alignment\": " << value.time_alignment->json << "\n}\n";
             if (!json)
                 throw std::runtime_error("Unable to write calibration output: " + config_.calibration_output);
         }
@@ -2208,39 +2402,19 @@ public:
                     return;
                 if (!capture_active_.load(std::memory_order_acquire))
                     return;
-                core::EgoDeviceStateT state;
-                state.sequence_number = report.sequence;
-                state.device_uid = selected_device_uid_;
-                state.capture_epoch = capture_epoch_;
-                state.connection_state = core::EgoConnectionState_Connected;
-                state.reconnect_attempt = auxiliary_stats_.reconnect_attempts;
-                state.work_mode = report.work_state;
-                state.status_flags = report.state_flags;
-                state.error_flags = report.error_flags;
-                state.storage_free_bytes = report.storage_free_bytes;
-                state.temperature_c = std::numeric_limits<float>::quiet_NaN();
-                enqueue(DeviceStateEvent{ std::move(state), core::os_monotonic_now_ns() });
+                const auto now = core::os_monotonic_now_ns();
+                auto state = sdk_report(diagnostic_origin(now), report.sequence, report.work_state, report.state_flags,
+                                        report.error_flags, report.storage_free_bytes);
+                enqueue(DeviceStateEvent{ std::move(state), now });
             });
     }
 
-    void publish_periodic_device_state()
+    void publish_periodic_device_state(const std::string& final_error = {}, bool direct = false)
     {
-        // Device removal callbacks and stream liveness own disconnect detection.
-        // A synchronous SDK identity query here can block capture draining for nearly a second.
-        core::EgoDeviceStateT state;
-        state.sequence_number = polled_state_sequence_++;
-        state.device_uid = selected_device_uid_;
-        state.capture_epoch = capture_epoch_;
-        state.connection_state = core::EgoConnectionState_Connected;
-        state.reconnect_attempt = auxiliary_stats_.reconnect_attempts;
-        state.temperature_c = std::numeric_limits<float>::quiet_NaN();
-        // These cached properties and temperature are not live periodic measurements.
-        if (!device_snapshot_published_)
-        {
-            state.temperature_c = temperature_snapshot_c_;
-            state.properties = std::move(property_snapshot_);
-            device_snapshot_published_ = true;
-        }
+        if (selected_device_uid_.empty())
+            return;
+        // Disconnect detection belongs to removal callbacks and existing stream liveness checks.
+        core::EgoCaptureSummaryT summary;
         uint64_t dropped_video_frame_sets = 0;
         {
             std::lock_guard<std::mutex> lock(video_queue_mutex_);
@@ -2248,36 +2422,53 @@ public:
         }
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
-            state.queue_capacity = static_cast<uint32_t>(kMaxQueuedEvents);
-            state.queue_peak = static_cast<uint32_t>(auxiliary_stats_.publish_queue_peak);
-            state.dropped_events = auxiliary_stats_.dropped_events;
-            if (!async_error_.empty() || state.dropped_events != 0 || dropped_video_frame_sets != 0)
+            summary.queue_capacity = static_cast<uint32_t>(kMaxQueuedEvents);
+            summary.queue_peak = static_cast<uint32_t>(auxiliary_stats_.publish_queue_peak);
+            summary.dropped_events = auxiliary_stats_.dropped_events;
+            if (!async_error_.empty() || summary.dropped_events != 0 || dropped_video_frame_sets != 0)
             {
-                state.capture_health = core::EgoCaptureHealth_Incomplete;
+                summary.capture_health = core::EgoCaptureHealth_Incomplete;
                 if (!async_error_.empty())
-                    state.failure_reason = async_error_;
-                else if (state.dropped_events != 0)
-                    state.failure_reason = "dropped metadata event";
+                    summary.reason = async_error_;
+                else if (summary.dropped_events != 0)
+                    summary.reason = "dropped metadata event";
                 else
-                    state.failure_reason = "dropped video frame set";
+                    summary.reason = "dropped video frame set";
             }
             else if (events_.size() >= kMaxQueuedEvents * 85 / 100)
             {
-                state.capture_health = core::EgoCaptureHealth_Warning;
-                state.failure_reason = "metadata queue reached 85 percent capacity";
+                summary.capture_health = core::EgoCaptureHealth_Warning;
+                summary.reason = "metadata queue reached 85 percent capacity";
             }
             else
-                state.capture_health = core::EgoCaptureHealth_Healthy;
+                summary.capture_health = core::EgoCaptureHealth_Healthy;
+        }
+        if (!final_error.empty())
+        {
+            summary.capture_health = core::EgoCaptureHealth_Incomplete;
+            summary.reason = final_error;
         }
         const auto now = core::os_monotonic_now_ns();
-        enqueue(DeviceStateEvent{ std::move(state), now });
+        summary.dropped_video_frame_sets = dropped_video_frame_sets;
+        summary.is_final = direct;
+        auto state = capture_summary(diagnostic_origin(now), std::move(summary));
+        // Producers are frozen at shutdown; bypass the stopped producer queue for the final summary.
+        if (direct)
+        {
+            if (auto* metadata = sink_->metadata_sink())
+                metadata->on_device_state(state, now, 0);
+        }
+        else
+            enqueue(DeviceStateEvent{ std::move(state), now });
         last_device_poll_ = std::chrono::steady_clock::now();
     }
 
 private:
     CaptureConfig config_;
+    TimeAlignment time_alignment_;
+    std::optional<core::EgoCalibrationT> last_calibration_;
     std::unique_ptr<ob::Context> context_;
-    std::shared_ptr<ob::DataAcquisitionDevice> device_;
+    std::shared_ptr<EgoSdkDevice> device_;
     std::unique_ptr<ob::Pipeline> pipeline_;
     std::unique_ptr<ob::Pipeline> imu_pipeline_;
     std::shared_ptr<ob::Sensor> audio_sensor_;
@@ -2291,7 +2482,6 @@ private:
     std::map<core::EgoCameraStream, int64_t> last_video_arrival_ns_;
     std::vector<PropertySetting> original_properties_;
     std::vector<PropertySetting> requested_controls_;
-    std::vector<core::EgoDevicePropertyValue> property_snapshot_;
     AuxiliaryStats auxiliary_stats_;
     WavWriter wav_writer_;
     uint32_t audio_rate_ = 0;
@@ -2314,9 +2504,6 @@ private:
     std::string initial_profile_description_;
     std::string recovery_reason_;
     std::string recovery_last_error_;
-    float temperature_snapshot_c_ = std::numeric_limits<float>::quiet_NaN();
-    bool device_snapshot_published_ = false;
-    uint64_t polled_state_sequence_ = 0;
     std::chrono::steady_clock::time_point last_device_poll_{};
     std::chrono::steady_clock::time_point recovery_deadline_{};
     std::chrono::steady_clock::time_point next_reconnect_attempt_{};
@@ -2343,6 +2530,7 @@ private:
     bool controls_applied_ = false;
     bool device_changed_callback_registered_ = false;
     bool recovering_ = false;
+    bool recovery_device_present_ = false;
     bool shutdown_complete_ = false;
     std::string cleanup_error_;
 };

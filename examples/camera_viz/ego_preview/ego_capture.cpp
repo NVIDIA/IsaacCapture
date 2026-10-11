@@ -53,6 +53,7 @@ public:
             if (uid.empty() || candidate->getDeviceInfo()->getUid() == uid)
             {
                 device_ = candidate;
+                selected_uid_ = candidate->getDeviceInfo()->getUid();
                 break;
             }
         }
@@ -91,7 +92,10 @@ public:
     {
         if (pipeline_)
         {
-            pipeline_->stop();
+            // A confirmed removed instance has deactivated SDK components; release it through SDK destruction.
+            // Connected-device stop errors still propagate through the existing source lifecycle.
+            if (!device_disconnected_)
+                pipeline_->stop();
             pipeline_.reset();
         }
         left_converter_.reset();
@@ -104,28 +108,30 @@ public:
     {
         if (!pipeline_)
             throw std::runtime_error("EGO capture is closed");
+        if (device_disconnected_)
+            throw std::runtime_error("EGO device " + selected_uid_ + " disconnected");
         std::shared_ptr<ob::FrameSet> frame_set;
         {
             py::gil_scoped_release release;
             frame_set = pipeline_->waitForFrameset(timeout_ms);
         }
         if (!frame_set)
-            return py::none();
+            return no_pair();
         const auto left_raw = frame_set->getFrame(OB_FRAME_COLOR_LEFT);
         const auto right_raw = frame_set->getFrame(OB_FRAME_COLOR_RIGHT);
         if (!left_raw || !right_raw)
-            return py::none();
+            return no_pair();
         const auto left = left_raw->as<ob::VideoFrame>();
         const auto right = right_raw->as<ob::VideoFrame>();
         const auto left_ts = static_cast<int64_t>(left->getTimeStampUs()) * 1000;
         const auto right_ts = static_cast<int64_t>(right->getTimeStampUs()) * 1000;
         // Match the eyes on raw device time before conversion or payload copies.
         if (std::llabs(left_ts - right_ts) > 2'000'000)
-            return py::none();
+            return no_pair();
         const auto left_bytes = bytes(left);
         const auto right_bytes = bytes(right);
         if (left_bytes.is_none() || right_bytes.is_none())
-            return py::none();
+            return no_pair();
         py::dict result;
         result["left"] = left_bytes;
         result["right"] = right_bytes;
@@ -138,6 +144,30 @@ public:
     }
 
 private:
+    py::object no_pair()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_presence_check_)
+        {
+            next_presence_check_ = now + std::chrono::seconds(1);
+            bool present = false;
+            {
+                py::gil_scoped_release release;
+                const auto devices = context_->queryDeviceList();
+                for (uint32_t index = 0; index < devices->getCount(); ++index)
+                    if (selected_uid_ == devices->getUid(index))
+                        present = true;
+            }
+            // None also represents transient timeout or incomplete pairs; only confirmed UID loss means disconnect.
+            if (!present)
+            {
+                device_disconnected_ = true;
+                throw std::runtime_error("EGO device " + selected_uid_ + " disconnected");
+            }
+        }
+        return py::none();
+    }
+
     py::object bytes(const std::shared_ptr<ob::VideoFrame>& frame)
     {
         std::shared_ptr<ob::VideoFrame> output = frame;
@@ -166,6 +196,9 @@ private:
     std::unique_ptr<ob::Pipeline> pipeline_;
     std::unique_ptr<ob::FormatConvertFilter> left_converter_;
     std::unique_ptr<ob::FormatConvertFilter> right_converter_;
+    std::string selected_uid_;
+    std::chrono::steady_clock::time_point next_presence_check_{};
+    bool device_disconnected_ = false;
     uint32_t width_;
     uint32_t height_;
     OBFormat format_;

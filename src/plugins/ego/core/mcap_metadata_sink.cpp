@@ -32,7 +32,8 @@ public:
     McapMetadataSink(const std::vector<StreamConfig>& streams,
                      const std::string& filename,
                      bool include_media,
-                     bool include_structured = true)
+                     bool include_structured,
+                     bool record_device_diagnostics)
         : final_filename_(filename), temporary_filename_(filename + ".partial")
     {
         if (std::filesystem::exists(final_filename_) || std::filesystem::is_symlink(final_filename_) ||
@@ -65,9 +66,17 @@ public:
                     writer_, "ego_audio", std::vector<std::string>{ "Audio" });
                 calibration_ = std::make_unique<core::McapTrackerChannels<core::EgoCalibrationRecord>>(
                     writer_, "ego_calibration", std::vector<std::string>{ "Calibration" });
-                device_state_ = std::make_unique<core::McapTrackerChannels<core::EgoDeviceStateRecord>>(
-                    writer_, "ego_device", std::vector<std::string>{ "DeviceState" });
+                if (record_device_diagnostics)
+                    device_state_ = std::make_unique<core::McapTrackerChannels<core::EgoDeviceStateRecord>>(
+                        writer_, "ego_device", std::vector<std::string>{ "DeviceState" });
             }
+            mcap::Metadata policy;
+            policy.name = "ego.recording";
+            policy.metadata = { { "record_device_diagnostics", record_device_diagnostics ? "on" : "off" },
+                                { "diagnostic_version", "2" } };
+            const auto policy_status = writer_.write(policy);
+            if (!policy_status.ok())
+                throw std::runtime_error("Unable to write EGO recording policy: " + policy_status.message);
             if (include_media)
             {
                 media_video_ = std::make_unique<core::McapTrackerChannels<core::EgoEncodedVideoFrameRecord>>(
@@ -292,9 +301,11 @@ private:
 std::unique_ptr<IMetadataSink> make_mcap_metadata_sink(const std::vector<StreamConfig>& streams,
                                                        const std::string& filename,
                                                        bool include_media,
-                                                       bool include_structured)
+                                                       bool include_structured,
+                                                       bool record_device_diagnostics)
 {
-    return std::make_unique<McapMetadataSink>(streams, filename, include_media, include_structured);
+    return std::make_unique<McapMetadataSink>(
+        streams, filename, include_media, include_structured, record_device_diagnostics);
 }
 
 } // namespace plugins::ego

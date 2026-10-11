@@ -30,6 +30,10 @@ scalar_options = {
     "plugin": (str, "--plugin"),
 }
 boolean_options = {
+    "record_device_diagnostics": (
+        "--record-device-diagnostics=on",
+        "--record-device-diagnostics=off",
+    ),
     "imu": ("--imu", "--no-imu"),
     "audio": ("--audio", "--no-audio"),
     "preview": ("--preview", "--no-preview"),

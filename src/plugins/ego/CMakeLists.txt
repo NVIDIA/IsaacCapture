@@ -4,10 +4,7 @@
 include(GNUInstallDirs)
 option(EGO_ENABLE_PREVIEW "Build the EGO SDL/FFmpeg preview" OFF)
 set(EGO_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/src/plugins/ego_camera")
-add_subdirectory(mcap_support)
-add_subdirectory(mcap_merge)
-add_subdirectory(merge)
-add_subdirectory(export_media)
+add_subdirectory(mcap)
 
 if(BUILD_PLUGIN_EGO_CAMERA)
     if(NOT DEFINED ORBBEC_SDK_ROOT AND DEFINED ENV{ORBBEC_SDK_ROOT})

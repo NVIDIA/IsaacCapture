@@ -52,7 +52,8 @@ void write_fixture(const fs::path& file,
                    const std::string& schema_name,
                    const std::vector<uint64_t>& times,
                    bool unknown = false,
-                   size_t payload_size = 4)
+                   size_t payload_size = 4,
+                   const std::string& diagnostic_policy = {})
 {
     mcap::McapWriter writer;
     mcap::McapWriterOptions options("teleop");
@@ -80,6 +81,13 @@ void write_fixture(const fs::path& file,
     metadata.name = "fixture";
     metadata.metadata = { { "file", file.filename().string() } };
     REQUIRE(writer.write(metadata).ok());
+    if (!diagnostic_policy.empty())
+    {
+        mcap::Metadata policy;
+        policy.name = "ego.recording";
+        policy.metadata = { { "record_device_diagnostics", diagnostic_policy }, { "diagnostic_version", "2" } };
+        REQUIRE(writer.write(policy).ok());
+    }
     const std::array attachment_data{ std::byte{ 1 }, std::byte{ 2 }, std::byte{ 3 } };
     mcap::Attachment attachment;
     attachment.logTime = 7;
@@ -261,3 +269,68 @@ TEST_CASE("ego_mcap_merge retains partial output on write failure", "[ego][unit]
     REQUIRE(fs::exists(temp.path / "capture.mcap"));
 }
 #endif
+
+TEST_CASE("ego_mcap_merge enforces diagnostics off across both inputs by schema", "[ego][unit]")
+{
+    TempDirectory temp;
+    const auto parent = temp.path / "session.mcap";
+    const auto fragment = temp.path / "capture.mcap";
+    const auto output = temp.path / "final.mcap";
+    SECTION("parent contains renamed diagnostics")
+    {
+        write_fixture(parent, "custom/diagnostic", "core.EgoDeviceStateRecord", { 1 });
+        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+    }
+    SECTION("fragment contains diagnostics despite policy")
+    {
+        write_fixture(parent, "head", "core.HeadPoseRecord", { 1 });
+        write_fixture(fragment, "custom/diagnostic", "core.EgoDeviceStateRecord", { 2 }, false, 4, "off");
+    }
+    SECTION("parent registers an empty diagnostic channel")
+    {
+        write_fixture(parent, "empty/diagnostic", "core.EgoDeviceStateRecord", {});
+        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+    }
+    SECTION("fragment registers an empty diagnostic channel")
+    {
+        write_fixture(parent, "head", "core.HeadPoseRecord", { 1 });
+        write_fixture(fragment, "empty/diagnostic", "core.EgoDeviceStateRecord", {}, false, 4, "off");
+    }
+    SECTION("parent declares a conflicting policy")
+    {
+        write_fixture(parent, "head", "core.HeadPoseRecord", { 1 }, false, 4, "on");
+        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+    }
+    REQUIRE_THROWS(plugins::ego::merge_recording(parent, fragment, output));
+    CHECK(fs::exists(parent));
+    CHECK(fs::exists(fragment));
+    CHECK_FALSE(fs::exists(output));
+}
+
+TEST_CASE("ego_mcap_merge preserves off policy and every other record", "[ego][unit]")
+{
+    TempDirectory temp;
+    write_fixture(temp.path / "session.mcap", "head", "core.HeadPoseRecord", { 1 });
+    write_fixture(temp.path / "capture.mcap", "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+    plugins::ego::merge_recording(temp.path / "session.mcap", temp.path / "capture.mcap", temp.path / "final.mcap");
+    mcap::McapReader reader;
+    REQUIRE(reader.open((temp.path / "final.mcap").string()).ok());
+    REQUIRE(reader.readSummary(mcap::ReadSummaryMethod::NoFallbackScan).ok());
+    CHECK(reader.statistics()->messageCount == 2);
+    CHECK(reader.statistics()->metadataCount == 4);
+    CHECK(reader.statistics()->attachmentCount == 2);
+    auto& data = *reader.dataSource();
+    mcap::TypedRecordReader records(data, sizeof(mcap::Magic), data.size() - sizeof(mcap::Magic));
+    unsigned policy_count = 0;
+    records.onMetadata = [&](const mcap::Metadata& metadata, auto)
+    {
+        if (metadata.name == "ego.recording")
+        {
+            ++policy_count;
+            CHECK(metadata.metadata.at("record_device_diagnostics") == "off");
+        }
+    };
+    while (records.next())
+        REQUIRE(records.status().ok());
+    CHECK(policy_count == 1);
+}

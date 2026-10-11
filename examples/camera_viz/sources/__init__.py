@@ -51,7 +51,9 @@ def resolve_video_paths(cfg: dict, base_dir) -> None:
             cam["path"] = str(p)
 
 
-def build_local_camera(spec: dict) -> List[FrameSource]:
+def build_local_camera(
+    spec: dict, *, renderer_cuda_device_id: int | None = None
+) -> List[FrameSource]:
     """Build local FrameSource(s) for one ``cameras:`` entry.
 
     Mono → [source]; ``stereo: true`` → [PairedFrameSource]. v4l2 rejects
@@ -135,6 +137,7 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
                 fps=int(spec.get("fps", 30)),
                 format=spec.get("format", "h264"),
                 gpu_id=int(spec.get("gpu_id", 0)),
+                renderer_cuda_device_id=renderer_cuda_device_id,
             )
         ]
     if kind == "video":

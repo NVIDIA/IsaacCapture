@@ -65,6 +65,11 @@ For stereo sources, window mode shows the left eye by default. Use
 it. Quote `"off"` in YAML. This option is available only in window mode;
 XR submits separate eye textures.
 
+EGO automatically uses the renderer's CUDA GPU for upload and decoding.
+Fatal EGO producer errors propagate through the official runner to the main
+thread instead of leaving the viewer waiting for frames. GPU configuration
+and retry boundaries are described in the [EGO preview binding guide](ego_preview/README.md).
+
 In XR mode, when the CloudXR service hosts the client (default if this `run`
 starts the service), open CloudXR.js on the headset at
 `https://<host>:48322/client/` (accept the self-signed cert, then CONNECT).

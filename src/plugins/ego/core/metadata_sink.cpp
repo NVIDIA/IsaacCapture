@@ -3,6 +3,10 @@
 
 #include "metadata_sink.hpp"
 
+#include "diagnostics.hpp"
+
+#include <filesystem>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,6 +49,10 @@ public:
     void on_pcm_audio_chunk(const core::EgoPcmAudioChunkT& value, int64_t local, int64_t device) override
     {
         for_each([&](auto& sink) { sink.on_pcm_audio_chunk(value, local, device); });
+    }
+    void on_capture_status(const CaptureStatus& status) override
+    {
+        for_each([&](auto& sink) { sink.on_capture_status(status); });
     }
     void close() override
     {
@@ -140,19 +148,49 @@ std::unique_ptr<FrameSink> create_frame_sink(const std::vector<StreamConfig>& st
             "--mcap-media=embedded with --collection-prefix requires --mcap-media-spool=PATH; "
             "the TeleopSession merger consumes this media fragment after the session closes");
     }
-    std::unique_ptr<IMetadataSink> metadata_sink;
-    if (!config.collection_prefix.empty())
-        metadata_sink = make_schema_metadata_sink(streams, config.collection_prefix);
-    else if (!config.mcap_filename.empty())
-        metadata_sink =
-            make_mcap_metadata_sink(streams, config.mcap_filename, config.mcap_media_mode == McapMediaMode::Embedded);
-    if (!config.collection_prefix.empty() && config.mcap_media_mode == McapMediaMode::Embedded)
+    std::set<std::filesystem::path> outputs;
+    const auto require_new_output = [&outputs](const std::string& path)
     {
-        std::vector<std::unique_ptr<IMetadataSink>> sinks;
-        sinks.push_back(std::move(metadata_sink));
-        sinks.push_back(make_mcap_metadata_sink(streams, config.mcap_media_spool, true, true));
-        metadata_sink = compose_metadata_sinks(std::move(sinks));
+        if (path.empty())
+            return;
+        if (std::filesystem::exists(path))
+            throw std::invalid_argument("Ego output already exists; refusing to overwrite: " + path);
+        if (!outputs.insert(std::filesystem::weakly_canonical(std::filesystem::absolute(path))).second)
+            throw std::invalid_argument("Ego outputs refer to the same path: " + path);
+    };
+    if (config.mcap_media_mode == McapMediaMode::MetadataOnly || config.keep_media_sidecars)
+    {
+        for (const auto& stream : streams)
+            require_new_output(stream.output_path);
+        require_new_output(config.audio_output);
     }
+    require_new_output(config.calibration_output);
+    require_new_output(config.mcap_filename);
+    if (config.mcap_media_mode == McapMediaMode::Embedded)
+        require_new_output(config.mcap_media_spool);
+    std::vector<std::unique_ptr<IMetadataSink>> sinks;
+    if (!config.collection_prefix.empty())
+        sinks.push_back(make_schema_metadata_sink(streams, config.collection_prefix, config.plugin_root_id));
+    else if (!config.plugin_root_id.empty())
+    {
+        try
+        {
+            sinks.push_back(make_schema_metadata_sink(streams, {}, config.plugin_root_id));
+        }
+        catch (const std::exception& error)
+        {
+            // Local recording must not acquire a mandatory OpenXR dependency for monitoring.
+            detail::log_warning() << "Ego device status session unavailable; local capture continues: " << error.what();
+        }
+    }
+    if (!config.mcap_filename.empty())
+        sinks.push_back(make_mcap_metadata_sink(streams, config.mcap_filename,
+                                                config.mcap_media_mode == McapMediaMode::Embedded, true,
+                                                config.record_device_diagnostics));
+    if (!config.collection_prefix.empty() && config.mcap_media_mode == McapMediaMode::Embedded)
+        sinks.push_back(
+            make_mcap_metadata_sink(streams, config.mcap_media_spool, true, true, config.record_device_diagnostics));
+    auto metadata_sink = sinks.empty() ? nullptr : compose_metadata_sinks(std::move(sinks));
     return std::make_unique<FrameSink>(
         streams, std::move(metadata_sink),
         config.mcap_media_mode == McapMediaMode::MetadataOnly || config.keep_media_sidecars);

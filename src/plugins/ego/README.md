@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # EGO Camera Plugin
 
 This plugin connects EGO stereo cameras to Isaac Capture. It captures
-`ColorLeft` and `ColorRight` video and, when available, accelerometer,
-gyroscope, microphone, calibration, and device state.
+`ColorLeft` and `ColorRight` video, available accelerometer and gyroscope data,
+calibration, and device state. Microphone capture is optional.
 
 The plugin selects a device by its left/right color sensors and advertised
 profiles. Run `ego.sh capabilities` for the connected device's firmware, USB
@@ -17,16 +17,18 @@ point-cloud, or YUYV streams.
 ## What you can do
 
 - Record stereo MJPEG, H.264, or H.265 elementary streams without a container.
-- Record 48 kHz, mono, S16_LE PCM audio as WAV.
+- Optionally record 48 kHz, mono, S16_LE PCM audio as WAV.
 - Record frame metadata, IMU batches, audio offsets, calibration, and device
   state in MCAP.
 - Choose raw-media-only, plugin-local MCAP, or TeleopSession MCAP workflows.
 - Create a self-contained private `embedded` MCAP containing encoded video and
-  PCM audio, then export it back to video files and WAV.
+  optional PCM audio, then export the recorded media.
 - Inspect device capabilities and apply validated exposure, gain, white-balance,
   image, bitrate, and IMU controls.
 - Preview stereo video with the plugin's SDL window or use the independent
   GPU `camera_viz` source.
+- Associate selected RGB, IMU, and audio samples offline using an independently
+  validated EGO time model, without changing the NV replay lifecycle.
 
 Capabilities have two levels. `--list-capabilities` reports profiles advertised
 for each sensor; starting the pipeline validates the exact simultaneous stream
@@ -36,6 +38,10 @@ SDK error instead of silently falling back.
 The wrapper defaults to stereo H.264 `1600x1300@30`. The plugin rejects
 resolved H.264/H.265 profiles above 30 FPS, even if the device advertises them.
 `fps=0` cannot bypass this check, and no lower-FPS fallback is selected.
+
+Available IMU is requested by default; audio is disabled unless explicitly
+enabled. See [Optional audio and synchronization limits](#optional-audio-and-synchronization-limits)
+before adding audio to a recording.
 
 ## Prerequisites
 
@@ -59,7 +65,7 @@ SDL2 or FFmpeg development packages.
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake ccache clang-format-14 patchelf \
-  pkg-config libudev-dev ffmpeg jq usbutils
+  pkg-config libudev-dev nlohmann-json3-dev libssl-dev ffmpeg jq usbutils
 ```
 
 The SDL preview is an optional build feature. Install its development packages
@@ -108,8 +114,8 @@ export ORBBEC_SDK=/absolute/path/to/OrbbecSDK_v2_linux_x86_64
 # 3. Save the software provenance and connected camera's advertised profiles.
 ./src/plugins/ego/ego.sh capabilities | tee capabilities.txt
 
-# 4. Record the supported default: stereo H.264 1600x1300@30, plus available
-#    IMU/audio, calibration, and a local metadata MCAP.
+# 4. Record stereo H.264 1600x1300@30, available IMU, calibration,
+#    and a local metadata MCAP. Audio is off by default.
 ./src/plugins/ego/ego.sh record --duration 30
 ```
 
@@ -119,7 +125,6 @@ The final command creates a Git-ignored directory:
 recordings/ego_<timestamp>/
 ├── raw/ColorLeft.h264
 ├── raw/ColorRight.h264
-├── Audio.wav
 ├── calibration.json
 ├── metadata.mcap
 ├── capabilities.txt
@@ -128,8 +133,11 @@ recordings/ego_<timestamp>/
 └── logs/capture.log
 ```
 
+Enabling audio adds `Audio.wav` in this sidecar workflow.
+
 `verification_report.txt` is created after the automatic post-recording
-verification succeeds. A standalone `verify` command refreshes it; a failed
+verification succeeds. A standalone `verify` command invalidates the previous
+success report before checking and refreshes it only after success; a failed
 run writes `verification_report.failed.txt` instead so incomplete evidence is
 not confused with an accepted report.
 
@@ -139,7 +147,8 @@ the request, while frame metadata and FFprobe describe what was actually
 captured.
 
 For an unlimited recording, omit `--duration` and stop with `Ctrl-C`. Wait for
-the final statistics and the shell prompt; this finalizes WAV and MCAP output.
+the final statistics and the shell prompt; this finalizes the media and MCAP
+output.
 
 Verify the run before sharing it. Do not type angle-bracket placeholders such
 as `<timestamp>` literally: replace them with the real directory name.
@@ -171,6 +180,37 @@ if retained sidecars exist, their video bytes must match the embedded payload
 exactly.
 If `requested_profile.json` is absent, `verify` warns that the
 requested-versus-recorded profile check was skipped.
+These integrity checks do not measure physical cross-stream synchronization.
+Use the [time-alignment workflow](#sample-time-alignment-and-offline-reading)
+and an independent physical error measurement for that conclusion.
+
+### Optional audio and synchronization limits
+
+For raw sound capture or timestamp investigation, request audio explicitly:
+
+```bash
+./src/plugins/ego/ego.sh record --duration 30 --audio
+```
+
+The TOML equivalent is `audio = true`. `--no-audio` overrides an audio-enabled
+configuration; omitting both the flag and the configuration setting leaves
+audio off. Native `--enable-audio` or `--audio-output=PATH.wav` arguments also
+explicitly enable capture.
+
+PCM capture, storage, and export remain available, but **audio cross-stream
+synchronization has not passed physical acceptance**. A tested Ethernet
+configuration with firmware 1.1.10 and an SDK 2.9.0 build returned raw audio
+timestamps advancing about 1.875 times faster than the duration implied by its
+48 kHz PCM samples. This observation does not establish the same fault for
+other devices, SDK builds, or USB capture paths. The adapter preserves the
+SDK values; neither a different source label nor successful WAV playback
+corrects their time scale or aligns audio to video/IMU.
+
+The recording verifier still checks audio when it is present and can reject
+recordings with this anomaly. Preserve failed recordings and logs for diagnosis.
+Include audio in an offline synchronization result only with an independently
+validated audio time model and continuity evidence. Disabling audio
+does not establish that the remaining RGB/IMU streams are physically synchronized.
 
 ### One-command script reference
 
@@ -229,10 +269,12 @@ The `[record]` table supports:
 | `format` | string | `mjpg`, `h264`, or `h265`. |
 | `width`, `height`, `fps` | integer | Exact stereo profile requested for both color streams. |
 | `device_uid` | string | UID reported by `capabilities`; omit to use the only connected compatible device. |
-| `imu`, `audio` | boolean | Request or disable the optional sensor streams. |
+| `imu` | boolean | Request available IMU; default `true`. |
+| `audio` | boolean | Request optional audio; default `false`. See the audio synchronization limits above. |
 | `preview` | boolean | Enable the SDL stereo preview. |
 | `mcap_media` | string | `metadata-only` or `embedded`. |
 | `keep_media_sidecars` | boolean | Retain video/WAV sidecars in embedded mode. |
+| `record_device_diagnostics` | boolean | Save diagnostic events in MCAP; default `true`. Monitoring and live diagnostics remain active. |
 | `reconnect_timeout` | integer | Same-device recovery window in seconds; zero disables recovery. |
 | `reconnect_interval_ms` | integer | Re-enumeration interval in milliseconds. |
 | `preset`, `plugin` | string | Select a build preset or an explicit plugin executable. |
@@ -252,9 +294,10 @@ the corresponding file values, while options after `--` are appended after
   --duration 120 --output recordings/ego_run --no-audio
 ```
 
-`record` automatically requests IMU and audio only if the device advertises
-them. It never silently changes an unsupported requested profile to another
-profile. Advertising Left and Right profiles separately does not prove that a
+`record` requests available IMU by default. Audio requires `--audio` or
+`audio = true` and is started only if the device advertises it. The wrapper
+never silently changes an unsupported requested profile to another profile.
+Advertising Left and Right profiles separately does not prove that a
 particular video/IMU/audio combination can run simultaneously; pipeline start
 and the completed `verify` run are the combination check.
 
@@ -272,9 +315,10 @@ is never substituted. SDK 2.9.0 EGO UIDs contain the USB enumeration address
 and can change after a physical reconnect, so UID is treated as an enumeration
 instance and may differ between capture epochs.
 The SDK pipelines, callbacks, exact stream profiles, calibration, and requested
-controls are rebuilt before capture resumes. Auxiliary streams must remain
-active throughout a five-second readiness window before a new epoch is
-committed. Set `--reconnect-timeout 0` to disable recovery;
+controls are rebuilt before capture resumes. After stream readiness, recovery
+waits five seconds, then requires each requested auxiliary stream to have
+arrived within the preceding 500 ms before committing the new epoch.
+Set `--reconnect-timeout 0` to disable recovery;
 `--reconnect-interval-ms` controls re-enumeration frequency.
 
 Every successful restart opens a new `capture_epoch` in video, IMU, audio,
@@ -293,6 +337,91 @@ Video, IMU, and audio are each monitored after recovery; a stream that stops
 for five seconds triggers another recovery instead of leaving a partial sensor
 set marked healthy.
 
+## Current availability and diagnostic events
+
+`TeleopSession.get_status()` is the current availability API. The EGO plugin
+uses NVIDIA's `PluginDeviceStatusPublisher` and the existing OpenXR session;
+it publishes one manifest device, `/camera/ego`, through
+`<plugin_root_id>/device_status`. Its observations come from the existing
+capture readiness, removal, liveness, and recovery checks, not a second probe.
+
+```python
+# Inside an active TeleopSession; plugin_root_id is your EGO PluginConfig value.
+session.step()
+device = session.get_device_status(plugin_root_id + "/camera/ego")
+provider = session.get_provider_status("plugin/" + plugin_root_id)
+```
+
+| Capture observation | NV device state / reason |
+|---|---|
+| No authoritative current conclusion | `UNKNOWN / NO_CURRENT_DATA` |
+| Target device confirmed absent | `DISCONNECTED / NO_HARDWARE_SIGNAL` |
+| Present but starting or recovering | `DEGRADED / NO_CURRENT_DATA` |
+| All requested streams ready and existing liveness checks pass | `CONNECTED / NONE` |
+| Nonrecoverable device failure while the provider is running | `FAILED / DEVICE_ERROR` |
+
+NVIDIA owns provider startup, failure, and teardown; a failed or stopped
+provider makes its device `UNAVAILABLE`. The official heartbeat is one second,
+with reports stale after three seconds. A blocked capture owner cannot be kept
+online by refreshing a cached report's timestamp. State publishing runs on the
+existing publishing thread, outside SDK callbacks. Status transport failures
+are logged and retried without independently failing recording; ordinary data
+publication and archive failures still prevent a successful recording.
+Standalone capture without `--plugin-root-id` has no monitoring dependency.
+Local recording launched with a root ID can continue if its status-only OpenXR
+session cannot start; the host then has no current report.
+
+`EgoDeviceStateTracker` serves a different purpose: it delivers individual
+**diagnostic events**, not the latest complete device condition. The collection
+remains `<collection-prefix>/DeviceState`, and its canonical recording topic
+remains `ego_device/DeviceState`. Each version-2 `EgoDeviceState` has a device UID,
+capture epoch, observation time in local common-clock nanoseconds, and exactly
+one typed `event`:
+
+| Python event type | Observations |
+|---|---|
+| `EgoSdkReport` | SDK report sequence, work mode, raw status/error flags, free storage bytes. |
+| `EgoCaptureSummary` | Capture health and reason, event queue capacity/peak, dropped event/video-frame-set totals, and `is_final`. |
+| `EgoRecoveryEvent` | `Started`, `Recovered`, or `Failed` stage, reason, and cumulative reconnect-attempt count. |
+| `EgoDeviceSnapshot` | Successfully read startup properties and optional `imu_temperature_c`. |
+
+Queue peaks, losses, and reconnect attempts accumulate for the capture instance,
+not separately for each epoch. A `Started` event carries the number of attempts
+already made; `Recovered`/`Failed` carry the count reached at that transition.
+SDK report sequences belong only to `EgoSdkReport`. Raw SDK flags are diagnostic
+values, not an independent USB connectivity decision.
+
+Temperature `None` means unavailable; `0.0` means a measured zero. Missing
+properties are omitted. Startup reads are timestamped when that batch finishes;
+they are not simultaneous periodic measurements, and recovery does not relabel
+them as new samples. Capture summaries retain the existing cadence and include
+a final event after producer drain. A final summary does not prove that the
+subsequent archive close and atomic publication succeeded.
+
+```python
+from isaaccapture.schema import EgoCaptureSummary, EgoDeviceSnapshot
+
+state = state_tracker.get_data(session.deviceio_session)
+if state is not None:
+    event = state.event
+    if isinstance(event, EgoCaptureSummary):
+        print(event.capture_health, event.reason, event.dropped_video_frame_sets)
+    elif isinstance(event, EgoDeviceSnapshot):
+        print(event.imu_temperature_c, event.properties)
+```
+
+Use the active DeviceIO session accepted by your tracker (`session` when working
+directly with DeviceIO). Event views are immutable and retain their record
+buffer after the parent view is released. There is no `valid_fields` mask or
+flat-field compatibility API.
+
+**Development protocol break:** version 2 replaces the former EGO diagnostic
+layout. The EGO device-state golden is intentionally renewed; other schema
+goldens and NVIDIA's compatibility checks are unchanged. Old files are retained,
+but requesting their diagnostic tracker can fail ReplaySession setup. No old
+diagnostic conversion is provided. The official monitoring schema remains
+version 1 and is independent of the EGO diagnostic version.
+
 ## Recording modes
 
 There are three recording workflows. `--mcap-filename` and
@@ -301,7 +430,7 @@ There are three recording workflows. `--mcap-filename` and
 | Workflow | Use it when | Media location |
 |---|---|---|
 | Raw media only | You only need video and/or WAV. | `.mjpg`, `.h264`, `.h265`, `.wav` files. |
-| Plugin-local MCAP | You need camera timing and sensor data in one local MCAP. | Default: sidecar video/WAV plus `metadata.mcap`. |
+| Plugin-local MCAP | You need camera timing and sensor data in one local MCAP. | Default: sidecar video, optional WAV, and `metadata.mcap`. |
 | TeleopSession MCAP | You need camera data alongside hand, head, controller, or other trackers. | DeviceIO writes the shared MCAP; raw media remains sidecar by default. |
 
 ### Raw media only
@@ -315,35 +444,36 @@ mkdir -p "$RUN/raw"
 
 timeout -s INT 30 "$EGO_PLUGIN" \
   --add-stream=camera=ColorLeft,output="$RUN/raw/ColorLeft.h264",format=h264,width=1600,height=1300,fps=30 \
-  --add-stream=camera=ColorRight,output="$RUN/raw/ColorRight.h264",format=h264,width=1600,height=1300,fps=30 \
-  --audio-output="$RUN/Audio.wav"
+  --add-stream=camera=ColorRight,output="$RUN/raw/ColorRight.h264",format=h264,width=1600,height=1300,fps=30
 ```
 
-The command ends normally after 30 seconds. Check `ColorLeft.h264`,
-`ColorRight.h264`, and `Audio.wav` are non-empty, then use the media checks in
+The command ends normally after 30 seconds. Check `ColorLeft.h264` and
+`ColorRight.h264` are non-empty, then use the media checks in
 [Inspect and play recordings](#inspect-and-play-recordings).
+To capture optional sound, add `--audio-output="$RUN/Audio.wav"` to the native
+command after reviewing the [audio limits](#optional-audio-and-synchronization-limits).
 
 ### Local metadata MCAP (default script behavior)
 
 The quick-start `record` command uses this mode. It writes the lightweight
-structured topics below while leaving high-throughput video and WAV as regular
-files:
+structured topics below while leaving high-throughput video as regular files:
 
 ```text
 ego_metadata/ColorLeft, ego_metadata/ColorRight
 ego_imu/Accel,           ego_imu/Gyro
-ego_audio/Audio
 ego_calibration/Calibration
 ego_device/DeviceState
 ```
 
 This mode avoids copying media bytes into an MCAP and keeps video playable
-through standard tools.
+through standard tools. IMU topics require an available, enabled IMU.
+Optional audio adds `ego_audio/Audio` indices and the separate `Audio.wav`.
 
 ### Self-contained private embedded MCAP
 
-Use `embedded` only when one private Ego MCAP must contain video bytes, PCM
-audio, metadata, IMU, calibration, and state. It does not transcode the data.
+Use `embedded` when one private Ego MCAP must contain video bytes, metadata,
+enabled IMU and optional PCM audio, calibration, and state. It does not
+transcode the data.
 During recording the file has a `.partial` suffix and is renamed only after a
 valid MCAP Footer is written and all capture, queue drain, media close, control
 restoration, and SchemaPusher cleanup steps succeed. A Footer alone does not
@@ -362,8 +492,10 @@ In this mode no sidecar video/WAV is written unless you add
 ```text
 ego_media/ColorLeft
 ego_media/ColorRight
-ego_media/Audio
 ```
+
+Enabling audio adds `ego_media/Audio` with PCM payloads; audio is not enabled
+by selecting `embedded`.
 
 Export a completed embedded MCAP for ordinary playback:
 
@@ -372,11 +504,12 @@ Export a completed embedded MCAP for ordinary playback:
 ```
 
 When `verify --plugin PATH` is used, the script requires
-`ego_mcap_export_media` from that plugin's installed directory or adjacent
-build-tree `export_media` directory. It does not fall back to an exporter from
+`ego_mcap_export_media` beside that plugin or in the same build tree's
+`ego/mcap/export_media_tool` directory. It does not fall back to an exporter from
 another preset or build tree.
 
-The output is `ColorLeft.<format>`, `ColorRight.<format>`, and `Audio.wav`.
+The output is `ColorLeft.<format>` and `ColorRight.<format>`, plus `Audio.wav`
+when audio was recorded.
 A remaining `metadata.mcap.partial` means the capture was interrupted or
 failed; do not treat it as a deliverable.
 
@@ -392,13 +525,13 @@ cmake --install build-ego-py3.11 --prefix install-ego-py3.11
 uv pip install --reinstall install-ego-py3.11/wheels/isaaccapture-*.whl
 ```
 
-For multi-device recording, create the five Ego Trackers together with your
-existing hand/head/controller Trackers, and give them channels in the same
-`McapRecordingConfig`:
+For multi-device recording, create trackers for the enabled EGO streams together
+with your existing hand/head/controller Trackers, and give them channels in the
+same `McapRecordingConfig`:
 
 ```python
 from isaaccapture.deviceio_trackers import (
-    EgoFrameMetadataTracker, EgoImuTracker, EgoAudioTracker,
+    EgoFrameMetadataTracker, EgoImuTracker,
     EgoCalibrationTracker, EgoDeviceStateTracker,
 )
 from isaaccapture.deviceio_session import McapRecordingConfig
@@ -411,12 +544,11 @@ trackers = [
         [EgoCameraStream.ColorLeft, EgoCameraStream.ColorRight],
     ),
     EgoImuTracker(prefix),
-    EgoAudioTracker(prefix + "/Audio"),
     EgoCalibrationTracker(prefix + "/Calibration"),
     EgoDeviceStateTracker(prefix + "/DeviceState"),
 ]
 tracker_names = list(zip(trackers, [
-    "ego_metadata", "ego_imu", "ego_audio", "ego_calibration", "ego_device",
+    "ego_metadata", "ego_imu", "ego_calibration", "ego_device",
 ]))
 
 # Add these trackers to the same TeleopSession and McapRecordingConfig as the
@@ -424,7 +556,7 @@ tracker_names = list(zip(trackers, [
 ```
 
 When a pipeline supplies these trackers through DeviceIO sources, use the same
-`ego_metadata`, `ego_imu`, `ego_audio`, `ego_calibration`, and `ego_device` source
+`ego_metadata`, `ego_imu`, `ego_calibration`, and `ego_device` source
 names. Source names determine MCAP topic bases; `--collection-prefix` determines
 OpenXR collection IDs independently.
 
@@ -435,8 +567,13 @@ Use plugin arguments such as:
 --add-stream=camera=ColorLeft,output=<run>/raw/ColorLeft.h264,format=h264,width=1600,height=1300,fps=30
 --add-stream=camera=ColorRight,output=<run>/raw/ColorRight.h264,format=h264,width=1600,height=1300,fps=30
 --enable-imu
---audio-output=<run>/Audio.wav
 ```
+
+For optional audio, also import and configure `EgoAudioTracker(prefix + "/Audio")`
+with recording/source name `ego_audio`, and add `--audio-output=<run>/Audio.wav`.
+The tracker carries indices; the WAV contains the sound samples. The
+[audio synchronization limits](#optional-audio-and-synchronization-limits) also
+apply to TeleopSession recordings.
 
 Set `shutdown_timeout_seconds=15.0` on this EGO `PluginConfig` to allow SDK stop,
 queue drain, and control restoration before the process deadline. Other plugins
@@ -466,8 +603,10 @@ working-directory ambiguity):
 --add-stream=camera=ColorLeft,format=h264,width=1600,height=1300,fps=30
 --add-stream=camera=ColorRight,format=h264,width=1600,height=1300,fps=30
 --enable-imu
---enable-audio
 ```
+
+For optional embedded audio, add `--enable-audio` and the audio tracker described
+above. It does not require a WAV sidecar.
 
 ```python
 from pathlib import Path
@@ -509,27 +648,266 @@ Audio, calibration, and state use `get_data(session)` with the same contract.
 Their collection IDs are the complete `prefix/Audio`, `prefix/Calibration`, and
 `prefix/DeviceState` strings; payloads have no `.data` wrapper.
 
+### Optional diagnostic recording
+
+Diagnostics are recorded by default. To omit them from plugin-local MCAP:
+
+```bash
+./src/plugins/ego/ego.sh record --duration 30 \
+  --output recordings/no_diagnostics --record-device-diagnostics=off
+```
+
+The TOML equivalent is `record_device_diagnostics = false` under `[record]`.
+The choice is recorded in `requested_profile.json` and the MCAP `ego.recording`
+Metadata, together with `diagnostic_version=2`. It removes only the diagnostic
+schema/channel/messages; capture checks, recovery, logs, NV monitoring, and
+live diagnostic publication remain active.
+
+For a normal NV session, validate a copied configuration before opening it:
+
+```python
+from isaaccapture.ego import configure_recording
+from isaaccapture.teleop_session_manager import TeleopSession
+
+config = configure_recording(config, record_device_diagnostics=False)
+with TeleopSession(config) as session:
+    session.step()
+```
+
+For embedded recording, pass the same keyword to `embedded_recording`.
+The helper accepts exactly one enabled EGO plugin. An explicit Python choice
+wins over effective manifest/instance plugin arguments; otherwise the default
+is on. With diagnostics off, remove `EgoDeviceStateTracker` from the explicit
+MCAP tracker-name list and from automatically recorded DeviceIO sources in the
+main pipeline, control pipeline, and sinks. The helper rejects these conflicts
+before capture instead of changing NVIDIA's automatic recording behavior.
+A manual live-only tracker can remain. Raw `TeleopSession` does not run this
+EGO-specific precheck unless you call `configure_recording` first.
+
+The helper also retains a recorded `EgoCalibrationTracker`, or adds one through
+the existing `McapRecordingConfig` interface when it is missing. Calibration
+contains the optional timing snapshot as well as spatial calibration. Use
+`--collection-prefix` and the canonical recording names shown above for EGO
+offline reading; custom calibration names remain valid for NV recording but
+are outside the offline reader's canonical topic layout.
+
+The merger checks both the parent session and the capture fragment. An off
+policy rejects diagnostic channels by schema identity even under custom topic
+names or with no messages. Conflicting policies fail too; inputs and partial
+outputs remain available for diagnosis. Canonical fragment tail data and
+`session_observed/` host observations retain their existing merge behavior.
+The replay example reads the recorded policy and omits the diagnostic tracker
+when it is off; `--record-device-diagnostics on|off` checks an expected policy.
+
 ### Replay structured Ego data
 
 Recordings use `Ego` schema types and `ego` topics; former Orbbec development
 interfaces and recordings are unsupported.
 
 From an environment containing the built or installed `isaaccapture` Python
-package, replay all five EGO tracker types headlessly through `ReplaySession`:
+package, inspect a recording containing RGB, IMU, and audio headlessly through
+`ReplaySession`. This example requires an Audio channel; point `AUDIO_RUN` to
+an audio-enabled recording rather than the default quick-start recording:
 
 ```bash
 uv pip install -e ./examples/mcap_record_replay
+AUDIO_RUN=/absolute/path/to/recording_with_audio
 python -m isaaccapture_examples.mcap_record_replay.replay_ego \
-  "$RUN/metadata.mcap"
+  "$AUDIO_RUN/metadata.mcap"
 ```
 
 The example reads `ColorLeft`/`ColorRight`, `Accel`/`Gyro`, audio,
-calibration, and device-state records, prints their capture epochs and key
+calibration, and enabled diagnostic events, prints their capture epochs and key
 fields, and exits nonzero if any expected channel is empty. Use
 `--max-updates N` for a short inspection. This replays structured metadata and
 sensor records; use FFmpeg or `export-media` to decode and view video payloads.
 The final MCAP produced by `isaaccapture.ego.embedded_recording` can also be
 passed to this command.
+
+The example reports a missing Audio channel for an audio-disabled recording.
+That result does not make the dataset incomplete for its selected streams.
+Use `verify` for recording integrity and the selected-stream offline interface
+below for sample association.
+
+### Sample-time alignment and offline reading
+
+NV `ReplaySession.update()` advances each configured tracker to its next
+record. One update is not a synchronized video/IMU/audio bundle. Keep
+`replay_ego` for structured replay and use `isaaccapture.ego.sync` when a
+consumer needs samples associated by capture time. Stereo preview and XR
+display continue using their existing left/right pairing.
+
+Streams are recorded independently at their own rates. Raw timestamps and
+host arrival times remain distinct. The optional `EgoCalibration.time_alignment`
+snapshot records clock sources, device/profile identity, model version, epoch
+and mapping provenance through the normal calibration channel. Optional
+`EgoAudioChunk.timing` and `EgoPcmAudioChunk.timing` record a continuous segment
+ID, the retained block's first sample index, and observed discontinuities.
+These are EGO payload extensions within NV's existing transport and MCAP
+format; the public timestamp and IMU sample layout are unchanged.
+
+Without a validated model, local sample times retain the arrival-time fallback
+and the recording is marked unverified. `time_alignment.sources.audio` is
+`sdk_audio_raw`: it identifies the raw `AudioFrame.getTimeStampUs()` value
+returned by the SDK, without claiming a hardware clock or a block-start reference.
+Its semantics depend on the transport and SDK version. The audited USB path
+estimates audio time from host time and sample count; the audited Ethernet path
+converts an RTP timestamp. The network clock rate, sample reference and relationship
+to camera/IMU time still require verification. Existing recordings can retain the
+older `sdk_host_estimated_block_start` label; that label alone does not establish
+their transport or clock semantics.
+
+Retained sample indices do not prove that the device lost no samples. The adapter
+therefore records `continuity_known=false`; an offline audio model needs separate
+continuity evidence before its windows can be complete.
+
+For an already validated reusable RGB/IMU calibration, pass it before capture:
+
+```bash
+./src/plugins/ego/ego.sh record --duration 30 -- \
+  --time-alignment=/absolute/path/capture_profile.json
+```
+
+The version-1 file has `scope="capture_profile"`, `status="validated"`, a
+`model_id`, `reference_stream="left_rgb"`, exact `identity` (`serial`,
+`firmware`, `sdk_version`, `sdk_binary_sha256`), and exact `profile` (`video` format/width/height/fps,
+`imu_rate_hz`, `audio` sample_rate_hz/channels/bits_per_sample). Each enabled
+RGB/IMU entry in `streams` contains `offset_ns` and `scale=1`; left RGB
+must be the identity mapping. Recording-bound models can fit drift; their
+nonunit scales cannot be rebased onto a later capture's unknown clock origin.
+Relative time is:
+
+```text
+t_ref = left_epoch_origin + scale * (raw_time - left_epoch_origin) + offset_ns
+```
+
+`validation` supplies `method`, `evidence`, `max_abs_error_ns`, `uncertainty_ns`
+and `held_out_duration_ns`. The independent duration must be at least 15 minutes
+and error plus uncertainty must be at most half a configured video frame.
+`max_capture_duration_ns` limits use from the first archived left frame and
+cannot exceed the validated duration. After expiry the adapter preserves raw
+data, records the boundary and returns to unverified arrival-time fallback;
+offline reads do not extend the calibrated interval into that tail. The plugin
+hashes the SDK library actually loaded by its process before validating identity.
+The plugin rejects malformed files before creating capture outputs and rejects
+identity/profile mismatches before starting capture pipelines. Files are
+limited to 8 KiB. A recording-bound file with old epoch/audio anchors cannot be
+reused as a capture profile; the recording calibration tool below does not
+automatically produce a reusable profile.
+
+The adapter anchors NV local time at the first archived left frame's host
+arrival. This provides a common local representation of the validated EGO
+relative clock; its absolute host-clock accuracy remains unverified. It does
+not validate alignment to another device. Audio still uses arrival-time
+fallback during capture. Updated calibration snapshots remain within the
+existing 32 KiB transport limit. A reconnect or observed clock discontinuity
+opens another epoch/segment instead of interpolating across it.
+Snapshots also identify the first mapped raw sample in each stream; an earlier
+arrival-time fallback belongs to a different timestamp mode.
+
+Install the offline dependency into an environment containing the built
+`isaaccapture` package, then select only the streams your consumer needs:
+
+```bash
+uv pip install 'isaaccapture[ego]'
+uv pip install -e ./examples/mcap_record_replay
+python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
+  "$RUN" --required-streams left_rgb right_rgb accel gyro \
+  --output "$RUN/sync_audit.json"
+```
+
+The reader accepts the standard sidecar directory (`metadata.mcap`,
+`raw/ColorLeft.<format>`, `raw/ColorRight.<format>`, and `Audio.wav` when audio
+was recorded) or a completed embedded MCAP. Metadata-only MCAP without
+accessible media is not a complete
+dataset. Merged recordings consume canonical EGO channels and ignore
+`session_observed/` duplicates. MCAP `logTime` and latest-value tracker getters
+are not sample-time sources.
+
+```python
+from isaaccapture.ego.sync import iter_sync_windows
+
+for window in iter_sync_windows(
+    run,
+    required_streams=("left_rgb", "right_rgb", "accel", "gyro"),
+    alignment=run / "alignment.json",  # Explicit recording-bound calibration.
+):
+    if window.complete:
+        consume(window.left_rgb, window.right_rgb, window.accel, window.gyro)
+    else:
+        record_gap(window.start_time_ns, window.reasons)
+```
+
+For a recording with audio and an independently validated audio model, add
+`"audio"` to `required_streams` to receive `window.audio` sample slices. The
+known timestamp anomaly does not make such a model available automatically;
+see the [audio limits](#optional-audio-and-synchronization-limits).
+
+Consecutive continuous reference frames define half-open windows
+`[t_k, t_{k+1})`. Windows contain video media references, every IMU sample in
+the interval, audio sample slices, aligned time, model ID and completeness
+reasons. `reference_stream="right_rgb"` selects right-frame windows while the
+model still uses the left camera's canonical clock. `epoch`, `start_time_ns`
+and `end_time_ns` limit selection; only complete reference-frame intervals
+inside a requested range are returned. These bounds are aligned nanoseconds.
+Missing data returns incomplete windows without stale samples or fabricated
+fills. Missing required streams or a trusted model raises an error. The audit
+also lists tails, unpaired frames, unassigned sample ranges and gaps.
+
+A valid model captured with the recording is the default. After-recording
+calibration must be supplied explicitly as `alignment`; it does not rewrite
+the original MCAP. Recording-bound models use `scope="recording"` and contain
+device/profile identity, MCAP/media SHA-256 fingerprints, independent
+validation and nonoverlapping epoch validity ranges. RGB/IMU mappings contain
+integer `source_anchor_ns`, `reference_anchor_ns`, positive `scale`, and
+`validation_start_ns`/`validation_end_ns` in the reference clock. Effective
+RGB/IMU intervals must stay within those independent validation bounds. Audio
+segments contain `segment_id`, `first_sample_index`, `sample_count`,
+`reference_anchor_ns`, fitted `period_ns` and an evidence-backed
+`continuity_verified` boolean, and the same validation bounds. Audio slices
+outside the validated segment interval remain incomplete. They express:
+
+```text
+t_sample = reference_anchor_ns + period_ns * (sample_index - first_sample_index)
+```
+
+Prepare independently annotated physical events, then fit a recording-bound
+model without opening a device:
+
+```bash
+python -m isaaccapture_examples.mcap_record_replay.calibrate_ego_sync \
+  "$RUN/events.json" --output "$RUN/alignment.json"
+python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
+  "$RUN" --required-streams left_rgb right_rgb accel gyro \
+  --alignment "$RUN/alignment.json" --output "$RUN/rgb_imu_audit.json"
+```
+
+The version-1 event manifest names `model_id`, `recording`, optional
+`media_paths`, `identity`, `profile` and `epochs`. Each epoch names `epoch`,
+`valid_from_ns`, `valid_to_ns` and `streams`. A fitted RGB/IMU stream provides
+`calibration_events`, separate `validation_events`, `validation_start_ns` and
+`validation_end_ns`. Each event provides `event_id`, `source_value` (raw ns for
+RGB/IMU, sample index for audio), `reference_time_ns`, `uncertainty_ns`, and an
+`evidence` file path. Audio uses `streams.audio.segments`, adding
+`segment_id`, `first_sample_index`, `sample_count`, and optional
+`continuity_verified` (default false) to those event fields. Manifest paths
+resolve relative to the manifest directory; evidence files are hashed.
+
+At least three calibration events and three distinct validation events are
+required per fit. Held-out events cover the beginning, middle, and end of a
+15-minute interval. Results apply to the validated duration; longer recordings
+need longer independent evidence. Uncertainty includes exposure reference, event detection
+and light/sound source delay. No fixed observed offset or factory `time_offset`
+is applied without verifying its units, direction and prior compensation.
+The tools do not detect physical events or manufacture acceptance evidence.
+The Python calibration helpers are also available from `isaaccapture.ego`.
+
+Both commands refuse to overwrite outputs. They preserve an unverified or
+incomplete JSON result and exit nonzero; a successful selected-stream audit
+applies only to its returned windows. The audit stores compact record/sample
+ranges without copying all IMU XYZ values into JSON. Physical measurements
+must still accompany the model; software association alone is not physical
+acceptance.
 
 ## Inspect and play recordings
 
@@ -540,13 +918,19 @@ MP4 for a desktop player:
 # Replace RUN with a real recording directory.
 ffmpeg -v error -f h264 -i "$RUN/raw/ColorLeft.h264" -f null -
 ffmpeg -v error -f h264 -i "$RUN/raw/ColorRight.h264" -f null -
-ffprobe -v error -show_entries stream=codec_name,sample_rate,channels \
-  -of default=noprint_wrappers=1 "$RUN/Audio.wav"
-
 ffmpeg -y -f h264 -framerate 30 -i "$RUN/raw/ColorLeft.h264" -c:v copy "$RUN/ColorLeft.mp4"
 xdg-open "$RUN/ColorLeft.mp4"
+```
+
+If audio was recorded, inspect and listen to the WAV separately:
+
+```bash
+ffprobe -v error -show_entries stream=codec_name,sample_rate,channels \
+  -of default=noprint_wrappers=1 "$RUN/Audio.wav"
 xdg-open "$RUN/Audio.wav"
 ```
+
+Opening video and WAV separately does not demonstrate synchronized playback.
 
 The plugin removes only recognized Ego timestamp-only SEI units, including
 the legacy `ORBBEC,EGO_` form and firmware 1.1.1's `EGO..._[LR],timestamp_us=...`
@@ -637,6 +1021,11 @@ The config defaults to H.264 `1600x1300@30`. Set `format` to `h265` or `mjpg`
 and choose an advertised stereo profile. H.264/H.265 requires a working CUDA
 toolkit and the native NVDEC codec; MJPEG uses SDK RGB conversion and CuPy for
 GPU upload.
+EGO's `gpu_id: 0` means automatic selection: the viewer supplies its actual
+CUDA device ID, shared by both eyes and decoders. A nonzero pin must match that
+device or startup fails before opening EGO. Capture-open/read failures retain
+their retry behavior; unhandled producer failures propagate through NVIDIA's
+`latest()` / `VizRunner.wait()` interfaces and stop the viewer with an error.
 The SDK's udev rules must be installed before opening the camera as a non-root
 user. See the [EGO preview binding guide](../../../examples/camera_viz/ego_preview/README.md)
 for binding builds, API, and GPU data flow.
@@ -644,6 +1033,23 @@ for binding builds, API, and GPU data flow.
 `camera_viz` and the recording plugin both open the physical camera; do not run
 them against the same EGO at the same time. For desktop stereo inspection and
 XR output options, see the [viewer guide](../../../examples/camera_viz/README.md#mode-1--direct).
+
+## Source layout
+
+| Directory | Responsibility | CMake target |
+|---|---|---|
+| `core/` | Camera capture, device controls, recording sinks, and optional preview. | `ego::camera_core` |
+| `app/` | Camera plugin command-line entry point. | `ego_camera_plugin` |
+| `mcap/io/` | Shared MCAP reader/writer implementation and checked writes. | `ego::mcap_support` |
+| `mcap/merge/` | Reusable session and capture-fragment merge logic. | `ego::mcap_merge` |
+| `mcap/merge_tool/` | MCAP merge command-line entry point. | `ego_mcap_merge` |
+| `mcap/export_media_tool/` | Embedded video and audio export tool. | `ego_mcap_export_media` |
+| `tools/` | Python configuration and recording-verification helpers. | — |
+
+`mcap/CMakeLists.txt` groups the four MCAP targets, which build without the
+Orbbec SDK. The plugin and both native tools are installed together under
+`plugins/ego`. Library `inc/` directories contain headers shared with other
+targets; private headers stay beside their sources.
 
 ## Native CLI reference
 
@@ -665,13 +1071,17 @@ Important options:
 | `--reconnect-timeout=N` | Wait N seconds for the same physical device after disconnect; 0 disables recovery. |
 | `--reconnect-interval-ms=N` | Set the device re-enumeration interval; default 1000 ms. |
 | `--enable-imu --imu-rate=400\|1000` | Capture accelerometer and gyroscope when available. |
-| `--audio-output=PATH.wav` | Capture PCM audio as WAV. |
+| `--enable-audio` | Explicitly enable optional PCM audio; no WAV path is needed for embedded capture. |
+| `--audio-output=PATH.wav` | Explicitly enable optional PCM audio and write a WAV sidecar. |
 | `--calibration-output=PATH.json` | Export structured calibration and original SDK YAML. |
+| `--time-alignment=PATH` | Load a validated, identity/profile-matched reusable RGB/IMU capture profile. |
 | `--mcap-filename=PATH` | Write a plugin-local MCAP. |
 | `--collection-prefix=PREFIX` | Publish data for a TeleopSession. |
 | `--mcap-media=metadata-only\|embedded` | Select sidecar or private self-contained local media handling. |
 | `--keep-media-sidecars` | Also write raw video/WAV in embedded mode. |
 | `--mcap-media-spool=PATH` | Required for embedded TeleopSession media merging. |
+| `--record-device-diagnostics=on\|off` | Record EGO diagnostic events; default on. |
+| `--plugin-root-id=ID` | Launcher-owned identity for NV device monitoring. |
 
 `--list-capabilities` reports SDK and firmware identity, serial and UID, USB
 connection, global-timestamp support, per-sensor advertised profiles, and
@@ -679,6 +1089,8 @@ property ranges. The wrapper adds plugin and resolved SDK-library hashes so a
 recording can distinguish SDK builds that share a version number. Global
 timestamp is not synthesized when the device reports it unsupported; recorded
 frames retain host monotonic arrival time and raw device timestamp separately.
+Validated EGO relative mappings may produce local sample times through the
+adapter; neither global time nor absolute host sampling accuracy is inferred.
 
 ## Build, installation, and review checks
 
