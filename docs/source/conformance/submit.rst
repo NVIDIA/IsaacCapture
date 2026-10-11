@@ -8,8 +8,8 @@
 Submit Your Results
 ===================
 
-This page shows how to package a checked take and attach it to your integration pull request. You
-can submit any verdict, as long as its report goes with it.
+This page shows how to package a checked take and submit it with your integration pull request.
+You can submit any verdict, as long as its report goes with it.
 
 .. contents:: Steps
    :local:
@@ -81,26 +81,16 @@ The archive lands next to the take directory:
        ├── report.json
        └── report.txt
 
-4. Send it
-----------
+4. Submit the form
+------------------
 
-.. admonition:: 🚧 Submission channel not final
-   :class: caution
+Fill in the submission form with the link to your pull request and upload the archive from step 3.
+The form asks you to sign in with a Google account.
 
-   We have not settled how archives reach us. These are the two candidates; if you are ready
-   before this is settled, use A.
+.. button-link:: https://forms.gle/hLqAhNkae4bhAUX79
+   :color: primary
 
-.. grid:: 1 1 2 2
-   :gutter: 3
-
-   .. grid-item-card:: A · Link in your pull request
-
-      Upload the archive to storage you control and put the link in the pull request
-      description. The link must open without signing in.
-
-   .. grid-item-card:: B · Submission form
-
-      A form that takes your pull request link and the archive. Link to come.
+   Open the submission form
 
 5. Describe the take in your pull request
 -----------------------------------------
@@ -113,7 +103,6 @@ Add one block per suite to the pull request description:
    Suite:    hand
    Take:     manus_2026-03-04_101530
    Verdict:  pass
-   Archive:  <link to manus_2026-03-04_101530-hand.pass.tar.gz>
    Notes:    <for fail, retake or insufficient_data: which checks failed, and why>
 
 6. What happens next
@@ -125,4 +114,5 @@ viewer, and reply on your pull request.
 .. note::
 
    The archive holds the performer's recorded motion and the recorder log, which shows file paths
-   and other details of your workstation. A link in a public pull request is public.
+   and other details of your workstation. The form sends it to us only; keep it out of the pull
+   request.

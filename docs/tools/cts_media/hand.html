@@ -16,8 +16,8 @@ const FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const BG = "#f7f8fa";
 const T = {
   n_above: "from above", n_side: "thumb side", n_palm: "from below",
-  n_rear_right: "rear right", n_yours: "your view",
-  holding: "holding", turning: "turning", moving: "moving into pose…",
+  n_yours: "your view", n_turning: "rotating view",
+  hold: "hold", holding: "holding", turning: "turning", moving: "moving into pose…",
   left: "Left", right: "Right", both_palms: "palms pressed together",
   palm_you: "palm toward you", palm_out: "palm out", still: "still",
 };
@@ -27,7 +27,6 @@ const VIEWS = {
   above: {yaw: 0, pitch: -0.75, name: T.n_above},
   thumb: {yaw: -1.45, pitch: -0.2, name: T.n_side},
   palm: {yaw: -2.6, pitch: 0.7, name: T.n_palm},
-  palms: {yaw: 1.0, pitch: -0.25, name: T.n_rear_right},
   facing: {yaw: 0, pitch: -0.12, name: T.n_yours},
 };
 const PINCH = {pinch_index: "index", pinch_middle: "middle", pinch_ring: "ring", pinch_little: "little"};
@@ -92,9 +91,14 @@ function table(P, T) {
 
 function render(si, fi) {
   const s = DATA.steps[si];
-  const view = VIEWS[s.view];
   const n = s.frames.length;
   const frame = s.frames[fi];
+  const holding = fi >= s.hold_from;
+  // An orbiting step turns the camera about the vertical through its target.
+  const base = VIEWS[s.view];
+  const view = s.orbit ? {yaw: base.yaw + s.orbit[fi], pitch: base.pitch, name: holding ? T.n_turning : base.name} : base;
+  // Contact rings only once the touch is made; the rolls start in contact.
+  const contact = holding || s.label in ROLLS;
   const labels = [];
   ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
 
@@ -107,7 +111,7 @@ function render(si, fi) {
     const items = [];
     frame.forEach(hand => items.push(...handItems(hand, P, focal)));
     items.sort((a, b) => b.z - a.z).forEach(it => it.fn());
-    if (TIPS.has(s.label)) ring(P(frame[0][MIDDLE_TIP]), P(frame[1][MIDDLE_TIP]));
+    if (TIPS.has(s.label) && contact) ring(P(frame[0][MIDDLE_TIP]), P(frame[1][MIDDLE_TIP]));
     if (TIPS.has(s.label)) frame.forEach((hand, h) => labels.push([h, W * (h ? 0.78 : 0.22), hand]));
     else labels.push([null, W / 2, null]);
   } else {
@@ -123,7 +127,7 @@ function render(si, fi) {
       ctx.save(); ctx.beginPath(); ctx.rect(h * half, 0, half, H); ctx.clip();
       table(P, T);
       handItems(hand, P, focal).sort((a, b) => b.z - a.z).forEach(it => it.fn());
-      if (PINCH[s.label]) ring(P(hand[DATA.chains.thumb.at(-1)]), P(hand[DATA.chains[PINCH[s.label]].at(-1)]));
+      if (PINCH[s.label] && contact) ring(P(hand[DATA.chains.thumb.at(-1)]), P(hand[DATA.chains[PINCH[s.label]].at(-1)]));
       ctx.restore();
       labels.push([h, cx, hand]);
     });
@@ -146,13 +150,15 @@ function render(si, fi) {
   }
 
   // Frames are 1/fps apart, so the elapsed hold is exact.
-  const holding = fi >= s.hold_from;
   const elapsed = (fi - s.hold_from) / DATA.fps;
+  const status = s.still ? `${T.hold} ${s.hold} s`
+    : holding ? `${s.label in ROLLS ? T.turning : T.holding} ${elapsed.toFixed(1)} / ${s.hold} s` : T.moving;
   ctx.fillStyle = holding ? "#1f7a44" : "#9aa2ad";
   ctx.font = `600 18px ${FONT}`; ctx.textAlign = "left";
-  ctx.fillText(holding ? `${s.label in ROLLS ? T.turning : T.holding} ${elapsed.toFixed(1)} / ${s.hold} s` : T.moving, 12, 26);
+  ctx.fillText(status, 12, 26);
   ctx.fillStyle = "#8a929c"; ctx.font = `18px ${FONT}`; ctx.textAlign = "right";
   ctx.fillText(view.name, W - 12, 26);
+  if (s.still) return;
   ctx.fillStyle = "#e3e6ea"; ctx.fillRect(12, H - 6, W - 24, 3);
   ctx.fillStyle = holding ? "#1f7a44" : "#9aa2ad";
   ctx.fillRect(12, H - 6, (W - 24) * fi / (n - 1), 3);

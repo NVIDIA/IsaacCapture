@@ -38,9 +38,10 @@ How each step runs
    :alt: The ten timed steps in a row, and step 2 zoomed in: spoken cue, get into the pose with no time limit, press, beep, hold for the countdown, tick.
    :width: 100%
 
-- The cue plays through the workstation speakers and shows on the capture panel. Once it reads
-  *ready when you are*, press the controller trigger, or space in the capture panel's browser
-  tab (not the terminal).
+- **Audio is optional.** The capture panel shows each cue as text. To hear the cues, connect
+  speakers to the workstation; they do not play in the headset.
+- Once the capture panel reads *ready when you are*, press the controller trigger, or space in
+  the capture panel's browser tab (not the terminal).
 - A press at any other moment is ignored on purpose: no reaction, nothing queued.
 - A press during the cue cuts the cue short. Press again when you are ready.
 - Held poses (steps 1–3, 10): get into the pose, then press. Motions (4–9): press, then move.
@@ -335,7 +336,7 @@ Troubleshooting
    * - A press does nothing
      - It came outside *ready when you are*, or the key went to another window. Click the
        capture panel page, then press space.
-   * - No sound, or an error naming ``aplay`` or a Git LFS pointer
+   * - An error naming ``aplay`` or a Git LFS pointer
      - Install ``alsa-utils`` or run ``git lfs pull`` (:doc:`setup`), then record again.
    * - *the session did not open: …*, on the capture panel
      - Nothing was recorded. *Required plugin … was not discovered*: ``--plugin`` must match the

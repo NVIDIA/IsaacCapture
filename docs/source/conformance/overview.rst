@@ -58,7 +58,7 @@ How it works
       :link: submit
       :link-type: doc
 
-      Package the take with its report and link it from your pull request.
+      Package the take with its report and send it through the submission form.
       +++
       Submit Your Results
 
@@ -76,7 +76,7 @@ Run the suite for the data your device produces. A device that produces both run
       :link: hand
       :link-type: doc
 
-      - **For:** gloves such as MANUS or Wuji, or a headset's own optical hand tracking
+      - **For:** gloves, or a headset's own optical hand tracking
       - **Records:** ``core.HandPoseRecord``, 26 OpenXR joints per hand, 21 of them judged
       - **Script:** 11 gestures, seated at a table, about 2 minutes
       - **Pacing:** automatic; a spoken cue, a count-in, a beep, then a timed hold
@@ -87,7 +87,7 @@ Run the suite for the data your device produces. A device that produces both run
       :link: full_body
       :link-type: doc
 
-      - **For:** PICO body tracking, or a mocap suit through a vendor backend
+      - **For:** headset body tracking, or a mocap suit through a vendor backend
       - **Records:** ``core.FullBodyPoseRecord``, 24 joints
       - **Script:** 10 poses and motions, standing
       - **Pacing:** self-paced; you press when ready, then hold the pose or do the motion
@@ -120,9 +120,9 @@ What the checker looks at
      - Hands flat on a level table, pinch finger identity, arm raised overhead, squat depth,
        march rhythm
 
-The checker needs only the ``mcap`` and ``flatbuffers`` Python packages and runs on Linux or
-macOS. It is deterministic, so we re-run it on your take and get the same verdict. Some checks are
-only measured and reported; the suite pages say which.
+The checker needs only the ``mcap`` and ``flatbuffers`` Python packages. It is deterministic, so
+we re-run it on your take and get the same verdict. Some checks are only measured and reported;
+the suite pages say which.
 
 .. _cts-overview-verdicts:
 
@@ -161,7 +161,7 @@ Verdicts
        not run.
      - Check that the device streamed on its channel for the whole take, then record again.
 
-Every ``FAIL`` counts toward the verdict. A take checked without its labels file still gets a verdict, even ``pass``, but every step check
+A take checked without its labels file still gets a verdict, even ``pass``, but every step check
 reads ``n/a``: keep the labels file beside the recording. You can submit any verdict with its
 report.
 
@@ -176,10 +176,11 @@ report.
 What you need
 -------------
 
-- A Linux workstation with the repository built for Python 3.12. The checker also runs on macOS.
+- A Linux workstation with the repository built for Python 3.12.
 - An XR headset connected through CloudXR, even when your device produces the joints.
 - Your device's plugin built and installed, if it has one.
-- Speakers on the workstation that the performer can hear: the spoken cues play there.
+- Optional: speakers on the workstation to hear the spoken cues. The capture panel also shows
+  every cue as text.
 - Room for the script (a table and chair for hand, standing space for full body), and ideally a
   second person at the screen.
 

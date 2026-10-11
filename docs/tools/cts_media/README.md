@@ -38,7 +38,7 @@ OUT=$(mktemp -d)
 python3 docs/tools/cts_media/build_pages.py --out "$OUT"
 node docs/tools/cts_media/capture.mjs "$OUT/hand.html" "$OUT/hand" 480 300 2
 node docs/tools/cts_media/capture.mjs "$OUT/full_body.html" "$OUT/full_body" 320 320 2
-python3 docs/tools/cts_media/encode.py "$OUT/hand" docs/source/_static/cts/hand
+python3 docs/tools/cts_media/encode.py "$OUT/hand" docs/source/_static/cts/hand --stats full
 python3 docs/tools/cts_media/encode.py "$OUT/full_body" docs/source/_static/cts/full_body
 python3 docs/tools/cts_media/rehearsal_audio.py docs/source/conformance/hand-rehearsal.mp3
 ```
@@ -53,14 +53,19 @@ Stage the results with a plain `git add`: GIFs and MP3s go through Git LFS.
   suite's `capture/session.py`; file names follow that order.
 - `build_pages.py` also redraws two hand poses to match the cues, without touching the
   oracle: flat on the table with the fingers together and the thumb beside the index,
-  and both thumbs closed for palms together.
-- Hand: a 1.2 s move into the pose, then the hold from beep to tick at real speed.
+  and, for palms together, each thumb straight beside its own index, clear of the seam.
+- Hand, from the oracle's poses and placements, holds at real speed: the flats are one
+  still frame; the pinches close from an open hand and the fingertips come together
+  from ~13 cm apart, each over 1 s, then hold; fist and palms hold while the camera
+  circles the fists once and swings ±70° from your view of the palms. The rolls are the
+  oracle's take: a 1.2 s move into the pose, then the turn from beep to tick.
 - Full body: the oracle's windows are shorter than the real ones, so each window is
   resampled to play for the session's duration. Still steps open with a short
   "getting into the pose" lead-in, which a performer does before pressing.
 - Each GIF holds its last frame for 0.6 s, then loops. The canvas font is pinned to
   Helvetica Neue / Helvetica / Arial.
-- Keep each suite under 2.5 MB and each GIF under 1 MB; `encode.py` prints the sizes.
+- Keep the hand suite under 3 MB (3,000,000 bytes), the full-body suite under 2.5 MB and
+  each GIF under 1 MB; `encode.py` prints the sizes.
 
 `hand.html` and `full_body.html` are render-only templates: `build_pages.py` fills in the
 data, `capture.mjs` calls their `setup()` and `render(step, frame)`.

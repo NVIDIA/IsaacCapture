@@ -55,6 +55,8 @@ How each step runs
    The cue is spoken, three counts lead in, a beep opens the hold, a tick
    closes it. The capture panel shows **listen**, **get into position** (3, 2, 1), **hold**.
 
+- **Audio is optional.** The capture panel shows each cue as text, with the count. To hear
+  the cues, connect speakers to the workstation; they do not play in the headset.
 - **Be in the pose by the beep, then keep still.** Move during the cue and count-in.
 - **The first 40% of each hold is ignored**, so a slightly late arrival is fine.
 - **The two rolls are measured whole, from beep to tick.** The cue's "at the tone" means
@@ -88,7 +90,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 2 · Fists
       :img-top: /_static/cts/hand/02-fist.gif
-      :img-alt: Both hands close into tight fists with the thumbs over the fingers.
+      :img-alt: Two tight fists, thumbs over the fingers; the view circles them to show every side.
 
       :bdg-secondary:`hold 4 s` *"Make two tight fists."*
 
@@ -99,7 +101,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 3 · Pinch: index
       :img-top: /_static/cts/hand/03-pinch_index.gif
-      :img-alt: On both hands the thumb tip touches the index fingertip.
+      :img-alt: On both hands the thumb closes onto the index fingertip over one second, then holds.
 
       :bdg-secondary:`hold 3 s` *"Thumb to index fingertip."*
 
@@ -110,7 +112,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 4 · Pinch: middle
       :img-top: /_static/cts/hand/04-pinch_middle.gif
-      :img-alt: On both hands the thumb tip touches the middle fingertip.
+      :img-alt: On both hands the thumb closes onto the middle fingertip over one second, then holds.
 
       :bdg-secondary:`hold 3 s` *"Thumb to middle fingertip."*
 
@@ -121,7 +123,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 5 · Pinch: ring
       :img-top: /_static/cts/hand/05-pinch_ring.gif
-      :img-alt: On both hands the thumb tip touches the ring fingertip.
+      :img-alt: On both hands the thumb closes onto the ring fingertip over one second, then holds.
 
       :bdg-secondary:`hold 3 s` *"Thumb to ring fingertip."*
 
@@ -132,7 +134,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 6 · Pinch: little
       :img-top: /_static/cts/hand/06-pinch_little.gif
-      :img-alt: On both hands the thumb tip touches the little fingertip.
+      :img-alt: On both hands the thumb closes onto the little fingertip over one second, then holds.
 
       :bdg-secondary:`hold 3 s` *"Thumb to little fingertip."*
 
@@ -143,7 +145,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 7 · Palms together
       :img-top: /_static/cts/hand/07-palms_together.gif
-      :img-alt: The palms press flat against each other, fingers pointing up.
+      :img-alt: Palms pressed flat together, fingers up, seen first from your side and then from either side.
 
       :bdg-secondary:`hold 4 s` *"Press your palms together, fingers up."*
 
@@ -154,7 +156,7 @@ Both hands perform every step together, except the two rolls.
 
    .. grid-item-card:: 8 · Fingertips together
       :img-top: /_static/cts/hand/08-tips_together.gif
-      :img-alt: Hands raised, palms facing the performer, middle fingertips touching.
+      :img-alt: Hands raised, palms facing you, move together until the middle fingertips touch.
 
       :bdg-secondary:`hold 3 s` *"Raise both hands, palms facing you. Touch middle
       fingertips."*
@@ -217,7 +219,6 @@ your first take.
 - **Press and touch for real**: hands on the table, palms together, fingertips meeting.
 - **You cannot pause or skip.** If a step goes wrong, let it finish and record again.
 - **Practice takes cost nothing.** Takes are never overwritten; submit your best one.
-- **Hear the cues.** They play through the workstation's speakers, not the headset.
 - **Have a helper watch the capture panel** while you perform.
 
 .. _cts-hand-record:
@@ -366,7 +367,7 @@ Troubleshooting
        source is tracked. Headset: hand tracking is off or the hands are out of view.
    * - The capture panel shows ``21 / 26 valid`` in red
      - Expected for a 21-joint glove; only the 21 required joints are judged.
-   * - No sound, or ``FileNotFoundError`` naming ``aplay``
+   * - ``FileNotFoundError`` naming ``aplay``
      - Install ``alsa-utils`` and record again.
    * - ``… is a Git LFS pointer, not audio`` at startup
      - Install ``git-lfs`` and run ``git lfs pull``.
