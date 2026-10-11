@@ -1,0 +1,192 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hand CTS steps</title>
+<style>html,body{margin:0;background:#f7f8fa}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script>
+// Render-only: capture.mjs calls setup() once, then render(step, frame) per frame.
+const DATA = /*DATA*/null;
+const FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+const BG = "#f7f8fa";
+const T = {
+  n_above: "from above", n_side: "thumb side", n_palm: "from below",
+  n_rear_right: "rear right", n_yours: "your view",
+  holding: "holding", turning: "turning", moving: "moving into pose…",
+  left: "Left", right: "Right", both_palms: "palms pressed together",
+  palm_you: "palm toward you", palm_out: "palm out", still: "still",
+};
+const DIGIT = {thumb: "#e69f00", index: "#0072b2", middle: "#009e73", ring: "#9467bd", little: "#bcbd22"};
+// For hands drawn apart, yaw is mirrored for the left hand so both are seen from the same side of themselves.
+const VIEWS = {
+  above: {yaw: 0, pitch: -0.75, name: T.n_above},
+  thumb: {yaw: -1.45, pitch: -0.2, name: T.n_side},
+  palm: {yaw: -2.6, pitch: 0.7, name: T.n_palm},
+  palms: {yaw: 1.0, pitch: -0.25, name: T.n_rear_right},
+  facing: {yaw: 0, pitch: -0.12, name: T.n_yours},
+};
+const PINCH = {pinch_index: "index", pinch_middle: "middle", pinch_ring: "ring", pinch_little: "little"};
+const ROLLS = {right_tip_roll: 1, left_tip_roll: 0};
+const TIPS = new Set(["tips_together", "right_tip_roll", "left_tip_roll"]);
+
+const bones = [];
+for (const [d, ch] of Object.entries(DATA.chains)) {
+  const js = [DATA.wrist, ...ch];
+  for (let i = 0; i + 1 < js.length; i++) bones.push([js[i], js[i + 1], d]);
+}
+const digitOf = {};
+for (const [d, ch] of Object.entries(DATA.chains)) ch.forEach(j => digitOf[j] = d);
+const PALM_LOOP = [DATA.wrist, DATA.chains.index[0], DATA.chains.index[1], DATA.chains.middle[1], DATA.chains.ring[1], DATA.chains.little[1], DATA.chains.little[0]];
+const MIDDLE_TIP = DATA.chains.middle.at(-1);
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let W = 0, H = 0;
+function setup(w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  W = w; H = h;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return DATA.steps.map(s => ({label: s.label, n: s.frames.length}));
+}
+
+function camera(view, T) {
+  const dist = 420;
+  const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+  // eye behind the target (+Z) when yaw = 0, raised when pitch < 0
+  const eye = [T[0] + dist * cp * Math.sin(view.yaw), T[1] - dist * sp, T[2] + dist * cp * Math.cos(view.yaw)];
+  const f = norm(sub(T, eye));
+  const r = norm(cross(f, [0, 1, 0]));
+  const u = cross(r, f);
+  return {eye, f, r, u};
+}
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = a => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+// Palm normal pointing out of the palm, for either chirality.
+function palmNormal(hand, h) {
+  const w = hand[DATA.wrist];
+  const n = cross(sub(hand[DATA.chains.index[1]], w), sub(hand[DATA.chains.little[1]], w));
+  return h ? n : n.map(c => -c);
+}
+
+function projector(cam, cx, cy, focal) {
+  return p => { const d = sub(p, cam.eye); const z = dot(d, cam.f); return [cx + focal * dot(d, cam.r) / z, cy - focal * dot(d, cam.u) / z, z]; };
+}
+
+function table(P, T) {
+  const y0 = DATA.table_mm;
+  ctx.strokeStyle = "#e6e9ed"; ctx.lineWidth = 1;
+  for (let x = -150; x <= 150; x += 50) line(P([T[0] + x, y0, T[2] - 160]), P([T[0] + x, y0, T[2] + 140]));
+  for (let z = -160; z <= 140; z += 50) line(P([T[0] - 150, y0, T[2] + z]), P([T[0] + 150, y0, T[2] + z]));
+  function line(a, b) { if (a[2] <= 0 || b[2] <= 0) return; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
+}
+
+function render(si, fi) {
+  const s = DATA.steps[si];
+  const view = VIEWS[s.view];
+  const n = s.frames.length;
+  const frame = s.frames[fi];
+  const labels = [];
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+
+  if (s.joint) {
+    const T = s.targets[0];
+    const cam = camera(view, T);
+    const focal = Math.min(W * 0.46 / s.extent[0], H * 0.36 / s.extent[1]) * 420;
+    const P = projector(cam, W / 2, H / 2, focal);
+    table(P, T);
+    const items = [];
+    frame.forEach(hand => items.push(...handItems(hand, P, focal)));
+    items.sort((a, b) => b.z - a.z).forEach(it => it.fn());
+    if (TIPS.has(s.label)) ring(P(frame[0][MIDDLE_TIP]), P(frame[1][MIDDLE_TIP]));
+    if (TIPS.has(s.label)) frame.forEach((hand, h) => labels.push([h, W * (h ? 0.78 : 0.22), hand]));
+    else labels.push([null, W / 2, null]);
+  } else {
+    const half = W / 2;
+    const focal = Math.min(half * 0.46 / s.extent[0], H * 0.36 / s.extent[1]) * 420;
+    ctx.strokeStyle = "#e3e6ea"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(half, 40); ctx.lineTo(half, H - 36); ctx.stroke();
+    frame.forEach((hand, h) => {
+      const T = s.targets[h];
+      const cam = camera({yaw: h ? view.yaw : -view.yaw, pitch: view.pitch}, T);
+      const cx = half * (h + 0.5);
+      const P = projector(cam, cx, H / 2 - 6, focal);
+      ctx.save(); ctx.beginPath(); ctx.rect(h * half, 0, half, H); ctx.clip();
+      table(P, T);
+      handItems(hand, P, focal).sort((a, b) => b.z - a.z).forEach(it => it.fn());
+      if (PINCH[s.label]) ring(P(hand[DATA.chains.thumb.at(-1)]), P(hand[DATA.chains[PINCH[s.label]].at(-1)]));
+      ctx.restore();
+      labels.push([h, cx, hand]);
+    });
+  }
+
+  for (const [h, x, hand] of labels) {
+    let text = h === null ? T.both_palms : h ? T.right : T.left;
+    ctx.fillStyle = "#4a515b";
+    if (s.label in ROLLS) {
+      if (ROLLS[s.label] === h) {
+        const toYou = palmNormal(hand, h)[2] > 0;
+        text += " · " + (toYou ? T.palm_you : T.palm_out);
+        ctx.fillStyle = toYou ? "#4a515b" : "#c0503a";
+      } else text += " · " + T.still;
+    }
+    ctx.font = `600 18px ${FONT}`; ctx.textAlign = "center";
+    // Keep a long roll label inside the frame rather than centred off its edge.
+    const half = ctx.measureText(text).width / 2;
+    ctx.fillText(text, Math.min(Math.max(x, 12 + half), W - 12 - half), H - 14);
+  }
+
+  // Frames are 1/fps apart, so the elapsed hold is exact.
+  const holding = fi >= s.hold_from;
+  const elapsed = (fi - s.hold_from) / DATA.fps;
+  ctx.fillStyle = holding ? "#1f7a44" : "#9aa2ad";
+  ctx.font = `600 18px ${FONT}`; ctx.textAlign = "left";
+  ctx.fillText(holding ? `${s.label in ROLLS ? T.turning : T.holding} ${elapsed.toFixed(1)} / ${s.hold} s` : T.moving, 12, 26);
+  ctx.fillStyle = "#8a929c"; ctx.font = `18px ${FONT}`; ctx.textAlign = "right";
+  ctx.fillText(view.name, W - 12, 26);
+  ctx.fillStyle = "#e3e6ea"; ctx.fillRect(12, H - 6, W - 24, 3);
+  ctx.fillStyle = holding ? "#1f7a44" : "#9aa2ad";
+  ctx.fillRect(12, H - 6, (W - 24) * fi / (n - 1), 3);
+}
+
+function ring(a, b) {
+  ctx.strokeStyle = "#a32820"; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.arc((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.max(13, Math.hypot(a[0] - b[0], a[1] - b[1]) / 2 + 9), 0, 7); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function handItems(hand, P, focal) {
+  const items = [];
+  const pp = hand.map(P);
+  items.push({z: Math.max(...PALM_LOOP.map(j => pp[j][2])) + 1, fn: () => {
+    ctx.beginPath(); PALM_LOOP.forEach((j, i) => i ? ctx.lineTo(pp[j][0], pp[j][1]) : ctx.moveTo(pp[j][0], pp[j][1]));
+    ctx.closePath(); ctx.fillStyle = "rgba(120,128,140,.22)"; ctx.fill();
+  }});
+  for (const [a, b, d] of bones) {
+    items.push({z: (pp[a][2] + pp[b][2]) / 2, fn: () => {
+      ctx.strokeStyle = DIGIT[d]; ctx.lineWidth = focal * 9 / ((pp[a][2] + pp[b][2]) / 2); ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(pp[a][0], pp[a][1]); ctx.lineTo(pp[b][0], pp[b][1]); ctx.stroke();
+    }});
+  }
+  hand.forEach((_, j) => {
+    if (j === 0) return;
+    items.push({z: pp[j][2] - 0.5, fn: () => {
+      ctx.fillStyle = digitOf[j] ? DIGIT[digitOf[j]] : "#78808c";
+      ctx.beginPath(); ctx.arc(pp[j][0], pp[j][1], focal * 6 / pp[j][2], 0, 7); ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+    }});
+  });
+  return items;
+}
+</script>
+</body>
+</html>

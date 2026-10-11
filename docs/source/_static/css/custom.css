@@ -273,3 +273,25 @@ figure a.no-image-zoom:has(> img) {
 .trademark-notice {
     color: var(--pst-color-text-muted) !important;
 }
+
+/* Device Conformance pages (rst-class "cts-page"): long check names overflow the step cards, and
+   long literals overflow the page on a phone. Sphinx sets span.pre to nowrap; lifting it on desktop
+   body text would split options like --json at the hyphen, so outside cards it only applies below
+   768px. Card literals are smaller so a 45-character check name fits a desktop card. */
+.cts-page .sd-card code.literal {
+    font-size: 0.8em;
+}
+
+.cts-page .sd-card code.literal,
+.cts-page .sd-card code.literal span.pre {
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+@media (max-width: 767.98px) {
+    .cts-page code.literal,
+    .cts-page code.literal span.pre {
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+}

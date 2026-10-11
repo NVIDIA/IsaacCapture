@@ -23,6 +23,7 @@
 
 # Audio assets are tracked by default.
 *.wav filter=lfs diff=lfs merge=lfs -text
+*.mp3 filter=lfs diff=lfs merge=lfs -text
 
 #
 # Exceptions for small source SVGs (webpack-inlined; not binary assets).

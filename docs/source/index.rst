@@ -86,6 +86,16 @@ Table of Contents
    device/add_device
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Device Conformance
+
+   Overview <conformance/overview>
+   conformance/setup
+   conformance/hand
+   conformance/full_body
+   conformance/submit
+
+.. toctree::
    :maxdepth: 2
    :caption: References
 
