@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import zipfile
+
+import pytest
 
 from cts_common.checks.base import Attribution, Severity, Status
 from cts_common.frames import SourceMetadata
@@ -110,3 +113,35 @@ def test_companions_that_are_not_there_are_named_not_raised(tmp_path):
 
 def test_the_tool_block_is_null_where_git_cannot_answer(tmp_path):
     assert bundle.tool(4, tmp_path) == {"commit": None, "dirty": None, "checks": 4}
+
+
+def _repo_with_suite_and_common(root):
+    def git(*args):
+        subprocess.run(
+            ("git", "-C", str(root), "-c", "commit.gpgsign=false", *args),
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "cts@example.com")
+    git("config", "user.name", "cts")
+    for name in ("suite", "common"):
+        (root / name).mkdir()
+        (root / name / "module.py").write_text("x = 1\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "init")
+    return root / "suite", root / "common"
+
+
+@pytest.mark.parametrize(
+    ("edited", "dirty"), [(None, False), ("suite", True), ("common", True)]
+)
+def test_uncommitted_shared_code_marks_the_tool_dirty(
+    tmp_path, monkeypatch, edited, dirty
+):
+    suite, common = _repo_with_suite_and_common(tmp_path)
+    monkeypatch.setattr(bundle, "COMMON", common, raising=False)
+    if edited is not None:
+        (tmp_path / edited / "module.py").write_text("x = 2\n")
+    assert bundle.tool(4, suite)["dirty"] is dirty

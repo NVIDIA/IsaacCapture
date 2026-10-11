@@ -27,6 +27,9 @@ CHUNK = 1 << 20
 # Companion file suffixes beside the recording: capture provenance and the recorder log.
 PROVENANCE_SUFFIXES = (".json", ".log")
 
+# The shared package every schema's verdict also depends on.
+COMMON = Path(__file__).resolve().parent.parent
+
 
 def build(
     report: Report,
@@ -152,11 +155,11 @@ def companions(
 
 
 def tool(checks: int, package: Path) -> dict[str, Any]:
-    """The git commit, whether ``package`` is dirty, and the check count.
+    """The git commit, whether ``package`` or ``COMMON`` is dirty, and the check count.
 
     ``commit`` and ``dirty`` are null where git cannot answer.
     """
-    changed = _git(package, "status", "--porcelain", "--", str(package))
+    changed = _git(package, "status", "--porcelain", "--", str(package), str(COMMON))
     return {
         "commit": _git(package, "rev-parse", "HEAD"),
         "dirty": None if changed is None else bool(changed),
