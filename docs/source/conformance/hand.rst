@@ -14,9 +14,8 @@ Hand Suite
    The hand tolerances are provisional and not yet calibrated against glove
    recordings, so treat a result close to a limit as indicative.
 
-Run this suite if your device publishes hand poses: a glove plugin such as
-:doc:`MANUS </device/manus>` or :doc:`Wuji </device/wuji_glove>`, or a headset's own
-optical hand tracking. You record one take of eleven scripted gestures; the checker
+Run this suite if your device publishes hand poses: a glove through its plugin, or a
+headset's own optical hand tracking. You record one take of eleven scripted gestures; the checker
 reads the recording and its labels and returns a verdict.
 
 .. list-table:: At a glance
@@ -33,8 +32,7 @@ reads the recording and its labels and returns a verdict.
    * - Checks
      - 40, in four groups: signal, hand shape, placement, and the scripted steps
    * - Your plugin
-     - Injects both hands with ``plugin_utils::HandInjector``, as the MANUS and Wuji plugins
-       do: the suite records what Isaac Teleop's OpenXR hand tracker reads, not a channel of
+     - Injects both hands with ``plugin_utils::HandInjector``: the suite records what Isaac Teleop's OpenXR hand tracker reads, not a channel of
        your own. Joints in metres, placed in the room, at 30 Hz or more. A glove with no
        wrist pose takes one from headset hand tracking or a controller
        (``plugin_utils::WristPoseSource``).
@@ -237,26 +235,15 @@ Headset optical hands, no plugin:
 
    src/python/isaaccapture/cts/hand/capture/record.sh quest3
 
-MANUS gloves:
+A glove, through its plugin. ``glovex`` and ``glove_x_plugin`` are placeholders for a
+fictional Glove X: use your device's name and the ``name:`` from your plugin's
+``plugin.yaml``. The plugin is loaded from ``install/plugins/`` (:doc:`setup`), and one that
+fails to load stops the take. Environment variables your plugin reads, such as where it takes
+the wrist pose from, go on the same command line.
 
 .. code-block:: bash
 
-   src/python/isaaccapture/cts/hand/capture/record.sh manus --plugin manus_hand_plugin
-
-Wuji gloves. The glove has no wrist pose of its own; ``WUJI_GLOVE_WRIST_SOURCE`` picks
-where the plugin takes it from: ``auto`` (default), ``hand_tracking`` or ``controller``.
-
-.. code-block:: bash
-
-   WUJI_GLOVE_WRIST_SOURCE=hand_tracking \
-     src/python/isaaccapture/cts/hand/capture/record.sh wuji --plugin wuji_glove_plugin
-
-Any other plugin: pass the ``name:`` from its ``plugin.yaml``. It is loaded from
-``install/plugins/`` (:doc:`setup`), and a plugin that fails to load stops the take.
-
-.. code-block:: bash
-
-   src/python/isaaccapture/cts/hand/capture/record.sh mydevice --plugin my_hand_plugin
+   src/python/isaaccapture/cts/hand/capture/record.sh glovex --plugin glove_x_plugin
 
 ``--note TEXT`` and ``--plugin-version NAME=VERSION`` are stored with the take. Then:
 
@@ -276,11 +263,11 @@ Any other plugin: pass the ``name:`` from its ``plugin.yaml``. It is loaded from
 
 .. code-block:: text
 
-   ~/isaaccapture-cts/manus_2026-03-04_101530/
-   ├── manus_2026-03-04_101530-hand.mcap          the recording
-   ├── manus_2026-03-04_101530-hand.labels.json   one window per step
-   ├── manus_2026-03-04_101530-hand.json          provenance: device, plugins, commit
-   └── manus_2026-03-04_101530-hand.log           capture panel output and label audit
+   ~/isaaccapture-cts/glovex_2026-03-04_101530/
+   ├── glovex_2026-03-04_101530-hand.mcap          the recording
+   ├── glovex_2026-03-04_101530-hand.labels.json   one window per step
+   ├── glovex_2026-03-04_101530-hand.json          provenance: device, plugins, commit
+   └── glovex_2026-03-04_101530-hand.log           capture panel output and label audit
 
 Keep the four files together and never rename them. The labels are stamped during the
 take and cannot be regenerated.

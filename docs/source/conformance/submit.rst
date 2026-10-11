@@ -49,14 +49,14 @@ The browser showing the viewer downloads ``<take>-hand.<verdict>.zip`` or
 
 .. code-block:: text
 
-   manus_2026-03-04_101530-hand.pass.zip
-   └── manus_2026-03-04_101530-hand.pass/
+   glovex_2026-03-04_101530-hand.pass.zip
+   └── glovex_2026-03-04_101530-hand.pass/
        ├── report.json                                verdict, checks, hashes, commit
        ├── report.txt                                 the same report as text
-       ├── manus_2026-03-04_101530-hand.mcap          the recording
-       ├── manus_2026-03-04_101530-hand.labels.json   the step windows
-       ├── manus_2026-03-04_101530-hand.json          capture provenance
-       └── manus_2026-03-04_101530-hand.log           recorder log
+       ├── glovex_2026-03-04_101530-hand.mcap          the recording
+       ├── glovex_2026-03-04_101530-hand.labels.json   the step windows
+       ├── glovex_2026-03-04_101530-hand.json          capture provenance
+       └── glovex_2026-03-04_101530-hand.log           recorder log
 
 4. Submit the form
 ------------------
@@ -78,7 +78,7 @@ Add one block per suite to the pull request description:
 
    Device conformance
    Suite:    hand
-   Take:     manus_2026-03-04_101530
+   Take:     glovex_2026-03-04_101530
    Verdict:  pass
    Notes:    <for fail, retake or insufficient_data: which checks failed, and why>
 

@@ -96,6 +96,14 @@ device page documents it, links belong in the Details panel, and the sentence it
 dropped. The build keeps `company` that narrow by rejecting every field but `name`, `logo`,
 and `logo_dark`.
 
+## Conformance pages name no device maker
+
+`source/conformance/` and its media are vendor-neutral: no glove, suit or tracker company
+or product appears in prose, cards, commands, take names or plugin names, because a named
+example reads as an endorsement. Use a fictional device (Glove X with `glove_x_plugin`,
+Suit X with `body.suit-x`) and say it is a placeholder. Headsets (PICO, Quest) are the
+exception: every take runs on one.
+
 ## Removing cache overrides
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch

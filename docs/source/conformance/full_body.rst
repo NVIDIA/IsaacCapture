@@ -16,8 +16,7 @@ The full-body suite records one take of ten standing poses and motions, then che
 - **PICO body tracking** is the default source (``body.pico-xr``). Set up, calibrate and
   activate the headset and Motion Trackers as described in :doc:`/device/body_tracking`.
 - **Your own suit or mocap system** records through a vendor backend and its plugin
-  (:ref:`vendor-selection`); ``body.noitom`` and ``body.xsens`` are registered today. Its
-  backend must publish those 24 indices right-handed, +Y up, in metres, with the subject facing
+  (:ref:`vendor-selection`). The backend must publish those 24 indices right-handed, +Y up, in metres, with the subject facing
   −Z (:code-file:`oracle/README.md <src/python/isaaccapture/cts/full_body/oracle/README.md>`).
   A CloudXR headset must stay connected for the OpenXR session, but it needs no body tracking.
 
@@ -216,14 +215,15 @@ at the first frame with a valid joint. After 10 s without one, a red box lists w
 the take keeps running.
 
 To record your own device, name the plugin, the vendor backend and its collection. The device
-name must come first:
+name must come first. ``suitx``, ``suit_x_plugin``, ``body.suit-x`` and ``suit_x`` are
+placeholders for a fictional Suit X; replace each with your own:
 
 .. code-block:: bash
 
-   src/python/isaaccapture/cts/full_body/capture/record.sh mysuit \
-       --plugin noitom_mocap \
-       --vendor body.noitom \
-       --vendor-param collection_id=noitom_mocap
+   src/python/isaaccapture/cts/full_body/capture/record.sh suitx \
+       --plugin suit_x_plugin \
+       --vendor body.suit-x \
+       --vendor-param collection_id=suit_x
 
 - ``--plugin NAME`` is the ``name:`` in the plugin's ``plugin.yaml``, found under
   ``install/plugins/`` once installed (``cmake --install build``). ``record.sh`` launches it

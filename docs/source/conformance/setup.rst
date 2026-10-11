@@ -65,8 +65,8 @@ with, so delete an existing ``build/`` before switching.
    cmake --build build --parallel
    cmake --install build
 
-A plugin behind a build option builds only when you add the option to the first line, for example
-``-DBUILD_PLUGIN_WUJI_GLOVE=ON`` or ``-DBUILD_PLUGIN_NOITOM_MOCAP=ON``.
+A plugin behind a ``BUILD_PLUGIN_<NAME>`` option builds only when you add
+``-DBUILD_PLUGIN_<NAME>=ON`` to the first line.
 
 :doc:`/getting_started/build_from_source/index` lists the build prerequisites, and
 :doc:`/references/build` explains per-Python-version build trees.
