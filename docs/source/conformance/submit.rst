@@ -31,55 +31,32 @@ both. Takes are never overwritten, so submit the one you want reviewed.
 3. Package the take
 -------------------
 
-Keep the four files of the take together and never rename them.
-
-**Full body.** Open the take in the viewer:
+Keep the four files of the take together and never rename them. Open the take in the viewer of
+its suite:
 
 .. code-block:: bash
 
+   # Hand
+   src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel \
+       ~/isaaccapture-cts/<take>/<take>-hand.mcap
+   # Full body
    src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.panel \
-       ~/isaaccapture-captures/<take>/<take>-body.mcap
+       ~/isaaccapture-cts/<take>/<take>-body.mcap
 
 Open http://127.0.0.1:8080 and press **package for submission** in the **Submission** folder.
-The browser showing the panel downloads ``<take>-body.<verdict>.zip``, and the panel shows its name,
-size and SHA-256 prefix:
+The browser showing the viewer downloads ``<take>-hand.<verdict>.zip`` or
+``<take>-body.<verdict>.zip``, and the viewer shows its name, size and SHA-256 prefix:
 
 .. code-block:: text
 
-   pico4u_2026-03-04_101530-body.retake.zip
-   └── pico4u_2026-03-04_101530-body.retake/
+   manus_2026-03-04_101530-hand.pass.zip
+   └── manus_2026-03-04_101530-hand.pass/
        ├── report.json                                verdict, checks, hashes, commit
        ├── report.txt                                 the same report as text
-       ├── pico4u_2026-03-04_101530-body.mcap         the recording
-       ├── pico4u_2026-03-04_101530-body.labels.json  the step windows
-       ├── pico4u_2026-03-04_101530-body.json         capture provenance
-       └── pico4u_2026-03-04_101530-body.log          recorder log
-
-**Hand.** There is no package button. From the repository root, write both reports into the take
-directory with the checker, then archive the directory:
-
-.. code-block:: bash
-
-   TAKE=~/isaaccapture-captures/<take>
-   NAME=$(basename "$TAKE")
-   CHECK=src/python/isaaccapture/cts/hand/checker/.venv/bin/python
-   "$CHECK" -m hand_cts.cli "$TAKE/$NAME-hand.mcap"        > "$TAKE/report.txt"
-   "$CHECK" -m hand_cts.cli "$TAKE/$NAME-hand.mcap" --json > "$TAKE/report.json"
-   VERDICT=$(awk '$1 == "verdict" {print tolower($2)}' "$TAKE/report.txt")
-   tar czf "$TAKE-hand.$VERDICT.tar.gz" -C "$(dirname "$TAKE")" "$NAME"
-
-The archive lands next to the take directory:
-
-.. code-block:: text
-
-   manus_2026-03-04_101530-hand.pass.tar.gz
-   └── manus_2026-03-04_101530/
-       ├── manus_2026-03-04_101530-hand.mcap
-       ├── manus_2026-03-04_101530-hand.labels.json
-       ├── manus_2026-03-04_101530-hand.json
-       ├── manus_2026-03-04_101530-hand.log
-       ├── report.json
-       └── report.txt
+       ├── manus_2026-03-04_101530-hand.mcap          the recording
+       ├── manus_2026-03-04_101530-hand.labels.json   the step windows
+       ├── manus_2026-03-04_101530-hand.json          capture provenance
+       └── manus_2026-03-04_101530-hand.log           recorder log
 
 4. Submit the form
 ------------------

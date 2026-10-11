@@ -244,7 +244,7 @@ own directory:
 
 .. code-block:: text
 
-   ~/isaaccapture-captures/pico4u_2026-03-04_101530/
+   ~/isaaccapture-cts/pico4u_2026-03-04_101530/
    ├── pico4u_2026-03-04_101530-body.mcap         the recording
    ├── pico4u_2026-03-04_101530-body.labels.json  the step windows
    ├── pico4u_2026-03-04_101530-body.json         device name, time, repo commit
@@ -263,7 +263,7 @@ beside it (to check on another machine, copy the whole directory):
 .. code-block:: bash
 
    src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.cli \
-       ~/isaaccapture-captures/<take>/<take>-body.mcap
+       ~/isaaccapture-cts/<take>/<take>-body.mcap
 
 The command prints the verdict and one
 line per check, and exits 0 ``pass``, 1 ``fail``, 2 ``retake`` or 3 ``insufficient_data``;
@@ -300,7 +300,7 @@ The viewer needs the checker environment built with
 .. code-block:: bash
 
    src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.panel \
-       ~/isaaccapture-captures/<take>/<take>-body.mcap
+       ~/isaaccapture-cts/<take>/<take>-body.mcap
 
 It prints the same report, then serves http://127.0.0.1:8080; ``--host 0.0.0.0`` opens it to
 other machines. If 8080 is taken it moves to the next free port but still prints 8080, so pass a

@@ -88,7 +88,7 @@ need:
    src/python/isaaccapture/cts/full_body/checker/setup_env.sh --panel
    src/python/isaaccapture/cts/full_body/capture/setup_env.sh
 
-``--panel`` adds the viewer that replays a take and, for full body, packages it for submission.
+``--panel`` adds the viewer that replays a take and packages it for submission.
 To only check takes on another machine, such as a Mac, run just the checker script there. The
 scripts are idempotent and write only inside their own directory; re-run them after pulling or
 rebuilding.

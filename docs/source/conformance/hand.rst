@@ -276,7 +276,7 @@ Any other plugin: pass the ``name:`` from its ``plugin.yaml``. It is loaded from
 
 .. code-block:: text
 
-   ~/isaaccapture-captures/manus_2026-03-04_101530/
+   ~/isaaccapture-cts/manus_2026-03-04_101530/
    ├── manus_2026-03-04_101530-hand.mcap          the recording
    ├── manus_2026-03-04_101530-hand.labels.json   one window per step
    ├── manus_2026-03-04_101530-hand.json          provenance: device, plugins, commit
@@ -296,7 +296,7 @@ beside it (to check on another machine, copy the whole directory):
 .. code-block:: bash
 
    src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.cli \
-       ~/isaaccapture-captures/<take>/<take>-hand.mcap
+       ~/isaaccapture-cts/<take>/<take>-hand.mcap
 
 It prints the verdict and one line per check, and exits 0 ``pass``, 1 ``fail``, 2 ``retake``
 or 3 ``insufficient_data``; :ref:`cts-overview-verdicts` says what each means and what to do.
@@ -336,12 +336,12 @@ The viewer needs the checker environment set up with ``--panel`` (:doc:`setup`):
 .. code-block:: bash
 
    src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel \
-       ~/isaaccapture-captures/<take>/<take>-hand.mcap
+       ~/isaaccapture-cts/<take>/<take>-hand.mcap
 
 It prints the same report and serves http://127.0.0.1:8080 (``--host 0.0.0.0`` to reach
 it from another machine). The viewer replays both hands with the current step and lists the
-checks, the deciding ones first; invalid joints show red. When the result is what you
-expect, :doc:`submit` it.
+checks, the deciding ones first; invalid joints show red. Its **package for submission**
+button builds the archive you send: see :doc:`submit`.
 
 .. figure:: /_static/cts/hand-checker-panel.png
    :alt: The hand viewer: both hands lying flat on a table grid, and a sidebar with a green
