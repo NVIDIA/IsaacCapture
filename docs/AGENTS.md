@@ -33,7 +33,9 @@ Images follow `.gitattributes` like everything else, Git LFS included. A checkou
 LFS holds pointer text and Sphinx copies it into the site verbatim, so a page that looks
 right locally can still ship broken artwork. Commit artwork together with the page or data
 that references it. Stage new artwork with a plain `git add` before running pre-commit:
-`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob.
+`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob. A clone
+whose hooks pre-commit installed has no LFS pre-push hook, so GitHub declines a push that
+adds artwork; run `git lfs push origin <branch>` first.
 
 ## Device pages stand alone
 
