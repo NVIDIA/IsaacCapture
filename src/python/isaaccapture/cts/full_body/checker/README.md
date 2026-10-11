@@ -63,7 +63,7 @@ hardware or licensing one; see [`../README.md`](../README.md).
 
 ```bash
 .venv/bin/python -m full_body_cts.cli \
-    ~/isaaccapture-captures/<take>/<take>-body.mcap
+    ~/isaaccapture-cts/<take>/<take>-body.mcap
 ```
 
 Spell the recording out. Do not use a symlink or a copy of the `.mcap` elsewhere: it has
@@ -104,7 +104,7 @@ verdict  RETAKE
 ```bash
 ./setup_env.sh --panel     # once; installs viser, the panel's renderer
 .venv/bin/python -m full_body_cts.panel \
-    ~/isaaccapture-captures/<take>/<take>-body.mcap
+    ~/isaaccapture-cts/<take>/<take>-body.mcap
 ```
 
 Prints the same report, then serves a panel on `http://127.0.0.1:8080`. It takes

@@ -7,7 +7,7 @@
 #
 #   ./record.sh [device]
 #
-#   ~/isaaccapture-captures/<device>_<date>_<time>/<device>_<date>_<time>-body.mcap
+#   ~/isaaccapture-cts/<device>_<date>_<time>/<device>_<date>_<time>-body.mcap
 #                                                                       -body.labels.json
 #                                                                       -body.log
 #                                                                       -body.json
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CAPTURES="$HOME/isaaccapture-captures"
+CAPTURES="$HOME/isaaccapture-cts"
 
 DEVICE="${1:-pico4u}"
 shift || true

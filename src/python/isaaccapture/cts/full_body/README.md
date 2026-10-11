@@ -220,7 +220,7 @@ The process keeps serving the report; Ctrl+C when you have read it.
 
 ## What you get
 
-One directory per take, under `~/isaaccapture-captures/`, named for the device and the
+One directory per take, under `~/isaaccapture-cts/`, named for the device and the
 moment you pressed the button:
 
 ```text

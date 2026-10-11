@@ -10,7 +10,7 @@
 #   ./record.sh manus --plugin manus_hand_plugin
 #   WUJI_GLOVE_WRIST_SOURCE=controller ./record.sh wuji --plugin wuji_glove_plugin
 #
-#   ~/isaaccapture-captures/<device>_<date>_<time>/<device>_<date>_<time>-hand.mcap
+#   ~/isaaccapture-cts/<device>_<date>_<time>/<device>_<date>_<time>-hand.mcap
 #                                                                         -hand.labels.json
 #                                                                         -hand.json
 #                                                                         -hand.log
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CAPTURES="$HOME/isaaccapture-captures"
+CAPTURES="$HOME/isaaccapture-cts"
 
 if [[ $# -lt 1 || "$1" == -* ]]; then
     echo "usage: $0 DEVICE [capture_panel.py options]" >&2

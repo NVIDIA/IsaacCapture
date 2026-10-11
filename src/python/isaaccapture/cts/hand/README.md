@@ -220,7 +220,7 @@ first flat step has found it.
 
 ## What you get
 
-One directory per take, under `~/isaaccapture-captures/`, named for the device and the
+One directory per take, under `~/isaaccapture-cts/`, named for the device and the
 moment you started the script:
 
 ```text
@@ -247,7 +247,7 @@ Always give the full path.
 
 ```bash
 src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.cli \
-    ~/isaaccapture-captures/<take>/<take>-hand.mcap
+    ~/isaaccapture-cts/<take>/<take>-hand.mcap
 ```
 
 This needs only the checker's environment, not the capture one. It prints one verdict and
@@ -283,7 +283,7 @@ the report.
 
 ```bash
 src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel \
-    ~/isaaccapture-captures/<take>/<take>-hand.mcap
+    ~/isaaccapture-cts/<take>/<take>-hand.mcap
 ```
 
 This needs the `--panel` setup above. It prints the same report, then serves a viewer
@@ -342,7 +342,7 @@ To run the label audit again on an existing take:
 ```bash
 src/python/isaaccapture/cts/hand/checker/.venv/bin/python \
     src/python/isaaccapture/cts/hand/capture/make_labels.py \
-    ~/isaaccapture-captures/<take>/<take>-hand.mcap
+    ~/isaaccapture-cts/<take>/<take>-hand.mcap
 ```
 
 ## Do not edit the script

@@ -9,7 +9,7 @@ Reference for this directory. The step-by-step guide — setup, headset, recordi
 do when it goes wrong — is [`../README.md`](../README.md).
 
 `record.sh` records one take of the hand script through `TeleopSession` — both hand
-channels and both controllers — into `~/isaaccapture-captures/<device>_<date>_<time>/`.
+channels and both controllers — into `~/isaaccapture-cts/<device>_<date>_<time>/`.
 The files repeat the directory's name:
 
 | File | What |

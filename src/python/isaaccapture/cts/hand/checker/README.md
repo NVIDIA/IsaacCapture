@@ -41,7 +41,7 @@ idempotent and writes nothing outside this directory.
 ## Run the checks
 
 ```bash
-.venv/bin/python -m hand_cts.cli ~/isaaccapture-captures/<take>/<take>-hand.mcap
+.venv/bin/python -m hand_cts.cli ~/isaaccapture-cts/<take>/<take>-hand.mcap
 ```
 
 Spell the recording out. The checker reads the labels from `<recording>.labels.json` as
@@ -98,7 +98,7 @@ argued against the integration, not that the integration is good.
 
 ```bash
 ./setup_env.sh --panel     # once; installs viser, the viewer's renderer
-.venv/bin/python -m hand_cts.panel ~/isaaccapture-captures/<take>/<take>-hand.mcap
+.venv/bin/python -m hand_cts.panel ~/isaaccapture-cts/<take>/<take>-hand.mcap
 ```
 
 Prints the same report, then serves a viewer on `http://127.0.0.1:8080`. Options:
