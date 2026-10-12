@@ -24,7 +24,7 @@ table SomaHandJointPoses {
     // Use CreateVectorOfSortedStructs when building the vector directly.
     // A joint absent from this vector is not provided by the producer.
     joint_poses: [SomaHandJointPose] (id: 0);
-    handedness: SomaHandedness = UNSPECIFIED (id: 1);
+    hand_side: SomaHandSide = UNSPECIFIED (id: 1);
 }
 
 table SomaHandJointPosesRecord {

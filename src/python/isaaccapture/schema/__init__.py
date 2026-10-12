@@ -85,7 +85,7 @@ from ._schema import (
     FullBodyPose,
     FullBodyPoseRecord,
     # Shared SOMA types.
-    SomaHandedness,
+    SomaHandSide,
     # SOMA body joint-rotation types.
     SomaBodyJoint,
     SomaBodyJointRotation,
@@ -210,7 +210,7 @@ __all__ = [
     "FullBodyPose",
     "FullBodyPoseRecord",
     # Shared SOMA types.
-    "SomaHandedness",
+    "SomaHandSide",
     # SOMA body joint-rotation types.
     "SomaBodyJoint",
     "SomaBodyJointRotation",
