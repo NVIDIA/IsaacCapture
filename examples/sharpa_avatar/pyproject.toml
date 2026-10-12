@@ -10,7 +10,7 @@ build-backend = "hatchling.build"
 # top-level name in site-packages.
 name = "isaaccapture-examples-sharpa-avatar"
 version = "0.0.0"  # Internal example - not versioned
-description = "Sharpa Avatar glove TeleopSession sample with viser and pinch haptic"
+description = "Sharpa AvatarExo Glove TeleopSession sample with viser and pinch haptic"
 requires-python = ">=3.11,<3.14"
 # No version on isaaccapture: the example runs against the one next to it -- this
 # checkout, or the wheel install_python_example() pins into the installed copy.
