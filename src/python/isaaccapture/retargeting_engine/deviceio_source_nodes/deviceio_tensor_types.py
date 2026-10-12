@@ -28,6 +28,8 @@ from isaaccapture.schema import (
     SomaHandJointPoses,
     SomaHandJointRotations,
     MessageChannelMessagesTracked,
+    TactileData,
+    TactileShape,
 )
 
 
@@ -148,6 +150,18 @@ class SomaHandJointPosesTrackedType(_PayloadTensorType):
     """SomaHandJointPoses payload from a generated SOMA hand tracker."""
 
     _payload_cls = SomaHandJointPoses
+
+
+class TactileDataTrackedType(_PayloadTensorType):
+    """TactileData payload from DeviceIO TactileTracker (internal only)."""
+
+    _payload_cls = TactileData
+
+
+class TactileShapeTrackedType(_PayloadTensorType):
+    """TactileShape payload from DeviceIO TactileShapeTracker (internal only)."""
+
+    _payload_cls = TactileShape
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -291,6 +305,30 @@ def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_soma_hand_joint_poses",
         [SomaHandJointPosesTrackedType("soma_hand_tracked")],
+    )
+
+
+def DeviceIOTactileDataTracked() -> TensorGroupType:
+    """Tracked tactile frame from DeviceIO TactileTracker.
+
+    Contains:
+        tactile_tracked: TactileData handle, or None when inactive
+    """
+    return TensorGroupType(
+        "deviceio_tactile_data",
+        [TactileDataTrackedType("tactile_tracked")],
+    )
+
+
+def DeviceIOTactileShapeTracked() -> TensorGroupType:
+    """Tactile shape from DeviceIO TactileShapeTracker.
+
+    Contains:
+        tactile_shape_tracked: TactileShape handle, or None before the first one arrives
+    """
+    return TensorGroupType(
+        "deviceio_tactile_shape",
+        [TactileShapeTrackedType("tactile_shape_tracked")],
     )
 
 

@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Internal only, not a public schema. Ask Lotus Li (lotusl@nvidia.com) before using it.
+
+include "point.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+// Per-frame tactile reading. The taxel layout it indexes is TactileShape (tactile_shape.fbs),
+// published separately because it is static per device.
+table TactileData {
+  // Equals the length of taxel_force; FlatBuffers does not check this.
+  taxel_count: uint32 (id: 0);
+
+  // Force vector per taxel, in TactileShape taxel order.
+  taxel_force: [Point] (id: 1);
+}
+
+// MCAP recording wrapper. Record types are the root types written to MCAP
+// channels; trackers serialize into Record types in serialize_all().
+table TactileDataRecord {
+  data: TactileData (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type TactileDataRecord;
