@@ -1,14 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 name: io_exo_glove_ros2
-description: "Exoskeleton glove joint angles (ROS 2 sensor_msgs/JointState) as JointStateOutput"
+description: "Exoskeleton glove joint angles (JointStateOutput) and fingertip poses (JointSe3PoseOutput)"
 command: "./io_exo_glove_ros2_plugin"
 version: "1.0.0"
 devices:
-  - path: "/glove/exo_left"
+  - path: "/glove/exo_joints"
     type: "joint_state"
-    description: "Left exoskeleton glove (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"
-  - path: "/glove/exo_right"
-    type: "joint_state"
-    description: "Right exoskeleton glove (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"
+    description: "Exoskeleton glove skeleton joint angles (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"
+  - path: "/glove/exo_tips_left"
+    type: "joint_se3_pose"
+    description: "Left hand fingertip poses in base_link, keyed HAND_RAW_*_TIP (ROS 2 tf2_msgs/TFMessage; topic set in config/io_exo_glove_ros2.yaml)"
+  - path: "/glove/exo_tips_right"
+    type: "joint_se3_pose"
+    description: "Right hand fingertip poses in base_link, keyed HAND_RAW_*_TIP (ROS 2 tf2_msgs/TFMessage; topic set in config/io_exo_glove_ros2.yaml)"

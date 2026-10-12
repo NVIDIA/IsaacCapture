@@ -24,9 +24,12 @@ namespace fs = std::filesystem;
 namespace
 {
 
-//! Every key the config file may define. Anything else is rejected, so a typo (say `left_topics`)
+//! Every key the config file may define. Anything else is rejected, so a typo (say `joint_topics`)
 //! fails loudly instead of silently leaving the built-in default in place.
-constexpr std::string_view kKnownKeys[] = { "left_topic", "right_topic", "left_collection_id", "right_collection_id" };
+constexpr std::string_view kKnownKeys[] = {
+    "joints_topic",        "links_topic", "joints_collection_id", "tips_left_collection_id", "tips_right_collection_id",
+    "tips_reference_frame"
+};
 
 std::string known_keys_as_text()
 {
@@ -152,10 +155,12 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     }
 
     validate_keys(root, path);
-    assign(root, "left_topic", options.left_topic, path);
-    assign(root, "right_topic", options.right_topic, path);
-    assign(root, "left_collection_id", options.left_collection_id, path);
-    assign(root, "right_collection_id", options.right_collection_id, path);
+    assign(root, "joints_topic", options.joints_topic, path);
+    assign(root, "links_topic", options.links_topic, path);
+    assign(root, "joints_collection_id", options.joints_collection_id, path);
+    assign(root, "tips_left_collection_id", options.tips_left_collection_id, path);
+    assign(root, "tips_right_collection_id", options.tips_right_collection_id, path);
+    assign(root, "tips_reference_frame", options.tips_reference_frame, path);
 
     resolution.loaded_path = path;
     return resolution;

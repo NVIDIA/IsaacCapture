@@ -4,41 +4,47 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 # Preface
-First, the required ROS2 topics need to be published through the IO exoskeleton SDK, and then the following process can be initiated.
+
+The required ROS 2 topics are published by the IO exoskeleton SDK; start that first, then run this
+plugin.
 
 # Exoskeleton Glove ROS 2 Bridge plugin
 
-Bridges an exoskeleton glove's ROS 2 (Humble) driver into Isaac Teleop's generic
-**joint-space device** path (`JointStateTracker` / `JointStateSource` /
-`JointStateRetargeter`), using the same `JointStateOutput` FlatBuffer schema as
-`so101_leader` / `rebot_devarm_leader`.
+Bridges the exoskeleton glove's own ROS 2 streams into Isaac Capture's device paths, so the mapping
+onto a particular dexterous hand stays on this side (`JointStateRetargeter` or the hand retargeters)
+and a recording is not tied to one hand:
+
+- the glove's own joint angles, as `JointStateOutput` (the generic joint-space path, the same schema
+  `so101_leader` / `rebot_devarm_leader` use);
+- the five fingertip poses per hand, as `JointSe3PoseOutput` -- the schema for a sparse,
+  vendor-chosen set of 6-DoF frames, the same one `manus` publishes its raw flex tips with.
 
 ## Data path
 
 ```
-Exoskeleton ROS 2 driver (sensor_msgs/msg/JointState, already retargeted to a
-dexterous hand's URDF joint names, radians)
-  --/io_teleop/joint_cmd_finger_left-->  ┐
-  --/io_teleop/joint_cmd_finger_right--> ┤
-                                          ▼
-                        io_exo_glove_ros2_plugin (rclcpp node)
-                          left  -> JointStateOutputT -> SchemaPusher(collection "exo_glove_left")
-                          right -> JointStateOutputT -> SchemaPusher(collection "exo_glove_right")
-                                          ▼
-                        JointStateTracker x2 -> JointStateSource x2 -> JointStateRetargeter x2
+Exoskeleton SDK / ROS 2 driver
+  --/io_esk/joint_data-->        sensor_msgs/msg/JointState  (glove skeleton DOF angles, radians)
+  --/io_fusion/tf_exoskeleton--> tf2_msgs/msg/TFMessage      (every link pose, children of base_link)
+                     |
+                     v
+        io_exo_glove_ros2_plugin (rclcpp node)
+          joints -> JointStateOutput    -> SchemaPusher("exo_glove_joints",    joint_state)
+          tips L -> JointSe3PoseOutput  -> SchemaPusher("exo_glove_tips_left",  joint_se3_pose)
+          tips R -> JointSe3PoseOutput  -> SchemaPusher("exo_glove_tips_right", joint_se3_pose)
+                     |
+                     v
+        JointStateTracker -> JointStateSource -> retargeters
+        JointSe3PoseTracker (fingertip poses)
 ```
 
-The plugin is a **pure transport bridge**: it assumes the upstream ROS 2 driver has already
-retargeted the exoskeleton's raw joint angles to the target dexterous hand's URDF joint names
-and units (radians), so `JointState.name[i]` / `JointState.position[i]` are copied through
-unchanged into `JointStateOutput.joints`. No unit conversion, calibration, or name remapping is
-performed here.
+Both topics are published at about 120 Hz in the reference setup. Nothing is changed on the way
+through: names, values and the reference frame are forwarded as published.
 
 ## Build
 
-Requires a sourced ROS 2 Humble environment (`rclcpp`, `sensor_msgs` are located via
-`find_package()`, same as any ROS 2 C++ node -- no colcon/ament wrapper needed since this plugin
-only *consumes* stock message types, no custom `.msg` generation):
+Requires a sourced ROS 2 Humble environment (`rclcpp`, `sensor_msgs`, `tf2_msgs` are located via
+`find_package()`, same as any ROS 2 C++ node -- no colcon/ament wrapper needed since this plugin only
+*consumes* stock message types, no custom `.msg` generation):
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -48,22 +54,25 @@ cmake --build build --target io_exo_glove_ros2_plugin --parallel
 
 ## Configuration
 
-Topics and collection ids live in `config/io_exo_glove_ros2.yaml`, **not** in the source: edit that
-file and restart the plugin, with no rebuild and no recompilation of the header defaults.
+Topics, collection ids and the fingertip reference frame live in `config/io_exo_glove_ros2.yaml`,
+**not** in the source: edit that file and restart the plugin, with no rebuild and no recompilation of
+the header defaults.
 
 ```yaml
-left_topic: "/io_teleop/joint_cmd_finger_left"
-right_topic: "/io_teleop/joint_cmd_finger_right"
-left_collection_id: "exo_glove_left"
-right_collection_id: "exo_glove_right"
+joints_topic: "/io_esk/joint_data"
+links_topic: "/io_fusion/tf_exoskeleton"
+joints_collection_id: "exo_glove_joints"
+tips_left_collection_id: "exo_glove_tips_left"
+tips_right_collection_id: "exo_glove_tips_right"
+tips_reference_frame: "base_link"
 ```
 
 Every key is optional. Precedence, lowest to highest:
 
 1. the built-in defaults in `io_exo_glove_ros2_plugin.hpp`
 2. the config file
-3. the command-line flags `--left-topic=`, `--right-topic=`, `--left-collection-id=`,
-   `--right-collection-id=`
+3. the command-line flags `--joints-topic=`, `--links-topic=`, `--joints-collection-id=`,
+   `--tips-left-collection-id=`, `--tips-right-collection-id=`, `--tips-reference-frame=`
 
 The file is looked up in this order, first hit wins:
 
@@ -85,17 +94,86 @@ IO_EXO_GLOVE_ROS2_CONFIG=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.
 
 Naming a file explicitly (`--config=` or the environment variable) makes a missing or malformed file
 an error instead of a silent fallback to defaults. Unknown keys are rejected too, so a typo such as
-`left_topics:` fails loudly rather than quietly keeping the old value.
+`joint_topics:` fails loudly rather than quietly keeping the old value.
+
+## Joint angles (collection `exo_glove_joints`)
+
+`JointState.name` is the lookup key, so the `JointStateSource` consumer reads joints **by name** and
+the order on the wire does not matter. The reference setup publishes 42 joints (radians), right hand
+first:
+
+| Group | Names |
+| --- | --- |
+| Right hand | `joint_RightSkeletonThumbBase`, `joint_RightSkeletonThumb1..4`, `joint_RightSkeletonIndex1..4`, `joint_RightSkeletonMiddle1..4`, `joint_RightSkeletonRing1..4`, `joint_RightSkeletonPinky1..4` |
+| Left hand | `joint_LeftSkeletonThumbBase`, `joint_LeftSkeletonThumb1..4`, `joint_LeftSkeletonIndex1..4`, `joint_LeftSkeletonMiddle1..4`, `joint_LeftSkeletonRing1..4`, `joint_LeftSkeletonPinky1..4` |
+
+List them from a running driver with
+`ros2 topic echo --once /io_esk/joint_data --field name`.
+
+The collection is sized 4096 bytes -- `JointStateTracker`'s own default -- so the consumer needs no
+explicit size; the reference 42-joint payload serializes to about 2 KB.
+
+> Names you do not list are simply unused, but a name that does **not** match what the driver
+> publishes is not an error: `JointStateSource` falls back to `0.0` for it, so a finger would read a
+> silent zero. Check the list above against your driver before wiring a retargeter.
+
+## Fingertip poses (collections `exo_glove_tips_left` / `exo_glove_tips_right`)
+
+Every transform in the TF message is one link pose and every frame is a child of the same reference
+frame (`base_link`), so each transform already is that frame's pose in `base_link`; no forward
+kinematics is composed here. The five fingertips of each hand are published as a `JointSe3PoseOutput`
+-- one collection per hand, tensor id `joint_se3_pose`, frame `type = JointType.HAND_RAW`, stamped
+with the message's own header stamp -- keyed by `JointName`:
+
+| Frame in `/io_fusion/tf_exoskeleton` | `JointName` key |
+| --- | --- |
+| `<left\|right>_thumb_tip` | `HAND_RAW_THUMB_TIP` |
+| `<left\|right>_index_tip` | `HAND_RAW_INDEX_TIP` |
+| `<left\|right>_middle_tip` | `HAND_RAW_MIDDLE_TIP` |
+| `<left\|right>_ring_tip` | `HAND_RAW_RING_TIP` |
+| `<left\|right>_pinky_tip` | `HAND_RAW_LITTLE_TIP` |
+
+The schema is sparse by design: a fingertip the driver does not publish is simply absent from the
+frame (there is no per-pose validity flag), so consumers must treat a missing key as "not tracked"
+rather than as an invalid pose. Positions are in meters and orientations are Hamilton quaternions
+(x, y, z, w).
+
+`JointSe3PoseOutput` has no per-pose frame: one output carries poses in a single frame, which is why
+`tips_reference_frame` exists. It defaults to `base_link` (the exoskeleton's own root, the frame
+every transform in the reference setup is a child of) and is the frame consumers read the poses as. A
+fingertip that arrives in any other frame is skipped with a throttled warning instead of being
+relabelled, so a reparented driver fails visibly rather than silently publishing poses in the wrong
+frame. Set the key to your exoskeleton's root frame if it is not `base_link`.
+
+The other links in the message are not duplicated here: they follow from the joint angles by forward
+kinematics, and the raw topic remains available for tooling that wants all 75 frames.
+
+Each collection is sized 1024 bytes -- `JointSe3PoseTracker`'s own default -- so the consumer needs
+no explicit size; five poses are about 200 B.
+
+### Consumer example
+
+```python
+from isaaccapture.deviceio_trackers import JointSe3PoseTracker, JointStateTracker
+from isaaccapture.schema import JointName, JointType
+
+joints = JointStateTracker("exo_glove_joints")            # 4096-byte default
+tips = JointSe3PoseTracker("exo_glove_tips_left")         # 1024-byte default
+
+# ... register both with the DeviceIOSession, then each tick:
+angles = {j.name: j.position for j in joints.get_data(session).data.joints}   # radians
+
+data = tips.get_data(session).data
+assert data is None or data.type == JointType.HAND_RAW
+thumb = data.lookup(JointName.HAND_RAW_THUMB_TIP) if data is not None else None
+if thumb is not None:
+    position, orientation = thumb.pose.position, thumb.pose.orientation
+```
 
 ## Usage
 
-
 ```bash
-
-python -m isaacteleop.cloudxr
-
 source /opt/ros/humble/setup.bash
-source ~/.cloudxr/run/cloudxr.env
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin
 
 # Show which config file was loaded and the effective settings, then exit (no OpenXR runtime,
@@ -105,7 +183,7 @@ source ~/.cloudxr/run/cloudxr.env
 # Point at a config file, and/or override a single key for one run:
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
     --config=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.yaml \
-    --left-topic=/io_teleop/joint_cmd_finger_left
+    --joints-topic=/io_esk/joint_data
 ```
 
 `--help` lists all flags. Everything from `--ros-args` onwards is forwarded to ROS 2 untouched
@@ -127,27 +205,27 @@ PluginConfig(
     plugin_name="io_exo_glove_ros2",
     plugin_root_id="io_exo_glove_ros2",
     search_paths=[install_dir / "plugins"],
-    plugin_args=["--left-topic=/io_teleop/joint_cmd_finger_left"],
+    plugin_args=["--joints-topic=/io_esk/joint_data"],
 )
 ```
 
-The consumer side creates a `JointStateSource(name=..., collection_id="exo_glove_left", ...)`
-(and the `_right` counterpart) via `JointStateTracker`, feeding `JointStateRetargeter` with
-`device_joints` set to the same URDF joint names the exoskeleton was calibrated against. The
-collection ids there must match `left_collection_id` / `right_collection_id` above. See
-`docs/source/device/joint_space.rst` for the shared schema/tracker/retargeter reference.
-
 ## Notes
 
-- Each hand gets its own OpenXR tensor collection (`SchemaPusher` instance) so the two sides can
-  be tracked, recorded, and retargeted independently.
+- Every collection carries the `joint_state` or `joint_se3_pose` tensor identifier its consumer
+  tracker reads, and each gets its own `SchemaPusher`, so the streams are tracked and recorded
+  independently.
 - The `--plugin-root-id=...` argument injected by the `PluginManager` is dropped wherever it appears
   -- including after `--ros-args`, where the launcher appends it -- because ROS 2 rejects unknown
   arguments inside the `--ros-args` section and startup would fail. This plugin does not use the id:
   it publishes under the fixed collection ids from its config file.
-- `JointState.header.stamp` is used as the raw device clock when the driver sets it (non-zero);
-  otherwise the local monotonic clock is used for both timestamps, per `SchemaPusher`'s documented
-  fallback convention.
-- A message whose `name` and `position` arrays differ in length is dropped with a throttled warning
-  rather than forwarded as a partial hand state, as is a message whose serialized payload would
-  exceed the tensor buffer (`SchemaPusher::push_buffer()` throws on oversized data).
+- `JointState.header.stamp`, or the first transform's stamp for the TF message, is used as the raw
+  device clock when the publisher sets one; otherwise the local monotonic clock is used for both
+  timestamps, per `SchemaPusher`'s documented fallback convention.
+- A joint message whose `name` and `position` arrays differ in length is dropped with a throttled
+  warning rather than forwarded as a partial device state, as is any frame whose serialized payload
+  would exceed its tensor buffer (`SchemaPusher::push_buffer()` throws on oversized data).
+- A fingertip frame is skipped (with a throttled warning) when it is not expressed in
+  `tips_reference_frame`: one `JointSe3PoseOutput` carries a single reference frame for all of its
+  poses, and the schema requires the producer to document it, so the pose is never relabelled to fit.
+- A hand with no fingertip frame in the message, or none in `tips_reference_frame`, pushes nothing for
+  that hand: the schema is sparse, and a missing tensor means "not tracked", not "identity pose".

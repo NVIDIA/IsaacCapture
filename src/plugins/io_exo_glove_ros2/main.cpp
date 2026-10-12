@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "io_exo_glove_ros2_config.hpp"
+#include "io_exo_glove_ros2_pack.hpp"
 #include "io_exo_glove_ros2_plugin.hpp"
 
 #include <rclcpp/rclcpp.hpp>
@@ -20,25 +21,30 @@ namespace
 //! built-in default provided.
 struct CliOverrides
 {
-    std::optional<std::string> left_topic;
-    std::optional<std::string> right_topic;
-    std::optional<std::string> left_collection_id;
-    std::optional<std::string> right_collection_id;
+    std::optional<std::string> joints_topic;
+    std::optional<std::string> links_topic;
+    std::optional<std::string> joints_collection_id;
+    std::optional<std::string> tips_left_collection_id;
+    std::optional<std::string> tips_right_collection_id;
+    std::optional<std::string> tips_reference_frame;
 };
 
 void print_usage(const char* prog)
 {
     std::cout << "Usage: " << prog << " [options] [--ros-args ...]\n"
-              << "\nTopics and collection ids come from the config file; the flags below override it.\n"
+              << "\nTopics, collection ids and the fingertip reference frame come from the config file; the flags\n"
+              << "below override it.\n"
               << "\nOptions:\n"
-              << "  --config=PATH               Config file to load (default: the default path, or $" << kConfigEnvVar
-              << ")\n"
-              << "  --left-topic=TOPIC          Override the left hand's ROS 2 JointState topic\n"
-              << "  --right-topic=TOPIC         Override the right hand's ROS 2 JointState topic\n"
-              << "  --left-collection-id=ID     Override the left OpenXR tensor collection id\n"
-              << "  --right-collection-id=ID    Override the right OpenXR tensor collection id\n"
-              << "  --print-config              Print the resolved settings and the file they came from, then exit\n"
-              << "  --help                      Show this help\n"
+              << "  --config=PATH                  Config file to load (default: the default path, or $"
+              << kConfigEnvVar << ")\n"
+              << "  --joints-topic=TOPIC           Override the glove joint angles topic (sensor_msgs/JointState)\n"
+              << "  --links-topic=TOPIC            Override the exoskeleton link poses topic (tf2_msgs/TFMessage)\n"
+              << "  --joints-collection-id=ID      Override the joint angles tensor collection id\n"
+              << "  --tips-left-collection-id=ID   Override the left fingertip poses collection id\n"
+              << "  --tips-right-collection-id=ID  Override the right fingertip poses collection id\n"
+              << "  --tips-reference-frame=FRAME   Override the frame the fingertip poses are expressed in\n"
+              << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
+              << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
 }
 
@@ -120,37 +126,53 @@ try
             }
             config_path = *value;
         }
-        else if (const auto value = flag_value(arg, "left-topic"))
+        else if (const auto value = flag_value(arg, "joints-topic"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "left-topic");
+                return fail_empty_flag(argv[0], "joints-topic");
             }
-            cli.left_topic = *value;
+            cli.joints_topic = *value;
         }
-        else if (const auto value = flag_value(arg, "right-topic"))
+        else if (const auto value = flag_value(arg, "links-topic"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "right-topic");
+                return fail_empty_flag(argv[0], "links-topic");
             }
-            cli.right_topic = *value;
+            cli.links_topic = *value;
         }
-        else if (const auto value = flag_value(arg, "left-collection-id"))
+        else if (const auto value = flag_value(arg, "joints-collection-id"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "left-collection-id");
+                return fail_empty_flag(argv[0], "joints-collection-id");
             }
-            cli.left_collection_id = *value;
+            cli.joints_collection_id = *value;
         }
-        else if (const auto value = flag_value(arg, "right-collection-id"))
+        else if (const auto value = flag_value(arg, "tips-left-collection-id"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "right-collection-id");
+                return fail_empty_flag(argv[0], "tips-left-collection-id");
             }
-            cli.right_collection_id = *value;
+            cli.tips_left_collection_id = *value;
+        }
+        else if (const auto value = flag_value(arg, "tips-right-collection-id"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "tips-right-collection-id");
+            }
+            cli.tips_right_collection_id = *value;
+        }
+        else if (const auto value = flag_value(arg, "tips-reference-frame"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "tips-reference-frame");
+            }
+            cli.tips_reference_frame = *value;
         }
         else
         {
@@ -162,21 +184,29 @@ try
 
     // Config file first, then the command line on top, so an ad-hoc flag beats the file.
     const ConfigResolution resolution = load_options_from_config(config_path, options);
-    if (cli.left_topic)
+    if (cli.joints_topic)
     {
-        options.left_topic = *cli.left_topic;
+        options.joints_topic = *cli.joints_topic;
     }
-    if (cli.right_topic)
+    if (cli.links_topic)
     {
-        options.right_topic = *cli.right_topic;
+        options.links_topic = *cli.links_topic;
     }
-    if (cli.left_collection_id)
+    if (cli.joints_collection_id)
     {
-        options.left_collection_id = *cli.left_collection_id;
+        options.joints_collection_id = *cli.joints_collection_id;
     }
-    if (cli.right_collection_id)
+    if (cli.tips_left_collection_id)
     {
-        options.right_collection_id = *cli.right_collection_id;
+        options.tips_left_collection_id = *cli.tips_left_collection_id;
+    }
+    if (cli.tips_right_collection_id)
+    {
+        options.tips_right_collection_id = *cli.tips_right_collection_id;
+    }
+    if (cli.tips_reference_frame)
+    {
+        options.tips_reference_frame = *cli.tips_reference_frame;
     }
 
     if (print_config)
@@ -188,10 +218,17 @@ try
         {
             std::cout << "  " << candidate << "\n";
         }
-        std::cout << "left_topic          = " << options.left_topic << "\n"
-                  << "right_topic         = " << options.right_topic << "\n"
-                  << "left_collection_id  = " << options.left_collection_id << "\n"
-                  << "right_collection_id = " << options.right_collection_id << std::endl;
+        std::cout << "joints_topic            = " << options.joints_topic << "\n"
+                  << "links_topic             = " << options.links_topic << "\n"
+                  << "joints_collection_id    = " << options.joints_collection_id << "\n"
+                  << "tips_left_collection_id = " << options.tips_left_collection_id << "\n"
+                  << "tips_right_collection_id= " << options.tips_right_collection_id << "\n"
+                  << "tips_reference_frame    = " << options.tips_reference_frame << "\n"
+                  << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
+                  << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
+                  << "\n(Both sizes are the consumer trackers' own defaults -- JointStateTracker and "
+                     "JointSe3PoseTracker -- so no explicit size is needed for either collection.)"
+                  << std::endl;
         return 0;
     }
 
@@ -211,8 +248,9 @@ try
     ros_argv.push_back(nullptr);
     rclcpp::init(static_cast<int>(ros_args.size()), ros_argv.data());
 
-    std::cout << "IoExoGloveRos2Plugin (left: " << options.left_topic << " -> " << options.left_collection_id
-              << ", right: " << options.right_topic << " -> " << options.right_collection_id << ")" << std::endl;
+    std::cout << "IoExoGloveRos2Plugin (joints: " << options.joints_topic << " -> " << options.joints_collection_id
+              << ", tips: " << options.links_topic << " -> " << options.tips_left_collection_id << " / "
+              << options.tips_right_collection_id << ")" << std::endl;
 
     auto node = std::make_shared<IoExoGloveRos2Plugin>(options);
     rclcpp::spin(node);

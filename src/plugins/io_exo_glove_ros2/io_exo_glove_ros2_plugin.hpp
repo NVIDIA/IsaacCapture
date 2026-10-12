@@ -6,7 +6,9 @@
 #include <pusherio/schema_pusher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <tf2_msgs/msg/tf_message.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -21,52 +23,66 @@ namespace io_exo_glove_ros2
 {
 
 /*!
- * @brief Bridges a ROS 2 exoskeleton glove driver to Isaac Teleop's joint-space device path.
+ * @brief Bridges the exoskeleton glove's own ROS 2 streams into Isaac Teleop's device paths.
  *
- * Subscribes to the left/right ``sensor_msgs/msg/JointState`` topics published by the
- * exoskeleton's ROS 2 driver (finger joint angles, already retargeted upstream to a specific
- * dexterous hand's URDF joint names and units [rad]) and re-publishes each message unchanged --
- * same joint names, same positions -- as a ``core::JointStateOutput`` FlatBuffer via OpenXR
- * ``SchemaPusher``, on the generic joint-space device path (``JointStateTracker`` /
- * ``JointStateSource`` / ``JointStateRetargeter``). One tensor collection per hand so each side
- * can be tracked independently downstream.
+ * The glove's articulation is bridged, not a pre-retargeted command stream, so the mapping onto a
+ * particular dexterous hand stays on this side and recordings are not tied to one hand:
  *
- * No unit conversion or name remapping is performed: the ROS 2 driver is expected to already
- * output the target hand's joint names and radians, so this plugin is a transport bridge only.
+ *  - ``sensor_msgs/msg/JointState`` (default ``/io_esk/joint_data``): the glove's own DOF angles (the
+ *    two hands' skeleton joints, radians), forwarded unchanged and read through the generic
+ *    joint-space path (``JointStateTracker`` / ``JointStateSource``).
+ *
+ *  - ``tf2_msgs/msg/TFMessage`` (default ``/io_fusion/tf_exoskeleton``): every link pose, of which
+ *    the five fingertips per hand are published as ``JointSe3PoseOutput`` (tensor id
+ *    ``joint_se3_pose``, one collection per hand) -- the schema for a sparse, vendor-chosen set of
+ *    6-DoF frames, which is what ``HandPose``'s dense OpenXR skeleton is not. See
+ *    ``pack_fingertip_poses``; the remaining links are derivable from the joint stream by forward
+ *    kinematics and are not duplicated here.
+ *
+ * Both streams are transport-only: names and values are forwarded as published. The one exception is
+ * the fingertip reference frame, which ``JointSe3PoseOutput`` cannot carry per pose: it is fixed by
+ * Options::tips_reference_frame (default ``base_link``, the exoskeleton's own root) and a tip that
+ * arrives in any other frame is skipped with a warning rather than published in a mixed set.
  */
 class IoExoGloveRos2Plugin : public rclcpp::Node
 {
 public:
     struct Options
     {
-        std::string left_topic = "/io_teleop/joint_cmd_finger_left";
-        std::string right_topic = "/io_teleop/joint_cmd_finger_right";
-        std::string left_collection_id = "exo_glove_left";
-        std::string right_collection_id = "exo_glove_right";
+        std::string joints_topic = "/io_esk/joint_data";
+        std::string links_topic = "/io_fusion/tf_exoskeleton";
+        std::string joints_collection_id = "exo_glove_joints";
+        std::string tips_left_collection_id = "exo_glove_tips_left";
+        std::string tips_right_collection_id = "exo_glove_tips_right";
+        //! Reference frame the fingertip poses must be expressed in; the frame a consumer reads them
+        //! as. Tips published in another frame are skipped (never silently mixed or relabelled).
+        std::string tips_reference_frame = "base_link";
     };
+
+    //! Tensor size for the joint collection, in bytes. It is ``JointStateTracker``'s own default, so a
+    //! consumer needs no custom size; the reference 42-joint payload serializes to about 2 KB.
+    static constexpr std::size_t kJointsMaxFlatbufferSize = 4096;
 
     explicit IoExoGloveRos2Plugin(const Options& options);
 
 private:
-    //! Shared by both callbacks: converts a JointState message to JointStateOutputT and pushes it
-    //! through @p pusher, using @p device_id as JointStateOutput.device_id.
-    void push_joint_state(core::SchemaPusher& pusher,
-                          const std::string& device_id,
-                          const sensor_msgs::msg::JointState& msg);
+    //! Forwards the glove's own joint angles unchanged.
+    void push_joint_state(const sensor_msgs::msg::JointState& msg);
 
-    void on_left(const sensor_msgs::msg::JointState::SharedPtr msg);
-    void on_right(const sensor_msgs::msg::JointState::SharedPtr msg);
+    //! Publishes one hand's fingertip poses (see pack_fingertip_poses()).
+    void push_fingertip_poses(const tf2_msgs::msg::TFMessage& msg);
 
     Options m_opts;
 
-    // OpenXR session shared by both hands; SchemaPusher is non-copyable/non-movable so each hand
-    // gets its own instance rather than a single multiplexed pusher.
+    // OpenXR session shared by all collections; SchemaPusher is non-copyable/non-movable, so each
+    // collection gets its own instance rather than a single multiplexed pusher.
     std::shared_ptr<core::OpenXRSession> m_session; // OpenXR session (connects to the CloudXR runtime)
-    std::unique_ptr<core::SchemaPusher> m_left_pusher; // Pushes the left hand's samples
-    std::unique_ptr<core::SchemaPusher> m_right_pusher; // Pushes the right hand's samples
+    std::unique_ptr<core::SchemaPusher> m_joints_pusher; // Glove joint angles
+    std::unique_ptr<core::SchemaPusher> m_tips_left_pusher; // Left fingertip poses
+    std::unique_ptr<core::SchemaPusher> m_tips_right_pusher; // Right fingertip poses
 
-    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_left_sub;
-    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_right_sub;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr m_joints_sub;
+    rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr m_links_sub;
 };
 
 } // namespace io_exo_glove_ros2

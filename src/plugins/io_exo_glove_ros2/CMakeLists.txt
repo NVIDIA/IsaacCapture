@@ -8,15 +8,17 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     return()
 endif()
 
-# rclcpp / sensor_msgs are ordinary ament CMake packages: find_package() locates them once the
-# ROS 2 (Humble) environment is sourced (CMAKE_PREFIX_PATH from setup.bash), same as any other
+# rclcpp / sensor_msgs / tf2_msgs are ordinary ament CMake packages: find_package() locates them once
+# the ROS 2 (Humble) environment is sourced (CMAKE_PREFIX_PATH from setup.bash), same as any other
 # ROS 2 C++ node -- no colcon/ament build wrapper needed for a plain consumer like this plugin.
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(tf2_msgs REQUIRED)
 
 add_executable(io_exo_glove_ros2_plugin
     main.cpp
     io_exo_glove_ros2_config.cpp
+    io_exo_glove_ros2_pack.cpp
     io_exo_glove_ros2_plugin.cpp
 )
 
@@ -25,7 +27,12 @@ target_link_libraries(io_exo_glove_ros2_plugin PRIVATE
     oxr::oxr_core
     isaacteleop_schema
     rclcpp::rclcpp
-    sensor_msgs::sensor_msgs
+    # ${<pkg>_TARGETS} rather than each package's <pkg>::<pkg> aggregate target: the aggregate is
+    # written into the message package's own CMake config at its build time, so `sensor_msgs::sensor_msgs`
+    # only exists from ros-humble-sensor-msgs 4.9.2 (2026-08-07) onwards. These variables work on every
+    # Humble.
+    ${sensor_msgs_TARGETS}
+    ${tf2_msgs_TARGETS}
     yaml-cpp::yaml-cpp
 )
 
