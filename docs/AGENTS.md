@@ -9,6 +9,9 @@ Rules that the docs tree cannot state for itself. Anything that describes how a 
 currently put together belongs next to it instead — in the `.rst`, in the YAML header, in
 the CSS — where it moves when the code moves.
 
+Keep small API-option updates to purpose, prerequisites, and usage; avoid
+example wrappers and lifecycle walkthroughs unless needed to use the option.
+
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which
