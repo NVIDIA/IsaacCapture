@@ -776,7 +776,7 @@ reference-frame convention as <code class="docutils literal notranslate"><span c
 <p>When a producer has already evaluated forward kinematics, it can instead publish
 <code class="docutils literal notranslate"><span class="pre">SomaHandJointPoses</span></code>. That profile carries a global position, orientation, and validity for each
 of the same 25 joints and requires no downstream FK. Create one tracker per hand collection; each
-payload identifies its side through <code class="docutils literal notranslate"><span class="pre">handedness</span></code>. As with the body contract, a vendor adapter
+payload identifies its side through <code class="docutils literal notranslate"><span class="pre">hand_side</span></code>. As with the body contract, a vendor adapter
 converts its device-native hand data before calling <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>.</p>
 <p>For a retargeting graph, <code class="docutils literal notranslate"><span class="pre">SomaHandSource</span></code> selects the rotation tracker by default and emits an
 evaluated <code class="docutils literal notranslate"><span class="pre">SomaHandInput</span></code>. Pass <code class="docutils literal notranslate"><span class="pre">representation=&quot;joint-poses&quot;</span></code> to select the evaluated-pose
@@ -1073,7 +1073,7 @@ construction; see <a class="reference internal" href="../getting_started/teleop_
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 10, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 12, 2026.
       <br/>
     
   </p>

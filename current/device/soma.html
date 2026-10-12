@@ -473,8 +473,9 @@ vendor hand SDK -&gt; SOMA hand FlatBuffer -&gt; SchemaPusher -&gt; SOMA hand tr
 </div>
 <p>The body schema contains SOMA’s complete body control set, including its hand
 controls. The standalone hand schemas provide independent left and right hand
-streams. Isaac Teleop does not automatically fuse standalone hands with the
-hand controls in a body payload.</p>
+streams, identified by <code class="docutils literal notranslate"><span class="pre">hand_side</span></code> (<code class="docutils literal notranslate"><span class="pre">SomaHandSide.LEFT</span></code> or
+<code class="docutils literal notranslate"><span class="pre">SomaHandSide.RIGHT</span></code>). Isaac Teleop does not automatically fuse standalone
+hands with the hand controls in a body payload.</p>
 </section>
 <section id="choose-a-representation">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Choose a representation</a><a class="headerlink" href="#choose-a-representation" title="Link to this heading">#</a></h2>
@@ -832,7 +833,7 @@ collection names.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 10, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 12, 2026.
       <br/>
     
   </p>

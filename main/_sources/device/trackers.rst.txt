@@ -348,7 +348,7 @@ reference-frame convention as ``SomaBodyJointRotations``.
 When a producer has already evaluated forward kinematics, it can instead publish
 ``SomaHandJointPoses``. That profile carries a global position, orientation, and validity for each
 of the same 25 joints and requires no downstream FK. Create one tracker per hand collection; each
-payload identifies its side through ``handedness``. As with the body contract, a vendor adapter
+payload identifies its side through ``hand_side``. As with the body contract, a vendor adapter
 converts its device-native hand data before calling ``SchemaPusher``.
 
 For a retargeting graph, ``SomaHandSource`` selects the rotation tracker by default and emits an
