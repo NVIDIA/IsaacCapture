@@ -13,10 +13,10 @@ namespace core
 
 inline void bind_soma_common(py::module& m)
 {
-    py::enum_<SomaHandedness>(m, "SomaHandedness")
-        .value("UNSPECIFIED", SomaHandedness_UNSPECIFIED)
-        .value("LEFT", SomaHandedness_LEFT)
-        .value("RIGHT", SomaHandedness_RIGHT);
+    py::enum_<SomaHandSide>(m, "SomaHandSide")
+        .value("UNSPECIFIED", SomaHandSide_UNSPECIFIED)
+        .value("LEFT", SomaHandSide_LEFT)
+        .value("RIGHT", SomaHandSide_RIGHT);
 }
 
 } // namespace core
