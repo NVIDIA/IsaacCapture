@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Replay a recorded full-body MCAP file and visualize it with viser.
+Replay recorded FullBodyPose or SOMA body data and visualize it with viser.
 
 ``mode=SessionMode.REPLAY`` skips all OpenXR initialization, so this runs
 headless on any machine. Open the URL viser prints (default
@@ -13,12 +13,14 @@ Usage:
 
 If no path is given, the newest ``full_body_*.mcap`` under ``./recordings/`` is
 used.
+SOMA mode selects ``soma_body_<representation>_*.mcap`` instead.
 Replay repeats until Ctrl+C.
 
 See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
 
 import argparse
+import math
 import sys
 import time
 from pathlib import Path
@@ -35,7 +37,19 @@ from isaaccapture.teleop_session_manager import (
     TeleopSessionConfig,
 )
 
-from .common import BODY_JOINT_NAMES, FullBodyViz, build_full_body_pipeline, setup_scene
+from .common import (
+    BODY_JOINT_NAMES,
+    FullBodyViz,
+    build_full_body_pipeline,
+    setup_scene,
+    add_body_arguments,
+    validate_body_arguments,
+    build_body_pipeline,
+    create_body_visualizer,
+    update_body_visualizer,
+    resolve_recording,
+    replay_once,
+)
 
 
 def mcap_duration_s(path: Path) -> float:
@@ -77,11 +91,12 @@ def run_once(
     mcap_path: Path,
     duration_s: float,
     viz: FullBodyViz,
+    include_controllers: bool = True,
 ) -> int:
     """Play the file once for ``duration_s`` wall-clock seconds. Returns frame count."""
     config = TeleopSessionConfig(
         app_name="McapFullBodyReplayExample",
-        pipeline=build_full_body_pipeline(),
+        pipeline=build_full_body_pipeline(include_controllers),
         mode=SessionMode.REPLAY,
         mcap_config=McapReplayConfig(str(mcap_path)),
     )
@@ -127,27 +142,66 @@ def main(argv: list[str]) -> int:
         help="Viser HTTP bind address (default: 0.0.0.0, all interfaces; pass 127.0.0.1 to keep it local)",
     )
     parser.add_argument("--port", type=int, default=8080, help="Viser HTTP port")
+    add_body_arguments(parser)
+    parser.add_argument(
+        "--rate",
+        type=float,
+        help="SOMA playback Hz (default: average capture rate); 0 = unpaced",
+    )
     args = parser.parse_args(argv[1:])
+    validate_body_arguments(parser, args)
+    if args.rate is not None:
+        if args.body_schema != "soma":
+            parser.error("--rate is only supported with --body-schema soma")
+        if not math.isfinite(args.rate) or args.rate < 0:
+            parser.error("rate must be finite and nonnegative")
 
-    mcap_path = resolve_mcap(args.mcap)
-    duration_s = mcap_duration_s(mcap_path)
+    if args.body_schema == "soma":
+        from .soma_body_common import replay_info
+
+        try:
+            mcap_path = resolve_recording(
+                args.mcap, f"soma_body_{args.soma_body_representation}"
+            )
+            count, capture_rate = replay_info(
+                mcap_path, args.soma_body_collection_id, args.soma_body_representation
+            )
+        except (FileNotFoundError, ValueError) as error:
+            parser.error(str(error))
+        rate = capture_rate if args.rate is None else args.rate
+        pipeline = build_body_pipeline(args)
+        print(f"[replay] reading {mcap_path}: {count} samples at {rate:.1f} Hz")
+    else:
+        mcap_path = resolve_mcap(args.mcap)
+        duration_s = mcap_duration_s(mcap_path)
+        print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
     server = viser.ViserServer(host=args.host, port=args.port)
     ground = setup_scene(server)
-    viz = FullBodyViz(server, ground)
+    viz = create_body_visualizer(args, server, ground)
 
     print(
         f"[replay] viser listening on {args.host}:{args.port} "
         f"(http://localhost:{args.port})"
     )
-    print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
     try:
         while True:
-            run_once(mcap_path, duration_s, viz)
+            if args.body_schema == "soma":
+                replay_once(
+                    mcap_path,
+                    pipeline,
+                    count,
+                    lambda result: update_body_visualizer(args, result, viz),
+                    rate,
+                )
+            else:
+                run_once(mcap_path, duration_s, viz, args.controllers)
             print("[replay] looping…")
     except KeyboardInterrupt:
         pass
+    finally:
+        server.stop()
 
     return 0
 
