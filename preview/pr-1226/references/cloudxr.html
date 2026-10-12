@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -366,6 +366,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spacemouse.html">SpaceMouse Plugin</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -706,43 +707,12 @@ alongside the check for a non-interactive stdin, so automated runs never wait.</
 </section>
 <section id="connect-the-oob-headset-after-application-startup">
 <span id="cloudxr-deferred-oob-connect"></span><h2>Connect the OOB headset after application startup<a class="headerlink" href="#connect-the-oob-headset-after-application-startup" title="Link to this heading">#</a></h2>
-<p>Applications that need their OpenXR session and renderer ready before the
-headset connects can pass <code class="docutils literal notranslate"><span class="pre">defer_oob_connect=True</span></code>. This Python option
-requires <code class="docutils literal notranslate"><span class="pre">setup_oob=True</span></code> and, for <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>, <code class="docutils literal notranslate"><span class="pre">run_embedded=True</span></code>.
-It is also available directly on <code class="docutils literal notranslate"><span class="pre">CloudXRService</span></code>. The default is <code class="docutils literal notranslate"><span class="pre">False</span></code>,
-so existing applications still connect immediately.</p>
-<p>The runtime and WSS listener start immediately, but OOB automation and backend
-WebSocket signaling wait for <code class="docutils literal notranslate"><span class="pre">connect_headset()</span></code>. This also holds signaling
-from an already-open headset page; the OOB control hub remains available.
-Call <code class="docutils literal notranslate"><span class="pre">connect_headset()</span></code> after application initialization, then keep servicing
-the application’s frame loop: the call is non-blocking and does not wait for
-the headset to finish connecting. Repeated calls are harmless. Stopping the
-service before releasing the gate cancels the wait without launching the client.</p>
-<p>In this example, <code class="docutils literal notranslate"><span class="pre">start_app()</span></code> is an application-provided context manager
-that creates the OpenXR session and waits for renderer initialization. Its
-<code class="docutils literal notranslate"><span class="pre">app.run()</span></code> method runs the frame loop, and context exit stops rendering
-and destroys the session before CloudXR stops:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.cloudxr</span><span class="w"> </span><span class="kn">import</span> <span class="n">CloudXRLauncher</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run_with_cloudxr</span><span class="p">(</span><span class="n">start_app</span><span class="p">):</span>
-    <span class="k">with</span> <span class="n">CloudXRLauncher</span><span class="p">(</span>
-        <span class="n">run_embedded</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">setup_oob</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">usb_local</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">defer_oob_connect</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="n">env_config</span><span class="o">=</span><span class="s2">"cloudxr.env"</span><span class="p">,</span>
-        <span class="n">accept_eula</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-    <span class="p">)</span> <span class="k">as</span> <span class="n">cloudxr</span><span class="p">:</span>
-        <span class="k">with</span> <span class="n">start_app</span><span class="p">()</span> <span class="k">as</span> <span class="n">app</span><span class="p">:</span>
-            <span class="n">cloudxr</span><span class="o">.</span><span class="n">connect_headset</span><span class="p">()</span>
-            <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</pre></div>
-</div>
-<p>Set a fixed <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE</span></code> matching the headset in <code class="docutils literal notranslate"><span class="pre">cloudxr.env</span></code>
-(for example, <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE=Quest3</span></code>). An <code class="docutils literal notranslate"><span class="pre">auto*</span></code> profile requires a
-connected client to discover the device and cannot support this startup order.
-The gate applies to an embedded service; it cannot defer connections on an
-already-running detached service.</p>
+<p>Set <code class="docutils literal notranslate"><span class="pre">defer_oob_connect=True</span></code> on <code class="docutils literal notranslate"><span class="pre">CloudXRService</span></code> or <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>
+to delay OOB automation and WebSocket signaling. Call <code class="docutils literal notranslate"><span class="pre">connect_headset()</span></code>
+after the OpenXR session and renderer are ready.</p>
+<p>Requires <code class="docutils literal notranslate"><span class="pre">setup_oob=True</span></code> and a fixed <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE</span></code> (not <code class="docutils literal notranslate"><span class="pre">auto*</span></code>).
+For <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>, also set <code class="docutils literal notranslate"><span class="pre">run_embedded=True</span></code>. The default <code class="docutils literal notranslate"><span class="pre">False</span></code>
+keeps immediate connection.</p>
 </section>
 <section id="configuration">
 <h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
@@ -765,6 +735,13 @@ the launcher starts a service. When attaching, the launcher recovers the
 detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.</p>
+<p>A launcher requesting <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> or <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
   NV_DEVICE_PROFILE: auto-native requested, Quest3 in effect
   Restart the service to apply it:
@@ -997,7 +974,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 09, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 12, 2026.
       <br/>
     
   </p>

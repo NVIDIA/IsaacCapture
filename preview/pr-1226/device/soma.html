@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -366,6 +366,7 @@
 <li class="toctree-l1"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="sharpa_avatar.html">Sharpa Avatar Glove</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
+<li class="toctree-l1"><a class="reference internal" href="spacemouse.html">SpaceMouse Plugin</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -472,8 +473,9 @@ vendor hand SDK -&gt; SOMA hand FlatBuffer -&gt; SchemaPusher -&gt; SOMA hand tr
 </div>
 <p>The body schema contains SOMA’s complete body control set, including its hand
 controls. The standalone hand schemas provide independent left and right hand
-streams. Isaac Teleop does not automatically fuse standalone hands with the
-hand controls in a body payload.</p>
+streams, identified by <code class="docutils literal notranslate"><span class="pre">hand_side</span></code> (<code class="docutils literal notranslate"><span class="pre">SomaHandSide.LEFT</span></code> or
+<code class="docutils literal notranslate"><span class="pre">SomaHandSide.RIGHT</span></code>). Isaac Teleop does not automatically fuse standalone
+hands with the hand controls in a body payload.</p>
 </section>
 <section id="choose-a-representation">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Choose a representation</a><a class="headerlink" href="#choose-a-representation" title="Link to this heading">#</a></h2>
@@ -831,7 +833,7 @@ collection names.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 09, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 12, 2026.
       <br/>
     
   </p>
