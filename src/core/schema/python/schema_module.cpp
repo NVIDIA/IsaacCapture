@@ -28,6 +28,8 @@
 #include "soma_hand_joint_rotations_bindings.h"
 #include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
+#include "tactile_bindings.h"
+#include "tactile_shape_bindings.h"
 #include "timestamp_bindings.h"
 
 namespace py = pybind11;
@@ -59,6 +61,10 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
+
+    // Bind tactile types (TactileData, TactileShape tables); internal only.
+    core::bind_tactile(m);
+    core::bind_tactile_shape(m);
 
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.
     core::bind_joint_state(m);

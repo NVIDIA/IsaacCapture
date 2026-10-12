@@ -52,6 +52,11 @@ from ._schema import (
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
+    # Tactile types (internal only).
+    TactileData,
+    TactileDataRecord,
+    TactileShape,
+    TactileShapeRecord,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
     JointState,
     JointStateOutput,
@@ -180,6 +185,11 @@ __all__ = [
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
+    # Tactile types (internal only).
+    "TactileData",
+    "TactileDataRecord",
+    "TactileShape",
+    "TactileShapeRecord",
     # Joint-state types (generic joint-space devices).
     "JointState",
     "JointStateOutput",
