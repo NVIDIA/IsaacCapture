@@ -636,15 +636,27 @@ class TestSignalHandlers:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("connect", [True, False])
-async def test_early_websocket_waits_for_app_or_shutdown(monkeypatch, connect):
+@pytest.mark.parametrize(
+    "outcome", ["connect", "shutdown", "disconnect", "disconnect_and_connect", "cancel"]
+)
+async def test_early_websocket_waits_for_app_or_disconnect(monkeypatch, outcome):
     from unittest.mock import AsyncMock
     from cloudxr_py_test_ns import wss
 
     requested = asyncio.Event()
     listening = asyncio.Event()
+    closed = asyncio.Event()
+    watching_close = asyncio.Event()
+    close_wait_finished = asyncio.Event()
     stop = asyncio.get_running_loop().create_future()
     handlers = []
+
+    async def wait_closed():
+        watching_close.set()
+        try:
+            await closed.wait()
+        finally:
+            close_wait_finished.set()
 
     @contextlib.asynccontextmanager
     async def serve(handler, **kwargs):
@@ -666,18 +678,114 @@ async def test_early_websocket_waits_for_app_or_shutdown(monkeypatch, connect):
             connect_requested=requested,
         )
     )
+    client = None
     try:
         await asyncio.wait_for(listening.wait(), timeout=1)
-        client = asyncio.create_task(handlers[0](object()))
-        await asyncio.sleep(0)
+        client = asyncio.create_task(
+            handlers[0](types.SimpleNamespace(wait_closed=wait_closed))
+        )
+        await asyncio.wait_for(watching_close.wait(), timeout=1)
         proxy.assert_not_called()
-        if connect:
+        if outcome in ("disconnect", "disconnect_and_connect"):
+            closed.set()
+        if outcome in ("connect", "disconnect_and_connect"):
             requested.set()
-        else:
+        if outcome == "shutdown":
             stop.set_result(None)
-        await asyncio.wait_for(client, timeout=1)
-        assert proxy.call_count == int(connect)
+        if outcome == "cancel":
+            client.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(client, timeout=1)
+        else:
+            await asyncio.wait_for(client, timeout=1)
+        assert proxy.call_count == int(outcome == "connect")
+        assert close_wait_finished.is_set()
+        assert stop.done() == (outcome == "shutdown")
     finally:
+        if client is not None:
+            client.cancel()
+            await asyncio.gather(client, return_exceptions=True)
         if not stop.done():
             stop.set_result(None)
         await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_disconnected_websockets_do_not_forward_stale_offers(monkeypatch):
+    from websockets.asyncio.client import connect
+    from websockets.asyncio.server import serve
+    from cloudxr_py_test_ns import wss
+
+    requested = asyncio.Event()
+    listening = asyncio.Event()
+    stop = asyncio.get_running_loop().create_future()
+    finished = asyncio.Queue()
+    connections = []
+    offers = []
+    proxy_port = None
+
+    async def backend_handler(ws):
+        connections.append(ws.request.path)
+        async for offer in ws:
+            offers.append(offer)
+            await ws.send(offer)
+
+    @contextlib.asynccontextmanager
+    async def serve_proxy(handler, **kwargs):
+        nonlocal proxy_port
+
+        async def tracked_handler(ws):
+            try:
+                await handler(ws)
+            finally:
+                finished.put_nowait(ws.request.path)
+
+        kwargs.update(host="127.0.0.1", port=0)
+        async with serve(tracked_handler, **kwargs) as server:
+            proxy_port = server.sockets[0].getsockname()[1]
+            yield
+
+    monkeypatch.setattr(wss, "default_cert_paths", lambda: None)
+    monkeypatch.setattr(wss, "ensure_certificate", lambda *args: None)
+    monkeypatch.setattr(wss, "build_ssl_context", lambda *args: None)
+    monkeypatch.setattr(wss, "ws_serve", serve_proxy)
+
+    async with serve(backend_handler, "127.0.0.1", 0) as backend:
+        task = asyncio.create_task(
+            wss.run(
+                None,
+                stop,
+                backend_host="127.0.0.1",
+                backend_port=backend.sockets[0].getsockname()[1],
+                proxy_port=0,
+                on_listening=listening.set,
+                connect_requested=requested,
+            )
+        )
+        try:
+            await asyncio.wait_for(listening.wait(), timeout=2)
+            uri = f"ws://127.0.0.1:{proxy_port}"
+            for index in range(3):
+                async with connect(f"{uri}/stale-{index}") as client:
+                    await client.send(f"stale-offer-{index}")
+
+            # Disconnected handlers must exit while the startup gate is still held.
+            exited = {
+                await asyncio.wait_for(finished.get(), timeout=2) for _ in range(3)
+            }
+            assert exited == {f"/stale-{index}" for index in range(3)}
+            assert not connections
+            assert not offers
+
+            async with connect(f"{uri}/live") as client:
+                await client.send("fresh-offer")
+                requested.set()
+                assert await asyncio.wait_for(client.recv(), timeout=2) == "fresh-offer"
+            assert await asyncio.wait_for(finished.get(), timeout=2) == "/live"
+        finally:
+            if not stop.done():
+                stop.set_result(None)
+            await asyncio.wait_for(task, timeout=2)
+
+    assert connections == ["/live"]
+    assert offers == ["fresh-offer"]

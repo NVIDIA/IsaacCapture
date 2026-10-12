@@ -687,8 +687,19 @@ async def run(
                     await hub.handle_connection(ws)
                     return
             # An already-open headset page may reconnect before ADB automation.
-            if await _wait_for_connect(connect_requested, stop_future):
-                await proxy_handler(ws, backend_host, backend_port)
+            ready = asyncio.create_task(
+                _wait_for_connect(connect_requested, stop_future)
+            )
+            closed = asyncio.create_task(ws.wait_closed())
+            try:
+                await asyncio.wait((ready, closed), return_when=asyncio.FIRST_COMPLETED)
+                # Disconnected clients must not forward queued offers when the gate opens.
+                if not closed.done() and ready.result():
+                    await proxy_handler(ws, backend_host, backend_port)
+            finally:
+                ready.cancel()
+                closed.cancel()
+                await asyncio.gather(ready, closed, return_exceptions=True)
 
         # /client/ on this WSS port for --host-client and --usb-local (same
         # files; USB-local reaches them via adb reverse of PROXY_PORT).
