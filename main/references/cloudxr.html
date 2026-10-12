@@ -512,8 +512,9 @@ that only the service exposes.</p></li>
 <li><p><a class="reference internal" href="#run-teleop-examples-against-the-service" id="id10">Run teleop examples against the service</a></p></li>
 <li><p><a class="reference internal" href="#use-a-system-openxr-runtime-no-cloudxr-attach" id="id11">Use a system OpenXR runtime (no CloudXR attach)</a></p></li>
 <li><p><a class="reference internal" href="#run-the-service-in-a-container-or-ci" id="id12">Run the service in a container or CI</a></p></li>
-<li><p><a class="reference internal" href="#configuration" id="id13">Configuration</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id14">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#connect-the-oob-headset-after-application-startup" id="id13">Connect the OOB headset after application startup</a></p></li>
+<li><p><a class="reference internal" href="#configuration" id="id14">Configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id15">Troubleshooting</a></p></li>
 </ul>
 </nav>
 <section id="start-the-service">
@@ -752,6 +753,15 @@ container that way.</p>
 <p>Setting <code class="docutils literal notranslate"><span class="pre">CI</span></code> skips the interactive pause described under <a class="reference internal" href="#configuration">Configuration</a>,
 alongside the check for a non-interactive stdin, so automated runs never wait.</p>
 </section>
+<section id="connect-the-oob-headset-after-application-startup">
+<span id="cloudxr-deferred-oob-connect"></span><h2>Connect the OOB headset after application startup<a class="headerlink" href="#connect-the-oob-headset-after-application-startup" title="Link to this heading">#</a></h2>
+<p>Set <code class="docutils literal notranslate"><span class="pre">defer_oob_connect=True</span></code> on <code class="docutils literal notranslate"><span class="pre">CloudXRService</span></code> or <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>
+to delay OOB automation and WebSocket signaling. Call <code class="docutils literal notranslate"><span class="pre">connect_headset()</span></code>
+after the OpenXR session and renderer are ready.</p>
+<p>Requires <code class="docutils literal notranslate"><span class="pre">setup_oob=True</span></code> and a fixed <code class="docutils literal notranslate"><span class="pre">NV_DEVICE_PROFILE</span></code> (not <code class="docutils literal notranslate"><span class="pre">auto*</span></code>).
+For <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher</span></code>, also set <code class="docutils literal notranslate"><span class="pre">run_embedded=True</span></code>. The default <code class="docutils literal notranslate"><span class="pre">False</span></code>
+keeps immediate connection.</p>
+</section>
 <section id="configuration">
 <h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
 <p>The service accepts the same configuration options as the launcher embedded in
@@ -924,6 +934,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run-teleop-examples-against-the-service">Run teleop examples against the service</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-a-system-openxr-runtime-no-cloudxr-attach">Use a system OpenXR runtime (no CloudXR attach)</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run-the-service-in-a-container-or-ci">Run the service in a container or CI</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connect-the-oob-headset-after-application-startup">Connect the OOB headset after application startup</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration">Configuration</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35"><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code> (-35)</a></li>

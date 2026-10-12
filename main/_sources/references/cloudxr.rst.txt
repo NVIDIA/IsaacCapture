@@ -276,6 +276,19 @@ container that way.
 Setting ``CI`` skips the interactive pause described under `Configuration`_,
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
+.. _cloudxr-deferred-oob-connect:
+
+Connect the OOB headset after application startup
+-------------------------------------------------
+
+Set ``defer_oob_connect=True`` on ``CloudXRService`` or ``CloudXRLauncher``
+to delay OOB automation and WebSocket signaling. Call ``connect_headset()``
+after the OpenXR session and renderer are ready.
+
+Requires ``setup_oob=True`` and a fixed ``NV_DEVICE_PROFILE`` (not ``auto*``).
+For ``CloudXRLauncher``, also set ``run_embedded=True``. The default ``False``
+keeps immediate connection.
+
 Configuration
 -------------
 
