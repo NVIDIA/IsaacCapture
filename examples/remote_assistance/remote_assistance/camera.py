@@ -125,6 +125,10 @@ class Capture:
 
 
 async def publish_camera(settings, spec, stop):
+    if settings.get("video_encoder") in ("gstreamer", "depthai"):
+        from .gst_camera import publish_encoded_camera
+
+        return await publish_encoded_camera(settings, spec, stop)
     if spec.get("stereo", False):
         raise ValueError("LiveKit camera prototype requires a mono camera")
     room = rtc.Room()

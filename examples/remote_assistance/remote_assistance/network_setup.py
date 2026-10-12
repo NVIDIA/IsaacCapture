@@ -23,15 +23,13 @@ def write_private(path, text):
 
 
 def generate(
-    output, edge_ip, session_template, camera_template, *, replace=False, **kwargs
+    output, edge_ip, session_template, camera_template, *, replace=True, **kwargs
 ):
     output = Path(output).absolute()
     if output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError("Output must be a directory, not a file or symlink")
     if output.exists() and not replace:
-        raise FileExistsError(
-            f"{output} already exists; use --replace to preserve a backup and regenerate"
-        )
+        raise FileExistsError(f"{output} already exists and replacement was disabled")
     output.parent.mkdir(parents=True, exist_ok=True)
     # Build alongside the destination so installation uses same-filesystem renames.
     with TemporaryDirectory(
@@ -321,12 +319,13 @@ def main():
         "--output",
         type=Path,
         required=True,
-        help="Private bundle directory (existing directories require --replace)",
+        help="Private bundle directory (existing bundles are backed up and replaced)",
     )
     parser.add_argument(
         "--replace",
         action="store_true",
-        help="Back up an existing bundle and generate fresh credentials; stop services first",
+        default=True,
+        help="Back up and replace an existing bundle (default; accepted for compatibility)",
     )
     parser.add_argument("--session-config", type=Path, default=root / "session.yaml")
     parser.add_argument(

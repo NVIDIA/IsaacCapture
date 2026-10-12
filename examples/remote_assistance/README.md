@@ -251,7 +251,7 @@ both after changing the mode.
 ### Edge Compute
 
 **For two computers, use the generated server profile in Network setup step 3
-and the bridge/viewer commands in step 8.** The localhost commands below are
+and the bridge/viewer commands in step 9.** The localhost commands below are
 for single-computer development; Process 3 applies to both setups.
 
 #### Process 0 — Essential — LiveKit SFU
@@ -391,6 +391,67 @@ path produced frozen pixels despite reporting fresh frames. This sets the SDK's
 process-wide `LK_DISABLE_NVDEC` before connection, while leaving CUDA available
 for Televiz. Changing to `auto` requires a fresh viewer process.
 
+### Experimental Thor hardware camera encoding
+
+The opt-in `gstreamer` backend uses `nvv4l2h264enc` or `nvv4l2h265enc` and
+publishes complete encoded frames through LiveKit, without a second sender-side
+encode. It requires **LiveKit 1.1.20**: the Python adapter uses its private native
+FFI because this SDK version has no public encoded-source wrapper. Missing NVIDIA
+plugins or unsupported capture modes fail explicitly; there is no software fallback.
+
+On Thor (Ubuntu 24.04 / Python 3.12), install the GStreamer Python bindings:
+
+```bash
+sudo apt install python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+gst-inspect-1.0 nvv4l2h264enc
+gst-inspect-1.0 nvv4l2h265enc
+```
+
+Stop the current camera sender to release the camera. From `~/IsaacTeleop`,
+create a separate profile from the working network bundle:
+
+```bash
+examples/remote_assistance/.venv/bin/python - <<'PYCONFIG'
+from pathlib import Path
+import yaml
+bundle = Path.home() / "remote-assistance-robot"
+cfg = yaml.safe_load((bundle / "camera.yaml").read_text())
+cfg["livekit"].update(video_encoder="gstreamer", codec="h264", bitrate_mbps=15)
+cfg["cameras"][0].update(type="v4l2", device="/dev/video4", fourcc="YUYV",
+                         width=1280, height=720, fps=30)
+(bundle / "camera-gstreamer.yaml").write_text(yaml.safe_dump(cfg))
+PYCONFIG
+source "$HOME/remote-assistance-robot/credentials.env"
+PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" \
+  examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera-gstreamer.yaml" \
+  2>&1 | tee "$HOME/remote-assistance-gstreamer.log"
+```
+
+For H.264, keep the existing Edge receiver running. For H.265, change
+`livekit.codec` to `h265` in this experimental sender profile and set
+`livekit.video_decoder: auto` in the generated Edge camera profile. Stop and
+restart the Edge viewer in a fresh process with `LK_DISABLE_NVDEC` unset, then
+restart the sender. H.265 passed the desktop GPU pixel test with automatic
+decoding; the software decoder produced no frames. This does not establish
+long-duration decoder stability. Restore `video_decoder: software` when
+returning to the established H.264 configuration.
+Use the same scene, resolution, frame rate and bitrate for a useful comparison.
+The tested D435i advertises **1280×720 at 30 fps**, **1920×1080 at 30 fps**, and
+**960×540 at 60 fps**. Hardware encoding cannot enable 720p60 on a camera that
+does not advertise it; use another camera for that mode.
+
+Logs report encoded fps, encoded payload Mbps, native LiveKit acceptance and
+queue drops. These are not receiver fps, wire bandwidth or encoder latency.
+Overflow/rejection discards dependent frames until a keyframe; keyframe requests
+are forwarded to the encoder. Bitrate feedback is applied only when the plugin
+supports changes while playing; otherwise a warning indicates fixed bitrate.
+Capture fps stays fixed, including when LiveKit requests a lower rate. This is
+an experimental LAN path, not complete congestion adaptation. Color conversion
+still uses CPU `videoconvert`; this is not a zero-copy pipeline.
+
+To roll back, stop this sender and launch the original `camera.yaml` profile.
+
 ### Network setup for two computers
 
 This profile supports Linux hosts with direct IPv4 connectivity over a LAN or
@@ -422,7 +483,7 @@ both systems and the firewall rules; if the Edge address changes, regenerate
 the bundles as described in step 1. Changing a variable alone does not update
 existing configurations.
 
-**1. Generate the bundles once on Edge Compute.** Install the package as above
+**1. Generate or refresh the bundles on Edge Compute.** Install the package as above
 and ensure `openssl` is available:
 
 ```bash
@@ -444,27 +505,11 @@ The generator copies the current camera settings, selects a unique room, and
 issues separate participant tokens. Tokens expire after 24 hours by default
 (`--hours` accepts 1–168); test TLS certificates expire after seven days.
 Files are private and ignored by Git. **Never commit the generated bundles.**
-The command refuses an existing output directory unless `--replace` is supplied.
-To renew tokens or change the Edge IP, stop the bridge and camera clients on both
-sites, then run on Edge Compute:
-
-```bash
-docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" down
-examples/remote_assistance/.venv/bin/python -m remote_assistance.network_setup \
-  --edge-ip "$EDGE_IP" \
-  --output "$HOME/remote-assistance-network" \
-  --hours 24 --replace
-```
-
-Replacement generates the complete new bundle before moving the old directory to
-`remote-assistance-network.backup.<timestamp>-<unique suffix>`. Generation failures
-leave the old bundle intact. The option also works for first-time generation.
-Camera settings come from the template (`--camera-config`), so edits made only in
-an old generated `camera.yaml` must be reapplied or supplied as that template.
-Transfer the new robot bundle in step 2, restart the server and clients, and source
-the new `credentials.env` in every client terminal.
-This rotates credentials and the test CA. Token expiry affects new joins;
-it is not an immediate disconnect/revocation mechanism for existing sessions.
+If a previous bundle exists, it is automatically backed up and replaced. Stop
+running clients and the network server before regenerating. Camera settings come
+from `--camera-config`; edits made only in the old bundle must be reapplied.
+Continue with step 2, then restart services and source the new `credentials.env`
+in each client terminal.
 
 **2. Transfer only `robot/` to Robot Site.** With Robot bridge and camera clients
 stopped, run this single command on Edge Compute after step 1:
@@ -503,8 +548,11 @@ interrupts its current sessions):
 # Process 0 — Essential — LiveKit SFU
 cd ~/IsaacTeleop
 docker compose -f examples/remote_assistance/compose.yaml down
-docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" up -d
+docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" up -d --force-recreate
 ```
+
+`--force-recreate` works on first launch and reloads current certificates and
+credentials on later launches. Repeating it interrupts existing LiveKit sessions.
 
 The generated deployment uses these default ports on Edge Compute:
 
@@ -546,14 +594,27 @@ to step 5. Do not enable it just for this test; enabling a firewall requires
 accounting for existing SSH and CloudXR access too. If another firewall manager
 or corporate policy controls the computer, use that system's equivalent rules.
 
-**5. Configure the firewall on Robot Site.** In a host terminal on **Robot Site**,
+**5. Check the server from Edge Compute.** Run in an Edge Compute terminal:
+
+```bash
+curl --noproxy '*' --connect-timeout 5 \
+  --cacert "$HOME/remote-assistance-network/edge/ca.crt" \
+  "https://${EDGE_IP}:8443/"
+```
+
+Expect `OK`, confirming TCP/TLS reachability, not media connectivity. If curl
+reports error **60** after refreshing a bundle, rerun step 3 to recreate the
+server with the current certificates, then retry. For error **77**, check that
+the Edge CA file exists and is readable. Do not bypass verification with `-k`.
+
+**6. Configure the firewall on Robot Site.** In a host terminal on **Robot Site**,
 check UFW's status and outgoing policy:
 
 ```bash
 sudo ufw status verbose
 ```
 
-If UFW is inactive, or its outgoing policy is `allow`, continue to step 6.
+If UFW is inactive, or its outgoing policy is `allow`, continue to step 7.
 No new inbound server ports are needed with the usual UFW policy of allowing
 outgoing traffic and established replies. If its outgoing policy is `deny`,
 permit outbound access explicitly:
@@ -569,24 +630,30 @@ upstream restrictions require the network administrator's help. The generated
 containers use host networking, so the Edge rules are host input rules, not Docker
 port-forwarding rules. See [Ubuntu's UFW documentation](https://ubuntu.com/server/docs/firewalls/).
 
-**6. Check reachability from Robot Site**, before starting robot control:
+**7. Check reachability from Robot Site**, before starting robot control:
 
 ```bash
-curl --connect-timeout 5 \
+curl --noproxy '*' --connect-timeout 5 \
   --cacert "$HOME/remote-assistance-robot/ca.crt" \
   "https://${EDGE_IP}:8443/"
 ```
 
-A response confirms TCP/TLS reachability, not media connectivity. A timeout
-suggests routing, firewall or Wi-Fi isolation; a certificate error suggests the
-wrong bundle/IP or an expired certificate. Do not use `curl -k` to bypass it.
+The command should return `OK`, confirming TCP/TLS reachability (not media
+connectivity). On Robot Site, use `~/remote-assistance-robot/ca.crt`, not the
+Edge Compute path `~/remote-assistance-network/edge/ca.crt`.
 
-**7. Start the processes on Robot Site first.** Keep the Edge network server
+If curl reports error **77**, check that the robot certificate exists and is
+readable. If missing, rerun **Step 2’s robot-bundle transfer from Edge Compute**,
+then retry. A timeout suggests routing, firewall or Wi-Fi isolation; certificate
+verification errors suggest a mismatched bundle/IP or expired certificate.
+Do not use `curl -k` to bypass verification.
+
+**8. Start the processes on Robot Site first.** Keep the Edge network server
 from step 3 running. MuJoCo (process 0) is required when using the simulator;
 omit it when using a real robot. SONIC (process 1) is required on
 Robot Site for this robot deployment workflow. Start it and the robot bridge
 below; add the camera sender when using Camera Televiz. Run each process in its
-own terminal and leave it running while you move to Edge Compute in step 8.
+own terminal and leave it running while you move to Edge Compute in step 9.
 
 For simulation, start MuJoCo in a **Robot Site host** terminal:
 
@@ -643,9 +710,9 @@ control-data process that belongs on Edge Compute. A connection attempt to
 Adjust `device` in the Robot Site camera YAML for that machine's camera before
 starting the sender. Match width/height/fps in both camera YAML files to a
 supported capture mode. For a camera-free network test, add `--synthetic` to
-the sender and use the probe in step 8 instead of the viewer.
+the sender and use the probe in step 9 instead of the viewer.
 
-**8. Start the processes on Edge Compute.** The network server (process 0) is
+**9. Start the processes on Edge Compute.** The network server (process 0) is
 already running from step 3. For Robot control, start the edge bridge (process 1)
 below; for Camera Televiz, start the viewer (process 2). Then start CloudXR / Pico
 Teleop Streamer (process 3) with the command below. Run each process in its own
@@ -709,6 +776,39 @@ docker compose -f "$HOME/remote-assistance-network/edge/compose.yaml" down
 This stops both NGINX and LiveKit, not the Pico/SONIC processes. The localhost
 Compose shutdown command does not stop the separate network profile.
 
+### Pico Manager waits forever after a body-tracking extension error
+
+If startup reports `no support found for requested extension: XR_FB_body_tracking`
+followed by this repeated message:
+
+> **`waiting for Isaac Teleop body data (connect the headset to CloudXR)...`**
+
+Check which environment started the shared CloudXR runtime. The camera_viz and SONIC teleop environments
+can contain different native CloudXR builds even when both report the same
+`isaaccapture` package version. Attaching to a runtime without the requested
+extension prevents Pico Manager from creating its OpenXR session; reconnecting
+the headset alone cannot fix that initialization failure.
+
+For the tested mismatch, the teleop environment has the required extensions:
+
+1. Stop Pico Manager and the Edge camera viewer with Ctrl+C. Leave LiveKit,
+   the bridges and the Thor camera sender running.
+2. Stop CloudXR from Edge Compute:
+
+   ```bash
+   cd ~/GR00T-WholeBodyControl
+   .venv_teleop/bin/python -m isaaccapture.cloudxr.service stop
+   ```
+
+   If stopping times out, inspect the service logs before proceeding.
+3. Start Pico Manager using the Edge Process 3 command **before** the viewer,
+   so its environment launches the compatible CloudXR runtime.
+4. Restart the viewer and reconnect the headset. Confirm the extension error
+   is gone and body data arrives before attempting robot activation.
+
+Align the native CloudXR builds in both environments for a lasting fix;
+this recovery sequence addresses the tested startup-order mismatch.
+
 ### Suspension, resumption and shutdown
 
 In MuJoCo, test removing the headset: the robot bridge should report
@@ -763,3 +863,126 @@ They do not validate physical balance.
 References: [LiveKit Python SDK](https://github.com/livekit/python-sdks),
 [data packets](https://docs.livekit.io/transport/data/packets/),
 [server ports](https://docs.livekit.io/transport/self-hosting/ports-firewall/).
+
+### Experimental OAK-D-W onboard H.264 sender
+
+This path uses the OAK's RVC2 encoder, then forwards encoded frames through Thor
+into LiveKit without re-encoding. It requires DepthAI, not a V4L2 device node.
+The IMX378 supports a 1080p60 sensor mode; 720p60 uses ISP downscaling.
+Both profiles have been tested with the connected camera. See
+[IMX378 modes](https://docs.luxonis.com/hardware/sensors/IMX378).
+
+First synchronize the sender code to Thor; copying YAML alone is insufficient.
+For a direct source transfer, run on **Edge Compute** (using the Robot Site
+IP and username from network setup). These commands replace the named source
+files; preserve any independent edits on Thor first:
+
+```bash
+cd ~/IsaacTeleop
+scp examples/remote_assistance/remote_assistance/{camera,gst_camera,encoded_source,oak_camera}.py \
+  "${ROBOT_USER}@${ROBOT_IP}:~/IsaacTeleop/examples/remote_assistance/remote_assistance/"
+scp examples/remote_assistance/pyproject.toml \
+  "${ROBOT_USER}@${ROBOT_IP}:~/IsaacTeleop/examples/remote_assistance/"
+```
+
+`KeyError: 'ENCODER_BACKEND_DEPTHAI'` means the running sender lacks the OAK
+routing code. `depthai` is our capture backend, which publishes through LiveKit's
+`PRE_ENCODED` backend; it is not a LiveKit encoder enum. Transfer the files above,
+install the optional SDK below, and restart the sender.
+
+On **Robot Site**, connect the OAK with a USB 3 data cable. Stop the existing
+camera sender, then install the optional SDK in the transport environment:
+
+```bash
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python -m pip install -e 'examples/remote_assistance[oak]'
+```
+
+If DepthAI reports USB permissions errors, install the
+[Luxonis Linux USB rules](https://docs.luxonis.com/software/depthai/manual-install/)
+and reconnect the camera. Run the sender on the host as your normal user.
+
+Create separate profiles from your current bundle, preserving its credentials:
+
+```bash
+examples/remote_assistance/.venv/bin/python - <<'PY'
+from pathlib import Path
+import copy
+import yaml
+base = Path.home() / 'remote-assistance-robot'
+original = yaml.safe_load((base / 'camera.yaml').read_text())
+for label, width, height in [('720p60', 1280, 720), ('1080p60', 1920, 1080)]:
+    cfg = copy.deepcopy(original)
+    cfg['livekit'].update(codec='h264', video_encoder='depthai', bitrate_mbps=15)
+    cfg['cameras'] = [dict(name='cam', type='depthai', width=width, height=height, fps=60)]
+    (base / f'camera-oak-{label}.yaml').write_text(yaml.safe_dump(cfg, sort_keys=False))
+PY
+source "$HOME/remote-assistance-robot/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera-oak-720p60.yaml"
+```
+
+On **Edge Compute**, use the existing generated viewer profile and H.264 hardware
+decoding (`livekit.video_decoder: auto`), with `LK_DISABLE_NVDEC` unset before
+starting the viewer. Update that profile's camera width/height/fps to match the
+chosen test (1280/720/60 first, 1920/1080/60 second). The LiveKit room, track name
+and credentials must match the Robot Site bundle.
+
+For 1080p60, stop only the sender and restart with `camera-oak-1080p60.yaml`;
+restart the viewer with matching dimensions. Compare encoded fps, accepted/rejected
+counts, queue drops and received video smoothness. Sender fps alone does not prove
+60 decoded frames per second. Good lighting helps sustain short exposures.
+
+This experiment uses fixed 15 Mbps and no B-frames. It repeats keyframes every
+0.5 seconds and waits for a fresh IDR after queue loss. DepthAI v2 does not expose
+runtime encoder control here, so LiveKit bitrate/fps feedback and keyframe
+requests cannot directly adjust the OAK encoder. Use a network with sufficient
+capacity; adaptive encoding and H.265 remain separate follow-up work. A camera
+`mxid` may be specified when more than one OAK is attached.
+
+
+#### OAK higher-resolution experiments
+
+The sender also accepts **3840×2160 at 30 fps** and **2016×1520 at 60 fps**.
+The second profile uses the IMX378 2024×1520 sensor mode, cropping eight columns:
+the [OAK H.264 encoder requires widths divisible by 32](https://docs.luxonis.com/software-v3/depthai/depthai-components/nodes/video_encoder).
+Exact 2024×1520 encoding is not supported by this backend. 4K60 is also rejected.
+Transfer the updated `oak_camera.py` to Robot Site before running these profiles.
+
+On Robot Site, generate the profiles from the current authenticated bundle:
+
+```bash
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python - <<'PYCODE'
+from pathlib import Path
+import copy
+import yaml
+base = Path.home() / 'remote-assistance-robot'
+original = yaml.safe_load((base / 'camera.yaml').read_text())
+for label, width, height, fps in [('4k30', 3840, 2160, 30), ('2016x1520-60', 2016, 1520, 60)]:
+    cfg = copy.deepcopy(original)
+    cfg['livekit'].update(codec='h264', video_encoder='depthai', bitrate_mbps=15)
+    cfg['cameras'] = [dict(name='cam', type='depthai', width=width, height=height, fps=fps)]
+    (base / f'camera-oak-{label}.yaml').write_text(yaml.safe_dump(cfg, sort_keys=False))
+PYCODE
+```
+
+Use the same sender command with `camera-oak-4k30.yaml` or
+`camera-oak-2016x1520-60.yaml`, running one at a time. Match the Edge viewer's
+camera dimensions and fps. Both retain 15 Mbps for comparison with the successful
+720p60/1080p60 tests.
+
+Operator tests on 2026-10-12 used OAK-D-W/IMX378 onboard H.264, Thor as
+Robot Site, and the Edge headset viewer:
+
+| Encoded resolution | Reported sender fps | Payload Mbps |
+| --- | --- | --- |
+| 1280×720 | 60.0 | 14.88–15.31 |
+| 1920×1080 | 60.0 | 14.68–15.31 |
+| 3840×2160 | 30.0–30.2 | 14.85–16.37 |
+| 2016×1520 | 59.2 initially, then 60.0–60.2 | 14.58–15.32 |
+
+All supplied log samples reported zero LiveKit rejections and zero application
+queue drops. The operator reported high visual quality in the headset. These
+are sender measurements and subjective viewing results, not measurements of
+network packet loss, decoded frame rate, or end-to-end latency.

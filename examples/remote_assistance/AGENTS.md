@@ -64,3 +64,33 @@ SPDX-License-Identifier: Apache-2.0
 - Resolve viewer import failures before suggesting a launch retry; configuration
   changes cannot repair a mixed legacy/current Python environment. Preserve local
   builds and shared package files when replacing a legacy distribution.
+
+- Bundle generation must support first-time setup and renewal with the same command;
+  preserve existing bundles in backups before installing replacements. Document
+  that command once per setup step, with a short note explaining replacement.
+
+- Reachability checks must name the site-specific certificate path, expected
+  response, and recovery step for a missing transferred bundle.
+
+- Pre-encoded video queues must recover at a keyframe after dropping dependent
+  frames. Validate codec/decoder pairs with changing pixels in separate processes;
+  decoder environment switches are process-wide and H.265 must not inherit the
+  software-only H.264 test configuration. Keep private FFI adapters version-pinned.
+
+- After replacing generated server bundles, recreate the network containers so
+  bind mounts and loaded credentials match the new files. Include an Edge-local
+  TLS check before Robot Site connectivity checks.
+
+- When Pico Manager reports a missing OpenXR body-tracking extension then waits
+  forever, check the shared CloudXR runtime's originating environment. Matching
+  isaaccapture package versions do not guarantee matching native runtime builds.
+  For the tested camera_viz/teleop mismatch, stop both clients and CloudXR, then
+  launch Pico Manager first from its compatible teleop environment, followed by
+  the viewer. Verify body samples; align native builds for a durable fix.
+
+- Troubleshooting entries should reproduce the complete operator-facing error or
+  waiting message on its own highlighted line so users can match terminal output.
+
+- Experimental remote-camera instructions must transfer uncommitted backend code
+  and dependency metadata before generating profiles that select the new backend.
+  Copying configuration does not update the Robot Site implementation.
