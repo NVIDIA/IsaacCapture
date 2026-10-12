@@ -1,10 +1,10 @@
 .. SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 .. SPDX-License-Identifier: Apache-2.0
 
-Sharpa Avatar Glove
-===================
+Sharpa AvatarExo Glove
+======================
 
-A Linux-only plugin for integrating Sharpa Avatar data gloves into the
+A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
 Isaac Teleop framework. The gloves stream IMU and encoder data through the
 official Avatar SDK over USB. The plugin maps that stream into Isaac Teleop's
 usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
@@ -12,7 +12,7 @@ usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
 inbound per-finger vibration on a haptic collection.
 
 Any downstream consumer that already reads OpenXR hands (``HandsSource``) or
-schema joint-state collections can use Avatar gloves through the same Isaac
+schema joint-state collections can use Sharpa AE Gloves through the same Isaac
 Teleop interfaces. The plugin talks to the gloves directly, so do not run
 ``avatar-backend`` or Avatar Desktop at the same time.
 
@@ -33,7 +33,7 @@ named joint-state collections:
 
 .. code-block:: text
 
-   Sharpa Avatar gloves (USB)
+   Sharpa AvatarExo Gloves (USB)
            │
            ▼
    avatar_hand_plugin  (Avatar SDK, production package)
@@ -56,7 +56,7 @@ Prerequisites
 - **Pinned production Avatar SDK** (``avatar-sdk`` 1.7.3-17) from Sharpa's
   signed APT repository. ``install_avatar_sdk.sh`` retrieves it; do not substitute
   ``avatar-sdk-dev`` or ``avatar-sdk-beta``.
-- **Sharpa Avatar gloves** powered and connected over USB. Transport settings
+- **Sharpa AvatarExo Gloves** powered and connected over USB. Transport settings
   are selected in ``<sdk-root>/share/sdk_config.json`` (default root
   ``/opt/avatar-sdk``).
 - **CloudXR runtime** on the plugin host, unless a ``TeleopSession`` example
@@ -178,7 +178,7 @@ per-finger pinch path as the generic glove haptic sample.
 Wrist pose
 ----------
 
-Avatar glove data is wrist-relative, so the plugin anchors HUMAN landmarks
+Sharpa AE Glove data is wrist-relative, so the plugin anchors HUMAN landmarks
 with a pose from ``WristPoseSource`` before publishing OpenXR hands. It prefers
 optical hand tracking and falls back to the controller aim pose when needed.
 If no wrist pose is available yet, the plugin still publishes a local skeleton
