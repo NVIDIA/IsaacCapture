@@ -15,7 +15,7 @@
 static_assert(core::SomaHandJointRotations::VT_JOINT_ROTATIONS == VT(0));
 static_assert(core::SomaHandJointRotations::VT_GLOBAL_TRANSLATION == VT(1));
 static_assert(core::SomaHandJointRotations::VT_GLOBAL_TRANSLATION_IS_VALID == VT(2));
-static_assert(core::SomaHandJointRotations::VT_HANDEDNESS == VT(3));
+static_assert(core::SomaHandJointRotations::VT_HAND_SIDE == VT(3));
 static_assert(core::SomaHandJointRotationsRecord::VT_DATA == VT(0));
 static_assert(core::SomaHandJointRotationsRecord::VT_TIMESTAMP == VT(1));
 
@@ -23,7 +23,7 @@ static_assert(core::SomaHandJointRotationsRecord::VT_TIMESTAMP == VT(1));
 static_assert(std::is_same_v<TYPE(joint_rotations), const flatbuffers::Vector<const core::SomaHandJointRotation*>*>);
 static_assert(std::is_same_v<TYPE(global_translation), const core::Point*>);
 static_assert(std::is_same_v<TYPE(global_translation_is_valid), bool>);
-static_assert(std::is_same_v<TYPE(handedness), core::SomaHandedness>);
+static_assert(std::is_same_v<TYPE(hand_side), core::SomaHandSide>);
 static_assert(std::is_trivially_copyable_v<core::SomaHandJointRotation>);
 static_assert(sizeof(core::SomaHandJointRotation) == 20);
 
@@ -49,7 +49,7 @@ TEST_CASE("SOMA hand joint rotations round trip as a sparse keyed vector", "[som
     pose.joint_rotations.emplace_back(core::SomaHandJoint_INDEX_END, core::Quaternion(0.0f, 0.0f, 0.6f, 0.8f));
     pose.global_translation = std::make_shared<core::Point>(1.0f, 2.0f, 3.0f);
     pose.global_translation_is_valid = true;
-    pose.handedness = core::SomaHandedness_RIGHT;
+    pose.hand_side = core::SomaHandSide_RIGHT;
 
     flatbuffers::FlatBufferBuilder builder;
     builder.Finish(core::SomaHandJointRotations::Pack(builder, &pose));
@@ -66,7 +66,7 @@ TEST_CASE("SOMA hand joint rotations round trip as a sparse keyed vector", "[som
     CHECK(decoded->joint_rotations()->LookupByKey(core::SomaHandJoint_WRIST) == nullptr);
     CHECK(decoded->global_translation()->x() == Catch::Approx(1.0f));
     CHECK(decoded->global_translation_is_valid());
-    CHECK(decoded->handedness() == core::SomaHandedness_RIGHT);
+    CHECK(decoded->hand_side() == core::SomaHandSide_RIGHT);
 }
 
 TEST_CASE("SOMA hand record preserves keyed quaternion components", "[soma_hand_joint_rotations][flatbuffers]")
@@ -80,7 +80,7 @@ TEST_CASE("SOMA hand record preserves keyed quaternion components", "[soma_hand_
         core::SomaHandJoint_PINKY_END, core::Quaternion(-scale, 2.0f * scale, -3.0f * scale, 4.0f * scale));
     record.data->global_translation = std::make_shared<core::Point>(1.0f, -2.0f, 3.0f);
     record.data->global_translation_is_valid = false;
-    record.data->handedness = core::SomaHandedness_LEFT;
+    record.data->hand_side = core::SomaHandSide_LEFT;
     record.timestamp = std::make_shared<core::DeviceDataTimestamp>(100, 200, 300);
 
     flatbuffers::FlatBufferBuilder builder;
@@ -106,7 +106,7 @@ TEST_CASE("SOMA hand record preserves keyed quaternion components", "[soma_hand_
     CHECK(pinky->rotation().z() == Catch::Approx(-3.0f * scale));
     CHECK(pinky->rotation().w() == Catch::Approx(4.0f * scale));
     CHECK(values->LookupByKey(core::SomaHandJoint_INDEX1) == nullptr);
-    CHECK(decoded->data()->handedness() == core::SomaHandedness_LEFT);
+    CHECK(decoded->data()->hand_side() == core::SomaHandSide_LEFT);
     CHECK(decoded->timestamp()->available_time_local_common_clock() == 100);
     CHECK(decoded->timestamp()->sample_time_local_common_clock() == 200);
     CHECK(decoded->timestamp()->sample_time_raw_device_clock() == 300);
