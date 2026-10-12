@@ -12,9 +12,18 @@ Viz classes (used by replay_* and live_* scripts): ``HandViz``,
 Rendering helpers: ``HandJoints``, ``HAND_BONES``, ``BODY_BONES``.
 """
 
+import argparse
+import time
+from pathlib import Path
+
 import numpy as np
 import viser
+from mcap.reader import make_reader
 
+from isaaccapture.cloudxr import CloudXRLauncher
+from isaaccapture.deviceio_session import DeviceIOSession, McapRecordingConfig
+from isaaccapture.deviceio import McapReplayConfig
+from isaaccapture.oxr import OpenXRSession
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     ControllersSource,
     FullBodySource,
@@ -41,11 +50,212 @@ from isaaccapture.retargeting_engine.tensor_types import (
 from isaaccapture.retargeting_engine.tensor_types.indices import (
     BodyJointIndex,
     ControllerInputIndex,
+    FullBodyInputIndex,
 )
 from isaaccapture.retargeting_engine.tensor_types.ndarray_types import (
     DLDataType,
     NDArrayType,
 )
+from isaaccapture.teleop_session_manager import (
+    SessionMode,
+    TeleopSession,
+    TeleopSessionConfig,
+)
+
+
+def add_body_arguments(parser):
+    from .soma_body_common import add_body_arguments as add_soma_arguments
+
+    parser.add_argument(
+        "--body-schema", choices=["full-body-pose", "soma"], default="full-body-pose"
+    )
+    parser.add_argument(
+        "--controllers",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Include controllers (default: enabled for FullBodyPose, disabled for SOMA)",
+    )
+    add_soma_arguments(parser)
+
+
+def validate_body_arguments(parser, args):
+    if args.body_schema == "soma" and not args.soma_body_collection_id:
+        parser.error("soma-body-collection-id must not be empty")
+    if args.controllers is None:
+        args.controllers = args.body_schema == "full-body-pose"
+
+
+def add_hand_arguments(parser):
+    from .soma_hand_common import add_hand_arguments as add_soma_arguments
+
+    parser.add_argument(
+        "--hand-schema",
+        choices=["openxr-hand-pose", "soma"],
+        default="openxr-hand-pose",
+    )
+    add_soma_arguments(parser)
+
+
+def validate_hand_arguments(parser, args):
+    if args.hand_schema == "soma":
+        from .soma_hand_common import collections
+
+        try:
+            collections(
+                args.soma_left_hand_collection_id, args.soma_right_hand_collection_id
+            )
+        except ValueError as error:
+            parser.error(str(error))
+
+
+def build_body_pipeline(args):
+    # Select the body independently; fingers in SOMA do not enable another hand source.
+    if args.body_schema == "soma":
+        from .soma_body_common import build_pipeline
+
+        pipeline = build_pipeline(
+            args.soma_body_collection_id, args.soma_body_representation
+        )
+        if args.controllers:
+            controllers = ControllersSource(name="controllers")
+            return OutputCombiner(
+                {
+                    "soma_body": pipeline.output("soma_body"),
+                    "controller_left": controllers.output(ControllersSource.LEFT),
+                    "controller_right": controllers.output(ControllersSource.RIGHT),
+                }
+            )
+        return pipeline
+    return build_full_body_pipeline(args.controllers)
+
+
+def create_body_visualizer(args, server, ground=None):
+    if args.body_schema == "soma":
+        from .soma_body_common import SomaBodyViz
+
+        return SomaBodyViz(server, ground)
+    return FullBodyViz(server, ground)
+
+
+def update_body_visualizer(args, result, viz):
+    if args.body_schema == "soma":
+        return viz.update(result["soma_body"])
+    body = result["full_body"]
+    if body.is_none:
+        viz.update(None, None)
+        return 0
+    valid = np.asarray(body[FullBodyInputIndex.JOINT_VALID], dtype=np.uint8)
+    viz.update(np.asarray(body[FullBodyInputIndex.JOINT_POSITIONS]), valid)
+    return int(np.count_nonzero(valid))
+
+
+def build_selected_hand_pipeline(args):
+    if args.hand_schema == "soma":
+        from .soma_hand_common import build_pipeline, collections
+
+        return build_pipeline(
+            collections(
+                args.soma_left_hand_collection_id, args.soma_right_hand_collection_id
+            ),
+            args.soma_hand_representation,
+        )
+    return build_hand_pipeline()
+
+
+def create_hand_visualizers(args, server, ground=None):
+    if args.hand_schema == "soma":
+        from .soma_hand_common import create_visualizers
+
+        return create_visualizers(server, ground)
+    return {
+        "hand_left": HandViz(server, "hand_left", LEFT_COLOR),
+        "hand_right": HandViz(server, "hand_right", RIGHT_COLOR),
+    }
+
+
+def update_hand_visualizers(args, result, visualizers):
+    valid = []
+    for side in ("left", "right"):
+        viz = visualizers[f"hand_{side}"]
+        if args.hand_schema == "soma":
+            valid.append(bool(viz.update(result[f"hand_{side}"])))
+        else:
+            available = bool(result[f"{side}_valid"][0])
+            viz.update(np.asarray(result[f"{side}_positions"][0]), available)
+            valid.append(available)
+    return valid
+
+
+def record_trackers(args, path, tracker_names):
+    """Record native inputs without preparing a model or evaluating a source graph."""
+    trackers = [tracker for tracker, _ in tracker_names]
+    config = McapRecordingConfig(str(path), tracker_names)
+    extensions = DeviceIOSession.get_required_extensions(trackers)
+    try:
+        with CloudXRLauncher.launch_context(args):
+            with OpenXRSession("McapRecordExample", extensions) as oxr:
+                with DeviceIOSession.run(
+                    trackers, oxr.get_handles(), config
+                ) as session:
+                    start = time.monotonic()
+                    frames = 0
+                    while time.monotonic() - start < args.duration:
+                        session.update()
+                        frames += 1
+                        if frames % 60 == 0:
+                            print(f"[record] frame={frames}")
+                        time.sleep(1 / 60)
+    except KeyboardInterrupt:
+        pass
+
+
+def resolve_recording(path_arg, prefix):
+    if path_arg:
+        path = Path(path_arg)
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} does not exist")
+        return path
+    recordings = Path.cwd() / "recordings"
+    candidates = list(recordings.glob(f"{prefix}_*.mcap"))
+    if not candidates:
+        raise FileNotFoundError(f"No {prefix}_*.mcap in {recordings}")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def channel_info(path, topic, record_name):
+    """Return the selected channel's sample count and average capture rate."""
+    count = 0
+    first = last = None
+    with path.open("rb") as stream:
+        for schema, _, message in make_reader(stream).iter_messages(
+            topics=[topic], log_time_order=False
+        ):
+            if schema is None or schema.name != record_name:
+                raise ValueError(f"{topic}: expected {record_name}")
+            first = message.log_time if first is None else min(first, message.log_time)
+            last = message.log_time if last is None else max(last, message.log_time)
+            count += 1
+    rate = (count - 1) * 1e9 / (last - first) if count > 1 and last > first else 60.0
+    return count, rate
+
+
+def replay_once(path, pipeline, frame_count, update, rate_hz):
+    config = TeleopSessionConfig(
+        app_name="McapReplayExample",
+        pipeline=pipeline,
+        mode=SessionMode.REPLAY,
+        mcap_config=McapReplayConfig(str(path)),
+    )
+    # Native replay consumes one tracked record per step. None is not an EOF signal.
+    with TeleopSession(config) as session:
+        start = time.monotonic()
+        for frame in range(frame_count):
+            update(session.step())
+            if rate_hz > 0 and frame + 1 < frame_count:
+                remaining = start + (frame + 1) / rate_hz - time.monotonic()
+                if remaining > 0:
+                    time.sleep(remaining)
+    return frame_count
 
 
 # Duplicated verbatim in deviceio_live_view/deviceio_viser.py: each example
@@ -204,16 +414,18 @@ def build_controller_pipeline():
     )
 
 
-def build_full_body_pipeline():
-    controllers = ControllersSource(name="controllers")
+def build_full_body_pipeline(include_controllers=True):
     full_body = FullBodySource(name="full_body")
-    return OutputCombiner(
-        {
-            "controller_left": controllers.output(ControllersSource.LEFT),
-            "controller_right": controllers.output(ControllersSource.RIGHT),
-            "full_body": full_body.output(FullBodySource.FULL_BODY),
-        }
-    )
+    outputs = {"full_body": full_body.output(FullBodySource.FULL_BODY)}
+    if include_controllers:
+        controllers = ControllersSource(name="controllers")
+        outputs.update(
+            {
+                "controller_left": controllers.output(ControllersSource.LEFT),
+                "controller_right": controllers.output(ControllersSource.RIGHT),
+            }
+        )
+    return OutputCombiner(outputs)
 
 
 # PICO body-joint connectivity (parent → child) for skeleton rendering.
@@ -302,10 +514,12 @@ def _bone_segments(positions: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
-def _valid_bone_segments(positions: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Return (N, 2, 3) segment array for body bones whose both endpoints are valid."""
+def _valid_bone_segments(
+    positions: np.ndarray, valid: np.ndarray, bones=BODY_BONES
+) -> np.ndarray:
+    """Return (N, 2, 3) segments whose endpoints are both available."""
     segments: list[np.ndarray] = []
-    for a, b in BODY_BONES:
+    for a, b in bones:
         if valid[a] and valid[b]:
             segments.append(np.stack([positions[a], positions[b]], axis=0))
     if not segments:
@@ -521,48 +735,105 @@ class ControllerViz:
             self.ray.colors = np.zeros((0, 2, 3), dtype=np.float32)
 
 
-class FullBodyViz:
-    """Viser handles for full-body skeleton (joint cloud + skeleton segments)."""
+class SkeletonViz:
+    """Viser joint cloud and bones with a schema-specific layout and validity mask."""
 
-    def __init__(self, server: viser.ViserServer, ground: "GroundGrid | None" = None):
+    def __init__(
+        self,
+        server,
+        ground=None,
+        *,
+        name="full_body",
+        joint_count=24,
+        bones=BODY_BONES,
+        color=TRACKED_COLOR,
+        hide_invalid=False,
+    ):
         self._ground = ground
-        self.color = np.array(TRACKED_COLOR, dtype=np.float32)
-        zero_pts = np.zeros((len(BODY_JOINT_NAMES), 3), dtype=np.float32)
+        self._joint_count = joint_count
+        self._bones = bones
+        self._hide_invalid = hide_invalid
+        self.color = np.array(color, dtype=np.float32)
+        zero_pts = np.zeros((0 if hide_invalid else joint_count, 3), dtype=np.float32)
         zero_segs = np.zeros((0, 2, 3), dtype=np.float32)
 
         self.points = server.scene.add_point_cloud(
-            name="/full_body/joints",
+            name=f"/{name}/joints",
             points=zero_pts,
-            colors=np.tile(self.color, (len(BODY_JOINT_NAMES), 1)),
+            colors=np.tile(self.color, (len(zero_pts), 1)),
             point_size=0.01,
         )
         self.bones = server.scene.add_line_segments(
-            name="/full_body/bones",
+            name=f"/{name}/bones",
             points=zero_segs,
             colors=np.zeros((0, 2, 3), dtype=np.float32),
             line_width=2.0,
         )
 
-    def update(self, positions: np.ndarray | None, valid: np.ndarray | None) -> None:
+    def update(self, positions: np.ndarray | None, valid: np.ndarray | None) -> int:
         if positions is None or valid is None:
-            zero_pts = np.zeros((len(BODY_JOINT_NAMES), 3), dtype=np.float32)
+            zero_pts = np.zeros(
+                (0 if self._hide_invalid else self._joint_count, 3), dtype=np.float32
+            )
             self.points.points = zero_pts
-            self.points.colors = np.tile(INVALID_COLOR, (len(BODY_JOINT_NAMES), 1))
+            self.points.colors = np.tile(INVALID_COLOR, (len(zero_pts), 1))
             self.bones.points = np.zeros((0, 2, 3), dtype=np.float32)
             self.bones.colors = np.zeros((0, 2, 3), dtype=np.float32)
-            return
+            return 0
 
         positions = positions.astype(np.float32)
         valid_bool = valid.astype(bool)
-        self.points.points = positions
+        self.points.points = positions[valid_bool] if self._hide_invalid else positions
 
         point_colors = np.tile(self.color, (positions.shape[0], 1))
         point_colors[~valid_bool] = INVALID_COLOR
-        self.points.colors = point_colors
+        self.points.colors = (
+            point_colors[valid_bool] if self._hide_invalid else point_colors
+        )
 
-        segs = _valid_bone_segments(positions, valid_bool)
+        segs = _valid_bone_segments(positions, valid_bool, self._bones)
         self.bones.points = segs
         self.bones.colors = np.tile(self.color, (segs.shape[0], 2, 1))
 
         if self._ground is not None:
             self._ground.follow(positions, valid_bool)
+        return int(np.count_nonzero(valid_bool))
+
+
+class FullBodyViz(SkeletonViz):
+    """Render FullBodyPose's 24 joints, coloring unavailable joints red."""
+
+
+class JointInputViz(SkeletonViz):
+    """Render an optional evaluated joint input, hiding unavailable joints."""
+
+    def __init__(
+        self,
+        server,
+        name,
+        joint_count,
+        bones,
+        positions_index,
+        valid_index,
+        color,
+        ground=None,
+    ):
+        super().__init__(
+            server,
+            ground,
+            name=name,
+            joint_count=joint_count,
+            bones=bones,
+            color=color,
+            hide_invalid=True,
+        )
+        self._positions_index = positions_index
+        self._valid_index = valid_index
+
+    def update(self, data):
+        if data.is_none:
+            return super().update(None, None)
+        return super().update(
+            np.asarray(data[self._positions_index], dtype=np.float32),
+            np.asarray(data[self._valid_index], dtype=bool),
+        )

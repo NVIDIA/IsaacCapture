@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Replay a recorded hand-tracking MCAP file and visualize it with viser.
+Replay recorded OpenXR or SOMA hand tracking and visualize it with viser.
 
 ``mode=SessionMode.REPLAY`` skips all OpenXR initialization, so this runs
 headless on any machine. Open the URL viser prints (default
@@ -13,12 +13,14 @@ Usage:
 
 If no path is given, the newest ``hands_*.mcap`` under ``./recordings/`` is
 used.
+SOMA mode selects ``soma_hand_<representation>_*.mcap`` instead.
 Replay repeats until Ctrl+C.
 
 See: https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.html
 """
 
 import argparse
+import math
 import sys
 import time
 from pathlib import Path
@@ -34,7 +36,18 @@ from isaaccapture.teleop_session_manager import (
     TeleopSessionConfig,
 )
 
-from .common import HandViz, LEFT_COLOR, RIGHT_COLOR, build_hand_pipeline, setup_scene
+from .common import (
+    HandViz,
+    build_hand_pipeline,
+    setup_scene,
+    add_hand_arguments,
+    validate_hand_arguments,
+    build_selected_hand_pipeline,
+    create_hand_visualizers,
+    update_hand_visualizers,
+    resolve_recording,
+    replay_once,
+)
 
 
 def mcap_duration_s(path: Path) -> float:
@@ -122,29 +135,76 @@ def main(argv: list[str]) -> int:
         help="Viser HTTP bind address (default: 0.0.0.0, all interfaces; pass 127.0.0.1 to keep it local)",
     )
     parser.add_argument("--port", type=int, default=8080, help="Viser HTTP port")
+    add_hand_arguments(parser)
+    parser.add_argument(
+        "--rate",
+        type=float,
+        help="SOMA playback Hz (default: busier hand's average capture rate); 0 = unpaced",
+    )
     args = parser.parse_args(argv[1:])
+    validate_hand_arguments(parser, args)
+    if args.rate is not None:
+        if args.hand_schema != "soma":
+            parser.error("--rate is only supported with --hand-schema soma")
+        if not math.isfinite(args.rate) or args.rate < 0:
+            parser.error("rate must be finite and nonnegative")
 
-    mcap_path = resolve_mcap(args.mcap)
-    duration_s = mcap_duration_s(mcap_path)
+    if args.hand_schema == "soma":
+        from .soma_hand_common import collections, replay_info
+
+        ids = collections(
+            args.soma_left_hand_collection_id, args.soma_right_hand_collection_id
+        )
+        try:
+            mcap_path = resolve_recording(
+                args.mcap, f"soma_hand_{args.soma_hand_representation}"
+            )
+            counts, capture_rate = replay_info(
+                mcap_path, ids, args.soma_hand_representation
+            )
+        except (FileNotFoundError, ValueError) as error:
+            parser.error(str(error))
+        rate = capture_rate if args.rate is None else args.rate
+        pipeline = build_selected_hand_pipeline(args)
+        print(
+            f"[replay] reading {mcap_path}: left={counts['hand_left']} right={counts['hand_right']} at {rate:.1f} Hz"
+        )
+    else:
+        mcap_path = resolve_mcap(args.mcap)
+        duration_s = mcap_duration_s(mcap_path)
+        print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
     server = viser.ViserServer(host=args.host, port=args.port)
-    setup_scene(server)
-
-    viz_left = HandViz(server, "hand_left", LEFT_COLOR)
-    viz_right = HandViz(server, "hand_right", RIGHT_COLOR)
+    visualizers = create_hand_visualizers(args, server, setup_scene(server))
 
     print(
         f"[replay] viser listening on {args.host}:{args.port} "
         f"(http://localhost:{args.port})"
     )
-    print(f"[replay] reading {mcap_path} (duration {duration_s:.2f}s)")
 
     try:
         while True:
-            run_once(mcap_path, duration_s, viz_left, viz_right)
+            if args.hand_schema == "soma":
+                # Each tracker advances independently; exhausted hands become absent.
+                replay_once(
+                    mcap_path,
+                    pipeline,
+                    max(counts.values()),
+                    lambda result: update_hand_visualizers(args, result, visualizers),
+                    rate,
+                )
+            else:
+                run_once(
+                    mcap_path,
+                    duration_s,
+                    visualizers["hand_left"],
+                    visualizers["hand_right"],
+                )
             print("[replay] looping…")
     except KeyboardInterrupt:
         pass
+    finally:
+        server.stop()
 
     return 0
 

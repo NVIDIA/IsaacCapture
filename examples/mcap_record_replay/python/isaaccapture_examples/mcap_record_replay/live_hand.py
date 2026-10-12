@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Visualize live OpenXR hand-tracking in real time with viser.
+Visualize live OpenXR or SOMA hand tracking in real time with viser.
 
 ``CloudXRLauncher`` starts the CloudXR runtime and WSS proxy automatically.
 Open the URL viser prints in a browser (binds all interfaces, so another
@@ -21,13 +21,19 @@ import argparse
 import sys
 import time
 
-import numpy as np
 import viser
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
 
-from .common import HandViz, LEFT_COLOR, RIGHT_COLOR, build_hand_pipeline, setup_scene
+from .common import (
+    add_hand_arguments,
+    validate_hand_arguments,
+    build_selected_hand_pipeline,
+    create_hand_visualizers,
+    update_hand_visualizers,
+    setup_scene,
+)
 
 
 def main(argv: list[str]) -> int:
@@ -38,15 +44,19 @@ def main(argv: list[str]) -> int:
         help="Viser HTTP bind address (default: 0.0.0.0, all interfaces; pass 127.0.0.1 to keep it local)",
     )
     parser.add_argument("--port", type=int, default=8080, help="Viser HTTP port")
+    add_hand_arguments(parser)
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args(argv[1:])
+    validate_hand_arguments(parser, args)
+
+    pipeline = build_selected_hand_pipeline(args)
 
     server = viser.ViserServer(host=args.host, port=args.port)
-    setup_scene(server)
+    ground = setup_scene(server)
 
     config = TeleopSessionConfig(
         app_name="LiveHandExample",
-        pipeline=build_hand_pipeline(),
+        pipeline=pipeline,
     )
 
     with CloudXRLauncher.launch_context(args) as launcher:
@@ -55,8 +65,7 @@ def main(argv: list[str]) -> int:
         print("[live] waiting for headset connection… (Ctrl+C to stop)")
 
         with TeleopSession(config) as session:
-            viz_left = HandViz(server, "hand_left", LEFT_COLOR)
-            viz_right = HandViz(server, "hand_right", RIGHT_COLOR)
+            visualizers = create_hand_visualizers(args, server, ground)
             print(
                 f"[live] viser listening on {args.host}:{args.port} "
                 f"(http://localhost:{args.port})"
@@ -70,18 +79,9 @@ def main(argv: list[str]) -> int:
                     _last_step_t = now
 
                     result = session.step()
-                    viz_left.update(
-                        np.asarray(result["left_positions"][0]),
-                        bool(result["left_valid"][0]),
-                    )
-                    viz_right.update(
-                        np.asarray(result["right_positions"][0]),
-                        bool(result["right_valid"][0]),
-                    )
+                    left, right = update_hand_visualizers(args, result, visualizers)
 
                     if session.frame_count % 60 == 0:
-                        left = bool(result["left_valid"][0])
-                        right = bool(result["right_valid"][0])
                         print(
                             f"[live] frame={session.frame_count}  "
                             f"L={'Y' if left else '-'}  R={'Y' if right else '-'}  "
@@ -92,6 +92,7 @@ def main(argv: list[str]) -> int:
             except KeyboardInterrupt:
                 pass
 
+    server.stop()
     print("[live] stopped")
     return 0
 
