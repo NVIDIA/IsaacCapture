@@ -120,9 +120,9 @@ def test_mock_adb_patches_subprocess_run_and_restores_it() -> None:
     assert subprocess.run is original
 
 
-def test_mock_adb_forwards_kwargs() -> None:
-    """subprocess.run() callers pass capture_output/text/timeout/check kwargs - the fake
-    must accept and ignore them rather than raising a TypeError on an unexpected kwarg."""
+def test_mock_adb_accepts_subprocess_options() -> None:
+    """subprocess.run() callers pass capture_output/text/timeout/check; the fake must
+    accept them rather than raise a TypeError on an unexpected kwarg."""
     with mock_adb():
         result = subprocess.run(
             ["adb", "get-state"],
@@ -132,3 +132,85 @@ def test_mock_adb_forwards_kwargs() -> None:
             check=False,
         )
         assert result.returncode == 0
+
+
+def test_check_true_returns_on_success_and_raises_on_failure() -> None:
+    """check=True is honored, as subprocess.run would: success returns, a non-zero rc
+    raises CalledProcessError carrying the command and return code."""
+    fake = FakeAdb(forward_rc=1)
+    ok = fake(["adb", "forward", "--remove", "tcp:48889"], check=True)
+    assert ok.returncode == 0
+    cmd = ["adb", "forward", "tcp:48889", "localabstract:chrome_devtools_remote"]
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        fake(cmd, check=True)
+    assert excinfo.value.returncode == 1
+    assert excinfo.value.cmd == cmd
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["adb", "forward"],
+        ["adb", "forward", "--remove"],
+        ["adb", "forward", "tcp:48889"],
+        ["adb", "forward", "--remove", "48889"],
+        ["adb", "shell", "echo am start"],
+        ["adb", "shell", "am start"],
+        ["adb", "shell", "am start -a android.intent.action.VIEW"],
+        ["adb", "shell", "am start -p -a android.intent.action.VIEW -d https://h/"],
+        ["adb", "shell", "dumpsys"],
+    ],
+)
+def test_malformed_commands_raise(args: list[str]) -> None:
+    """A command that merely resembles a supported one must not silently succeed."""
+    with pytest.raises(AssertionError, match="unscripted adb call"):
+        FakeAdb()(args)
+
+
+@pytest.mark.parametrize(
+    "shell_cmd",
+    [
+        "am start -a android.intent.action.VIEW -d https://headset.local/",
+        "am start -p com.oculus.browser -a android.intent.action.VIEW -d "
+        "'https://headset.local/?a=1&b=2'",
+    ],
+)
+def test_intent_launch_shapes_are_accepted(shell_cmd: str) -> None:
+    assert FakeAdb(am_start_rc=0)(["adb", "shell", shell_cmd]).returncode == 0
+
+
+def test_dumpsys_power_reports_configured_wakefulness() -> None:
+    assert (
+        "mWakefulness=Awake" in FakeAdb()(["adb", "shell", "dumpsys", "power"]).stdout
+    )
+    asleep = FakeAdb(wakefulness="Asleep")
+    assert "mWakefulness=Asleep" in asleep(["adb", "shell", "dumpsys", "power"]).stdout
+
+
+def test_pinned_serial_matches_and_is_recorded_as_issued() -> None:
+    fake = FakeAdb()
+    assert fake(["adb", "-s", "HEADSET", "get-state"]).returncode == 0
+    assert fake(["adb", "-s", "HEADSET", "shell", "dumpsys", "power"]).returncode == 0
+    assert fake.calls[0] == ["adb", "-s", "HEADSET", "get-state"]
+
+
+@pytest.mark.parametrize("serial", [None, "HEADSET"])
+def test_real_open_url_on_headset_runs_against_the_fake(serial: str | None) -> None:
+    """The real launch helper (device-state, wakefulness, vendor probe, am start) must
+    complete against the fake, with and without a pinned serial, so the fake cannot
+    drift behind the helper it exists to drive."""
+    from cloudxr_py_test_ns.oob_teleop_adb import (
+        SELECTED_ADB_SERIAL,
+        open_url_on_headset,
+    )
+
+    token = SELECTED_ADB_SERIAL.set(serial)
+    try:
+        with mock_adb() as fake:
+            rc, diag = open_url_on_headset("https://headset.local/?a=1&b=2")
+    finally:
+        SELECTED_ADB_SERIAL.reset(token)
+    assert (rc, diag) == (0, "")
+    assert any("am start" in c[-1] for c in fake.calls)
+    if serial:
+        assert all(c[1:3] == ["-s", serial] for c in fake.calls)
