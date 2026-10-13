@@ -74,6 +74,14 @@ const WARMUP_COMPLETE_LOG_PATTERN =
 // override via the streamAttachTimeoutMs prop, not by lowering this default.
 const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
 
+// Debug log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
+// frames. Not currently emitted by CloudXR.js: until a release that emits it is consumed, and the
+// session logLevel includes Debug, none of the idle-frame handling below runs.
+const IDLE_FRAME_LOG_MESSAGE = 'Received idle frame';
+// Idle frames are sent about every 250 ms; this long with none means real frames have started
+// (or the stream stalled), so the warm-up watchdogs resume.
+const IDLE_FRAMES_QUIET_MS = 1000;
+
 // Defaults for the warmupBeginTimeoutMs/warmupEndTimeoutMs props below. Both shorter than
 // STREAM_ATTACH_BASE_TIMEOUT_MS and, unlike it, neither grows per reconnect attempt (see
 // armWarmupBeginTimer/armWarmupEndTimer): once the stream has attached at all, decoder warm-up
@@ -306,6 +314,10 @@ export default function CloudXRComponent({
   const streamAttachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warmupBeginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warmupEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fires IDLE_FRAMES_QUIET_MS after the last idle-frame log; see noteIdleFrame.
+  const idleQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True from an idle-frame log until idleQuietTimerRef fires or the attempt ends.
+  const idleFramesActiveRef = useRef(false);
 
   /** Clears the attach and both warm-up watchdogs - the three fire a synthetic error if left
    * pending past an attempt that's already been handled some other way (success, a real error,
@@ -324,6 +336,11 @@ export default function CloudXRComponent({
       clearTimeout(warmupEndTimerRef.current);
       warmupEndTimerRef.current = null;
     }
+    if (idleQuietTimerRef.current !== null) {
+      clearTimeout(idleQuietTimerRef.current);
+      idleQuietTimerRef.current = null;
+    }
+    idleFramesActiveRef.current = false;
   }, []);
 
   // False from session creation until a real onStreamStarted fires; lets the effect below tell
@@ -455,6 +472,41 @@ export default function CloudXRComponent({
       }, timeoutMs);
     },
     [warmupEndBaseTimeoutMs]
+  );
+
+  /**
+   * Handles one idle-frame log: the server is alive but no app is submitting frames, so warm-up
+   * can't be stuck yet. Cancels the warm-up watchdogs and (re)starts a quiet-period timer; when no
+   * idle frame has arrived for IDLE_FRAMES_QUIET_MS, resumes the watchdog for whichever warm-up
+   * phase is still pending. Idle frames also reach the decoder as warm-up frames, so without this
+   * the end timer would start on them.
+   */
+  const noteIdleFrame = useCallback(
+    (cxrSession: CloudXR.Session) => {
+      idleFramesActiveRef.current = true;
+      if (warmupBeginTimerRef.current !== null) {
+        clearTimeout(warmupBeginTimerRef.current);
+        warmupBeginTimerRef.current = null;
+      }
+      if (warmupEndTimerRef.current !== null) {
+        clearTimeout(warmupEndTimerRef.current);
+        warmupEndTimerRef.current = null;
+      }
+      if (idleQuietTimerRef.current !== null) {
+        clearTimeout(idleQuietTimerRef.current);
+      }
+      idleQuietTimerRef.current = setTimeout(() => {
+        idleQuietTimerRef.current = null;
+        idleFramesActiveRef.current = false;
+        if (warmupStatusRef.current.completed) return;
+        if (warmupBegunRef.current) {
+          armWarmupEndTimer(cxrSession);
+        } else {
+          armWarmupBeginTimer(cxrSession);
+        }
+      }, IDLE_FRAMES_QUIET_MS);
+    },
+    [armWarmupBeginTimer, armWarmupEndTimer]
   );
 
   // Metrics trackers for averaging performance metrics
@@ -658,6 +710,14 @@ export default function CloudXRComponent({
                         : console.info;
                 printFn(`[CloudXR] ${message}`);
 
+                if (message === IDLE_FRAME_LOG_MESSAGE) {
+                  // Only once streaming: before that, the attach timer owns the deadline.
+                  if (!headless && cxrSessionRef.current && hasStreamStartedRef.current) {
+                    noteIdleFrame(cxrSessionRef.current);
+                  }
+                  continue;
+                }
+
                 const progressMatch = message.match(WARMUP_PROGRESS_LOG_PATTERN);
                 const completeMatch = message.match(WARMUP_COMPLETE_LOG_PATTERN);
                 if ((progressMatch || completeMatch) && !warmupBegunRef.current) {
@@ -674,7 +734,13 @@ export default function CloudXRComponent({
                   // completion either (onMetrics' RenderFramerate never fires). A progress log
                   // without a matching complete log shouldn't be possible when nothing ever
                   // begins watching for it, but skip arming regardless, for the same reason.
-                  if (!completeMatch && !headless && cxrSessionRef.current) {
+                  // Not while idle frames are arriving: noteIdleFrame arms it once they stop.
+                  if (
+                    !completeMatch &&
+                    !headless &&
+                    cxrSessionRef.current &&
+                    !idleFramesActiveRef.current
+                  ) {
                     armWarmupEndTimer(cxrSessionRef.current);
                   }
                 }

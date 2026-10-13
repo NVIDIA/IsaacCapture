@@ -53,6 +53,8 @@ const WARMUP_LOG_INTERVAL = 10;
 // setWarmupFirstStatusFrame() so a test can get fast confirmation that warm-up has begun without
 // waiting for 10 real rendered frames.
 const DEFAULT_WARMUP_FIRST_STATUS_FRAME = WARMUP_LOG_INTERVAL;
+// The server sends a keep-alive idle frame about this often while no app is submitting frames.
+const IDLE_FRAME_INTERVAL_MS = 250;
 
 /**
  * Sentinel `gl` value for {@link CloudXR.SessionOptions.gl}: a MockCloudXR constructed with this
@@ -116,6 +118,7 @@ export class MockCloudXR implements CloudXR.Session {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private streamTestTimer: ReturnType<typeof setTimeout> | null = null;
   private networkMetricsTimer: ReturnType<typeof setInterval> | null = null;
+  private idleFrameTimer: ReturnType<typeof setInterval> | null = null;
   private frameCount = 0;
   private lastRenderTimestamp: DOMHighResTimeStamp | null = null;
   // Monotonic per-render() counter, reset to 0 at the top of each connect()'s Connected
@@ -484,6 +487,31 @@ export class MockCloudXR implements CloudXR.Session {
     );
   }
 
+  /**
+   * Emulates the server's keep-alive frames sent while no app is submitting frames: logs the Debug
+   * line 'Received idle frame' immediately, then every IDLE_FRAME_INTERVAL_MS, until
+   * stopIdleFrames(), disconnect or failure. Only logs - it does not feed warm-up frames; call
+   * videoFrameReceived(0) for those, as the real stream also counts idle frames as warm-up.
+   * No-op unless Connected. Real CloudXR.js does not currently emit this log.
+   */
+  startIdleFrames(): void {
+    if (this.sessionState !== CloudXR.SessionState.Connected) {
+      return;
+    }
+    this.stopIdleFrames();
+    const emit = () => this.log(CloudXR.LogLevel.Debug, 'Received idle frame');
+    emit();
+    this.idleFrameTimer = setInterval(emit, IDLE_FRAME_INTERVAL_MS);
+  }
+
+  /** Stops the emulation started by startIdleFrames(). */
+  stopIdleFrames(): void {
+    if (this.idleFrameTimer !== null) {
+      clearInterval(this.idleFrameTimer);
+      this.idleFrameTimer = null;
+    }
+  }
+
   /** Delivers `data` through `onServerMessageReceived`, as if the server had sent it. */
   sendFakeServerMessage(data: Uint8Array): void {
     this.delegates.onServerMessageReceived?.(data);
@@ -573,6 +601,7 @@ export class MockCloudXR implements CloudXR.Session {
       clearInterval(this.networkMetricsTimer);
       this.networkMetricsTimer = null;
     }
+    this.stopIdleFrames();
   }
 
   private emitNetworkMetrics(): void {

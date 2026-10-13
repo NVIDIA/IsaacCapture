@@ -73,6 +73,13 @@ interface AttemptConfig {
   warmupTotalFrames?: number | null;
   /** How many no-arg videoFrameReceived() calls to make, at FRAME_CALL_DELAYS_MS after Connected. */
   frameCallCount: number;
+  /**
+   * Idle-frame scenario: emulate the server's keep-alive frames from Connected until this many
+   * ms later, with one warm-up frame arriving while they run (the real stream counts idle frames
+   * as warm-up), then one pose-backed frame at `completeWarmupAtMs` to finish warm-up.
+   */
+  idleFramesForMs?: number;
+  completeWarmupAtMs?: number;
 }
 
 // Per-attempt mock configuration - see the module doc comment for what each attempt tests.
@@ -83,7 +90,15 @@ const ATTEMPT_CONFIGS: AttemptConfig[] = [
   // emits streaming metrics, which trips the "no metrics during warm-up" check below.
   { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 0 },
   { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 1 }, // 3: warm-up begins, then stalls -> warmup-end timeout
-  { connectWaitMs: 100, warmupTotalFrames: 2, frameCallCount: 3 }, // 4: warm-up begins and completes fast -> success
+  // 4: idle frames run for 3x the 500ms warm-up budgets, with warm-up frames among them, then stop;
+  // warm-up completes after the watchdog resumes but within its budget -> success, no timeout.
+  {
+    connectWaitMs: 100,
+    warmupTotalFrames: 2,
+    frameCallCount: 0,
+    idleFramesForMs: 1500,
+    completeWarmupAtMs: 2400,
+  },
 ];
 
 const config: CloudXRConfig = {
@@ -128,6 +143,7 @@ let activeSession: MockCloudXR | null = null;
 // fires (see onStatusChange).
 let attemptConfigQueue: AttemptConfig[] = [];
 let pendingFrameCallCount = 0;
+let pendingIdleConfig: { idleFramesForMs: number; completeWarmupAtMs: number } | null = null;
 let statusMessages: string[] = [];
 let warmupStatuses: WarmupStatus[] = [];
 // Set the moment an onStreamingPerformanceMetrics event is observed to fire while warm-up
@@ -164,6 +180,20 @@ function Scene() {
               );
             }
             pendingFrameCallCount = 0;
+            const idleConfig = pendingIdleConfig;
+            pendingIdleConfig = null;
+            if (idleConfig) {
+              sessionForThisAttempt?.startIdleFrames();
+              setTimeout(
+                () => sessionForThisAttempt?.videoFrameReceived(0),
+                FRAME_CALL_DELAYS_MS[0]
+              );
+              setTimeout(() => sessionForThisAttempt?.stopIdleFrames(), idleConfig.idleFramesForMs);
+              setTimeout(
+                () => sessionForThisAttempt?.videoFrameReceived(1),
+                idleConfig.completeWarmupAtMs
+              );
+            }
           }
         }}
         onWarmupStatus={status => {
@@ -205,6 +235,14 @@ function Scene() {
               // armed in the first place.
               activeSession.setWarmupFirstStatusFrame(1);
               pendingFrameCallCount = attemptConfig.frameCallCount;
+              pendingIdleConfig =
+                attemptConfig.idleFramesForMs !== undefined &&
+                attemptConfig.completeWarmupAtMs !== undefined
+                  ? {
+                      idleFramesForMs: attemptConfig.idleFramesForMs,
+                      completeWarmupAtMs: attemptConfig.completeWarmupAtMs,
+                    }
+                  : null;
             }
           }
           appendLog(`[event] onSessionReady ${session ? 'session' : 'null'}`);
@@ -233,13 +271,17 @@ async function runTest(): Promise<void> {
   appendLog('=== Attempt 1 (1.25s wait, 1s attach budget) should time out on attach, ===');
   appendLog('=== attempt 2 (attaches, no frame ever) should time out on warmup begin, ===');
   appendLog('=== attempt 3 (warm-up begins, then stalls) should time out on warmup end, ===');
-  appendLog('=== attempt 4 (warm-up begins and completes fast) should succeed ===');
+  appendLog(
+    '=== attempt 4 (idle frames for 3x the warm-up budgets, then warm-up completes) should ==='
+  );
+  appendLog('=== succeed: idle frames must not start the warm-up watchdogs ===');
   statusMessages = [];
   warmupStatuses = [];
   streamingMetricsFiredDuringWarmup = false;
   streamingMetricsFiredAfterWarmupComplete = false;
   attemptConfigQueue = [...ATTEMPT_CONFIGS];
   pendingFrameCallCount = 0;
+  pendingIdleConfig = null;
   await startSession();
 
   // Staged waits mirroring the component's own three-phase progression: Connected (attach done)
@@ -251,7 +293,7 @@ async function runTest(): Promise<void> {
   // + 300ms retry + fast success, plus margin.
   const reachedConnected = await waitUntil(() => statusMessages.includes('Connected'), 3000);
   const warmupBegan = await waitUntil(() => warmupStatuses.length > 0, 3000);
-  const warmupCompleted = await waitUntil(() => warmupStatuses.some(s => s.completed), 3000);
+  const warmupCompleted = await waitUntil(() => warmupStatuses.some(s => s.completed), 7000);
   // A little extra time after warm-up completes for attempt 4's render loop to actually emit at
   // least one PerFrame metrics tick - proving the pipe resumes once warm-up ends, not just that
   // it stayed silent throughout (which sawStalledWarmupProgress alone wouldn't distinguish from
@@ -271,7 +313,7 @@ async function runTest(): Promise<void> {
   appendLog(
     pass
       ? '[result] PASS: attempt 1 attach-timed-out, attempt 2 warmup-begin-timed-out, ' +
-          'attempt 3 warmup-end-timed-out, attempt 4 attached and warmed up, streaming metrics ' +
+          'attempt 3 warmup-end-timed-out, attempt 4 rode out idle frames then warmed up, streaming metrics ' +
           'stayed frozen throughout warm-up and resumed once it completed'
       : `[result] FAIL: reachedConnected=${reachedConnected} warmupBegan=${warmupBegan} ` +
           `warmupCompleted=${warmupCompleted} retryCount=${retryCount} ` +
