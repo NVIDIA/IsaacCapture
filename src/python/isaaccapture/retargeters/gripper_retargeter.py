@@ -5,7 +5,8 @@
 Gripper Retargeter Module.
 
 Gripper control from hand tracking or controller input (GripperRetargeter), and toggles from a
-keyboard key (KeyboardGripperRetargeter) or a SpaceMouse button (SpaceMouseGripperRetargeter).
+keyboard key (KeyboardGripperRetargeter), a SpaceMouse button (SpaceMouseGripperRetargeter) or a
+gamepad button (GamepadGripperRetargeter).
 """
 
 import numpy as np
@@ -32,6 +33,8 @@ from isaaccapture.retargeting_engine.tensor_types import (
     HandInputIndex,
     HandJointIndex,
     ControllerInputIndex,
+    GamepadInput,
+    GamepadInputIndex,
 )
 
 
@@ -216,6 +219,53 @@ class SpaceMouseGripperRetargeter(BaseRetargeter):
         # device returns is not read as a new press.
         if not buttons.is_none:
             pressed = bool(np.asarray(buttons[0])[self.TOGGLE_BUTTON])
+            if context.execution_events.reset:
+                self._closed = False
+            elif pressed and not self._was_pressed:
+                self._closed = not self._closed
+            self._was_pressed = pressed
+        elif context.execution_events.reset:
+            self._closed = False
+
+        gripper_out[0] = -1.0 if self._closed else 1.0
+
+
+class GamepadGripperRetargeter(BaseRetargeter):
+    """
+    Toggles a gripper open/closed state on each press of the gamepad's west face button (X on an
+    Xbox pad, Square on a PlayStation pad).
+
+    Buttons are sampled, so a press is its rising edge between frames. A reset reopens the
+    gripper, and a button held through the reset does not toggle again.
+
+    Output matches GripperRetargeter's convention: -1.0 when closed, 1.0 when open.
+    """
+
+    TOGGLE_BUTTON = GamepadInputIndex.WEST_CLICK
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name)
+        self._closed = False
+        self._was_pressed = False
+
+    def input_spec(self) -> RetargeterIOType:
+        return {"gamepad": OptionalType(GamepadInput())}
+
+    def output_spec(self) -> RetargeterIOType:
+        return {
+            "gripper_command": TensorGroupType(
+                "gripper_command", [FloatType("command")]
+            )
+        }
+
+    def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
+        gripper_out = outputs["gripper_command"]
+        gamepad = inputs["gamepad"]
+
+        # Without a device the last edge state is kept, so a button still held when the
+        # device returns is not read as a new press.
+        if not gamepad.is_none:
+            pressed = float(gamepad[self.TOGGLE_BUTTON]) > 0.5
             if context.execution_events.reset:
                 self._closed = False
             elif pressed and not self._was_pressed:

@@ -317,6 +317,22 @@ devices:
         - label: 3dconnexion.com
           url: https://3dconnexion.com/
 
+  - id: gamepad
+    name: Gamepads
+    url: https://github.com/mdqinc/SDL_GameControllerDB
+    group: peripheral
+    modes: 6-DoF end effector, base velocity
+    since: main
+    details:
+      setup:
+        - label: Gamepad Plugin
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/gamepad
+        - label: Gamepad docs
+          doc: /device/gamepad
+      requirements:
+        - Linux workstation with the pad on USB or Bluetooth
+        - Xbox, PlayStation, Switch Pro, Steam or any pad SDL_GameControllerDB maps
+
   - id: oak-d-camera
     name: OAK-D Camera
     url: https://shop.luxonis.com/products/oak-d

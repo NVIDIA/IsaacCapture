@@ -20,6 +20,7 @@ from .standard_types import (
     SomaHandInput,
     HeadInput,
     ControllerInput,
+    GamepadInput,
     Generic3AxisPedalInput,
     FullBodyInput,
     SomaBodyInput,
@@ -45,6 +46,9 @@ SomaHandInputIndex: Any = _create_index_enum(
 HeadInputIndex: Any = _create_index_enum("HeadInputIndex", HeadInput(), "head_")
 ControllerInputIndex: Any = _create_index_enum(
     "ControllerInputIndex", ControllerInput(), "controller_"
+)
+GamepadInputIndex: Any = _create_index_enum(
+    "GamepadInputIndex", GamepadInput(), "gamepad_"
 )
 Generic3AxisPedalInputIndex: Any = _create_index_enum(
     "Generic3AxisPedalInputIndex", Generic3AxisPedalInput(), "pedal_"

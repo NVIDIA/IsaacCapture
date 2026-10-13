@@ -235,6 +235,42 @@ def ControllerInput() -> TensorGroupType:
     )
 
 
+def GamepadInput() -> TensorGroupType:
+    """
+    Standard TensorGroupType for gamepad data: a generic controller split in two.
+
+    Mirrors GamepadInputState in gamepad.fbs. Buttons are 1.0 while held and 0.0 otherwise; face
+    buttons are named by position (south is A on Xbox, Cross on PlayStation). Thumbsticks are in
+    [-1, 1] with right and up positive, as in OpenXR; triggers are in [0, 1]. Index fields with
+    GamepadInputIndex, e.g. ``gamepad[GamepadInputIndex.WEST_CLICK]``.
+    """
+    return TensorGroupType(
+        "gamepad",
+        [
+            FloatType("gamepad_south_click"),
+            FloatType("gamepad_east_click"),
+            FloatType("gamepad_west_click"),
+            FloatType("gamepad_north_click"),
+            FloatType("gamepad_view_click"),
+            FloatType("gamepad_menu_click"),
+            FloatType("gamepad_shoulder_left_click"),
+            FloatType("gamepad_shoulder_right_click"),
+            FloatType("gamepad_thumbstick_left_click"),
+            FloatType("gamepad_thumbstick_right_click"),
+            FloatType("gamepad_dpad_up_click"),
+            FloatType("gamepad_dpad_down_click"),
+            FloatType("gamepad_dpad_left_click"),
+            FloatType("gamepad_dpad_right_click"),
+            FloatType("gamepad_thumbstick_left_x"),
+            FloatType("gamepad_thumbstick_left_y"),
+            FloatType("gamepad_thumbstick_right_x"),
+            FloatType("gamepad_thumbstick_right_y"),
+            FloatType("gamepad_trigger_left_value"),
+            FloatType("gamepad_trigger_right_value"),
+        ],
+    )
+
+
 # ============================================================================
 # Full Body Tracking Types
 # ============================================================================

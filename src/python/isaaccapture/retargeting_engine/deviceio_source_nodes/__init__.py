@@ -17,6 +17,7 @@ from .spacemouse_source import (
     SpaceMouseSource,
     SpaceMouseTranslationType,
 )
+from .gamepad_source import GamepadSource
 
 from .keyboard_source import (
     KeyboardHeldType,
@@ -48,6 +49,7 @@ from .deviceio_tensor_types import (
     Generic3AxisPedalOutputTrackedType,
     KeyboardOutputTrackedType,
     SpaceMouseOutputTrackedType,
+    GamepadSnapshotTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
     SomaBodyJointRotationsTrackedType,
@@ -60,6 +62,7 @@ from .deviceio_tensor_types import (
     DeviceIOGeneric3AxisPedalOutputTracked,
     DeviceIOKeyboardOutputTracked,
     DeviceIOSpaceMouseOutputTracked,
+    DeviceIOGamepadSnapshotTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
     DeviceIOSomaBodyJointRotationsTracked,
@@ -85,6 +88,7 @@ __all__ = [
     "SpaceMouseRotationType",
     "SpaceMouseSource",
     "SpaceMouseTranslationType",
+    "GamepadSource",
     "KeyboardHeldType",
     "KeyboardPressedType",
     "KeyboardAttachment",
@@ -112,6 +116,7 @@ __all__ = [
     "Generic3AxisPedalOutputTrackedType",
     "KeyboardOutputTrackedType",
     "SpaceMouseOutputTrackedType",
+    "GamepadSnapshotTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
     "SomaBodyJointRotationsTrackedType",
@@ -127,6 +132,7 @@ __all__ = [
     "DeviceIOGeneric3AxisPedalOutputTracked",
     "DeviceIOKeyboardOutputTracked",
     "DeviceIOSpaceMouseOutputTracked",
+    "DeviceIOGamepadSnapshotTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
     "DeviceIOSomaBodyJointRotationsTracked",
