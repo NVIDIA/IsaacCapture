@@ -118,7 +118,7 @@ Generated today
      - Overrides ``class`` and ``traits``; the defaults would spell ``Spacemouse``
    * - ``gamepad``
      - ``GamepadTracker``
-     - Linux joystick-API gamepad pushed by the gamepad plugin; only ``python_accessor`` is overridden
+     - Gamepad state pushed by the gamepad plugin (SDL3); only ``python_accessor`` is overridden
 
 Still hand-written
 ------------------
