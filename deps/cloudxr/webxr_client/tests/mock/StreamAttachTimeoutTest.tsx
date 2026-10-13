@@ -78,7 +78,10 @@ interface AttemptConfig {
 // Per-attempt mock configuration - see the module doc comment for what each attempt tests.
 const ATTEMPT_CONFIGS: AttemptConfig[] = [
   { connectWaitMs: 1250, frameCallCount: 0 }, // 1: attach timeout (over 1x budget)
-  { connectWaitMs: 100, frameCallCount: 0 }, // 2: attaches fine, no frame ever -> warmup-begin timeout
+  // 2: attaches fine, no frame ever -> warmup-begin timeout. warmupTotalFrames: null turns warm-up
+  // simulation on (render() stays black, no streaming metrics); left off, the mock renders and
+  // emits streaming metrics, which trips the "no metrics during warm-up" check below.
+  { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 0 },
   { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 1 }, // 3: warm-up begins, then stalls -> warmup-end timeout
   { connectWaitMs: 100, warmupTotalFrames: 2, frameCallCount: 3 }, // 4: warm-up begins and completes fast -> success
 ];
