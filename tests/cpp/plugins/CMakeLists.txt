@@ -3,9 +3,10 @@
 
 add_subdirectory(plugin_utils)
 
-# The SpaceMouse plugin (and its spacemouse_core library) is Linux only.
+# The SpaceMouse and gamepad plugins (and their core libraries) are Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(spacemouse)
+    add_subdirectory(gamepad)
 endif()
 
 if(BUILD_PLUGIN_OGLO)

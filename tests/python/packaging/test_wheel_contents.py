@@ -134,3 +134,18 @@ def test_capture_license_ships_in_distribution_metadata() -> None:
         license_path = metadata_path.removesuffix("METADATA") + "licenses/LICENSE.md"
         assert archive.read(license_path) == (repo_root() / "LICENSE.md").read_bytes()
         assert not any("isaaccapture_egopost/" in name for name in archive.namelist())
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="the plugin is Linux only"
+)
+def test_gamepad_plugin_ships_runnable_for_teleop_session() -> None:
+    """Apps start the bundled plugin from BUNDLED_PLUGINS_DIR, so it needs its manifest and exec bit."""
+    bundle = f"{DIST}/plugins/gamepad"
+    with zipfile.ZipFile(_wheel()) as archive:
+        names = set(archive.namelist())
+        binary = archive.getinfo(f"{bundle}/gamepad_plugin")
+    assert f"{bundle}/plugin.yaml" in names
+    assert (binary.external_attr >> 16) & 0o111, (
+        "gamepad_plugin lost its executable bit"
+    )
