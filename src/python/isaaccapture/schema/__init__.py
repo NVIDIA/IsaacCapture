@@ -44,6 +44,10 @@ from ._schema import (
     # SpaceMouse types.
     SpaceMouseOutput,
     SpaceMouseOutputRecord,
+    # Gamepad types.
+    GamepadInputState,
+    GamepadSnapshot,
+    GamepadSnapshotRecord,
     # Keyboard types (held keys plus ordered key events).
     KeyAction,
     KeyEvent,
@@ -172,6 +176,10 @@ __all__ = [
     # SpaceMouse types.
     "SpaceMouseOutput",
     "SpaceMouseOutputRecord",
+    # Gamepad types.
+    "GamepadInputState",
+    "GamepadSnapshot",
+    "GamepadSnapshotRecord",
     # Keyboard types (held keys plus ordered key events).
     "KeyAction",
     "KeyEvent",
