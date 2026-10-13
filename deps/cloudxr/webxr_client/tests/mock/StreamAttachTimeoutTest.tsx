@@ -164,6 +164,10 @@ let pendingIdleConfig: Pick<
 > | null = null;
 // Status and idle events in the order they happened, for ordering assertions.
 let timeline: string[] = [];
+// Wall-clock time of each status in statusMessages, for timing assertions.
+let statusTimes: number[] = [];
+// Set by Scene: replaces the CloudXRComponent config object, as an operator edit would.
+let changeConfig: (() => void) | null = null;
 let streamingMetricsCount = 0;
 let statusMessages: string[] = [];
 let warmupStatuses: WarmupStatus[] = [];
@@ -176,11 +180,18 @@ let streamingMetricsFiredDuringWarmup = false;
 let streamingMetricsFiredAfterWarmupComplete = false;
 
 function Scene() {
+  const [sceneConfig, setSceneConfig] = useState(config);
+  useEffect(() => {
+    changeConfig = () => setSceneConfig(c => ({ ...c }));
+    return () => {
+      changeConfig = null;
+    };
+  }, []);
   return (
     <XR store={store}>
       <XROrigin />
       <CloudXRComponent
-        config={config}
+        config={sceneConfig}
         applicationName="StreamAttachTimeoutTest"
         iceServers={{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }}
         reconnect={{ maxAttempts: 4, delayMs: 300 }}
@@ -189,6 +200,7 @@ function Scene() {
         warmupEndTimeoutMs={WARMUP_END_TIMEOUT_MS}
         onStatusChange={(isConnected, status) => {
           statusMessages.push(status);
+          statusTimes.push(Date.now());
           timeline.push(`status:${status}`);
           appendLog(`[status] connected=${isConnected} ${status}`);
           if (status === 'Connected') {
@@ -420,6 +432,77 @@ async function runRealVideoAfterIdleTest(): Promise<void> {
   store.getState().session?.end();
 }
 
+// Scenarios ?scenario=idle-silence-never-began|idle-silence-stalled|idle-config-change: idle frames
+// stop with no real video, so the warm-up watchdog must resume. It must fire no earlier than the
+// quiet period plus the phase budget after the last idle frame, however often the config changes
+// meanwhile: a config change must neither re-arm a watchdog while idle is active nor leave an
+// orphaned timer behind.
+const IDLE_QUIET_MS = 1000;
+interface IdleSilenceScenario {
+  /** Feed a warm-up frame at the start, so warm-up has begun (then stalls) when idle stops. */
+  warmupBegun: boolean;
+  idleForMs: number;
+  configChangesAtMs: number[];
+}
+const IDLE_SILENCE_SCENARIOS: Record<string, IdleSilenceScenario> = {
+  'idle-silence-never-began': { warmupBegun: false, idleForMs: 600, configChangesAtMs: [] },
+  'idle-silence-stalled': { warmupBegun: true, idleForMs: 600, configChangesAtMs: [] },
+  // Config changes while idle runs (300, 1200) and inside the quiet window after it (2250).
+  'idle-config-change': {
+    warmupBegun: true,
+    idleForMs: 2000,
+    configChangesAtMs: [300, 1200, 2250],
+  },
+};
+
+async function runIdleSilenceScenario(name: string, sc: IdleSilenceScenario): Promise<void> {
+  appendLog(`=== ${name}: idle frames then silence must time out after quiet + budget ===`);
+  statusMessages = [];
+  statusTimes = [];
+  warmupStatuses = [];
+  idleStatuses = [];
+  timeline = [];
+  attemptConfigQueue = [
+    {
+      connectWaitMs: 100,
+      warmupTotalFrames: null,
+      frameCallCount: sc.warmupBegun ? 1 : 0,
+      idleFramesForMs: sc.idleForMs,
+    },
+  ];
+  pendingFrameCallCount = 0;
+  pendingIdleConfig = null;
+  await startSession();
+  const connected = await waitUntil(() => statusMessages.includes('Connected'), 3000);
+  for (const at of sc.configChangesAtMs) {
+    setTimeout(() => changeConfig?.(), at);
+  }
+  const retried = await waitUntil(
+    () => statusMessages.some(s => s.startsWith('Reconnecting')),
+    8000
+  );
+  const retryAt = statusTimes[statusMessages.findIndex(s => s.startsWith('Reconnecting'))] ?? 0;
+  const lastIdleAt = Math.max(0, ...idleStatuses.filter(s => s.active).map(s => s.timestamp));
+  const gapMs = retryAt - lastIdleAt;
+  // Expected gap: IDLE_QUIET_MS + the 500 ms phase budget. Early means a watchdog ran during idle
+  // or its quiet window; the upper bound only guards against it never resuming properly.
+  const timedOutAfterQuiet = retried && gapMs >= IDLE_QUIET_MS + WARMUP_BEGIN_TIMEOUT_MS - 100;
+  const timedOutPromptly = retried && gapMs <= IDLE_QUIET_MS + 2500;
+  const firstRetry = timeline.findIndex(t => t.startsWith('status:Reconnecting'));
+  const idleEndedFirst =
+    timeline.includes('idle:false') && timeline.indexOf('idle:false') < firstRetry;
+  const pass = connected && timedOutAfterQuiet && timedOutPromptly && idleEndedFirst;
+  appendLog(
+    pass
+      ? `[result] PASS: ${name} timed out ${gapMs} ms after the last idle frame`
+      : `[result] FAIL: ${name} connected=${connected} retried=${retried} gapMs=${gapMs} ` +
+          `timedOutAfterQuiet=${timedOutAfterQuiet} timedOutPromptly=${timedOutPromptly} ` +
+          `idleEndedFirst=${idleEndedFirst} timeline=${JSON.stringify(timeline)}`
+  );
+  await sleep(300);
+  store.getState().session?.end();
+}
+
 function App() {
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
@@ -431,8 +514,11 @@ function App() {
     runningRef.current = true;
     setRunning(true);
     try {
-      if (new URLSearchParams(window.location.search).get('scenario') === 'real-video-after-idle') {
+      const scenario = new URLSearchParams(window.location.search).get('scenario') ?? '';
+      if (scenario === 'real-video-after-idle') {
         await runRealVideoAfterIdleTest();
+      } else if (scenario in IDLE_SILENCE_SCENARIOS) {
+        await runIdleSilenceScenario(scenario, IDLE_SILENCE_SCENARIOS[scenario]);
       } else {
         await runTest();
       }

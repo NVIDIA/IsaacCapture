@@ -338,8 +338,6 @@ export default function CloudXRComponent({
   const warmupEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Fires IDLE_FRAMES_QUIET_MS after the last idle-frame log; see noteIdleFrame.
   const idleQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True from an idle-frame log until idleQuietTimerRef fires or the attempt ends.
-  const idleFramesActiveRef = useRef(false);
   const idleStatusRef = useRef<IdleStatus>({ framesSeen: 0, timestamp: 0, active: false });
   // Per attempt: a RenderFramerate tick showed real, pose-backed video, so warm-up is over even if
   // the SDK never logged its completion line (a stream that starts warmed up).
@@ -403,6 +401,7 @@ export default function CloudXRComponent({
     (cxrSession: CloudXR.Session) => {
       // <= 0 disables detection; setTimeout(fn, 0) would fire immediately instead.
       if (streamAttachBaseTimeoutMs <= 0) return;
+      if (streamAttachTimerRef.current !== null) clearTimeout(streamAttachTimerRef.current);
       const attemptForThisTimer = reconnectAttemptRef.current;
       const attachTimeoutMs = Math.min(
         streamAttachBaseTimeoutMs * 2 ** attemptForThisTimer,
@@ -445,6 +444,7 @@ export default function CloudXRComponent({
     (cxrSession: CloudXR.Session) => {
       // warmupEndTimeoutMs <= 0 turns off all warm-up detection; the begin timer only hands off to the end timer.
       if (warmupBeginBaseTimeoutMs <= 0 || warmupEndBaseTimeoutMs <= 0) return;
+      if (warmupBeginTimerRef.current !== null) clearTimeout(warmupBeginTimerRef.current);
       // Same overflow guard as armStreamAttachTimer: an uncapped delay above setTimeout's
       // ~24.8-day int32 limit wraps and fires near-immediately instead of waiting.
       const timeoutMs = Math.min(warmupBeginBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
@@ -478,6 +478,7 @@ export default function CloudXRComponent({
   const armWarmupEndTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
       if (warmupEndBaseTimeoutMs <= 0) return; // disabled, see armStreamAttachTimer
+      if (warmupEndTimerRef.current !== null) clearTimeout(warmupEndTimerRef.current);
       const timeoutMs = Math.min(warmupEndBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
       warmupEndTimerRef.current = setTimeout(() => {
         warmupEndTimerRef.current = null;
@@ -508,8 +509,7 @@ export default function CloudXRComponent({
       clearTimeout(idleQuietTimerRef.current);
       idleQuietTimerRef.current = null;
     }
-    if (!idleFramesActiveRef.current) return;
-    idleFramesActiveRef.current = false;
+    if (!idleStatusRef.current.active) return;
     idleStatusRef.current = { ...idleStatusRef.current, timestamp: Date.now(), active: false };
     onIdleStatusRef.current?.(idleStatusRef.current);
   }, []);
@@ -522,7 +522,6 @@ export default function CloudXRComponent({
    * the end timer would start on them.
    */
   const noteIdleFrame = useCallback(() => {
-    idleFramesActiveRef.current = true;
     idleStatusRef.current = {
       framesSeen: idleStatusRef.current.framesSeen + 1,
       timestamp: Date.now(),
@@ -620,10 +619,17 @@ export default function CloudXRComponent({
     // no deadline for the rest of this attempt.
     if (cxrSessionRef.current && !hasStreamStartedRef.current) {
       armStreamAttachTimer(cxrSessionRef.current);
-    } else if (!headless && cxrSessionRef.current && !warmupBegunRef.current) {
-      armWarmupBeginTimer(cxrSessionRef.current);
-    } else if (!headless && cxrSessionRef.current && !warmupStatusRef.current.completed) {
-      armWarmupEndTimer(cxrSessionRef.current);
+    } else if (
+      !headless &&
+      cxrSessionRef.current &&
+      !idleStatusRef.current.active && // the idle quiet timer resumes the watchdog itself
+      !realVideoSeenRef.current
+    ) {
+      if (!warmupBegunRef.current) {
+        armWarmupBeginTimer(cxrSessionRef.current);
+      } else if (!warmupStatusRef.current.completed) {
+        armWarmupEndTimer(cxrSessionRef.current);
+      }
     }
 
     if (webXRManager) {
@@ -793,7 +799,7 @@ export default function CloudXRComponent({
                     !completeMatch &&
                     !headless &&
                     cxrSessionRef.current &&
-                    !idleFramesActiveRef.current
+                    !idleStatusRef.current.active
                   ) {
                     armWarmupEndTimer(cxrSessionRef.current);
                   }
