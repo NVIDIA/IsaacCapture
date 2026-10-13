@@ -56,6 +56,10 @@ from ._schema import (
     TactileData,
     TactileDataRecord,
     TactileShape,
+    # Tracker metadata, for producers of a tracker's metadata.
+    TRACKER_METADATA_SAMPLE_SIZE,
+    TRACKER_METADATA_TENSOR_IDENTIFIER,
+    tracker_metadata_collection_id,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
     JointState,
     JointStateOutput,
@@ -188,6 +192,10 @@ __all__ = [
     "TactileData",
     "TactileDataRecord",
     "TactileShape",
+    # Tracker metadata.
+    "TRACKER_METADATA_SAMPLE_SIZE",
+    "TRACKER_METADATA_TENSOR_IDENTIFIER",
+    "tracker_metadata_collection_id",
     # Joint-state types (generic joint-space devices).
     "JointState",
     "JointStateOutput",

@@ -108,16 +108,10 @@ max_flatbuffer_size = 256
 python_accessor = "get_spacemouse_data"
 
 # Defaults fit about 1300 taxels (12 B each); larger devices pass max_flatbuffer_size.
+# TactileShape is its metadata, in one 16 KiB sample: about 0.9 KiB for 26 joints plus 68 B
+# per taxel fits about 225 taxels.
 [[tracker]]
 name = "tactile"
 table = "TactileData"
-max_flatbuffer_size = 16384
-
-# About 0.9 KiB for 26 joints plus 68 B per taxel: fits about 225 taxels. 128 KiB samples
-# failed in the CloudXR runtime's IPC; 16 KiB is the largest size in use (noitom_mocap).
-# TactileShape has no capture time, so it is recorded as itself rather than in a Record.
-[[tracker]]
-name = "tactile_shape"
-table = "TactileShape"
-record_type = "TactileShape"
+metadata = "TactileShape"
 max_flatbuffer_size = 16384

@@ -28,6 +28,9 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
 - **A table with no capture time is its own `root_type`, not wrapped in a `Record`.** Set
   `record_type = "<Table>"` on its entry: the generated tracker then records the table as itself.
   Do not keep a `Record` only to satisfy the generator.
+- **Static per-device data is `metadata`, not a second tracker.** `metadata = "<Table>"` adds
+  `get_metadata()` and the companion metadata collection; do not declare the table as its own
+  `[[tracker]]`, which makes every consumer pair and cache two streams itself.
 - **Do not hand-register a manifest tracker.** Factory dispatch rows, factory methods, pybind
   blocks, MCAP recording traits, and the Python `__all__` are emitted as `.inc` fragments that the
   hand-written files `#include`; adding a row yourself produces a duplicate definition.

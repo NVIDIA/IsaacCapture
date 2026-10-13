@@ -122,6 +122,9 @@ seven-layer tracker stack. Instead:
    :code-file:`src/core/codegen/generate_trackers.py` and wires generated sources into
    ``deviceio_trackers``, ``live_trackers``, and ``replay_trackers``.
 
+A device with a table that is fixed per producer, such as a sensor layout, declares it with
+``metadata``; see :ref:`Trackers with metadata <generated-trackers-metadata>`.
+
 Use ``direction = "push"`` when Teleop **pushes** a typed table to a plugin (e.g.
 ``HapticCommandPushTracker``). Cross-process **consumers** that bucket multiple
 ``HapticCommand.endpoint`` samples on one collection (e.g. ``HapticCommandReaderTracker`` for Manus

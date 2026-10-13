@@ -159,7 +159,7 @@ class TactileDataTrackedType(_PayloadTensorType):
 
 
 class TactileShapeTrackedType(_PayloadTensorType):
-    """TactileShape payload from DeviceIO TactileShapeTracker."""
+    """TactileShape metadata from DeviceIO TactileTracker."""
 
     _payload_cls = TactileShape
 
@@ -308,27 +308,19 @@ def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
     )
 
 
-def DeviceIOTactileDataTracked() -> TensorGroupType:
-    """Tracked tactile frame from DeviceIO TactileTracker.
+def DeviceIOTactileTracked() -> TensorGroupType:
+    """Tracked tactile frame and its shape from DeviceIO TactileTracker.
 
     Contains:
         tactile_tracked: TactileData handle, or None when inactive
+        tactile_shape: TactileShape metadata handle, or None until it arrives
     """
     return TensorGroupType(
-        "deviceio_tactile_data",
-        [TactileDataTrackedType("tactile_tracked")],
-    )
-
-
-def DeviceIOTactileShapeTracked() -> TensorGroupType:
-    """Tactile shape from DeviceIO TactileShapeTracker.
-
-    Contains:
-        tactile_shape_tracked: TactileShape handle, or None before the first one arrives
-    """
-    return TensorGroupType(
-        "deviceio_tactile_shape",
-        [TactileShapeTrackedType("tactile_shape_tracked")],
+        "deviceio_tactile",
+        [
+            TactileDataTrackedType("tactile_tracked"),
+            TactileShapeTrackedType("tactile_shape"),
+        ],
     )
 
 

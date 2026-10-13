@@ -29,6 +29,7 @@ pybind11_add_module(schema_py
     steering_wheel_bindings.h
     tactile_bindings.h
     tactile_shape_bindings.h
+    tracker_metadata_bindings.h
 )
 
 target_link_libraries(schema_py

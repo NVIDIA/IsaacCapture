@@ -33,11 +33,14 @@ RESOLVED_REQUIRED = frozenset(
         "record",
         "record_type",
         "facade_tensor_constant",
+        "metadata",
+        "metadata_schema",
+        "metadata_channel",
     }
 )
 
 _PLACEHOLDER = re.compile(
-    r"%(?P<key>[a-zA-Z0-9_]+?)(?P<transform>_(?:CamelCase|UPPER))?%|(?P<literal>%%)"
+    r"%(?P<key>[a-zA-Z0-9_]+?)(?P<transform>_(?:CamelCase|snake_case|UPPER))?%|(?P<literal>%%)"
 )
 
 
@@ -62,9 +65,18 @@ def snake_to_camel(value: str) -> str:
     return "".join(out)
 
 
+def camel_to_snake(value: str) -> str:
+    """Convert CamelCase to snake_case (TactileShape -> tactile_shape)."""
+    return re.sub(
+        r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", value
+    ).lower()
+
+
 def apply_transform(value: str, transform: str | None) -> str:
     if transform == "_CamelCase":
         return snake_to_camel(value)
+    if transform == "_snake_case":
+        return camel_to_snake(value)
     if transform == "_UPPER":
         return value.upper()
     return value
@@ -171,6 +183,11 @@ def resolve_tracker_entry(
     if not isinstance(record, bool):
         raise ValueError(
             f"tracker '{raw['name']}': record must be a boolean, got {type(record).__name__}"
+        )
+
+    if resolved["metadata"] and resolved["direction"] != "pull":
+        raise ValueError(
+            f"tracker '{raw['name']}': metadata is supported only for direction=pull"
         )
 
     if resolved["direction"] == "pull" and record:

@@ -1,0 +1,5 @@
+std::unique_ptr<@IFACE@> ReplayDeviceIOFactory::create_@NAME@_tracker_impl(const @CLASS@* tracker)
+{
+    return std::make_unique<@REPLAY_IMPL@>(
+        open_reader(filename_), open_reader(filename_), get_name(tracker), recorded_schemas_);
+}

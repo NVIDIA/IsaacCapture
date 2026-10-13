@@ -36,11 +36,8 @@ struct TactileTaxel {
 // TactileData. `joints` is indexed by XrHandJointEXT ordinal; `taxels` is in
 // TactileData.taxel_force order.
 //
-// Its own root rather than a Record: it is fixed for the life of the producer's collections, so
-// it has no capture time, and frames carry no shape version; a different shape needs new
-// collections (a producer restart). Producers publish it on connect, then republish it
-// periodically. Replay reads one message per update, not by timestamp, so the recorded shapes
-// run out after the first few frames; consumers keep the latest one.
+// Published as the metadata of the tactile tracker (`metadata` in trackers.toml), not as
+// samples: it carries no timestamp, and the tracker holds one shape for the whole session.
 table TactileShape {
   joints: [TactileJoint] (id: 0);
   taxels: [TactileTaxel] (id: 1);

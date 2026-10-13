@@ -46,6 +46,8 @@ def _join_lines(lines: Iterator[str]) -> str:
 
 def _render_tracker_set(ctx: TrackerGenContext, prefix: str) -> dict[str, str]:
     """Seven-file bundle: deviceio_base, facade hpp/cpp, live hpp/cpp, replay hpp/cpp."""
+    # A tracker with metadata reads, gates and replays two streams, so its impls have their own bodies.
+    impl = "_metadata" if ctx.metadata else ""
     return {
         f"deviceio_base/{ctx.base_header}.hpp": render_with_copyright(
             f"{prefix}/deviceio_base.hpp.template", ctx, COPYRIGHT
@@ -57,16 +59,16 @@ def _render_tracker_set(ctx: TrackerGenContext, prefix: str) -> dict[str, str]:
             f"{prefix}/facade.cpp.template", ctx, COPYRIGHT
         ),
         f"live_trackers/{ctx.live_impl_file}.hpp": render_with_copyright(
-            f"{prefix}/live.hpp.template", ctx, COPYRIGHT
+            f"{prefix}/live{impl}.hpp.template", ctx, COPYRIGHT
         ),
         f"live_trackers/{ctx.live_impl_file}.cpp": render_with_copyright(
-            f"{prefix}/live.cpp.template", ctx, COPYRIGHT
+            f"{prefix}/live{impl}.cpp.template", ctx, COPYRIGHT
         ),
         f"replay_trackers/{ctx.replay_impl_file}.hpp": render_with_copyright(
-            f"{prefix}/replay.hpp.template", ctx, COPYRIGHT
+            f"{prefix}/replay{impl}.hpp.template", ctx, COPYRIGHT
         ),
         f"replay_trackers/{ctx.replay_impl_file}.cpp": render_with_copyright(
-            f"{prefix}/replay.cpp.template", ctx, COPYRIGHT
+            f"{prefix}/replay{impl}.cpp.template", ctx, COPYRIGHT
         ),
     }
 
@@ -156,6 +158,8 @@ def _live_factory_template(ctx: TrackerGenContext) -> str:
 def _replay_factory_template(ctx: TrackerGenContext) -> str:
     if ctx.direction == "push":
         return "replay_factory_push.template"
+    if ctx.metadata:
+        return "replay_factory_pull_metadata.template"
     if ctx.record:
         return "replay_factory_pull.template"
     return "replay_factory_pull_plain.template"

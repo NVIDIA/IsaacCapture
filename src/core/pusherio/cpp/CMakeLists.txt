@@ -6,7 +6,9 @@ cmake_minimum_required(VERSION 3.20)
 # PusherIO library (static; consumed in-tree via pusherio::pusherio)
 add_library(pusherio STATIC
     schema_pusher.cpp
+    schema_metadata_pusher.cpp
     inc/pusherio/schema_pusher.hpp
+    inc/pusherio/schema_metadata_pusher.hpp
 )
 
 target_include_directories(pusherio
@@ -24,6 +26,9 @@ target_link_libraries(pusherio
         Teleop::openxr_extensions
 
         log_bridge::log_bridge_core
+
+        # schema/tracker_metadata.hpp, for SchemaMetadataPusher
+        isaacteleop_schema
 )
 
 # pusherio does NOT link to OpenXR loader - it's completely standalone

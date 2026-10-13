@@ -31,6 +31,7 @@
 #include "tactile_bindings.h"
 #include "tactile_shape_bindings.h"
 #include "timestamp_bindings.h"
+#include "tracker_metadata_bindings.h"
 
 namespace py = pybind11;
 
@@ -65,6 +66,9 @@ PYBIND11_MODULE(_schema, m)
     // Bind tactile types (TactileData, TactileShape tables).
     core::bind_tactile(m);
     core::bind_tactile_shape(m);
+
+    // Bind the helpers for producers of tracker metadata.
+    core::bind_tracker_metadata(m);
 
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.
     core::bind_joint_state(m);

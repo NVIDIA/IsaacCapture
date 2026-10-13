@@ -7,7 +7,7 @@ include "timestamp.fbs";
 namespace core;
 
 // Per-frame tactile reading. The taxel layout it indexes is TactileShape (tactile_shape.fbs),
-// published separately because it is static per device.
+// the tactile tracker's metadata.
 table TactileData {
   // Force vector per taxel, in TactileShape taxel order.
   taxel_force: [Point] (id: 0);

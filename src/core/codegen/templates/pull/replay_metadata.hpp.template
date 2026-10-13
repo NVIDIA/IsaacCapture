@@ -1,0 +1,38 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+#include <deviceio_base/@BASE_HEADER@.hpp>
+#include <log_bridge/logger.hpp>
+#include <mcap/tracker_channels.hpp>
+#include <schema/@METADATA_SCHEMA@_generated.h>
+#include <schema/@SCHEMA@_generated.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+namespace core
+{
+using @MCAP_VIEWERS_TYPE@ = McapTrackerViewers<@RECORD_TYPE@>;
+class @REPLAY_IMPL@ : public @IFACE@
+{
+public:
+    // `metadata_reader` is read to the metadata and dropped during construction.
+    @REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
+                  std::unique_ptr<mcap::McapReader> metadata_reader,
+                  std::string_view base_name,
+                  const RecordedSchemas& recorded);
+    void update(int64_t monotonic_time_ns) override;
+    const Serialized<@FB_TABLE@>& get_data() const override;
+    const Serialized<@METADATA@>& get_metadata() const override;
+
+private:
+    Serialized<@FB_TABLE@> tracked_;
+    Serialized<@METADATA@> metadata_;
+    std::unique_ptr<@MCAP_VIEWERS_TYPE@> mcap_viewers_;
+    std::shared_ptr<spdlog::logger> logger_;
+    std::string no_data_message_;
+    bool warned_no_data_ = false;
+};
+} // namespace core

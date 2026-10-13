@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tactile Source Nodes - DeviceIO to Retargeting Engine converters.
+"""Tactile Source Node - DeviceIO to Retargeting Engine converter.
 
-``TactileSource`` turns per-frame ``TactileData`` into a force array; ``TactileShapeSource``
-turns the device's static ``TactileShape`` into the arrays that lay those forces out. Taxel and
-joint counts are fixed at construction so the retargeting graph has a static spec.
+``TactileSource`` turns per-frame ``TactileData`` into a force array, and the tracker's
+``TactileShape`` metadata into the arrays that lay those forces out. Taxel and joint counts are
+fixed at construction so the retargeting graph has a static spec.
 """
 
 from __future__ import annotations
@@ -20,10 +20,7 @@ from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
 from ..interface.tensor_group import TensorGroup
 from ..interface.tensor_group_type import OptionalType, TensorGroupType
 from ..tensor_types import DLDataType, NDArrayType
-from .deviceio_tensor_types import (
-    DeviceIOTactileDataTracked,
-    DeviceIOTactileShapeTracked,
-)
+from .deviceio_tensor_types import DeviceIOTactileTracked
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio_trackers import ITracker
@@ -81,89 +78,18 @@ def TactileShapeLayout(num_joints: int, num_taxels: int) -> TensorGroupType:
 
 
 class TactileSource(IDeviceIOSource):
-    """Converter: DeviceIO ``TactileData`` -> per-taxel force array.
+    """Converter: DeviceIO ``TactileTracker`` -> per-taxel forces and the shape that lays them out.
 
-    Outputs (Optional -- absent when the device is inactive):
-        - :data:`FORCES`: :func:`TactileForces` of ``num_taxels``, in ``TactileShape`` taxel order.
+    Outputs (Optional):
+        - :data:`FORCES`: :func:`TactileForces` of ``num_taxels``, in ``TactileShape`` taxel
+          order; absent when the device is inactive.
+        - :data:`SHAPE`: :func:`TactileShapeLayout` of ``num_joints`` x ``num_taxels``; absent
+          until the tracker holds the device's shape. The tracker publishes no forces before then.
 
-    A frame whose taxel count differs from ``num_taxels`` raises ``ValueError``.
+    A frame or shape whose counts differ from the constructor's raises ``ValueError``.
     """
 
     FORCES = "taxel_forces"
-
-    def __init__(
-        self,
-        name: str,
-        collection_id: str,
-        num_taxels: int,
-        max_flatbuffer_size: Optional[int] = None,
-    ) -> None:
-        """Initialize the tactile source.
-
-        Args:
-            name: Unique name for this source node.
-            collection_id: Tensor collection ID of the producer's ``TactileData`` stream.
-            num_taxels: Taxel count of the device; fixes the output spec.
-            max_flatbuffer_size: Override for ``TactileTracker``'s default collection size.
-        """
-        from isaaccapture.deviceio_trackers import TactileTracker
-
-        self._tracker = (
-            TactileTracker(collection_id)
-            if max_flatbuffer_size is None
-            else TactileTracker(collection_id, max_flatbuffer_size)
-        )
-        self._num_taxels = int(num_taxels)
-        super().__init__(name)
-
-    def get_tracker(self) -> "ITracker":
-        """Return the ``TactileTracker`` instance for ``TeleopSession`` to initialize."""
-        return self._tracker
-
-    def poll_tracker(self, deviceio_session: Any) -> RetargeterIO:
-        """Poll the tracker and wrap the raw tracked data for the compute step."""
-        tg = TensorGroup(DeviceIOTactileDataTracked())
-        tg[0] = self._tracker.get_data(deviceio_session)
-        return {"deviceio_tactile": tg}
-
-    def input_spec(self) -> RetargeterIOType:
-        """Declare the raw DeviceIO tactile input."""
-        return {"deviceio_tactile": DeviceIOTactileDataTracked()}
-
-    def output_spec(self) -> RetargeterIOType:
-        """Declare the force output (Optional -- may be absent)."""
-        return {self.FORCES: OptionalType(TactileForces(self._num_taxels))}
-
-    def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
-        """Copy the frame's forces out, or call ``set_none()`` when the device is inactive."""
-        data: "TactileData | None" = inputs["deviceio_tactile"][0]
-
-        out = outputs[self.FORCES]
-        if data is None:
-            out.set_none()
-            return
-
-        forces = data.taxel_force
-        if len(forces) != self._num_taxels:
-            raise ValueError(
-                f"{self.name}: frame has {len(forces)} taxels, source expects {self._num_taxels}"
-            )
-        out[0] = forces
-
-
-class TactileShapeSource(IDeviceIOSource):
-    """Converter: DeviceIO ``TactileShape`` -> layout arrays.
-
-    The last shape received is kept and re-emitted every frame. Producers publish the shape
-    only occasionally, and replay reads one record per update, so it runs out of recorded
-    shapes after the first few frames.
-
-    Outputs (Optional -- absent until the first shape arrives):
-        - :data:`SHAPE`: :func:`TactileShapeLayout` of ``num_joints`` x ``num_taxels``.
-
-    A shape with other counts raises ``ValueError``.
-    """
-
     SHAPE = "tactile_shape"
 
     def __init__(
@@ -174,69 +100,78 @@ class TactileShapeSource(IDeviceIOSource):
         num_taxels: int,
         max_flatbuffer_size: Optional[int] = None,
     ) -> None:
-        """Initialize the tactile shape source.
+        """Initialize the tactile source.
 
         Args:
             name: Unique name for this source node.
-            collection_id: Tensor collection ID of the producer's ``TactileShape`` stream.
-            num_joints: Joint count of the device skeleton; fixes the output spec.
-            num_taxels: Taxel count of the device; fixes the output spec.
-            max_flatbuffer_size: Override for ``TactileShapeTracker``'s default collection size.
+            collection_id: Tensor collection ID of the producer's ``TactileData`` stream.
+            num_joints: Joint count of the device skeleton; fixes the shape output spec.
+            num_taxels: Taxel count of the device; fixes the output specs.
+            max_flatbuffer_size: Override for ``TactileTracker``'s default collection size.
         """
-        from isaaccapture.deviceio_trackers import TactileShapeTracker
+        from isaaccapture.deviceio_trackers import TactileTracker
 
         self._tracker = (
-            TactileShapeTracker(collection_id)
+            TactileTracker(collection_id)
             if max_flatbuffer_size is None
-            else TactileShapeTracker(collection_id, max_flatbuffer_size)
+            else TactileTracker(collection_id, max_flatbuffer_size)
         )
         self._num_joints = int(num_joints)
         self._num_taxels = int(num_taxels)
-        self._latest: "TactileShape | None" = None
         super().__init__(name)
 
     def get_tracker(self) -> "ITracker":
-        """Return the ``TactileShapeTracker`` instance for ``TeleopSession`` to initialize."""
+        """Return the ``TactileTracker`` instance for ``TeleopSession`` to initialize."""
         return self._tracker
 
     def poll_tracker(self, deviceio_session: Any) -> RetargeterIO:
-        """Poll the tracker, keeping the last shape it delivered."""
-        shape = self._tracker.get_data(deviceio_session)
-        if shape is not None:
-            self._latest = shape
-        tg = TensorGroup(DeviceIOTactileShapeTracked())
-        tg[0] = self._latest
-        return {"deviceio_tactile_shape": tg}
+        """Poll the tracker's frame and metadata for the compute step."""
+        tg = TensorGroup(DeviceIOTactileTracked())
+        tg[0] = self._tracker.get_data(deviceio_session)
+        tg[1] = self._tracker.get_metadata(deviceio_session)
+        return {"deviceio_tactile": tg}
 
     def input_spec(self) -> RetargeterIOType:
-        """Declare the raw DeviceIO tactile shape input."""
-        return {"deviceio_tactile_shape": DeviceIOTactileShapeTracked()}
+        """Declare the raw DeviceIO tactile input."""
+        return {"deviceio_tactile": DeviceIOTactileTracked()}
 
     def output_spec(self) -> RetargeterIOType:
-        """Declare the layout output (Optional -- may be absent)."""
+        """Declare the force and shape outputs (Optional -- may be absent)."""
         return {
+            self.FORCES: OptionalType(TactileForces(self._num_taxels)),
             self.SHAPE: OptionalType(
                 TactileShapeLayout(self._num_joints, self._num_taxels)
-            )
+            ),
         }
 
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
-        """Copy the shape's arrays out, or call ``set_none()`` before the first shape."""
-        shape: "TactileShape | None" = inputs["deviceio_tactile_shape"][0]
+        """Copy the forces and shape out, or call ``set_none()`` on whichever is absent."""
+        data: "TactileData | None" = inputs["deviceio_tactile"][0]
+        shape: "TactileShape | None" = inputs["deviceio_tactile"][1]
 
-        out = outputs[self.SHAPE]
+        forces_out = outputs[self.FORCES]
+        if data is None:
+            forces_out.set_none()
+        else:
+            forces = data.taxel_force
+            if len(forces) != self._num_taxels:
+                raise ValueError(
+                    f"{self.name}: frame has {len(forces)} taxels, source expects {self._num_taxels}"
+                )
+            forces_out[0] = forces
+
+        shape_out = outputs[self.SHAPE]
         if shape is None:
-            out.set_none()
+            shape_out.set_none()
             return
-
         joints, taxels = len(shape.joint_parents), len(shape.taxel_positions)
         if (joints, taxels) != (self._num_joints, self._num_taxels):
             raise ValueError(
                 f"{self.name}: shape has {joints} joints and {taxels} taxels, "
                 f"source expects {self._num_joints} and {self._num_taxels}"
             )
-        for index, tensor_type in enumerate(out.group_type.types):
+        for index, tensor_type in enumerate(shape_out.group_type.types):
             value = getattr(shape, tensor_type.name)
             if value.dtype == np.uint32:
                 value = value.astype(np.int32)
-            out[index] = value
+            shape_out[index] = value
