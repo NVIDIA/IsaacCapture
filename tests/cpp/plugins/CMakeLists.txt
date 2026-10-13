@@ -11,3 +11,6 @@ endif()
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
+
+# Ungated: see jmex/CMakeLists.txt.
+add_subdirectory(jmex)

@@ -282,6 +282,20 @@ devices:
         - label: Noitom Mocap Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/noitom_mocap
 
+  - id: jmex-agilemaster
+    name: j-mex AgileMaster
+    url: https://jmex.com.tw/agilemaster/
+    group: peripheral
+    modes: Full-body motion capture
+    since: main
+    details:
+      setup:
+        - label: j-mex AgileMaster Plugin
+          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/jmex
+      requirements:
+        - MOXI Receiver SDK 0.8.0 or newer (on request from j-mex)
+        - MOXI Player with the standard human skeleton loaded, on this machine or the same subnet
+
   - id: logitech-rudder-pedals
     name: Logitech Rudder Pedals
     url: https://www.logitechg.com/en-us/products/flight/flight-simulator-rudder-pedals.html
