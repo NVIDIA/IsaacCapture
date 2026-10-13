@@ -2,10 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: io_exo_glove_ros2
-description: "Exoskeleton glove joint angles (JointStateOutput) and fingertip poses (JointSe3PoseOutput)"
+description: "Exoskeleton glove hands (OpenXR hand tracker), joint angles (JointStateOutput) and fingertip poses (JointSe3PoseOutput)"
 command: "./io_exo_glove_ros2_plugin"
 version: "1.0.0"
 devices:
+  - path: "/hand/left"
+    type: "hand_tracker"
+    description: "Left exoskeleton hand, injected as the OpenXR hand skeleton the conformance suite records (ROS 2 tf2_msgs/TFMessage; topic set in config/io_exo_glove_ros2.yaml)"
+  - path: "/hand/right"
+    type: "hand_tracker"
+    description: "Right exoskeleton hand, injected as the OpenXR hand skeleton (ROS 2 tf2_msgs/TFMessage; topic set in config/io_exo_glove_ros2.yaml)"
   - path: "/glove/exo_joints"
     type: "joint_state"
     description: "Exoskeleton glove skeleton joint angles (ROS 2 sensor_msgs/JointState; topic set in config/io_exo_glove_ros2.yaml)"

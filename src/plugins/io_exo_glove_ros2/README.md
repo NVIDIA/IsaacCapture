@@ -65,6 +65,8 @@ joints_collection_id: "exo_glove_joints"
 tips_left_collection_id: "exo_glove_tips_left"
 tips_right_collection_id: "exo_glove_tips_right"
 tips_reference_frame: "base_link"
+wrist_source: "auto"
+wrist_alignment: "auto"
 ```
 
 Every key is optional. Precedence, lowest to highest:
@@ -72,7 +74,8 @@ Every key is optional. Precedence, lowest to highest:
 1. the built-in defaults in `io_exo_glove_ros2_plugin.hpp`
 2. the config file
 3. the command-line flags `--joints-topic=`, `--links-topic=`, `--joints-collection-id=`,
-   `--tips-left-collection-id=`, `--tips-right-collection-id=`, `--tips-reference-frame=`
+   `--tips-left-collection-id=`, `--tips-right-collection-id=`, `--tips-reference-frame=`,
+   `--wrist-source=`, `--wrist-alignment=`
 
 The file is looked up in this order, first hit wins:
 
@@ -169,6 +172,61 @@ thumb = data.lookup(JointName.HAND_RAW_THUMB_TIP) if data is not None else None
 if thumb is not None:
     position, orientation = thumb.pose.position, thumb.pose.orientation
 ```
+
+## Hand tracking (devices `/hand/left`, `/hand/right`)
+
+The same link poses are injected as the **OpenXR hand skeleton**, one push device per hand
+(`plugin_utils::HandInjector`). This is the output the device conformance suite records: it reads
+Isaac Teleop's OpenXR hand tracker (`core.HandPoseRecord`, 26 joints per hand), not a tensor
+collection of the plugin's own, so a glove that publishes only joint angles or fingertips cannot be
+conformance tested. OpenXR judges 21 of the 26 joints (`PALM` and the four non-thumb metacarpals are
+optional), and the exoskeleton's own chain ends at the fingertips, which is exactly 21 poses per hand:
+
+| OpenXR joint | Frame in `/io_fusion/tf_exoskeleton` |
+| --- | --- |
+| `WRIST` | `joint_<Side>SkeletonBase` (`<side>_hand` also accepted) |
+| `THUMB_METACARPAL`, `THUMB_PROXIMAL`, `THUMB_DISTAL` | `link_<Side>SkeletonThumbBase`, `…Thumb1`, `…Thumb2` |
+| `THUMB_TIP` | `<side>_thumb_tip` |
+| `INDEX_PROXIMAL`, `INDEX_INTERMEDIATE`, `INDEX_DISTAL` | `link_<Side>SkeletonIndex1..3` |
+| `INDEX_TIP` | `<side>_index_tip` |
+| `MIDDLE_*` | `link_<Side>SkeletonMiddle1..3`, `<side>_middle_tip` |
+| `RING_*` | `link_<Side>SkeletonRing1..3`, `<side>_ring_tip` |
+| `LITTLE_*` | `link_<Side>SkeletonPinky1..3`, `<side>_little_tip` |
+
+A rig whose link names differ only needs that table changed in `io_exo_glove_ros2_hand.cpp`; the plugin
+logs every slot it resolved on the first frame that carries a hand and lists the ones it could not
+fill, so one run says exactly what bound to what.
+
+The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
+is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,
+the preference under the default `auto`), `controller` (aim pose, the fallback), or `auto`.
+`$IO_EXO_GLOVE_ROS2_WRIST_SOURCE` overrides the setting -- the conformance capture's `--wrist-source`
+only labels the take, so set the variable to match. The glove's wrist frame and the headset's wrist
+frame differ by a fixed rotation per hand, and `wrist_alignment: "auto"` captures it from the first
+frame where both are tracked, logging it as `x,y,z,w` to paste into the config and make a take
+reproducible; `identity` says the frames already agree, and an explicit `x,y,z,w` pins the rotation.
+With no wrist source tracked the skeleton is still injected, at the origin and flagged untracked:
+honest degradation rather than a frozen pose at the last known place.
+
+Poses are metres in the session's base space, as OpenXR requires, and the injected rate follows the
+glove's 120 Hz TF stream -- above the 30 Hz the conformance suite asks for. A hand with no data for
+200 ms has its push device dropped, so the runtime reports it inactive instead of holding a stale pose.
+
+### Recording a conformance take
+
+Device conformance is recorded from a build of this repository, with the CTS copied into
+`src/python/isaaccapture/cts/`:
+
+```bash
+src/python/isaaccapture/cts/hand/checker/setup_env.sh --panel
+src/python/isaaccapture/cts/hand/capture/setup_env.sh
+src/python/isaaccapture/cts/hand/capture/record.sh exo_glove --plugin io_exo_glove_ros2 --wrist-source hand_tracking
+```
+
+`record.sh` launches the plugin from `install/plugins/` (`cmake --install build`), so install before
+recording. The capture panel then drives the eleven scripted gestures and writes the take; check it
+with `hand_cts.cli` and package it with `hand_cts.panel`. See **Device Conformance Testing** for the
+full procedure.
 
 ## Usage
 

@@ -7,6 +7,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <cstdlib>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -27,13 +28,15 @@ struct CliOverrides
     std::optional<std::string> tips_left_collection_id;
     std::optional<std::string> tips_right_collection_id;
     std::optional<std::string> tips_reference_frame;
+    std::optional<std::string> wrist_source;
+    std::optional<std::string> wrist_alignment;
 };
 
 void print_usage(const char* prog)
 {
     std::cout << "Usage: " << prog << " [options] [--ros-args ...]\n"
-              << "\nTopics, collection ids and the fingertip reference frame come from the config file; the flags\n"
-              << "below override it.\n"
+              << "\nTopics, collection ids, the fingertip reference frame and the wrist source come from the\n"
+              << "config file; the flags below override it.\n"
               << "\nOptions:\n"
               << "  --config=PATH                  Config file to load (default: the default path, or $"
               << kConfigEnvVar << ")\n"
@@ -43,6 +46,10 @@ void print_usage(const char* prog)
               << "  --tips-left-collection-id=ID   Override the left fingertip poses collection id\n"
               << "  --tips-right-collection-id=ID  Override the right fingertip poses collection id\n"
               << "  --tips-reference-frame=FRAME   Override the frame the fingertip poses are expressed in\n"
+              << "  --wrist-source=SOURCE          Override where the injected hand's wrist pose comes from\n"
+              << "                                 (auto | hand_tracking | controller)\n"
+              << "  --wrist-alignment=ROTATION     Override how the glove's wrist frame is aligned with it\n"
+              << "                                 (auto | identity | x,y,z,w)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
@@ -174,6 +181,22 @@ try
             }
             cli.tips_reference_frame = *value;
         }
+        else if (const auto value = flag_value(arg, "wrist-source"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "wrist-source");
+            }
+            cli.wrist_source = *value;
+        }
+        else if (const auto value = flag_value(arg, "wrist-alignment"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "wrist-alignment");
+            }
+            cli.wrist_alignment = *value;
+        }
         else
         {
             std::cerr << "Unknown option: " << arg << std::endl;
@@ -182,8 +205,14 @@ try
         }
     }
 
-    // Config file first, then the command line on top, so an ad-hoc flag beats the file.
+    // Config file first, then the environment, then the command line on top, so an ad-hoc flag beats
+    // everything else. The capture's --wrist-source is a label the plugin cannot see, so it is read
+    // from the environment variable the capture sets alongside it.
     const ConfigResolution resolution = load_options_from_config(config_path, options);
+    if (const char* from_env = std::getenv(kWristSourceEnvVar); from_env != nullptr && *from_env != '\0')
+    {
+        options.wrist_source = from_env;
+    }
     if (cli.joints_topic)
     {
         options.joints_topic = *cli.joints_topic;
@@ -208,6 +237,14 @@ try
     {
         options.tips_reference_frame = *cli.tips_reference_frame;
     }
+    if (cli.wrist_source)
+    {
+        options.wrist_source = *cli.wrist_source;
+    }
+    if (cli.wrist_alignment)
+    {
+        options.wrist_alignment = *cli.wrist_alignment;
+    }
 
     if (print_config)
     {
@@ -224,6 +261,8 @@ try
                   << "tips_left_collection_id = " << options.tips_left_collection_id << "\n"
                   << "tips_right_collection_id= " << options.tips_right_collection_id << "\n"
                   << "tips_reference_frame    = " << options.tips_reference_frame << "\n"
+                  << "wrist_source            = " << options.wrist_source << "\n"
+                  << "wrist_alignment         = " << options.wrist_alignment << "\n"
                   << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
                   << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
                   << "\n(Both sizes are the consumer trackers' own defaults -- JointStateTracker and "

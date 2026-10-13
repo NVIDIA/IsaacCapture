@@ -19,6 +19,10 @@ inline constexpr const char* kConfigFileName = "io_exo_glove_ros2.yaml";
 //! Environment variable naming a config file explicitly, the counterpart of `--config=...`.
 inline constexpr const char* kConfigEnvVar = "IO_EXO_GLOVE_ROS2_CONFIG";
 
+//! Environment variable selecting the wrist source; the device conformance capture sets it alongside
+//! its own `--wrist-source` label, which the plugin cannot see. The counterpart of `--wrist-source=`.
+inline constexpr const char* kWristSourceEnvVar = "IO_EXO_GLOVE_ROS2_WRIST_SOURCE";
+
 //! Where the effective options came from, for startup logging and `--print-config`.
 struct ConfigResolution
 {

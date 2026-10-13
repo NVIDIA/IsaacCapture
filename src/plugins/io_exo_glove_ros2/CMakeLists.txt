@@ -18,6 +18,7 @@ find_package(tf2_msgs REQUIRED)
 add_executable(io_exo_glove_ros2_plugin
     main.cpp
     io_exo_glove_ros2_config.cpp
+    io_exo_glove_ros2_hand.cpp
     io_exo_glove_ros2_pack.cpp
     io_exo_glove_ros2_plugin.cpp
 )
@@ -25,6 +26,12 @@ add_executable(io_exo_glove_ros2_plugin
 target_link_libraries(io_exo_glove_ros2_plugin PRIVATE
     pusherio::pusherio
     oxr::oxr_core
+    # The injected OpenXR hand skeleton, and the wrist pose that places it in the room.
+    Teleop::plugin_utils
+    Teleop::openxr_extensions
+    deviceio::deviceio_session
+    deviceio::deviceio_trackers
+    oxr::oxr_utils
     isaacteleop_schema
     rclcpp::rclcpp
     # ${<pkg>_TARGETS} rather than each package's <pkg>::<pkg> aggregate target: the aggregate is
@@ -35,6 +42,15 @@ target_link_libraries(io_exo_glove_ros2_plugin PRIVATE
     ${tf2_msgs_TARGETS}
     yaml-cpp::yaml-cpp
 )
+
+# rclcpp initializes ROS's own spdlog-based logger in this process, and this project statically
+# links the spdlog it fetches itself. Both define the same symbols, so unless ours are hidden the
+# linker binds ROS's undefined references to our copy and the two implementations free each other's
+# objects -- rcl_logging_external_initialize() aborts with "free(): invalid pointer" before this
+# plugin runs a single line. Hidden visibility plus excluding archive symbols keeps ROS on its own
+# spdlog; nothing links against this executable, so hiding its symbols costs nothing.
+set_target_properties(io_exo_glove_ros2_plugin PROPERTIES CXX_VISIBILITY_PRESET hidden)
+target_link_options(io_exo_glove_ros2_plugin PRIVATE "LINKER:--exclude-libs,ALL")
 
 install(TARGETS io_exo_glove_ros2_plugin RUNTIME DESTINATION plugins/io_exo_glove_ros2)
 install(FILES plugin.yaml README.md DESTINATION plugins/io_exo_glove_ros2)

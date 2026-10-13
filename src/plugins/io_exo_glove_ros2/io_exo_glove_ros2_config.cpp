@@ -26,10 +26,14 @@ namespace
 
 //! Every key the config file may define. Anything else is rejected, so a typo (say `joint_topics`)
 //! fails loudly instead of silently leaving the built-in default in place.
-constexpr std::string_view kKnownKeys[] = {
-    "joints_topic",        "links_topic", "joints_collection_id", "tips_left_collection_id", "tips_right_collection_id",
-    "tips_reference_frame"
-};
+constexpr std::string_view kKnownKeys[] = { "joints_topic",
+                                            "links_topic",
+                                            "joints_collection_id",
+                                            "tips_left_collection_id",
+                                            "tips_right_collection_id",
+                                            "tips_reference_frame",
+                                            "wrist_source",
+                                            "wrist_alignment" };
 
 std::string known_keys_as_text()
 {
@@ -161,6 +165,8 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     assign(root, "tips_left_collection_id", options.tips_left_collection_id, path);
     assign(root, "tips_right_collection_id", options.tips_right_collection_id, path);
     assign(root, "tips_reference_frame", options.tips_reference_frame, path);
+    assign(root, "wrist_source", options.wrist_source, path);
+    assign(root, "wrist_alignment", options.wrist_alignment, path);
 
     resolution.loaded_path = path;
     return resolution;
