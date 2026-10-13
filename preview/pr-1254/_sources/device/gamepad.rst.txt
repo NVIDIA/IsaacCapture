@@ -70,7 +70,7 @@ Buttons are named by position, so a binding means the same on every pad:
 
 The shoulders (``LEFT_SHOULDER``, ``RIGHT_SHOULDER``), stick clicks (``LEFT_STICK``,
 ``RIGHT_STICK``) and D-pad (``DPAD_UP`` ... ``DPAD_RIGHT``) are buttons too. ``GamepadAxis`` is
-``LEFT_X``, ``LEFT_Y``, ``RIGHT_X``, ``RIGHT_Y`` in ``[-1, 1]`` (right and down positive) and
+``LEFT_X``, ``LEFT_Y``, ``RIGHT_X``, ``RIGHT_Y`` in ``[-1, 1]`` (right and up positive, as in OpenXR) and
 ``LEFT_TRIGGER``, ``RIGHT_TRIGGER`` in ``[0, 1]``.
 
 Device access
