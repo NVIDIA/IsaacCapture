@@ -67,7 +67,7 @@ PYBIND11_MODULE(_schema, m)
     core::bind_tactile(m);
     core::bind_tactile_shape(m);
 
-    // Bind the helpers for producers of tracker metadata.
+    // Bind the chunking helpers for producers of tracker metadata.
     core::bind_tracker_metadata(m);
 
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.

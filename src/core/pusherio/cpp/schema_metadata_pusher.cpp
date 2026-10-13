@@ -14,17 +14,17 @@ namespace core
 namespace
 {
 
-std::vector<uint8_t> checked_metadata(std::span<const uint8_t> metadata)
+std::vector<Serialized<TrackerMetadataChunk>> split_checked(std::span<const uint8_t> metadata, size_t max_chunk_size)
 {
-    if (metadata.empty() || metadata.size() > TRACKER_METADATA_SAMPLE_SIZE)
+    if (max_chunk_size > TRACKER_METADATA_CHUNK_SIZE)
     {
-        throw std::invalid_argument("SchemaMetadataPusher: metadata size " + std::to_string(metadata.size()) +
-                                    " is outside 1.." + std::to_string(TRACKER_METADATA_SAMPLE_SIZE));
+        throw std::invalid_argument("SchemaMetadataPusher: max_chunk_size " + std::to_string(max_chunk_size) +
+                                    " exceeds TRACKER_METADATA_CHUNK_SIZE, which consumers reject");
     }
-    return std::vector<uint8_t>(metadata.begin(), metadata.end());
+    return split_tracker_metadata(metadata, max_chunk_size);
 }
 
-SchemaPusherConfig metadata_pusher_config(const std::string& collection_id)
+SchemaPusherConfig metadata_pusher_config(const std::string& collection_id, size_t max_chunk_size)
 {
     std::string metadata_collection_id = tracker_metadata_collection_id(collection_id);
     // SchemaPusher truncates longer identifiers, and the reader would then look for another name.
@@ -34,7 +34,7 @@ SchemaPusherConfig metadata_pusher_config(const std::string& collection_id)
                                     "' does not fit XR_MAX_TENSOR_IDENTIFIER_SIZE");
     }
     return SchemaPusherConfig{ .collection_id = std::move(metadata_collection_id),
-                               .max_flatbuffer_size = TRACKER_METADATA_SAMPLE_SIZE,
+                               .max_flatbuffer_size = max_chunk_size,
                                .tensor_identifier = std::string(TRACKER_METADATA_TENSOR_IDENTIFIER),
                                .localized_name = "Tracker metadata" };
 }
@@ -43,15 +43,22 @@ SchemaPusherConfig metadata_pusher_config(const std::string& collection_id)
 
 SchemaMetadataPusher::SchemaMetadataPusher(const OpenXRSessionHandles& handles,
                                            const std::string& collection_id,
-                                           std::span<const uint8_t> metadata)
-    : m_metadata(checked_metadata(metadata)), m_pusher(handles, metadata_pusher_config(collection_id))
+                                           std::span<const uint8_t> metadata,
+                                           size_t max_chunk_size)
+    : m_chunks(split_checked(metadata, max_chunk_size)),
+      m_pusher(handles, metadata_pusher_config(collection_id, max_chunk_size))
 {
 }
 
-void SchemaMetadataPusher::push(int64_t sample_time_local_common_clock_ns)
+void SchemaMetadataPusher::push_next(int64_t sample_time_local_common_clock_ns, size_t count)
 {
-    m_pusher.push_buffer(
-        m_metadata.data(), m_metadata.size(), sample_time_local_common_clock_ns, sample_time_local_common_clock_ns);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const std::span<const uint8_t> bytes = m_chunks[m_next].buffer();
+        m_pusher.push_buffer(
+            bytes.data(), bytes.size(), sample_time_local_common_clock_ns, sample_time_local_common_clock_ns);
+        m_next = (m_next + 1) % m_chunks.size();
+    }
 }
 
 } // namespace core

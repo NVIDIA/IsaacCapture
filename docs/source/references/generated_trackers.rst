@@ -84,10 +84,10 @@ The table lives in its own ``.fbs`` with that table as ``root_type`` and no ``Re
 ``metadata_schema`` defaults to the table name in ``snake_case``.
 
 - **Transport.** The producer encodes the table once and pushes it with ``SchemaMetadataPusher``
-  (:code-file:`src/core/pusherio/cpp/inc/pusherio/schema_metadata_pusher.hpp`) as samples of
-  ``<collection_id>/metadata``, periodically, for as long as the data collection exists. One sample
-  holds the whole table, so it must fit ``TRACKER_METADATA_SAMPLE_SIZE``
-  (:code-file:`src/core/schema/cpp/inc/schema/tracker_metadata.hpp`).
+  (:code-file:`src/core/pusherio/cpp/inc/pusherio/schema_metadata_pusher.hpp`) as a loop of
+  ``TrackerMetadataChunk`` samples on ``<collection_id>/metadata``, a few per frame, for as long as
+  the data collection exists. :code-file:`src/core/schema/cpp/inc/schema/tracker_metadata.hpp` holds
+  the chunking and reassembly rules.
 - **Consumer.** The facade gains ``get_metadata()``. The tracker adopts the first complete metadata
   and keeps it for the session, and ``get_data()`` stays empty unless the producer's metadata is the
   adopted one, so a frame that reaches a consumer can always be read with ``get_metadata()``.

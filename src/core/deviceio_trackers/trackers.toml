@@ -108,8 +108,7 @@ max_flatbuffer_size = 256
 python_accessor = "get_spacemouse_data"
 
 # Defaults fit about 1300 taxels (12 B each); larger devices pass max_flatbuffer_size.
-# TactileShape is its metadata, in one 16 KiB sample: about 0.9 KiB for 26 joints plus 68 B
-# per taxel fits about 225 taxels.
+# The TactileShape metadata is chunked, so its size is not bounded by a sample.
 [[tracker]]
 name = "tactile"
 table = "TactileData"

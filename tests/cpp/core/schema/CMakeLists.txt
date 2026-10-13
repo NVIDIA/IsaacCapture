@@ -23,6 +23,7 @@ add_executable(schema_tests
   test_soma_hand_joint_poses.cpp
   test_tactile.cpp
   test_tactile_shape.cpp
+  test_tracker_metadata.cpp
   test_schema_conform.cpp
 )
 target_link_libraries(schema_tests PRIVATE

@@ -27,7 +27,7 @@ target_link_libraries(pusherio
 
         log_bridge::log_bridge_core
 
-        # schema/tracker_metadata.hpp, for SchemaMetadataPusher
+        # TrackerMetadataChunk and its split, for SchemaMetadataPusher
         isaacteleop_schema
 )
 
