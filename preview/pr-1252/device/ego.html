@@ -1,0 +1,891 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>EGO Camera Plugin &#8212; Isaac Teleop Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/ego';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="OGLO Tactile Glove Plugin" href="oglo.html" />
+    <link rel="prev" title="OAK Camera Plugin" href="oak.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.6.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Teleop Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="soma.html">SOMA Pose Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="joint_space.html">Generic Joint-Space Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="body_tracking.html">Body Tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
+<li class="toctree-l1"><a class="reference internal" href="manus.html">MANUS Gloves</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">EGO Camera Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="oglo.html">OGLO Tactile Glove Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sharpa_avatar.html">Sharpa Avatar Glove</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">EGO Camera Plugin</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="ego-camera-plugin">
+<h1>EGO Camera Plugin<a class="headerlink" href="#ego-camera-plugin" title="Link to this heading">#</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">ego_camera</span></code> plugin connects EGO stereo cameras to Isaac Capture.
+It records ColorLeft and ColorRight video, and captures accelerometer,
+gyroscope, microphone, calibration, and device state when the device exposes
+them. Detailed operator commands live in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">src/plugins/ego/README.md</a>.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#supported-streams-and-profiles" id="id1">Supported streams and profiles</a></p></li>
+<li><p><a class="reference internal" href="#installation" id="id2">Installation</a></p></li>
+<li><p><a class="reference internal" href="#capture-and-verify" id="id3">Capture and verify</a></p></li>
+<li><p><a class="reference internal" href="#data-flow-and-published-collections" id="id4">Data flow and published collections</a></p></li>
+<li><p><a class="reference internal" href="#availability-and-diagnostics" id="id5">Availability and diagnostics</a></p></li>
+<li><p><a class="reference internal" href="#multi-device-sessions" id="id6">Multi-device sessions</a></p></li>
+<li><p><a class="reference internal" href="#replay-and-visualization" id="id7">Replay and visualization</a></p></li>
+<li><p><a class="reference internal" href="#sample-time-association" id="id8">Sample-time association</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id9">Troubleshooting</a></p></li>
+</ul>
+</nav>
+<section id="supported-streams-and-profiles">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Supported streams and profiles</a><a class="headerlink" href="#supported-streams-and-profiles" title="Link to this heading">#</a></h2>
+<p>The plugin captures <code class="docutils literal notranslate"><span class="pre">ColorLeft</span></code> and <code class="docutils literal notranslate"><span class="pre">ColorRight</span></code> in MJPEG, H.264, or H.265.
+The recording wrapper defaults to stereo H.264 <code class="docutils literal notranslate"><span class="pre">1600x1300&#64;30</span></code>. Use
+<code class="docutils literal notranslate"><span class="pre">capabilities</span></code> to inspect the connected device’s available profiles;
+unsupported simultaneous combinations fail without a fallback. The current
+plugin rejects H.264/H.265 profiles above 30 FPS and does not capture depth or
+infrared streams.</p>
+</section>
+<section id="installation">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Installation</a><a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
+<p>Use an extracted Linux OrbbecSDK v2 package and the normal Isaac Capture source
+build dependencies, including <code class="docutils literal notranslate"><span class="pre">nlohmann-json3-dev</span></code> for the EGO adapter.
+Install the SDK package’s udev rules and reconnect the
+camera before using it as a non-root user. The SDK is an external dependency;
+the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> describes its expected
+layout and advanced build options.</p>
+<p>From the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">ORBBEC_SDK_ROOT</span><span class="o">=</span>/path/to/OrbbecSDK
+./src/plugins/ego/ego.sh<span class="w"> </span>doctor<span class="w"> </span>--sdk-root<span class="w"> </span><span class="s2">"</span><span class="nv">$ORBBEC_SDK_ROOT</span><span class="s2">"</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>build<span class="w"> </span>--sdk-root<span class="w"> </span><span class="s2">"</span><span class="nv">$ORBBEC_SDK_ROOT</span><span class="s2">"</span><span class="w"> </span>--jobs<span class="w"> </span><span class="m">8</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>capabilities
+</pre></div>
+</div>
+<p>Preview is optional and requires SDL2 and FFmpeg development libraries; enable
+it with the wrapper’s <code class="docutils literal notranslate"><span class="pre">build</span> <span class="pre">--preview</span></code> flag. Recording alone needs neither.</p>
+</section>
+<section id="capture-and-verify">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Capture and verify</a><a class="headerlink" href="#capture-and-verify" title="Link to this heading">#</a></h2>
+<p>The wrapper records the default stereo profile with available accelerometer
+and gyroscope streams. Audio is off by default. Give each recording a fresh
+output directory:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">RUN</span><span class="o">=</span><span class="s2">"recordings/ego_</span><span class="k">$(</span>date<span class="w"> </span>+%Y%m%d_%H%M%S<span class="k">)</span><span class="s2">"</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>record<span class="w"> </span>--duration<span class="w"> </span><span class="m">30</span><span class="w"> </span>--output<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>verify<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>Raw video is an elementary MJPEG, H.264, or H.265 stream. Metadata, IMU,
+calibration, and state are recorded in MCAP. The wrapper also preserves profile
+and software/device provenance.</p>
+<p>Enable optional audio with <code class="docutils literal notranslate"><span class="pre">--audio</span></code> or <code class="docutils literal notranslate"><span class="pre">audio</span> <span class="pre">=</span> <span class="pre">true</span></code> in a TOML config;
+<code class="docutils literal notranslate"><span class="pre">--no-audio</span></code> overrides a config that enables it. Audio is saved as 48 kHz mono
+S16_LE WAV, with audio offsets recorded in MCAP:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./src/plugins/ego/ego.sh<span class="w"> </span>record<span class="w"> </span>--duration<span class="w"> </span><span class="m">30</span><span class="w"> </span>--audio<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>recordings/ego_with_audio
+</pre></div>
+</div>
+<p>Raw PCM capture, storage and export are supported. The tested Ethernet path
+has an SDK audio timestamp cadence anomaly, so audio/video and five-stream
+physical synchronization have not passed acceptance. The recommended capture
+workflow uses stereo RGB and IMU; including audio in synchronization requires
+an independently validated audio time model. See “Optional audio and
+synchronization limits” in the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">plugin README</a>.</p>
+<p>For one self-contained MCAP with encoded video and any enabled audio PCM:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">RUN</span><span class="o">=</span><span class="s2">"recordings/ego_embedded_</span><span class="k">$(</span>date<span class="w"> </span>+%Y%m%d_%H%M%S<span class="k">)</span><span class="s2">"</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>record<span class="w"> </span>--duration<span class="w"> </span><span class="m">30</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span><span class="w"> </span>--mcap-media<span class="w"> </span>embedded
+./src/plugins/ego/ego.sh<span class="w"> </span>verify<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span>
+./src/plugins/ego/ego.sh<span class="w"> </span>export-media<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>Embedded recording preserves the encoded media without transcoding. Export
+produces ordinary video files and, when audio was enabled, WAV. A remaining
+<code class="docutils literal notranslate"><span class="pre">.partial</span></code> file means the capture did not finish successfully; preserve it
+and the log for diagnosis.</p>
+</section>
+<section id="data-flow-and-published-collections">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Data flow and published collections</a><a class="headerlink" href="#data-flow-and-published-collections" title="Link to this heading">#</a></h2>
+<p>The plugin writes captured media and sensor records and can publish structured
+data through SchemaPusher. DeviceIO trackers read the published collections
+during session updates.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">--collection-prefix=ego</span></code>, the collections and Python read APIs are:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 40.0%" />
+<col style="width: 30.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Collection</p></th>
+<th class="head"><p>Python tracker</p></th>
+<th class="head"><p>Read method</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ego/ColorLeft</span></code>, <code class="docutils literal notranslate"><span class="pre">ego/ColorRight</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EgoFrameMetadataTracker</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">get_stream_data</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ego/Accel</span></code>, <code class="docutils literal notranslate"><span class="pre">ego/Gyro</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EgoImuTracker</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">get_stream_data</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ego/Audio</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EgoAudioTracker</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">get_data</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ego/Calibration</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EgoCalibrationTracker</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">get_data</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ego/DeviceState</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EgoDeviceStateTracker</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">get_data</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>All reads return the schema payload directly or <code class="docutils literal notranslate"><span class="pre">None</span></code> when unavailable.
+Audio records are available only when audio capture is enabled.
+Camera and IMU readers select one configured stream by its index. Camera streams
+use <code class="docutils literal notranslate"><span class="pre">EgoCameraStream</span></code> enums; IMU sensors default to Accel and Gyro. See the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> for the full tracker
+configuration example.</p>
+</section>
+<section id="availability-and-diagnostics">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Availability and diagnostics</a><a class="headerlink" href="#availability-and-diagnostics" title="Link to this heading">#</a></h2>
+<p>The plugin integrates with <a class="reference internal" href="../references/device_provider_monitoring.html"><span class="doc">NV device monitoring</span></a>.
+After <code class="docutils literal notranslate"><span class="pre">session.step()</span></code>, query <code class="docutils literal notranslate"><span class="pre">session.get_device_status(plugin_root_id</span> <span class="pre">+</span>
+<span class="pre">&quot;/camera/ego&quot;)</span></code> for current availability. The provider ID is
+<code class="docutils literal notranslate"><span class="pre">plugin/&lt;plugin_root_id&gt;</span></code>. The existing capture checks report unknown, absent,
+starting/recovering, streaming, or failed conditions; NVIDIA owns provider
+failure/teardown and the one-second heartbeat / three-second stale-report rule.
+No additional device polling thread is introduced.</p>
+<p><code class="docutils literal notranslate"><span class="pre">EgoDeviceStateTracker</span></code> carries historical diagnostic events, separately from
+current availability. Version-2 payloads have <code class="docutils literal notranslate"><span class="pre">device_uid</span></code>, <code class="docutils literal notranslate"><span class="pre">capture_epoch</span></code>,
+<code class="docutils literal notranslate"><span class="pre">observed_at_ns</span></code> and one typed <code class="docutils literal notranslate"><span class="pre">event</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">EgoSdkReport</span></code>: original SDK mode, flags, storage and report sequence.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EgoCaptureSummary</span></code>: capture health, queue/loss totals and final-summary flag.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EgoRecoveryEvent</span></code>: recovery stage, cause and attempt count.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EgoDeviceSnapshot</span></code>: successful startup property reads and optional IMU temperature.</p></li>
+</ul>
+<p>An unavailable temperature is <code class="docutils literal notranslate"><span class="pre">None</span></code>; a measured zero remains <code class="docutils literal notranslate"><span class="pre">0.0</span></code>. Startup
+samples are not repeated as live periodic measurements. These event views are
+read-only and retain the backing buffer. This development-stage layout replaces
+the previous diagnostic protocol: old diagnostic recordings are unsupported,
+and the official Replay compatibility check remains enabled.</p>
+<p>Diagnostic MCAP recording defaults to on. Use
+<code class="docutils literal notranslate"><span class="pre">--record-device-diagnostics=off</span></code> or the TOML
+<code class="docutils literal notranslate"><span class="pre">record_device_diagnostics</span> <span class="pre">=</span> <span class="pre">false</span></code> option to omit it. Monitoring, live
+publication, capture checks, recovery and logs continue. For NV sessions use
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.ego.configure_recording(config,</span> <span class="pre">record_device_diagnostics=False)</span></code>
+or the same keyword on <code class="docutils literal notranslate"><span class="pre">embedded_recording</span></code>. Remove diagnostic trackers from
+explicit recording lists and automatically recorded pipeline/control/sink
+sources; the helper rejects conflicts before capture. The merger checks both
+inputs, including custom or empty diagnostic channels. See the plugin README
+for complete configuration and failure handling.</p>
+</section>
+<section id="multi-device-sessions">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Multi-device sessions</a><a class="headerlink" href="#multi-device-sessions" title="Link to this heading">#</a></h2>
+<p>Add the EGO trackers to a normal
+<a class="reference internal" href="../getting_started/teleop_session.html"><span class="doc">TeleopSession</span></a> configuration and its
+<code class="docutils literal notranslate"><span class="pre">McapRecordingConfig</span></code> tracker-name list, alongside the hand, head, or
+controller trackers. Configure <code class="docutils literal notranslate"><span class="pre">ego_camera</span></code> through <code class="docutils literal notranslate"><span class="pre">PluginConfig</span></code> with
+<code class="docutils literal notranslate"><span class="pre">--collection-prefix=ego</span></code> and <code class="docutils literal notranslate"><span class="pre">shutdown_timeout_seconds=15.0</span></code> to allow
+capture cleanup. Live publication requires a running OpenXR runtime.
+Complete the normal full source build and install its Python wheel before
+using the EGO tracker bindings and recording helper; the wrapper’s
+<code class="docutils literal notranslate"><span class="pre">build</span></code> command builds only the native plugin tools.</p>
+<p>Call <code class="docutils literal notranslate"><span class="pre">isaaccapture.ego.configure_recording</span></code> before opening a normal NV
+recording session. It retains or adds the calibration tracker through the
+existing recording configuration, so EGO time-model snapshots are recorded.
+<code class="docutils literal notranslate"><span class="pre">embedded_recording</span></code> performs this configuration as part of its existing
+finalization workflow.</p>
+<p>For one self-contained multi-device MCAP, use
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.ego.embedded_recording</span></code> with exactly one EGO plugin configured
+for embedded media. The full configuration, matching media-spool path, and
+clean-stop procedure are documented under “TeleopSession: one MCAP with other
+trackers” in the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">plugin README</a>.</p>
+</section>
+<section id="replay-and-visualization">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Replay and visualization</a><a class="headerlink" href="#replay-and-visualization" title="Link to this heading">#</a></h2>
+<p>The current structured replay example requires camera, IMU, audio, calibration
+and any enabled diagnostic channels. Use an audio-enabled recording such as the
+one above:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_ego<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>recordings/ego_with_audio/metadata.mcap
+</pre></div>
+</div>
+<p>A recording without audio is valid; this example reports a missing Audio
+channel because of its fixed tracker configuration. It reads structured
+records and does not play sound or schedule synchronized media playback. Use
+<code class="docutils literal notranslate"><span class="pre">export-media</span></code> followed by FFmpeg for encoded media playback. For a live GPU
+preview, build the standalone camera_viz binding:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>examples/camera_viz/camera_viz.sh<span class="w"> </span>setup<span class="w"> </span>--with-ego<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--sdk-root<span class="w"> </span><span class="s2">"</span><span class="nv">$ORBBEC_SDK_ROOT</span><span class="s2">"</span>
+examples/camera_viz/camera_viz.sh<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>examples/camera_viz/configs/ego.yaml<span class="w"> </span>--mode<span class="w"> </span>window<span class="w"> </span>--stereo-debug<span class="w"> </span>sbs
+</pre></div>
+</div>
+<p>MJPEG uses SDK conversion and GPU upload; H.264/H.265 uses native NVDEC. Window
+SBS is an optional left/right inspection image and is refused in XR mode.
+XR mode submits separate eye textures using the existing visualization API.
+The viewer and recording plugin each open the camera; run them one at a time.</p>
+</section>
+<section id="sample-time-association">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Sample-time association</a><a class="headerlink" href="#sample-time-association" title="Link to this heading">#</a></h2>
+<p>NV replay advances each tracker to its next record; a single update does not
+automatically align video, IMU and audio. The EGO offline API associates only
+the streams required by a consumer. It preserves the existing replay lifecycle
+and introduces no video/audio player.</p>
+<p>Capture retains original timestamps and host arrival times separately. An
+optional <code class="docutils literal notranslate"><span class="pre">--time-alignment=PATH</span></code> loads a validated reusable RGB/IMU model
+bound to the device identity and actual stream profile. EGO calibration payloads
+carry clock provenance and model snapshots through the normal NV recording
+channel. Audio payloads carry retained sample indices and segment information.
+Reusable profiles require the loaded SDK’s SHA-256, unit scale and a verified
+duration limit. Expiry preserves capture data with an explicit arrival-time
+fallback; offline reads keep the validated interval separate from that tail.
+Without a trustworthy model the recording remains unverified. An estimated
+host-clock origin does not establish absolute host sampling accuracy or
+synchronization with other devices.</p>
+<p>The audio source label <code class="docutils literal notranslate"><span class="pre">sdk_audio_raw</span></code> identifies the SDK’s original
+timestamp; its sampling-clock semantics depend on the SDK transport and do
+not alone establish a common camera/IMU clock. Audio alignment needs an
+independently validated sample-time model, including offset and sample-clock
+drift. Retained audio sample indices do not prove physical continuity; this
+needs separate evidence. Reconnects and detected clock discontinuities are
+segmented, and the reader does not interpolate across these boundaries.</p>
+<p>Install the offline extra into an environment containing the built package:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[ego]'</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.analyze_ego_sync<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">"</span><span class="w"> </span>--required-streams<span class="w"> </span>left_rgb<span class="w"> </span>right_rgb<span class="w"> </span>accel<span class="w"> </span>gyro<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">"</span><span class="nv">$RUN</span><span class="s2">/sync_audit.json"</span>
+</pre></div>
+</div>
+<p>The recommended audit selects stereo RGB and IMU. Include <code class="docutils literal notranslate"><span class="pre">audio</span></code> only for
+recordings with accessible audio media and an independently validated audio
+time model; selecting the stream does not establish physical synchronization.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">isaaccapture.ego.sync.iter_sync_windows</span></code> for Python consumers. Consecutive
+reference video frames define half-open time windows containing frame media
+references, all interval IMU samples, audio sample slices when requested,
+model identity and completeness reasons. The default reference is left RGB;
+right RGB is also selectable. Missing data remains incomplete without stale
+fills. An absent required stream or trusted time model is an error. The audit
+retains unpaired frames, tails and gaps.</p>
+<p>Standard sidecar recording directories and embedded MCAP are supported.
+Metadata-only files need their accessible video sidecars and, when audio was
+recorded, their WAV sidecar to form a complete dataset. Merged recordings use
+canonical EGO topics and ignore duplicated
+session observations. MCAP log times and latest-value tracker getters are not
+used as sample times.</p>
+<p>A model recorded during capture is selected by default. For calibration made
+after recording, pass <code class="docutils literal notranslate"><span class="pre">--alignment</span> <span class="pre">PATH</span></code> explicitly; the model must match
+the recording/media fingerprints, identity and valid intervals. The
+<code class="docutils literal notranslate"><span class="pre">calibrate_ego_sync</span></code> example fits such a model from separately annotated
+calibration and validation events and preserves evidence hashes. It does not
+detect physical events or rewrite the MCAP. Both offline commands refuse to
+overwrite output files and return nonzero for unverified/incomplete results.</p>
+<p>Physical acceptance requires independent beginning/middle/end measurements
+over at least 15 minutes. Results apply to the validated duration. Corrected
+maximum error plus measurement uncertainty
+must be no more than half a configured video frame. Successful software
+association alone does not establish that bound. Detailed model and event
+manifest formats are in the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/ego/README.md" rel="noopener noreferrer" target="_blank">plugin README</a>.</p>
+</section>
+<section id="troubleshooting">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>No camera or USB access:</strong> install the selected SDK’s udev rules, reconnect,
+and re-run <code class="docutils literal notranslate"><span class="pre">doctor</span></code> and <code class="docutils literal notranslate"><span class="pre">capabilities</span></code>.</p></li>
+<li><p><strong>Profile rejected:</strong> choose an exact advertised left/right combination;
+the current plugin rejects H.264/H.265 profiles above 30 FPS.</p></li>
+<li><p><strong>Partial MCAP:</strong> the recording did not finish successfully. Preserve it and
+the log for diagnosis before starting a new recording.</p></li>
+<li><p><strong>Publisher startup failure:</strong> check the running OpenXR runtime and plugin
+search path.</p></li>
+<li><p><strong>No embedded final output:</strong> check normal context exit, committed fragment,
+matching spool path, and the merge tool beside the selected plugin.</p></li>
+<li><p><strong>Native decoder unavailable:</strong> build camera_viz’s codec with CUDA, or choose
+an advertised MJPEG profile for that preview.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="oak.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">OAK Camera Plugin</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="oglo.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">OGLO Tactile Glove Plugin</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-streams-and-profiles">Supported streams and profiles</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation">Installation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#capture-and-verify">Capture and verify</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-flow-and-published-collections">Data flow and published collections</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#availability-and-diagnostics">Availability and diagnostics</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-device-sessions">Multi-device sessions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#replay-and-visualization">Replay and visualization</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sample-time-association">Sample-time association</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 13, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
