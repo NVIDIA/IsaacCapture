@@ -39,7 +39,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 
 import { loadIWERIfNeeded } from '@helpers/LoadIWER';
-import CloudXRComponent, { WarmupStatus } from '@helpers/react/CloudXRComponent';
+import CloudXRComponent, { IdleStatus, WarmupStatus } from '@helpers/react/CloudXRComponent';
 import type { CloudXRConfig } from '@helpers/utils';
 
 import type { MockCloudXR } from './MockCloudXR';
@@ -146,6 +146,7 @@ let pendingFrameCallCount = 0;
 let pendingIdleConfig: { idleFramesForMs: number; completeWarmupAtMs: number } | null = null;
 let statusMessages: string[] = [];
 let warmupStatuses: WarmupStatus[] = [];
+let idleStatuses: IdleStatus[] = [];
 // Set the moment an onStreamingPerformanceMetrics event is observed to fire while warm-up
 // hadn't completed yet (checked against warmupStatuses at that instant - see onStatusChange's
 // use of the same pattern) - a real CloudXR.js bug repro, not something this test should ever
@@ -199,6 +200,10 @@ function Scene() {
         onWarmupStatus={status => {
           warmupStatuses.push(status);
           appendLog(`[warmup] framesSeen=${status.framesSeen} completed=${status.completed}`);
+        }}
+        onIdleStatus={status => {
+          idleStatuses.push(status);
+          appendLog(`[idle] framesSeen=${status.framesSeen} active=${status.active}`);
         }}
         onStreamingPerformanceMetrics={() => {
           // warmupStatuses already reflects this instant: onWarmupStatus (pushed synchronously
@@ -277,6 +282,7 @@ async function runTest(): Promise<void> {
   appendLog('=== succeed: idle frames must not start the warm-up watchdogs ===');
   statusMessages = [];
   warmupStatuses = [];
+  idleStatuses = [];
   streamingMetricsFiredDuringWarmup = false;
   streamingMetricsFiredAfterWarmupComplete = false;
   attemptConfigQueue = [...ATTEMPT_CONFIGS];
@@ -302,12 +308,17 @@ async function runTest(): Promise<void> {
 
   const retryCount = statusMessages.filter(s => s.startsWith('Reconnecting')).length;
   const sawStalledWarmupProgress = warmupStatuses.some(s => !s.completed);
+  // Attempt 4's idle frames are reported as active, then as inactive once they stop.
+  const reportedIdleFrames =
+    idleStatuses.some(s => s.active && s.framesSeen > 1) &&
+    idleStatuses[idleStatuses.length - 1]?.active === false;
   const pass =
     reachedConnected &&
     warmupBegan &&
     warmupCompleted &&
     retryCount === 3 &&
     sawStalledWarmupProgress &&
+    reportedIdleFrames &&
     !streamingMetricsFiredDuringWarmup &&
     streamingMetricsFiredAfterWarmupComplete;
   appendLog(
@@ -318,6 +329,7 @@ async function runTest(): Promise<void> {
       : `[result] FAIL: reachedConnected=${reachedConnected} warmupBegan=${warmupBegan} ` +
           `warmupCompleted=${warmupCompleted} retryCount=${retryCount} ` +
           `sawStalledWarmupProgress=${sawStalledWarmupProgress} ` +
+          `reportedIdleFrames=${reportedIdleFrames} idleStatuses=${JSON.stringify(idleStatuses)} ` +
           `streamingMetricsFiredDuringWarmup=${streamingMetricsFiredDuringWarmup} ` +
           `streamingMetricsFiredAfterWarmupComplete=${streamingMetricsFiredAfterWarmupComplete} ` +
           `statusMessages=${JSON.stringify(statusMessages)} warmupStatuses=${JSON.stringify(warmupStatuses)}`
