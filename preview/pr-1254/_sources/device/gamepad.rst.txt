@@ -65,7 +65,7 @@ pad:
      - Y
      - Triangle
      - X
-   * - ``back_click`` / ``start_click``
+   * - ``view_click`` / ``menu_click``
      - View / Menu
      - Create / Options
      - − / +
