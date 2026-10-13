@@ -63,13 +63,15 @@ Buttons are named by position, so a binding means the same on every pad:
      - Y
      - Triangle
      - X
-   * - ``BACK`` / ``START`` / ``GUIDE``
-     - View / Menu / Xbox
-     - Create / Options / PS
-     - − / + / Home
+   * - ``BACK`` / ``START``
+     - View / Menu
+     - Create / Options
+     - − / +
 
 The shoulders (``LEFT_SHOULDER``, ``RIGHT_SHOULDER``), stick clicks (``LEFT_STICK``,
-``RIGHT_STICK``) and D-pad (``DPAD_UP`` ... ``DPAD_RIGHT``) are buttons too. ``GamepadAxis`` is
+``RIGHT_STICK``) and D-pad (``DPAD_UP`` ... ``DPAD_RIGHT``) are buttons too. These 14 buttons are the
+ones every standard pad has, the same set as OpenXR's ``xbox_controller`` profile; pad-specific
+extras such as the guide button, paddles and touchpad are not reported. ``GamepadAxis`` is
 ``LEFT_X``, ``LEFT_Y``, ``RIGHT_X``, ``RIGHT_Y`` in ``[-1, 1]`` (right and up positive, as in OpenXR) and
 ``LEFT_TRIGGER``, ``RIGHT_TRIGGER`` in ``[0, 1]``.
 
@@ -154,7 +156,7 @@ Published data
 The plugin pushes ``GamepadOutput`` to collection ``gamepad`` (``--collection-id`` changes it;
 match it in ``GamepadSource`` / ``GamepadTracker``):
 
-- ``buttons`` — indexed by ``GamepadButton``, 1 while held. A button the pad lacks stays 0.
+- ``buttons`` — indexed by ``GamepadButton``, 1 while held.
 - ``axes`` — indexed by ``GamepadAxis``.
 - ``connected`` — whether the plugin has the pad open.
 

@@ -517,16 +517,18 @@ after an unplug; <code class="docutils literal notranslate"><span class="pre">ap
 <td><p>Triangle</p></td>
 <td><p>X</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">BACK</span></code> / <code class="docutils literal notranslate"><span class="pre">START</span></code> / <code class="docutils literal notranslate"><span class="pre">GUIDE</span></code></p></td>
-<td><p>View / Menu / Xbox</p></td>
-<td><p>Create / Options / PS</p></td>
-<td><p>− / + / Home</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">BACK</span></code> / <code class="docutils literal notranslate"><span class="pre">START</span></code></p></td>
+<td><p>View / Menu</p></td>
+<td><p>Create / Options</p></td>
+<td><p>− / +</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <p>The shoulders (<code class="docutils literal notranslate"><span class="pre">LEFT_SHOULDER</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_SHOULDER</span></code>), stick clicks (<code class="docutils literal notranslate"><span class="pre">LEFT_STICK</span></code>,
-<code class="docutils literal notranslate"><span class="pre">RIGHT_STICK</span></code>) and D-pad (<code class="docutils literal notranslate"><span class="pre">DPAD_UP</span></code> … <code class="docutils literal notranslate"><span class="pre">DPAD_RIGHT</span></code>) are buttons too. <code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code> is
+<code class="docutils literal notranslate"><span class="pre">RIGHT_STICK</span></code>) and D-pad (<code class="docutils literal notranslate"><span class="pre">DPAD_UP</span></code> … <code class="docutils literal notranslate"><span class="pre">DPAD_RIGHT</span></code>) are buttons too. These 14 buttons are the
+ones every standard pad has, the same set as OpenXR’s <code class="docutils literal notranslate"><span class="pre">xbox_controller</span></code> profile; pad-specific
+extras such as the guide button, paddles and touchpad are not reported. <code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code> is
 <code class="docutils literal notranslate"><span class="pre">LEFT_X</span></code>, <code class="docutils literal notranslate"><span class="pre">LEFT_Y</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_X</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_Y</span></code> in <code class="docutils literal notranslate"><span class="pre">[-1,</span> <span class="pre">1]</span></code> (right and up positive, as in OpenXR) and
 <code class="docutils literal notranslate"><span class="pre">LEFT_TRIGGER</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_TRIGGER</span></code> in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>.</p>
 </section>
@@ -600,7 +602,7 @@ own collection, read by a <code class="docutils literal notranslate"><span class
 <p>The plugin pushes <code class="docutils literal notranslate"><span class="pre">GamepadOutput</span></code> to collection <code class="docutils literal notranslate"><span class="pre">gamepad</span></code> (<code class="docutils literal notranslate"><span class="pre">--collection-id</span></code> changes it;
 match it in <code class="docutils literal notranslate"><span class="pre">GamepadSource</span></code> / <code class="docutils literal notranslate"><span class="pre">GamepadTracker</span></code>):</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">buttons</span></code> — indexed by <code class="docutils literal notranslate"><span class="pre">GamepadButton</span></code>, 1 while held. A button the pad lacks stays 0.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">buttons</span></code> — indexed by <code class="docutils literal notranslate"><span class="pre">GamepadButton</span></code>, 1 while held.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">axes</span></code> — indexed by <code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">connected</span></code> — whether the plugin has the pad open.</p></li>
 </ul>
