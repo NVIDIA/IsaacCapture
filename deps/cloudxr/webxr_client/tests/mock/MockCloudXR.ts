@@ -119,6 +119,9 @@ export class MockCloudXR implements CloudXR.Session {
   private streamTestTimer: ReturnType<typeof setTimeout> | null = null;
   private networkMetricsTimer: ReturnType<typeof setInterval> | null = null;
   private idleFrameTimer: ReturnType<typeof setInterval> | null = null;
+  // Opt-in (setEmitRenderFramerate): the real SDK reports RenderFramerate on each rendered,
+  // pose-backed frame, which CloudXRComponent treats as "real video is flowing".
+  private emitRenderFramerate = false;
   private frameCount = 0;
   private lastRenderTimestamp: DOMHighResTimeStamp | null = null;
   // Monotonic per-render() counter, reset to 0 at the top of each connect()'s Connected
@@ -305,11 +308,12 @@ export class MockCloudXR implements CloudXR.Session {
       this.processPendingFrame();
     }
 
-    if (this.warmupSimulationEnabled && !this.warmupComplete) {
+    if ((this.warmupSimulationEnabled && !this.warmupComplete) || this.idleFrameTimer !== null) {
       // Decoder warm-up frames carry no pose-backed video to show - see processPendingFrame,
       // which counts warm-up frames (from a frame videoFrameReceived() queued) and flips this
       // flag. Gated on warmupSimulationEnabled too: a demo that never opted into warm-up
       // simulation (see that field's doc comment) should render normally, not black forever.
+      // Idle frames (startIdleFrames) likewise carry no pose-backed video.
       if (this.options.gl !== NullWebGLContext) {
         const gl = this.options.gl;
         this.delegates.onWebGLStateChangeBegin?.();
@@ -357,6 +361,17 @@ export class MockCloudXR implements CloudXR.Session {
       },
       CloudXR.MetricsCadence.PerFrame
     );
+    if (this.emitRenderFramerate) {
+      this.delegates.onMetrics?.(
+        { [CloudXR.MetricsName.RenderFramerate]: this.estimateFps(timestamp) },
+        CloudXR.MetricsCadence.PerRender
+      );
+    }
+  }
+
+  /** Makes render() also report RenderFramerate for each rendered frame; off by default. */
+  setEmitRenderFramerate(enabled: boolean): void {
+    this.emitRenderFramerate = enabled;
   }
 
   sendServerMessage(): void {

@@ -18,16 +18,18 @@
 /**
  * StreamAttachTimeoutTest - mounts the real CloudXRComponent against MockCloudXR (see
  * CloudXRComponentTest.tsx's header for the general approach) to exercise its three
- * connection-phase deadlines back-to-back in one continuous 4-attempt retry sequence:
+ * connection-phase deadlines back-to-back in one continuous 5-attempt retry sequence:
  * streamAttachTimeoutMs (attempt 1: stream never attaches), warmupBeginTimeoutMs (attempt 2:
  * attaches but no warm-up log ever arrives), warmupEndTimeoutMs (attempt 3: warm-up begins but
- * never completes), then a normal attempt 4 proving none of the timers fire once attach and
- * warm-up genuinely succeed. Each attempt drives MockCloudXR via setWarmupTotalFrames() +
+ * never completes), attempt 4 (keep-alive idle frames running when the session fails: the idle
+ * status must be reported inactive before the retry), then a normal attempt 5 that rides out idle
+ * frames for 3x the warm-up budgets, proving none of the timers fire once attach and warm-up
+ * genuinely succeed. Each attempt drives MockCloudXR via setWarmupTotalFrames() +
  * videoFrameReceived() (test-driven, no background clock) on a schedule relative to Connected.
  *
  * Also asserts a real diagnostic signal: streaming/render metrics (MetricsCadence.PerFrame)
  * must not fire during a stalled warm-up (attempt 3) and must fire once warm-up completes
- * (attempt 4) - a frozen frame count while the session reads Connected is what a stuck warm-up
+ * (attempt 5) - a frozen frame count while the session reads Connected is what a stuck warm-up
  * looks like from the outside, and MockCloudXR.render() reproduces that.
  *
  * Click the button (or press "S") to run it.
@@ -79,7 +81,12 @@ interface AttemptConfig {
    * as warm-up), then one pose-backed frame at `completeWarmupAtMs` to finish warm-up.
    */
   idleFramesForMs?: number;
+  /** With idleFramesForMs: feed a warm-up frame at the start and a pose-backed one at this time. */
   completeWarmupAtMs?: number;
+  /** With idleFramesForMs: fail the session this many ms after Connected, mid-idle. */
+  failAtMs?: number;
+  /** Report RenderFramerate from each rendered frame (real video, without a warm-up log). */
+  emitRenderFramerate?: boolean;
 }
 
 // Per-attempt mock configuration - see the module doc comment for what each attempt tests.
@@ -90,7 +97,15 @@ const ATTEMPT_CONFIGS: AttemptConfig[] = [
   // emits streaming metrics, which trips the "no metrics during warm-up" check below.
   { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 0 },
   { connectWaitMs: 100, warmupTotalFrames: null, frameCallCount: 1 }, // 3: warm-up begins, then stalls -> warmup-end timeout
-  // 4: idle frames run for 3x the 500ms warm-up budgets, with warm-up frames among them, then stop;
+  // 4: idle frames running when the session fails -> idle must be reported inactive before the retry.
+  {
+    connectWaitMs: 100,
+    warmupTotalFrames: null,
+    frameCallCount: 0,
+    idleFramesForMs: 5000,
+    failAtMs: 700,
+  },
+  // 5: idle frames run for 3x the 500ms warm-up budgets, with warm-up frames among them, then stop;
   // warm-up completes after the watchdog resumes but within its budget -> success, no timeout.
   {
     connectWaitMs: 100,
@@ -143,7 +158,13 @@ let activeSession: MockCloudXR | null = null;
 // fires (see onStatusChange).
 let attemptConfigQueue: AttemptConfig[] = [];
 let pendingFrameCallCount = 0;
-let pendingIdleConfig: { idleFramesForMs: number; completeWarmupAtMs: number } | null = null;
+let pendingIdleConfig: Pick<
+  AttemptConfig,
+  'idleFramesForMs' | 'completeWarmupAtMs' | 'failAtMs'
+> | null = null;
+// Status and idle events in the order they happened, for ordering assertions.
+let timeline: string[] = [];
+let streamingMetricsCount = 0;
 let statusMessages: string[] = [];
 let warmupStatuses: WarmupStatus[] = [];
 let idleStatuses: IdleStatus[] = [];
@@ -162,12 +183,13 @@ function Scene() {
         config={config}
         applicationName="StreamAttachTimeoutTest"
         iceServers={{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }}
-        reconnect={{ maxAttempts: 3, delayMs: 300 }}
+        reconnect={{ maxAttempts: 4, delayMs: 300 }}
         streamAttachTimeoutMs={STREAM_ATTACH_TIMEOUT_MS}
         warmupBeginTimeoutMs={WARMUP_BEGIN_TIMEOUT_MS}
         warmupEndTimeoutMs={WARMUP_END_TIMEOUT_MS}
         onStatusChange={(isConnected, status) => {
           statusMessages.push(status);
+          timeline.push(`status:${status}`);
           appendLog(`[status] connected=${isConnected} ${status}`);
           if (status === 'Connected') {
             // Capture the session in this attempt's closure - by the time a later timeout fires
@@ -183,17 +205,22 @@ function Scene() {
             pendingFrameCallCount = 0;
             const idleConfig = pendingIdleConfig;
             pendingIdleConfig = null;
-            if (idleConfig) {
+            if (idleConfig && idleConfig.idleFramesForMs !== undefined) {
               sessionForThisAttempt?.startIdleFrames();
-              setTimeout(
-                () => sessionForThisAttempt?.videoFrameReceived(0),
-                FRAME_CALL_DELAYS_MS[0]
-              );
               setTimeout(() => sessionForThisAttempt?.stopIdleFrames(), idleConfig.idleFramesForMs);
-              setTimeout(
-                () => sessionForThisAttempt?.videoFrameReceived(1),
-                idleConfig.completeWarmupAtMs
-              );
+              if (idleConfig.completeWarmupAtMs !== undefined) {
+                setTimeout(
+                  () => sessionForThisAttempt?.videoFrameReceived(0),
+                  FRAME_CALL_DELAYS_MS[0]
+                );
+                setTimeout(
+                  () => sessionForThisAttempt?.videoFrameReceived(1),
+                  idleConfig.completeWarmupAtMs
+                );
+              }
+              if (idleConfig.failAtMs !== undefined) {
+                setTimeout(() => sessionForThisAttempt?.triggerFailure(), idleConfig.failAtMs);
+              }
             }
           }
         }}
@@ -203,9 +230,11 @@ function Scene() {
         }}
         onIdleStatus={status => {
           idleStatuses.push(status);
+          timeline.push(`idle:${status.active}`);
           appendLog(`[idle] framesSeen=${status.framesSeen} active=${status.active}`);
         }}
         onStreamingPerformanceMetrics={() => {
+          streamingMetricsCount++;
           // warmupStatuses already reflects this instant: onWarmupStatus (pushed synchronously
           // from MockCloudXR's onLog handling inside render()) always fires before this same
           // render() call reaches its own onMetrics(PerFrame) emission - see
@@ -241,13 +270,16 @@ function Scene() {
               activeSession.setWarmupFirstStatusFrame(1);
               pendingFrameCallCount = attemptConfig.frameCallCount;
               pendingIdleConfig =
-                attemptConfig.idleFramesForMs !== undefined &&
-                attemptConfig.completeWarmupAtMs !== undefined
+                attemptConfig.idleFramesForMs !== undefined
                   ? {
                       idleFramesForMs: attemptConfig.idleFramesForMs,
                       completeWarmupAtMs: attemptConfig.completeWarmupAtMs,
+                      failAtMs: attemptConfig.failAtMs,
                     }
                   : null;
+              if (attemptConfig.emitRenderFramerate) {
+                activeSession.setEmitRenderFramerate(true);
+              }
             }
           }
           appendLog(`[event] onSessionReady ${session ? 'session' : 'null'}`);
@@ -276,13 +308,13 @@ async function runTest(): Promise<void> {
   appendLog('=== Attempt 1 (1.25s wait, 1s attach budget) should time out on attach, ===');
   appendLog('=== attempt 2 (attaches, no frame ever) should time out on warmup begin, ===');
   appendLog('=== attempt 3 (warm-up begins, then stalls) should time out on warmup end, ===');
-  appendLog(
-    '=== attempt 4 (idle frames for 3x the warm-up budgets, then warm-up completes) should ==='
-  );
-  appendLog('=== succeed: idle frames must not start the warm-up watchdogs ===');
+  appendLog('=== attempt 4 (session fails while idle frames run) should report idle inactive, ===');
+  appendLog('=== attempt 5 (idle frames for 3x the warm-up budgets, then warm-up completes) ===');
+  appendLog('=== should succeed: idle frames must not start the warm-up watchdogs ===');
   statusMessages = [];
   warmupStatuses = [];
   idleStatuses = [];
+  timeline = [];
   streamingMetricsFiredDuringWarmup = false;
   streamingMetricsFiredAfterWarmupComplete = false;
   attemptConfigQueue = [...ATTEMPT_CONFIGS];
@@ -294,13 +326,13 @@ async function runTest(): Promise<void> {
   // -> warm-up begun (first onWarmupStatus event) -> warm-up finished (completed: true). Each
   // condition is monotonic over the whole run's accumulated statusMessages/warmupStatuses, so
   // this naturally spans attempts 2-3 (which each reach a subset of the stages, then fail and
-  // retry) and attempt 4 (which reaches all three). Total timeout budget: 1s attach budget fail
+  // retry) and attempt 5 (which reaches all three). Total timeout budget: 1s attach budget fail
   // + 300ms retry + 500ms warmup-begin budget fail + 300ms retry + 500ms warmup-end budget fail
   // + 300ms retry + fast success, plus margin.
   const reachedConnected = await waitUntil(() => statusMessages.includes('Connected'), 3000);
   const warmupBegan = await waitUntil(() => warmupStatuses.length > 0, 3000);
-  const warmupCompleted = await waitUntil(() => warmupStatuses.some(s => s.completed), 7000);
-  // A little extra time after warm-up completes for attempt 4's render loop to actually emit at
+  const warmupCompleted = await waitUntil(() => warmupStatuses.some(s => s.completed), 9000);
+  // A little extra time after warm-up completes for attempt 5's render loop to actually emit at
   // least one PerFrame metrics tick - proving the pipe resumes once warm-up ends, not just that
   // it stayed silent throughout (which sawStalledWarmupProgress alone wouldn't distinguish from
   // a metrics pipe that's permanently broken).
@@ -309,6 +341,9 @@ async function runTest(): Promise<void> {
   const retryCount = statusMessages.filter(s => s.startsWith('Reconnecting')).length;
   const sawStalledWarmupProgress = warmupStatuses.some(s => !s.completed);
   // Attempt 4's idle frames are reported as active, then as inactive once they stop.
+  // The idle period running when attempt 4 failed was reported inactive before the retry began.
+  const retry4 = timeline.indexOf('status:Reconnecting (4/4)');
+  const idleEndedBeforeRetry = retry4 > 0 && timeline[retry4 - 1] === 'idle:false';
   const reportedIdleFrames =
     idleStatuses.some(s => s.active && s.framesSeen > 1) &&
     idleStatuses[idleStatuses.length - 1]?.active === false;
@@ -316,7 +351,8 @@ async function runTest(): Promise<void> {
     reachedConnected &&
     warmupBegan &&
     warmupCompleted &&
-    retryCount === 3 &&
+    retryCount === 4 &&
+    idleEndedBeforeRetry &&
     sawStalledWarmupProgress &&
     reportedIdleFrames &&
     !streamingMetricsFiredDuringWarmup &&
@@ -324,11 +360,13 @@ async function runTest(): Promise<void> {
   appendLog(
     pass
       ? '[result] PASS: attempt 1 attach-timed-out, attempt 2 warmup-begin-timed-out, ' +
-          'attempt 3 warmup-end-timed-out, attempt 4 rode out idle frames then warmed up, streaming metrics ' +
+          'attempt 3 warmup-end-timed-out, attempt 4 reported idle inactive when it failed, attempt 5 ' +
+          'rode out idle frames then warmed up, streaming metrics ' +
           'stayed frozen throughout warm-up and resumed once it completed'
       : `[result] FAIL: reachedConnected=${reachedConnected} warmupBegan=${warmupBegan} ` +
           `warmupCompleted=${warmupCompleted} retryCount=${retryCount} ` +
           `sawStalledWarmupProgress=${sawStalledWarmupProgress} ` +
+          `idleEndedBeforeRetry=${idleEndedBeforeRetry} timeline=${JSON.stringify(timeline)} ` +
           `reportedIdleFrames=${reportedIdleFrames} idleStatuses=${JSON.stringify(idleStatuses)} ` +
           `streamingMetricsFiredDuringWarmup=${streamingMetricsFiredDuringWarmup} ` +
           `streamingMetricsFiredAfterWarmupComplete=${streamingMetricsFiredAfterWarmupComplete} ` +
@@ -336,6 +374,49 @@ async function runTest(): Promise<void> {
   );
 
   await sleep(500);
+  store.getState().session?.end();
+}
+
+// Scenario ?scenario=real-video-after-idle: idle frames stop, then real video renders with no
+// warm-up completion log (a stream that starts warmed up). Idle frames then resume briefly and
+// stop with no further video. The idle quiet timer must not re-arm a warm-up watchdog after real
+// video was seen, so the session stays Connected well past the watchdog budgets.
+async function runRealVideoAfterIdleTest(): Promise<void> {
+  appendLog('=== idle frames then real video without a warm-up log: no watchdog may fire ===');
+  statusMessages = [];
+  warmupStatuses = [];
+  idleStatuses = [];
+  timeline = [];
+  streamingMetricsCount = 0;
+  attemptConfigQueue = [
+    { connectWaitMs: 100, frameCallCount: 0, idleFramesForMs: 600, emitRenderFramerate: true },
+  ];
+  pendingFrameCallCount = 0;
+  pendingIdleConfig = null;
+  await startSession();
+  const connected = await waitUntil(() => statusMessages.includes('Connected'), 3000);
+  const session = activeSession;
+  setTimeout(() => session?.startIdleFrames(), 1200);
+  setTimeout(() => {
+    session?.stopIdleFrames();
+    session?.setEmitRenderFramerate(false);
+  }, 1700);
+  // After the second idle burst ends (~1.7 s), 1 s of quiet then the 500 ms begin budget: a wrongly
+  // re-armed watchdog would have disconnected by about 3.2 s after Connected.
+  await sleep(5000);
+  const stayedConnected = !statusMessages.some(s => s.startsWith('Reconnecting') || s === 'Error');
+  const sawRealVideo = streamingMetricsCount > 0;
+  const idleEnded =
+    idleStatuses.some(s => s.active) && idleStatuses[idleStatuses.length - 1]?.active === false;
+  const pass = connected && stayedConnected && sawRealVideo && idleEnded;
+  appendLog(
+    pass
+      ? '[result] PASS: real video after idle frames kept the session connected'
+      : `[result] FAIL: connected=${connected} stayedConnected=${stayedConnected} ` +
+          `sawRealVideo=${sawRealVideo} idleEnded=${idleEnded} ` +
+          `timeline=${JSON.stringify(timeline)}`
+  );
+  await sleep(300);
   store.getState().session?.end();
 }
 
@@ -350,7 +431,11 @@ function App() {
     runningRef.current = true;
     setRunning(true);
     try {
-      await runTest();
+      if (new URLSearchParams(window.location.search).get('scenario') === 'real-video-after-idle') {
+        await runRealVideoAfterIdleTest();
+      } else {
+        await runTest();
+      }
     } finally {
       runningRef.current = false;
       setRunning(false);
