@@ -42,3 +42,7 @@ endif()
 if(BUILD_PLUGIN_SHARPA_AVATAR)
     add_subdirectory(sharpa_avatar)
 endif()
+# Gated: requires a sourced ROS 2 environment (rclcpp + sensor_msgs via find_package()).
+if(BUILD_PLUGIN_IO_EXO_GLOVE_ROS2)
+    add_subdirectory(io_exo_glove_ros2)
+endif()

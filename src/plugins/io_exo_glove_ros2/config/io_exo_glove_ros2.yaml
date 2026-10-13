@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runtime configuration for the io_exo_glove_ros2 plugin.
+#
+# Edit this file and restart the plugin -- no rebuild is needed. Every key is optional: a key that
+# is absent (or a whole missing file) keeps the built-in default compiled into the plugin.
+#
+# Precedence, lowest to highest:
+#   1. built-in defaults in io_exo_glove_ros2_plugin.hpp
+#   2. this file
+#   3. command-line flags (--joints-topic=..., --links-topic=..., --joints-collection-id=...,
+#      --tips-left-collection-id=..., --tips-right-collection-id=..., --tips-reference-frame=...,
+#      --wrist-source=..., --wrist-alignment=...)
+#
+# Run the plugin with --print-config to see which file was loaded and the effective values.
+
+# The glove's own joint angles (the exoskeleton skeleton DOFs, radians), as a whole-machine
+# sensor_msgs/msg/JointState topic.
+joints_topic: "/io_esk/joint_data"
+
+# Every exoskeleton link pose, as a tf2_msgs/msg/TFMessage topic. Every frame is a child of one
+# reference frame (base_link), so each transform is that frame's pose in the reference frame and no
+# forward kinematics is performed. Only the five fingertips per hand are bridged, as
+# JointSe3PoseOutput; the other links follow from the joint angles by forward kinematics.
+links_topic: "/io_fusion/tf_exoskeleton"
+
+# Reference frame the bridged fingertip poses are expressed in. JointSe3PoseOutput has no per-pose
+# frame, so the poses of one hand must all share this frame: a fingertip published in any other frame
+# is skipped with a warning instead of being relabelled. Set it to the exoskeleton's own root frame.
+tips_reference_frame: "base_link"
+
+# Where the wrist pose that places the injected OpenXR hand in the room comes from. The exoskeleton
+# reports the hand in its own frame, which is not anchored in the room, so the skeleton is injected at
+# a wrist pose read from the headset: "auto" prefers the headset's own optical hand tracking and falls
+# back to a controller, or pin one with "hand_tracking" / "controller". The conformance capture's
+# --wrist-source label is read from $IO_EXO_GLOVE_ROS2_WRIST_SOURCE, so set that too (or instead).
+wrist_source: "auto"
+
+# How the glove's wrist frame is aligned with that pose: "auto" captures the rotation from the first
+# frame where both are tracked and logs it (a good default, and the log line gives you the value to
+# paste here), "identity" when the frames already agree, or an explicit "x,y,z,w" rotation.
+wrist_alignment: "auto"
+
+# OpenXR tensor collection ids this plugin pushes to. These must match the collection_id used by the
+# consumer side (JointStateTracker / JointSe3PoseTracker), so changing them means changing the
+# consumer configuration too.
+joints_collection_id: "exo_glove_joints"
+tips_left_collection_id: "exo_glove_tips_left"
+tips_right_collection_id: "exo_glove_tips_right"
