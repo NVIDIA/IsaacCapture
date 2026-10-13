@@ -62,7 +62,7 @@ PYBIND11_MODULE(_schema, m)
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
 
-    // Bind tactile types (TactileData, TactileShape tables); internal only.
+    // Bind tactile types (TactileData, TactileShape tables).
     core::bind_tactile(m);
     core::bind_tactile_shape(m);
 

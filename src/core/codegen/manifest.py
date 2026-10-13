@@ -31,6 +31,7 @@ RESOLVED_REQUIRED = frozenset(
         "python_accessor",
         "max_flatbuffer_size",
         "record",
+        "record_type",
         "facade_tensor_constant",
     }
 )

@@ -9,8 +9,11 @@
 #include <mcap/tracker_channels.hpp>
 #include <schema/serialized.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <type_traits>
+#include <vector>
 
 namespace core
 {
@@ -21,7 +24,8 @@ namespace core
  * Wraps SchemaTrackerBase with FlatBuffer type knowledge so that each sample
  * read from the tensor can be automatically written to an MCAP channel.
  *
- * @tparam RecordT    FlatBuffer record wrapper (e.g. Generic3AxisPedalOutputRecord).
+ * @tparam RecordT    Root written to MCAP: a record wrapper (e.g. Generic3AxisPedalOutputRecord),
+ *                    or DataTableT itself for a table recorded without one.
  * @tparam DataTableT FlatBuffer data table (e.g. Generic3AxisPedalOutput). This is both
  *                    the wire type and the type published to consumers.
  */
@@ -87,19 +91,17 @@ public:
         if (mcap_channels_)
         {
             Serialized<RecordT> last_record;
+            int64_t last_log_time = 0;
             for (const auto& sample : samples_)
             {
-                auto fb = flatbuffers::GetRoot<DataTableT>(sample.buffer.data());
-                if (!fb)
+                Serialized<RecordT> record = to_record(sample);
+                if (!record)
                 {
                     continue;
                 }
-
-                NativeDataT latest;
-                fb->UnPackTo(&latest);
-
-                last_record = pack_record<RecordT>(&latest, sample.timestamp);
-                mcap_channels_->write(mcap_channel_index_, last_record);
+                last_record = std::move(record);
+                last_log_time = sample.timestamp.available_time_local_common_clock();
+                mcap_channels_->write(mcap_channel_index_, last_record, last_log_time);
             }
 
             // The tracked channel marks the final sample of the tick, which is the record
@@ -108,7 +110,7 @@ public:
             // failed to resolve a root, the one case where there is no final sample.
             if (mcap_channel_tracked_index_ && last_record)
             {
-                mcap_channels_->write(*mcap_channel_tracked_index_, last_record);
+                mcap_channels_->write(*mcap_channel_tracked_index_, last_record, last_log_time);
             }
         }
 
@@ -119,6 +121,28 @@ public:
     }
 
 private:
+    //! What MCAP stores for one sample: its Record, or the sample's own bytes when RecordT is
+    //! DataTableT. Empty when the sample has no root.
+    static Serialized<RecordT> to_record(const SampleResult& sample)
+    {
+        if constexpr (std::is_same_v<RecordT, DataTableT>)
+        {
+            return Serialized<RecordT>::adopt(std::vector<uint8_t>(sample.buffer));
+        }
+        else
+        {
+            auto fb = flatbuffers::GetRoot<DataTableT>(sample.buffer.data());
+            if (!fb)
+            {
+                return Serialized<RecordT>();
+            }
+
+            NativeDataT latest;
+            fb->UnPackTo(&latest);
+            return pack_record<RecordT>(&latest, sample.timestamp);
+        }
+    }
+
     Channels* mcap_channels_;
     size_t mcap_channel_index_;
     std::optional<size_t> mcap_channel_tracked_index_;

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for TactileData / TactileDataRecord in isaaccapture.schema (internal only)."""
+"""Unit tests for TactileData / TactileDataRecord in isaaccapture.schema."""
 
 import gc
 
@@ -16,12 +16,10 @@ FORCES = np.array([[0.0, 0.0, 1.0], [0.5, -0.5, 2.0], [0.0, 0.1, 0.0]], np.float
 class TestTactileData:
     def test_default_construction(self):
         data = TactileData()
-        assert data.taxel_count == 0
         assert data.taxel_force.shape == (0, 3)
 
     def test_round_trip(self):
         data = TactileData(FORCES)
-        assert data.taxel_count == 3
         assert data.taxel_force.dtype == np.float32
         np.testing.assert_array_equal(data.taxel_force, FORCES)
 
@@ -39,7 +37,7 @@ class TestTactileData:
             TactileData(np.zeros((2, 4), np.float32))
 
     def test_repr(self):
-        assert "taxel_count=3" in repr(TactileData(FORCES))
+        assert "taxels=3" in repr(TactileData(FORCES))
 
 
 class TestTactileDataRecord:

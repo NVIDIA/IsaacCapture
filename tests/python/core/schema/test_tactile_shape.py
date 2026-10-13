@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for TactileShape / TactileShapeRecord in isaaccapture.schema (internal only)."""
+"""Unit tests for TactileShape in isaaccapture.schema."""
 
 import numpy as np
 import pytest
 
-from isaaccapture.schema import DeviceDataTimestamp, TactileShape, TactileShapeRecord
+from isaaccapture.schema import TactileShape
 
 ROOT = TactileShape.ROOT_PARENT
 
@@ -39,7 +39,6 @@ class TestTactileShape:
         arrays = shape_arrays()
         shape = TactileShape(**arrays)
 
-        assert (shape.joint_count, shape.taxel_count) == (2, 3)
         for name, expected in arrays.items():
             value = getattr(shape, name)
             assert value.dtype == expected.dtype, name
@@ -76,13 +75,6 @@ class TestTactileShape:
             TactileShape(**arrays)
 
     def test_repr(self):
-        assert "taxel_count=3" in repr(TactileShape(**shape_arrays()))
-
-
-class TestTactileShapeRecord:
-    def test_record_carries_payload_and_timestamp(self):
-        record = TactileShapeRecord(
-            TactileShape(**shape_arrays()), DeviceDataTimestamp(1, 2, 3)
+        assert (
+            repr(TactileShape(**shape_arrays())) == "TactileShape(joints=2, taxels=3)"
         )
-        assert record.data.taxel_count == 3
-        assert record.timestamp.available_time_local_common_clock == 1

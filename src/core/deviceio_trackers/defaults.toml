@@ -16,6 +16,9 @@ traits = "%channel_CamelCase%RecordingTraits"
 python_accessor = "get_data"
 max_flatbuffer_size = 512
 record = true
+# Root written to MCAP: the table's Record wrapper, or the table itself when it has no
+# capture time of its own.
+record_type = "%table%Record"
 facade_tensor_constant = false
 
 [defaults.pull]

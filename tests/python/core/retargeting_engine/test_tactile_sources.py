@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the TactileSource / TactileShapeSource DeviceIO converters (internal only).
+"""Tests for the TactileSource / TactileShapeSource DeviceIO converters.
 
 Payloads are built through the real schema bindings; no OpenXR device is involved.
 """

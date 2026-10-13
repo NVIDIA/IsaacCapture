@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tactile Source Nodes - DeviceIO to Retargeting Engine converters (internal only).
+"""Tactile Source Nodes - DeviceIO to Retargeting Engine converters.
 
 ``TactileSource`` turns per-frame ``TactileData`` into a force array; ``TactileShapeSource``
 turns the device's static ``TactileShape`` into the arrays that lay those forces out. Taxel and
@@ -229,12 +229,10 @@ class TactileShapeSource(IDeviceIOSource):
             out.set_none()
             return
 
-        if (shape.joint_count, shape.taxel_count) != (
-            self._num_joints,
-            self._num_taxels,
-        ):
+        joints, taxels = len(shape.joint_parents), len(shape.taxel_positions)
+        if (joints, taxels) != (self._num_joints, self._num_taxels):
             raise ValueError(
-                f"{self.name}: shape has {shape.joint_count} joints and {shape.taxel_count} taxels, "
+                f"{self.name}: shape has {joints} joints and {taxels} taxels, "
                 f"source expects {self._num_joints} and {self._num_taxels}"
             )
         for index, tensor_type in enumerate(out.group_type.types):

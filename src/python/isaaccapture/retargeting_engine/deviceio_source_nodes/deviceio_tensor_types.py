@@ -153,13 +153,13 @@ class SomaHandJointPosesTrackedType(_PayloadTensorType):
 
 
 class TactileDataTrackedType(_PayloadTensorType):
-    """TactileData payload from DeviceIO TactileTracker (internal only)."""
+    """TactileData payload from DeviceIO TactileTracker."""
 
     _payload_cls = TactileData
 
 
 class TactileShapeTrackedType(_PayloadTensorType):
-    """TactileShape payload from DeviceIO TactileShapeTracker (internal only)."""
+    """TactileShape payload from DeviceIO TactileShapeTracker."""
 
     _payload_cls = TactileShape
 

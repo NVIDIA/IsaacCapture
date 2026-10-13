@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Unit tests for the generated TactileData FlatBuffer message (internal only).
+// Unit tests for the generated TactileData FlatBuffer message.
 
 #include <catch2/catch_test_macros.hpp>
 #include <flatbuffers/flatbuffers.h>
@@ -16,7 +16,6 @@
 // VT_<FIELD> == (id + 2) * 2.
 #define VT(field) (field + 2) * 2
 static_assert(core::TactileData::VT_TAXEL_FORCE == VT(0));
-static_assert(core::TactileData::VT_TAXEL_COUNT == VT(1));
 static_assert(core::TactileDataRecord::VT_DATA == VT(0));
 static_assert(core::TactileDataRecord::VT_TIMESTAMP == VT(1));
 
@@ -30,7 +29,6 @@ core::TactileDataT make_frame()
 {
     core::TactileDataT native;
     native.taxel_force = { core::Point(0.0f, 0.0f, 1.0f), core::Point(0.5f, -0.5f, 2.0f) };
-    native.taxel_count = static_cast<uint32_t>(native.taxel_force.size());
     return native;
 }
 
@@ -41,7 +39,6 @@ TEST_CASE("TactileData round-trips every field", "[unit][tactile]")
     const auto data = core::pack<core::TactileData>(make_frame());
 
     REQUIRE(data);
-    CHECK(data->taxel_count() == 2);
     REQUIRE(data->taxel_force() != nullptr);
     REQUIRE(data->taxel_force()->size() == 2);
     CHECK(data->taxel_force()->Get(1)->x() == 0.5f);
@@ -53,7 +50,6 @@ TEST_CASE("TactileData leaves an empty frame's vector absent", "[unit][tactile]"
     const auto data = core::pack<core::TactileData>(core::TactileDataT{});
 
     REQUIRE(data);
-    CHECK(data->taxel_count() == 0);
     CHECK(data->taxel_force() == nullptr);
 }
 

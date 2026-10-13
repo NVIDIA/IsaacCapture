@@ -14,6 +14,7 @@
 #include <deviceio_trackers/keyboard_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/se3_tracker.hpp>
+#include <deviceio_trackers/tactile_shape_tracker.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/tracker_channels.hpp>
 #include <schema/hand_generated.h>
@@ -22,6 +23,7 @@
 #include <schema/keyboard_generated.h>
 #include <schema/message_channel_generated.h>
 #include <schema/se3_tracker_generated.h>
+#include <schema/tactile_shape_generated.h>
 
 #include <array>
 #include <atomic>
@@ -823,4 +825,53 @@ TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider inpu
 
     session->update();
     CHECK_FALSE(keyboard_tracker.get_data(*session));
+}
+
+// =============================================================================
+// Table recorded as itself — TactileShapeTracker (record_type = the table)
+// =============================================================================
+
+TEST_CASE("ReplaySession: a table recorded without a Record replays as itself", "[replay][session][tactile_shape]")
+{
+    // Frozen wire string: the channel's schema is the table itself, not a Record.
+    CHECK(std::string_view(core::TactileShape::GetFullyQualifiedName()) == "core.TactileShape");
+
+    auto path = get_temp_mcap_path();
+    TempFileCleanup cleanup(path);
+    const std::string base_name = "tactile_shape";
+
+    constexpr int num_frames = 2;
+    {
+        auto writer = open_writer(path);
+        core::McapTrackerChannels<core::TactileShape> ch(
+            *writer, base_name, to_string_vec(core::TactileShapeRecordingTraits::recording_channels));
+        for (int i = 0; i < num_frames; ++i)
+        {
+            core::TactileShapeT shape;
+            shape.joints = { core::TactileJoint(make_pose(static_cast<float>(i), 0, 0), 0x7FFFFFFF) };
+            const auto encoded = core::pack<core::TactileShape>(shape);
+            // Mirrors SchemaTracker: per-sample to index 0, the tick's last sample to index 1.
+            ch.write(0, encoded, (i + 1) * 1000);
+            ch.write(1, encoded, (i + 1) * 1000);
+        }
+        writer->close();
+    }
+
+    core::TactileShapeTracker tracker("tactile_shape/right");
+    core::McapReplayConfig config;
+    config.filename = path;
+    config.tracker_names = { { &tracker, base_name } };
+    auto session = core::ReplaySession::run(config);
+
+    for (int i = 0; i < num_frames; ++i)
+    {
+        session->update();
+        const auto& shape = tracker.get_data(*session);
+        REQUIRE(shape);
+        REQUIRE(shape->joints()->size() == 1);
+        CHECK(shape->joints()->Get(0)->bind_pose().position().x() == static_cast<float>(i));
+    }
+
+    session->update();
+    CHECK_FALSE(tracker.get_data(*session));
 }
