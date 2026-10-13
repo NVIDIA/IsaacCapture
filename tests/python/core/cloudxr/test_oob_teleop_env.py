@@ -405,6 +405,20 @@ def test_client_ui_fields_from_env_invalid_timeout_ignored(
     assert "streamAttachTimeoutMs" not in fields
 
 
+def test_zero_warmup_timeout_env_reaches_bookmark_url(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0 means "disabled" to the web client, so it must survive as a field and a query param."""
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "0")
+    fields = client_ui_fields_from_env()
+    assert fields["warmupEndTimeoutMs"] == 0
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={"serverIP": "10.0.0.1", "port": 48322, **fields},
+    )
+    assert parse_qs(urlparse(u).query)["warmupEndTimeoutMs"] == ["0"]
+
+
 def test_build_headset_bookmark_url_reconnect_enabled() -> None:
     """reconnectEnabled=True from stream_config is serialised as "true" in the bookmark URL."""
     u = build_headset_bookmark_url(

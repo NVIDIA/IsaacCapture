@@ -609,6 +609,21 @@ Environment variables
      - Non-negative delay between browser-local attempts in milliseconds
        (default ``3000``). The host derives its bounded recovery grace from
        this value and the maximum-attempt count.
+   * - ``TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS``
+     - Base timeout in milliseconds for the web client to detect a stream that
+       never attaches (client default ``120000``; doubles per retry). ``0``
+       disables this detection. Included in the generated headset URL.
+   * - ``TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS``
+     - Timeout in milliseconds for the web client to see the first decoder
+       warm-up signal after the stream attaches (client default ``10000``).
+       ``0`` disables this detection. Included in the generated headset URL.
+   * - ``TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS``
+     - Timeout in milliseconds for decoder warm-up to finish once it has begun
+       (client default ``30000``). ``0`` disables all warm-up detection,
+       including the begin timeout. Set this to ``0`` when the OpenXR
+       application starts after the headset connects: until it submits frames
+       the server sends only idle frames, which the client cannot tell apart
+       from a stuck warm-up. Included in the generated headset URL.
    * - ``USB_BACKEND_PORT``
      - CloudXR backend port the headset reaches via ``adb reverse`` in
        ``--usb-local`` mode (default ``49100``).
