@@ -151,7 +151,8 @@ interface CloudXRComponentProps {
    * only whether the resulting synthetic error gets retried depends on `reconnect`. Doubles on
    * every reconnect attempt (this value, then x2, then x4, ...) so a connection that's genuinely
    * just slow, not stuck, gets more time on each retry instead of being cut off at the same fixed
-   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (2 minutes).
+   * threshold every attempt. Defaults to STREAM_ATTACH_BASE_TIMEOUT_MS (2 minutes). A value <= 0
+   * disables this detection.
    */
   streamAttachTimeoutMs?: number;
 
@@ -166,7 +167,8 @@ interface CloudXRComponentProps {
    * message. Like warmupEndTimeoutMs, does NOT grow per reconnect attempt - warm-up is a fast,
    * bounded server-side priming step once the stream has attached at all, not something that
    * legitimately takes longer under retry the way the initial attach can. Defaults to
-   * WARMUP_BEGIN_BASE_TIMEOUT_MS (10 seconds).
+   * WARMUP_BEGIN_BASE_TIMEOUT_MS (10 seconds). A value <= 0 disables this detection, as does
+   * warmupEndTimeoutMs <= 0.
    */
   warmupBeginTimeoutMs?: number;
 
@@ -176,7 +178,8 @@ interface CloudXRComponentProps {
    * the first warm-up log arrives and cleared by WARMUP_COMPLETE_LOG_PATTERN). See
    * warmupBeginTimeoutMs's doc comment for why this is a separate deadline. Does NOT grow per
    * reconnect attempt, for the same reason warmupBeginTimeoutMs doesn't. Defaults to
-   * WARMUP_END_BASE_TIMEOUT_MS (30 seconds).
+   * WARMUP_END_BASE_TIMEOUT_MS (30 seconds). A value <= 0 disables this detection and
+   * warmupBeginTimeoutMs too (all warm-up detection); stream-attach detection is unaffected.
    */
   warmupEndTimeoutMs?: number;
 
@@ -357,6 +360,8 @@ export default function CloudXRComponent({
    */
   const armStreamAttachTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
+      // <= 0 disables detection; setTimeout(fn, 0) would fire immediately instead.
+      if (streamAttachBaseTimeoutMs <= 0) return;
       const attemptForThisTimer = reconnectAttemptRef.current;
       const attachTimeoutMs = Math.min(
         streamAttachBaseTimeoutMs * 2 ** attemptForThisTimer,
@@ -397,6 +402,8 @@ export default function CloudXRComponent({
    */
   const armWarmupBeginTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
+      // warmupEndTimeoutMs <= 0 turns off all warm-up detection; the begin timer only hands off to the end timer.
+      if (warmupBeginBaseTimeoutMs <= 0 || warmupEndBaseTimeoutMs <= 0) return;
       // Same overflow guard as armStreamAttachTimer: an uncapped delay above setTimeout's
       // ~24.8-day int32 limit wraps and fires near-immediately instead of waiting.
       const timeoutMs = Math.min(warmupBeginBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
@@ -416,7 +423,7 @@ export default function CloudXRComponent({
         } as CloudXR.StreamingError);
       }, timeoutMs);
     },
-    [warmupBeginBaseTimeoutMs]
+    [warmupBeginBaseTimeoutMs, warmupEndBaseTimeoutMs]
   );
 
   /**
@@ -429,6 +436,7 @@ export default function CloudXRComponent({
    */
   const armWarmupEndTimer = useCallback(
     (cxrSession: CloudXR.Session) => {
+      if (warmupEndBaseTimeoutMs <= 0) return; // disabled, see armStreamAttachTimer
       const timeoutMs = Math.min(warmupEndBaseTimeoutMs, MAX_SET_TIMEOUT_MS);
       warmupEndTimerRef.current = setTimeout(() => {
         warmupEndTimerRef.current = null;
