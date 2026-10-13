@@ -62,7 +62,7 @@ from .teleop_state_manager_types import teleop_control_states
 logger = logging.getLogger(__name__)
 
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
-_MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse"})
+_MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse", "gamepad"})
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:

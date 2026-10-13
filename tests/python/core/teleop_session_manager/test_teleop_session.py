@@ -1563,15 +1563,14 @@ class TestPluginInitialization:
 class TestStatusMonitoringIntegration:
     """Test monitored-plugin inventory, refresh, and provider failure integration."""
 
-    def test_spacemouse_plugin_is_monitored(self, tmp_path):
-        manager = MockPluginManager(plugin_names=["spacemouse"])
+    @pytest.mark.parametrize("plugin", ["spacemouse", "gamepad"])
+    def test_device_plugin_is_monitored(self, tmp_path, plugin):
+        manager = MockPluginManager(plugin_names=[plugin])
         manager.get_plugin_info = MagicMock(
             return_value=SimpleNamespace(
-                name="spacemouse",
+                name=plugin,
                 devices=(
-                    SimpleNamespace(
-                        path="/spacemouse", type="spacemouse", description="SpaceMouse"
-                    ),
+                    SimpleNamespace(path=f"/{plugin}", type=plugin, description=plugin),
                 ),
             )
         )
@@ -1579,8 +1578,8 @@ class TestStatusMonitoringIntegration:
             MockPipeline(leaf_nodes=[]),
             plugins=[
                 PluginConfig(
-                    plugin_name="spacemouse",
-                    plugin_root_id="spacemouse",
+                    plugin_name=plugin,
+                    plugin_root_id=plugin,
                     search_paths=[tmp_path],
                 )
             ],
@@ -1593,8 +1592,8 @@ class TestStatusMonitoringIntegration:
             mock_session_dependencies(mock_pm=manager, collected_trackers=[]),
         ):
             with TeleopSession(config) as session:
-                tracker_cls.assert_called_once_with("spacemouse/device_status")
-                assert session.get_device_status("spacemouse/spacemouse") is not None
+                tracker_cls.assert_called_once_with(f"{plugin}/device_status")
+                assert session.get_device_status(f"{plugin}/{plugin}") is not None
 
     def test_only_manus_is_monitored_and_plugin_launch_order_is_preserved(
         self, tmp_path
