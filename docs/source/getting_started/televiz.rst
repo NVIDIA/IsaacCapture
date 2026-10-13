@@ -1,8 +1,10 @@
 .. SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 .. SPDX-License-Identifier: Apache-2.0
 
+.. Seven '=' are a Git conflict marker while a merge is pending.
+
 Televiz
-=======
+========
 
 Televiz (``isaaccapture.viz``) is the visualization module for Isaac Teleop. It composites what the
 operator sees — camera and sensor feeds, plus 3D rendered content such as gsplat or nvblox — and

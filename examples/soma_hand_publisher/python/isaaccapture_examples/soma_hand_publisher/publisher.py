@@ -20,7 +20,7 @@ from isaaccapture.schema import (
     Point,
     Pose,
     Quaternion,
-    SomaHandedness,
+    SomaHandSide,
     SomaHandJoint,
     SomaHandJointPose,
     SomaHandJointPoses,
@@ -150,31 +150,31 @@ def demo_hand_frames(path: Path, body, hands):
     return frames
 
 
-def soma_joint_rotations(rotations, translation, handedness):
+def soma_joint_rotations(rotations, translation, hand_side):
     joints = [
         SomaHandJointRotation(joint, Quaternion(*rotation))
         for joint, rotation in zip(HAND_JOINTS, rotations, strict=True)
     ]
-    return SomaHandJointRotations(joints, Point(*translation), True, handedness)
+    return SomaHandJointRotations(joints, Point(*translation), True, hand_side)
 
 
-def soma_joint_poses(positions, orientations, handedness):
+def soma_joint_poses(positions, orientations, hand_side):
     joints = [
         SomaHandJointPose(joint, Pose(Point(*position), Quaternion(*orientation)))
         for joint, position, orientation in zip(
             HAND_JOINTS, positions, orientations, strict=True
         )
     ]
-    return SomaHandJointPoses(joints, handedness)
+    return SomaHandJointPoses(joints, hand_side)
 
 
-def _payload(frame, index: int, representation: str, handedness):
+def _payload(frame, index: int, representation: str, hand_side):
     if representation == "joint-poses":
         return soma_joint_poses(
-            frame["positions"][index], frame["orientations"][index], handedness
+            frame["positions"][index], frame["orientations"][index], hand_side
         ).to_bytes()
     return soma_joint_rotations(
-        frame["rotations"][index], frame["translation"][index], handedness
+        frame["rotations"][index], frame["translation"][index], hand_side
     ).to_bytes()
 
 
@@ -237,13 +237,13 @@ def main(argv: list[str]) -> int:
                         frames["left"],
                         index,
                         args.hand_representation,
-                        SomaHandedness.LEFT,
+                        SomaHandSide.LEFT,
                     )
                     right = _payload(
                         frames["right"],
                         index,
                         args.hand_representation,
-                        SomaHandedness.RIGHT,
+                        SomaHandSide.RIGHT,
                     )
                     if len(left) > max_payload_size or len(right) > max_payload_size:
                         raise ValueError("SOMA hand payload exceeds transport capacity")

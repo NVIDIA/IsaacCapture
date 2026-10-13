@@ -13,8 +13,13 @@ import json
 import math
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING
 
 from ._records import ByteVector, RecordDecoder
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+    from typing import Any
 
 STREAMS = ("left_rgb", "right_rgb", "accel", "gyro", "audio")
 _TOPICS = {
@@ -389,7 +394,7 @@ def _format(value):
         raise ValueError(f"Unknown EGO pixel format: {value}") from error
 
 
-def recording_fingerprint(recording):
+def recording_fingerprint(recording: str | Path) -> dict[str, str | dict[str, str]]:
     """Hash the MCAP and the media files referenced by its canonical records."""
     return _fingerprint(_load(recording))
 
@@ -1103,15 +1108,15 @@ def _arguments(
 
 
 def iter_sync_windows(
-    recording,
+    recording: str | Path,
     *,
-    required_streams,
-    alignment=None,
-    reference_stream="left_rgb",
-    epoch=None,
-    start_time_ns=None,
-    end_time_ns=None,
-):
+    required_streams: Iterable[str],
+    alignment: dict[str, Any] | str | Path | None = None,
+    reference_stream: str = "left_rgb",
+    epoch: int | None = None,
+    start_time_ns: int | None = None,
+    end_time_ns: int | None = None,
+) -> Iterator[SyncWindow]:
     """Yield immutable half-open reference-frame windows from a validated model.
 
     Full windows only are returned within a requested range. Epoch/model tails
@@ -1239,15 +1244,15 @@ def _unassigned(loaded, assigned, assigned_audio, epoch):
 
 
 def analyze_recording_sync(
-    recording,
+    recording: str | Path,
     *,
-    required_streams=None,
-    alignment=None,
-    reference_stream="left_rgb",
-    epoch=None,
-    start_time_ns=None,
-    end_time_ns=None,
-):
+    required_streams: Iterable[str] | None = None,
+    alignment: dict[str, Any] | str | Path | None = None,
+    reference_stream: str = "left_rgb",
+    epoch: int | None = None,
+    start_time_ns: int | None = None,
+    end_time_ns: int | None = None,
+) -> dict[str, Any]:
     """Audit all retained records; associations require independently validated timing."""
     required = _arguments(
         required_streams, reference_stream, epoch, start_time_ns, end_time_ns, True

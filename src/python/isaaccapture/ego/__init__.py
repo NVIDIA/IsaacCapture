@@ -3,9 +3,15 @@
 
 """EGO recording, clock calibration, and offline sample association."""
 
+from __future__ import annotations
+
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from .recording import configure_recording, embedded_recording
+
+if TYPE_CHECKING:
+    from typing import Any
 
 _SYNC_EXPORTS = (
     "RecordReference",
@@ -46,7 +52,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> Any:
     if name in _SYNC_EXPORTS:
         module = import_module(".sync", __name__)
     elif name in _CALIBRATION_EXPORTS:

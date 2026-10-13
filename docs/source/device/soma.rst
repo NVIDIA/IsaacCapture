@@ -30,8 +30,9 @@ select their body and hand sources independently.
 
 The body schema contains SOMA's complete body control set, including its hand
 controls. The standalone hand schemas provide independent left and right hand
-streams. Isaac Teleop does not automatically fuse standalone hands with the
-hand controls in a body payload.
+streams, identified by ``hand_side`` (``SomaHandSide.LEFT`` or
+``SomaHandSide.RIGHT``). Isaac Teleop does not automatically fuse standalone
+hands with the hand controls in a body payload.
 
 Choose a representation
 -----------------------
