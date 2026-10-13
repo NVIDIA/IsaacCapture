@@ -718,6 +718,20 @@ def test_print_host_preflight_warnings_busy_port(capsys) -> None:
     assert "PROXY_PORT" in out
 
 
+def test_host_preflight_warning_can_use_logger_only(capsys) -> None:
+    with (
+        patch("cloudxr_py_test_ns.oob_teleop_env._port_in_use", return_value=True),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_env._ufw_unallowed_ports",
+            return_value=None,
+        ),
+        patch("cloudxr_py_test_ns.oob_teleop_env.log.warning") as warning,
+    ):
+        print_host_preflight_warnings(usb_local=False, emit_console=False)
+    assert capsys.readouterr().out == ""
+    warning.assert_called_once()
+
+
 def test_print_host_preflight_warnings_ufw_blocks(capsys) -> None:
     """ufw blocking the proxy port prints a warning with the ufw allow command."""
     with (

@@ -817,7 +817,9 @@ def ss_listeners_on_port(port: int) -> list[str]:
     return out
 
 
-def print_host_preflight_warnings(*, usb_local: bool) -> None:
+def print_host_preflight_warnings(
+    *, usb_local: bool, emit_console: bool = True
+) -> None:
     """Best-effort host preflight (port conflicts + ufw).
 
     In ``--usb-local`` mode this is fail-fast: a port conflict on any of
@@ -830,6 +832,8 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
     ufw findings are always warn-only (best-effort: ``status`` parsing
     can yield false positives on permissive rulesets), and ufw is only
     checked in WiFi mode (USB-local is loopback, not firewalled).
+    Shared service callers use ``emit_console=False`` to avoid duplicating
+    logger warnings in embedded operator terminals.
 
     The WSS proxy binds the wildcard address (``host=""`` in
     :mod:`websockets`, i.e. ``0.0.0.0``), but we probe via loopback
@@ -860,19 +864,21 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
                 "then retry."
             )
         log.warning("preflight: port(s) already in use: %s", busy)
-        print(
-            f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
-            f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
-            "PROXY_PORT.\033[0m\n"
-        )
+        if emit_console:
+            print(
+                f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
+                f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
+                "PROXY_PORT.\033[0m\n"
+            )
     # ufw is only meaningful in WiFi mode (USB-local is loopback, not firewalled).
     if not usb_local:
         unallowed = _ufw_unallowed_ports([wss_proxy_port()])
         if unallowed:
             cmd = "; ".join(f"sudo ufw allow {p}/tcp" for p in unallowed)
             log.warning("preflight: ufw blocks port(s) %s", unallowed)
-            print(
-                f"\n\033[33m[preflight] ufw is active and may block port(s) "
-                f"{unallowed} from reaching the headset. Allow with: {cmd}"
-                "\033[0m\n"
-            )
+            if emit_console:
+                print(
+                    f"\n\033[33m[preflight] ufw is active and may block port(s) "
+                    f"{unallowed} from reaching the headset. Allow with: {cmd}"
+                    "\033[0m\n"
+                )

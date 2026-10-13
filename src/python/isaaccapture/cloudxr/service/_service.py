@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..env_config import DEFAULT_DEVICE_PROFILE, ENV_FILE_NAME, EnvConfig
+from ..oob_teleop_env import oob_progress
+from ..oob_teleop_progress import OobProgressReporter
 from ...logging_config._core import logging_enabled
 from ...logging_config._native_api import native_capture_fd, native_capture_path
 from ..runtime import (
@@ -171,6 +173,11 @@ class CloudXRService:
         self._usb_local = usb_local
         self._host_client = host_client
 
+        if setup_oob and (usb_local or host_client):
+            oob_progress(
+                "usb-local" if usb_local else "setup-oob",
+                "host preflight: checking web client assets",
+            )
         if self._usb_local or self._host_client:
             from ..oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
 
@@ -190,6 +197,8 @@ class CloudXRService:
         self._oob_publish_lock = asyncio.Lock()
         self._oob_snapshot: dict | None = None
         self._oob_updates: deque[dict] = deque(maxlen=128)
+        # Shared publication reaches embedded owners; the service CLI does not.
+        self._oob_progress_reporter = OobProgressReporter() if setup_oob else None
         self._oob_session_id = uuid.uuid4().hex
         self._fatal_error: Exception | None = None
         self._fatal_supervisor: threading.Thread | None = None
@@ -219,10 +228,22 @@ class CloudXRService:
                 require_turn_port_free,
             )
             from ..oob_teleop_env import (  # noqa: PLC0415
+                print_host_preflight_warnings,
                 resolve_lan_host_for_oob,
                 usb_turn_port,
             )
 
+            stage = "usb-local" if usb_local else "setup-oob"
+            oob_progress(
+                stage,
+                f"recovery episode {self._recovery_config.timeout_sec:g}s, "
+                f"retry/observe {self._recovery_config.interval_sec:g}s",
+            )
+            oob_progress(
+                stage, "host preflight: checking adb and transport dependencies"
+            )
+            if not usb_local and os.getenv("TELEOP_OOB_HUB_ONLY"):
+                oob_progress(stage, "hub-only mode; skipping adb preflight")
             if usb_local or not os.getenv("TELEOP_OOB_HUB_ONLY"):
                 require_adb_on_path()
             if usb_local:
@@ -230,6 +251,8 @@ class CloudXRService:
                 require_turn_port_free(usb_turn_port())
             else:
                 resolve_lan_host_for_oob()
+            print_host_preflight_warnings(usb_local=usb_local, emit_console=False)
+            oob_progress(stage, "host preflight OK; starting CloudXR runtime")
         try:
             self._oob_status_path.unlink(missing_ok=True)
         except OSError as exc:
@@ -322,6 +345,11 @@ class CloudXRService:
             self.stop()
             raise
         logger.info("CloudXR WSS proxy listening (log=%s)", wss_log_path)
+        if setup_oob:
+            oob_progress(
+                "usb-local" if usb_local else "setup-oob",
+                "runtime and OOB proxy listening; headset setup may still be pending",
+            )
 
     # ------------------------------------------------------------------
     # Context manager
@@ -438,6 +466,11 @@ class CloudXRService:
                 # so it cannot recreate a stale status file after cleanup.
                 await persistence
                 raise
+            reporter = getattr(self, "_oob_progress_reporter", None)
+            if reporter is not None:
+                stage = "usb-local" if self._usb_local else "setup-oob"
+                for message in reporter.observe(payload):
+                    oob_progress(stage, message)
 
     def oob_status(self) -> dict | None:
         """Return the latest lifecycle snapshot without touching the WSS event loop."""
@@ -504,6 +537,7 @@ class CloudXRService:
             payload["readinessSince"] = payload["updatedAt"]
             self._oob_snapshot = payload
             self._oob_updates.append(payload)
+        logger.error("OOB stopped: %s", reason)
         self._fatal_supervisor = threading.Thread(
             target=self._stop_after_oob_fatal,
             name="cloudxr-oob-fatal-supervisor",
