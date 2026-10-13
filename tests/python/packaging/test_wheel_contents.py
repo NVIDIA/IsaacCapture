@@ -121,3 +121,16 @@ def test_spacemouse_plugin_ships_runnable_for_teleop_session() -> None:
         assert (info.external_attr >> 16) & 0o111, (
             f"{info.filename} lost its executable bit"
         )
+
+
+def test_capture_license_ships_in_distribution_metadata() -> None:
+    with zipfile.ZipFile(_wheel()) as archive:
+        metadata_path = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+        assert metadata["License-Expression"] == "Apache-2.0"
+        assert "LICENSE.md" in metadata.get_all("License-File", [])
+        license_path = metadata_path.removesuffix("METADATA") + "licenses/LICENSE.md"
+        assert archive.read(license_path) == (repo_root() / "LICENSE.md").read_bytes()
+        assert not any("isaaccapture_egopost/" in name for name in archive.namelist())

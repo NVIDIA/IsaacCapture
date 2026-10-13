@@ -47,6 +47,24 @@ If you cannot run a shell, use your search/glob tools on the pattern `**/AGENTS.
 
 Optional context index: [`src/core/AGENTS.md`](src/core/AGENTS.md) (also on the ancestor walk—read it when working under `src/core/`).
 
+## Product naming
+
+- Spell the product name “Isaac Capture” in prose; avoid the ambiguous shorthand “Capture”.
+
+## Component licensing
+
+- Keep licensing summaries brief in README and CONTRIBUTING; automate routine
+  checks and updates rather than documenting manual header maintenance.
+
+- Preserve root `LICENSE.md` verbatim as Apache-2.0; explain component exceptions
+  in README/CONTRIBUTING and local license files, so GitHub can recognize the default.
+- EgoPost uses `LicenseRef-OpenMDW-1.1`; preserve upstream exceptions and notices.
+  Keep license-boundary changes separate from copyright-template and year-policy changes.
+- Keep canonical texts in `LICENSES/` unmodified, including template placeholders;
+  do not prepend project copyright or SPDX headers or include them in header repair.
+- Source hosting does not authorize wheel inclusion. Keep package discovery explicit
+  and verify license metadata/notices in each artifact before shipping a new component.
+
 ## CMake & include structure
 
 When you create or edit a `CMakeLists.txt`, add or move a target, place a header,

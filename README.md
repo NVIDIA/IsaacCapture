@@ -63,3 +63,9 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 Isaac Teleop is design to work side by side with [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) starting with Isaac Lab [3.0 Beta release](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-beta).
 
 To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html) guide for more details. Then follow the [CloudXR teleoperation in Isaac Lab](https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html) to get started with Teleoperation in Sim.
+
+## Licensing
+
+The default license is [Apache-2.0](LICENSE.md).
+EgoPost is licensed under [OpenMDW-1.1](src/python/isaaccapture_egopost/LICENSE.md).
+Third-party materials may carry their own licenses.
