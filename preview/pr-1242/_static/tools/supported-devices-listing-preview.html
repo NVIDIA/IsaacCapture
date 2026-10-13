@@ -1,0 +1,1557 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Standalone preview of one row in the Ecosystem page's Supported Devices table, for the
+company that makes the device. Nothing is uploaded: logos are read with FileReader.
+
+Each stage is an iframe that loads ../css/ecosystem.css and carries the theme's computed
+--pst-* tokens (STAGE_CSS), so the page only draws correctly when served next to that file.
+rowHtml() and its helpers mirror docs/source/_ext/ecosystem_grid.py; change one, change both.
+
+Table widths are measured from the built page: 781px in a window of 1440px or more, 592px
+at 1200px (the narrowest window that keeps the table), 358px on a 390px phone. The table
+stacks below a 900px viewport, so a desktop stage iframe is 901px wide and clipped.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isaac Teleop — Supported device listing preview</title>
+<style>
+* { box-sizing: border-box; }
+
+/* The tool chrome is not themed: only the stages flip to dark, so the controls stay
+   readable while you judge the dark row. */
+body {
+    margin: 0;
+    padding: 0 24px 64px;
+    background: #f2f4f7;
+    color: #1f2328;
+    font-family: NVIDIA, Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+}
+
+a { color: #4a7a00; }
+
+.wrap { max-width: 1400px; margin: 0 auto; }
+
+header.tool-head { padding: 32px 0 20px; }
+
+.tool-title {
+    margin: 0 0 6px;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.tool-lede { max-width: 72ch; margin: 0; color: #4b535c; }
+
+.tool-lede strong { color: #1f2328; }
+
+.tool-ref { margin-top: 8px; }
+
+.tool-ref a { font-weight: 600; }
+
+/* The preview column has to hold the widest table (781px) plus its stage padding. */
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+}
+
+@media (max-width: 1340px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.tool-panel {
+    padding: 20px;
+    border: 1px solid #dfe3e8;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.tool-panel + .tool-panel { margin-top: 20px; }
+
+.tool-panel-title {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin: 0 0 4px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #6b7480;
+}
+
+.tool-panel-note { margin: 0 0 16px; font-size: 13px; color: #6b7480; }
+
+.tool-panel-note code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #eef1f4;
+    font-family: RobotoMono, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: #1f2328;
+}
+
+.panel-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Reads as one sentence across the two buttons, so nobody takes the second for a button
+   that uploads on their behalf. */
+.step-sep { font-size: 11px; font-weight: 600; color: #8a929c; }
+
+.field { margin-bottom: 16px; }
+
+.field:last-child { margin-bottom: 0; }
+
+.field > label,
+.field > .label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 5px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.opt { font-weight: 400; color: #8a929c; }
+
+.hint { margin: 5px 0 0; font-size: 12px; color: #767e88; }
+
+.count { font-size: 11px; font-variant-numeric: tabular-nums; color: #8a929c; }
+
+.count.over { color: #b3261e; font-weight: 600; }
+
+input[type="text"], input[type="url"], input[type="email"], input[type="tel"], select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #cdd3da;
+    border-radius: 6px;
+    background: #fff;
+    color: inherit;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid #76b900;
+    outline-offset: 1px;
+}
+
+.row { display: flex; gap: 10px; }
+
+.row > * { flex: 1; min-width: 0; }
+
+/* ---- details columns ---- */
+
+.col-block + .col-block {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #eef1f4;
+}
+
+.col-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.entry {
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid #e3e7ec;
+    border-radius: 8px;
+    background: #fafbfc;
+}
+
+.entry .row + .row,
+.entry .row + input,
+.entry input + input { margin-top: 8px; }
+
+.entry-kind { flex: 0 0 104px !important; }
+
+.entry-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+
+/* ---- segmented switches ---- */
+
+.seg {
+    display: inline-flex;
+    padding: 2px;
+    border: 1px solid #cdd3da;
+    border-radius: 8px;
+    background: #f7f8fa;
+}
+
+.seg button {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: #4b535c;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.seg button[aria-pressed="true"] {
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.16);
+    color: #1f2328;
+}
+
+/* ---- buttons ---- */
+
+.btn {
+    padding: 8px 14px;
+    border: 1px solid #cdd3da;
+    border-radius: 6px;
+    background: #fff;
+    color: #1f2328;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn:hover { border-color: #76b900; }
+
+.btn.primary { border-color: #76b900; background: #76b900; color: #10240a; }
+
+/* An <a> inherits the panel title's uppercase and tracking, which a <button> does not. */
+a.btn {
+    display: inline-block;
+    text-decoration: none;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.btn.link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #4a7a00;
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: normal;
+    text-decoration: underline;
+}
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---- logo drop zones ---- */
+
+.drop {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px;
+    border: 1px dashed #b9c0c8;
+    border-radius: 8px;
+    background: #fafbfc;
+    font-size: 12px;
+    color: #767e88;
+    cursor: pointer;
+}
+
+.drop.is-over { border-color: #76b900; background: #f3f9e8; }
+
+.drop input { display: none; }
+
+.drop-name { font-size: 13px; font-weight: 600; color: #1f2328; }
+
+/* ---- preview ---- */
+
+.preview-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+    margin-bottom: 16px;
+}
+
+.preview-bar .grp {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7480;
+}
+
+.stage-wrap + .stage-wrap { margin-top: 18px; }
+
+.stage-label {
+    margin: 0 0 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8a929c;
+}
+
+/* Clips the iframe to the table width: the iframe is wider so the page's 900px
+   breakpoint does not stack the rows. */
+.stage {
+    box-sizing: content-box;
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid #dfe3e8;
+    border-radius: 8px;
+}
+
+.stage iframe {
+    display: block;
+    height: 120px;
+    border: 0;
+}
+
+.size-readout { margin: 12px 0 0; font-size: 12px; color: #767e88; }
+
+.checks { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+
+.checks li { display: flex; gap: 10px; padding: 6px 0; }
+
+.checks li + li { border-top: 1px solid #f0f2f5; }
+
+.checks .mark {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    color: #fff;
+}
+
+.checks .ok .mark { background: #4a7a00; }
+
+.checks .warn .mark { background: #b77800; }
+
+.checks .bad .mark { background: #b3261e; }
+
+.checks .info .mark { background: #8a929c; }
+
+pre.out {
+    max-height: 360px;
+    margin: 0;
+    padding: 14px;
+    overflow: auto;
+    border-radius: 8px;
+    background: #10151b;
+    color: #d6e2c2;
+    font-family: RobotoMono, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: #1f2328;
+    color: #fff;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(8px);
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="tool-head">
+    <h1 class="tool-title">Supported device listing preview</h1>
+    <p class="tool-lede">
+        Fill in your device and this page draws its row in the Isaac Teleop Supported Devices
+        table, with the docs site's own styles, in both themes and at desktop and phone widths.
+        <strong>Everything stays in your browser:</strong> your logo is read locally and never
+        uploaded. When the row looks right, download the archive at the bottom and send it to
+        us through the upload form.
+    </p>
+    <p class="tool-lede tool-ref">
+        <a href="../../overview/ecosystem.html" target="_blank" rel="noopener noreferrer">See the live Ecosystem page <span aria-hidden="true">&#8599;</span></a>
+        for how listed devices fill in each field.
+    </p>
+</header>
+
+<div class="layout">
+
+    <!-- ------------------------------------------------------------ controls -->
+    <div>
+        <section class="tool-panel">
+            <p class="tool-panel-title">Device <button class="btn link" id="load-example" type="button">Load example</button></p>
+            <p class="tool-panel-note">The table is read at a glance, so every field is a short phrase rather than a sentence.</p>
+
+            <div class="field">
+                <label for="f-name">Device name <span class="count" id="c-name"></span></label>
+                <input type="text" id="f-name" placeholder="Acme Haptic Glove" autocomplete="off">
+                <p class="hint">The row label. It links to your product page, so the row needs no separate link to it.</p>
+            </div>
+
+            <div class="field">
+                <label for="f-url">Product page <span class="opt">required</span></label>
+                <input type="url" id="f-url" placeholder="https://example.com/products/haptic-glove" autocomplete="off">
+            </div>
+
+            <div class="field">
+                <label for="f-modes">Input modes <span class="count" id="c-modes"></span></label>
+                <input type="text" id="f-modes" placeholder="Finger tracking, haptic feedback" autocomplete="off">
+                <p class="hint">What the device feeds Isaac Teleop. It decides which retargeters apply, so we check it against our own documentation for the device.</p>
+            </div>
+        </section>
+
+        <section class="tool-panel">
+            <p class="tool-panel-title">Company mark</p>
+            <p class="tool-panel-note">
+                Shown at the top of the Details panel, 20&nbsp;px tall and at most
+                144&nbsp;px wide. A horizontal wordmark in SVG with a transparent background
+                reads best. Leave it out and the listing shows no company.
+            </p>
+
+            <div class="field">
+                <label for="f-company">Company name <span class="opt">required with a logo</span></label>
+                <input type="text" id="f-company" placeholder="Acme Robotics" autocomplete="off">
+                <p class="hint">The logo's alternative text, for screen readers. The listing names your company nowhere else.</p>
+            </div>
+
+            <div class="field">
+                <span class="label">Logo file</span>
+                <label class="drop" id="drop-light">
+                    <input type="file" id="f-logo" accept=".svg,image/svg+xml,.png,image/png">
+                    <span class="drop-name" id="name-light">Drop an SVG here, or click to choose</span>
+                    <span id="sub-light">SVG preferred · PNG accepted at 3&times; size</span>
+                </label>
+                <p class="hint"><button class="btn link" id="clear-light" type="button">Remove logo</button></p>
+            </div>
+
+            <div class="field">
+                <span class="label">Dark-theme variant <span class="opt">optional</span></span>
+                <label class="drop" id="drop-dark">
+                    <input type="file" id="f-logo-dark" accept=".svg,image/svg+xml,.png,image/png">
+                    <span class="drop-name" id="name-dark">Drop a second file for dark mode</span>
+                    <span id="sub-dark">Only needed if your mark is a single dark or light color</span>
+                </label>
+                <p class="hint"><button class="btn link" id="clear-dark" type="button">Remove dark variant</button></p>
+            </div>
+        </section>
+
+        <section class="tool-panel">
+            <p class="tool-panel-title">Details panel</p>
+            <p class="tool-panel-note">
+                Three columns, always in this order. Each entry is a noun phrase, a link, or a way
+                to reach someone, with no trailing period. An empty column shows a dash; leave all
+                three empty and the row gets no Details button.
+            </p>
+            <div id="columns"></div>
+        </section>
+    </div>
+
+    <!-- ------------------------------------------------------------- preview -->
+    <div>
+        <section class="tool-panel">
+            <div class="preview-bar">
+                <div class="grp">
+                    <span>Theme</span>
+                    <div class="seg" id="seg-theme">
+                        <button type="button" data-v="light" aria-pressed="true">Light</button>
+                        <button type="button" data-v="dark" aria-pressed="false">Dark</button>
+                        <button type="button" data-v="both" aria-pressed="false">Both</button>
+                    </div>
+                </div>
+                <div class="grp">
+                    <span>Width</span>
+                    <div class="seg" id="seg-width">
+                        <button type="button" data-v="781" aria-pressed="true">Wide 781px</button>
+                        <button type="button" data-v="592" aria-pressed="false">Narrow 592px</button>
+                        <button type="button" data-v="358" aria-pressed="false">Phone 358px</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="stages"></div>
+            <p class="size-readout" id="readout"></p>
+        </section>
+
+        <section class="tool-panel">
+            <p class="tool-panel-title">Checks</p>
+            <ul class="checks" id="checks"></ul>
+        </section>
+
+        <section class="tool-panel">
+            <p class="tool-panel-title">
+                Send us this
+                <span class="panel-actions">
+                    <button class="btn primary" id="download-zip" type="button">Download .zip</button>
+                    <span class="step-sep">then</span>
+                    <a class="btn" href="https://forms.gle/fATPBXKNi9yFcKwb8" target="_blank" rel="noopener noreferrer">Open the upload form <span aria-hidden="true">&#8599;</span></a>
+                </span>
+            </p>
+            <p class="tool-panel-note">
+                <code id="zip-filename">listing.zip</code> is everything we need in one
+                attachment: this record, your logo files renamed to match it, and a plain-text
+                summary. We add the table group and the release tag ourselves. Save the
+                archive first, then attach it in the upload form, or email it to whoever you
+                have been talking to here.
+            </p>
+            <pre class="out" id="yaml"></pre>
+        </section>
+
+        <section class="tool-panel">
+            <p class="tool-panel-title">Copy and reset</p>
+            <div class="btn-row">
+                <button class="btn" id="copy-summary" type="button">Copy summary</button>
+                <button class="btn" id="copy-yaml" type="button">Copy YAML</button>
+                <button class="btn" id="reset" type="button">Clear everything</button>
+            </div>
+            <p class="hint">
+                The copies hold the same record as the archive. Your entries stay in this browser
+                only, so you can close the tab and come back.
+            </p>
+        </section>
+    </div>
+</div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+const PROJECT_REPO = "https://github.com/NVIDIA/IsaacTeleop";
+const STORE_KEY = "isaac-teleop-supported-devices-listing-preview";
+const ECO_CSS = new URL("../css/ecosystem.css", location.href).href;
+const LOGO_DIR = new URL("../logos/", location.href).href;
+const DISCLOSURE_GROUP = "isaac-teleop-device";
+const NAME_LIMIT = 34;
+const MODES_LIMIT = 60;
+/* .device-panel-head img is 1.25rem tall and at most 9rem wide; a wider mark is squashed. */
+const LOGO_MAX_ASPECT = 9 / 1.25;
+
+const ARROW = '<svg class="eco-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+    ' stroke-width="2" aria-hidden="true" focusable="false"><path d="M7 17 17 7M9 7h8v8"></path></svg>';
+
+const FONT_FACES = [300, 400, 500, 700].map((weight) => {
+    const file = { 300: "Lt", 400: "Rg", 500: "Md", 700: "Bd" }[weight];
+    const base = "https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_" + file;
+    return "@font-face{font-family:NVIDIA;font-style:normal;font-weight:" + weight +
+        ";src:url(" + base + '.woff2) format("woff2"),url(' + base + '.woff) format("woff")}';
+}).join("\n");
+
+/* The theme's computed tokens and base rules that ecosystem.css relies on. */
+const STAGE_CSS = `
+*, ::before, ::after { box-sizing: border-box; }
+html {
+    font-size: 16px;
+    --pst-font-family-base: NVIDIA, Arial, Helvetica, Sans-Serif;
+    --pst-font-family-monospace: RobotoMono, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, Courier, monospace;
+    --pst-color-primary: #76B900;
+    --pst-color-link: #76B900;
+}
+html[data-theme="light"] {
+    --pst-color-background: #fff;
+    --pst-color-surface: #f5f5f5;
+    --pst-color-text-base: #323232;
+    --pst-color-text-muted: #646464;
+    --pst-color-border: #c9c9c9;
+    --pst-color-border-muted: rgba(23, 23, 26, 0.2);
+    --pst-color-link-hover: #789841;
+}
+html[data-theme="dark"] {
+    --pst-color-background: #121212;
+    --pst-color-surface: #212121;
+    --pst-color-text-base: #cecece;
+    --pst-color-text-muted: #a6a6a6;
+    --pst-color-border: silver;
+    --pst-color-border-muted: #29313d;
+    --pst-color-link-hover: #aee354;
+}
+body {
+    margin: 0;
+    padding: 16px;
+    background: var(--pst-color-background);
+    color: var(--pst-color-text-base);
+    font-family: var(--pst-font-family-base);
+    font-size: 1rem;
+    line-height: 1.65;
+}
+a { color: var(--pst-color-link); text-decoration: none; }
+a:hover, a:focus { text-decoration: underline; }
+h4 { font-family: var(--pst-font-family-base); line-height: 1.15; }
+img { vertical-align: middle; }
+html[data-theme="light"] .only-dark,
+html[data-theme="dark"] .only-light { display: none !important; }
+`;
+
+const WIDTHS = {
+    "781": "the table in a browser window 1440px wide or more",
+    "592": "the table in a 1200px window, the narrowest that still lays it out as a table",
+    "358": "a 390px phone, where each row stacks into a record",
+};
+
+const COLUMNS = [
+    {
+        key: "setup",
+        heading: "Set up",
+        hint: "Where to start: your plugin or SDK repository, an integration guide. We add links to our own docs ourselves.",
+        text: "Isaac Teleop Web Client",
+        label: "Acme Glove SDK",
+    },
+    {
+        key: "requirements",
+        heading: "Requirements",
+        hint: "What the workstation or the device needs: software and firmware versions, connections.",
+        text: "Acme SDK 2.0 or newer",
+        label: "Acme Hub for Linux",
+    },
+    {
+        key: "acquire",
+        heading: "Acquire",
+        hint: "Where to buy or who to contact. Your product page is already the row's name link, so do not repeat it here.",
+        text: "Sales contact name",
+        label: "example.com store",
+    },
+];
+
+const KINDS = [["text", "Text"], ["link", "Link"], ["email", "Email"], ["phone", "Phone"]];
+
+const EXAMPLE = {
+    name: "MANUS Metagloves Pro",
+    url: "https://www.manus-meta.com/products/metagloves-pro",
+    modes: "High-fidelity finger tracking",
+    company: "MANUS",
+    details: {
+        setup: [{ kind: "link", label: "MANUS Gloves Plugin", value: PROJECT_REPO + "/tree/main/src/plugins/manus", note: "" }],
+        requirements: [
+            { kind: "text", value: "MANUS SDK" },
+            { kind: "text", value: "USB receiver on the workstation" },
+        ],
+        acquire: [
+            { kind: "link", label: "manus-meta.com", value: "https://www.manus-meta.com/", note: "" },
+            { kind: "email", value: "sales@manus-meta.com" },
+        ],
+    },
+};
+
+function emptyDetails() {
+    return { setup: [], requirements: [], acquire: [] };
+}
+
+const state = {
+    name: "",
+    url: "",
+    modes: "",
+    company: "",
+    details: emptyDetails(),
+    logo: null,      // { name, size, dataUrl, text, isSvg, aspect }
+    logoDark: null,
+    theme: "light",
+    width: "781",
+};
+
+const $ = (id) => document.getElementById(id);
+
+function esc(text) {
+    return String(text).replace(/[&<>"']/g, (c) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+}
+
+function toast(message) {
+    const el = $("toast");
+    el.textContent = message;
+    el.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+function slug(text) {
+    return String(text).toLowerCase().trim()
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/* ------------------------------------------------------------ the record -- */
+
+function isHttp(url) {
+    return /^https?:\/\/\S+$/.test(String(url).trim());
+}
+
+/* An entry the form holds, as the entry devices.yaml would carry: a string or a mapping. */
+function toEntry(item) {
+    const value = (item.value || "").trim();
+    if (item.kind === "text") return value || null;
+    if (item.kind === "email") return value ? { email: value } : null;
+    if (item.kind === "phone") return value ? { phone: value } : null;
+    const label = (item.label || "").trim();
+    if (!label && !value) return null;
+    const entry = { label: label, url: value };
+    if ((item.note || "").trim()) entry.note = item.note.trim();
+    return entry;
+}
+
+function recordDetails() {
+    const details = {};
+    for (const column of COLUMNS) {
+        const entries = state.details[column.key].map(toEntry).filter((e) => e !== null);
+        if (entries.length) details[column.key] = entries;
+    }
+    return Object.keys(details).length ? details : null;
+}
+
+function companyLogoName(logo, dark) {
+    return (slug(state.company) || "company") + (dark ? "-dark" : "") + (logo.isSvg ? ".svg" : ".png");
+}
+
+/* ---------------------------------------------- markup: ecosystem_grid.py -- */
+
+function isExternal(url) {
+    return !String(url).startsWith(PROJECT_REPO);
+}
+
+const EXTERNAL_LABEL = '<span class="eco-link-external-label"> (external)</span>';
+
+function deviceNameHtml(record) {
+    return '<p class="device-name"><a class="reference external" href="' +
+        esc(record.url || "#") + '">' + esc(record.name) + EXTERNAL_LABEL + "</a></p>";
+}
+
+function detailLineHtml(entry) {
+    let inner;
+    if (typeof entry === "string") {
+        inner = esc(entry);
+    } else if (entry.email) {
+        inner = '<a class="reference external" href="mailto:' + esc(entry.email) + '">' + esc(entry.email) + "</a>";
+    } else if (entry.phone) {
+        inner = '<a class="reference external" href="tel:' + esc(String(entry.phone).replace(/[^\d+]/g, "")) + '">' +
+            esc(entry.phone) + "</a>";
+    } else {
+        const marker = entry.url && isExternal(entry.url) ? ARROW + EXTERNAL_LABEL : "";
+        inner = '<a class="reference external" href="' + esc(entry.url || "#") + '">' +
+            esc(entry.label || "Link") + marker + "</a>";
+    }
+    if (entry.note) inner += " — " + esc(entry.note);
+    return '<p class="device-panel-line">' + inner + "</p>";
+}
+
+function sinceHtml(since) {
+    if (since === "main") {
+        return '<span class="device-since"><a class="device-since-branch is-main reference external" href="' +
+            PROJECT_REPO + '/tree/main">main</a></span>';
+    }
+    return '<span class="device-since"><span class="device-since-label">Since</span>' +
+        '<a class="device-since-branch reference external" href="' + PROJECT_REPO + "/releases/tag/" +
+        esc(since) + '">' + esc(since) + "</a></span>";
+}
+
+function companyHeadHtml(company) {
+    const alt = esc(company.name);
+    if (company.logoDark) {
+        return '<p class="device-panel-head"><img alt="' + alt + '" class="only-light" src="' + company.logo + '" />' +
+            '<img alt="' + alt + '" class="only-dark pst-js-only" src="' + company.logoDark + '" /></p>';
+    }
+    return '<p class="device-panel-head"><img alt="' + alt + '" src="' + company.logo + '" /></p>';
+}
+
+function panelHtml(record, panelId) {
+    let html = '<div class="device-panel" id="' + panelId + '">';
+    if (record.company) html += companyHeadHtml(record.company);
+    for (const column of COLUMNS) {
+        const entries = record.details[column.key] || ["—"];
+        html += '<div class="device-panel-col"><h4 class="device-panel-heading">' + column.heading + "</h4>";
+        html += entries.map(detailLineHtml).join("") + "</div>";
+    }
+    if (record.since) html += '<p class="device-panel-foot">' + sinceHtml(record.since) + "</p>";
+    return html + "</div>";
+}
+
+function rowHtml(record, open) {
+    const panelId = "device-" + record.id + "-details";
+    let html = deviceNameHtml(record);
+    html += '<p class="device-modes" data-label="Input modes">' + esc(record.modes) + "</p>";
+    if (!record.details) return html + '<div class="device-action"></div>';
+    html += '<div class="device-action"><details class="device-disclosure" name="' + DISCLOSURE_GROUP + '"' +
+        (open ? " open" : "") + ">" +
+        '<summary aria-controls="' + panelId + '" class="device-toggle">' +
+        '<span class="device-toggle-label">Details</span>' +
+        '<span class="device-toggle-label is-open">Close</span></summary></details></div>';
+    return html + panelHtml(record, panelId);
+}
+
+/* The row the form describes. `since` is ours to set, and a device a release does not
+   carry yet is listed as `main`. */
+function selfRecord() {
+    const details = recordDetails();
+    const record = {
+        id: slug(state.name) || "your-device",
+        name: state.name.trim() || "Device name",
+        url: state.url.trim(),
+        modes: state.modes.trim() || "Input modes",
+        details: details,
+        since: details ? "main" : null,
+    };
+    if (state.logo) {
+        record.company = {
+            name: state.company.trim() || "Company name",
+            logo: state.logo.dataUrl,
+            logoDark: state.logoDark ? state.logoDark.dataUrl : null,
+        };
+    }
+    return record;
+}
+
+function matrixHtml(open) {
+    return '<div class="device-matrix"><div class="device-grid">' +
+        '<p class="device-col">Device</p><p class="device-col">Input modes</p>' +
+        '<p class="device-col device-col-action"></p>' + rowHtml(selfRecord(), open) + "</div></div>";
+}
+
+/* ----------------------------------------------------------------- stages -- */
+
+let stages = [];
+
+function stageDoc(theme) {
+    return '<!doctype html><html lang="en" data-theme="' + theme + '"><head><meta charset="utf-8">' +
+        '<link rel="stylesheet" href="' + esc(ECO_CSS) + '"><style>' + FONT_FACES + STAGE_CSS +
+        "</style></head><body><main></main></body></html>";
+}
+
+function fitStage(stage) {
+    if (!stage.doc) return;
+    stage.frame.style.height = Math.ceil(stage.doc.body.getBoundingClientRect().height) + "px";
+}
+
+function paintStage(stage) {
+    const doc = stage.doc;
+    const current = doc.querySelector("details.device-disclosure");
+    const open = current ? current.open : true;
+    const main = doc.querySelector("main");
+    main.style.width = stage.width + "px";
+    main.innerHTML = matrixHtml(open);
+    for (const img of main.querySelectorAll("img")) img.addEventListener("load", () => fitStage(stage));
+    fitStage(stage);
+}
+
+function buildStages() {
+    const themes = state.theme === "both" ? ["light", "dark"] : [state.theme];
+    const width = Number(state.width);
+    const phone = state.width === "358";
+    $("stages").innerHTML = "";
+    stages = themes.map((theme) => {
+        const wrap = document.createElement("div");
+        wrap.className = "stage-wrap";
+        wrap.innerHTML = '<p class="stage-label">' + (theme === "dark" ? "Dark" : "Light") + " theme · " +
+            width + "px table</p>";
+        const box = document.createElement("div");
+        box.className = "stage";
+        box.style.width = width + 32 + "px";
+        const frame = document.createElement("iframe");
+        frame.title = "Supported Devices table, " + theme + " theme";
+        frame.style.width = (phone ? width + 32 : Math.max(width + 32, 901)) + "px";
+        const stage = { frame: frame, doc: null, theme: theme, width: width };
+        frame.addEventListener("load", () => {
+            stage.doc = frame.contentDocument;
+            stage.doc.addEventListener("click", (event) => {
+                if (event.target.closest("a")) event.preventDefault();
+            });
+            stage.doc.addEventListener("toggle", () => fitStage(stage), true);
+            paintStage(stage);
+            if (stage.doc.fonts) stage.doc.fonts.ready.then(() => { fitStage(stage); runChecks(); });
+            runChecks();
+        });
+        frame.srcdoc = stageDoc(theme);
+        box.appendChild(frame);
+        wrap.appendChild(box);
+        $("stages").appendChild(wrap);
+        return stage;
+    });
+    $("readout").textContent = "Table: " + width + " px, " + WIDTHS[state.width] +
+        ". The release tag under the panel is ours to set: main until a release carries your plugin.";
+}
+
+/* ----------------------------------------------------------------- checks -- */
+
+/* Colours declared anywhere in an SVG, so a mark that is one solid tone can be called out
+   before it disappears into the panel behind it. */
+function svgLuminance(text) {
+    const found = [];
+    const push = (r, g, b) => found.push(0.2126 * r / 255 + 0.7152 * g / 255 + 0.0722 * b / 255);
+    const hex = /#([0-9a-f]{3}|[0-9a-f]{6})\b/gi;
+    let m;
+    while ((m = hex.exec(text))) {
+        let h = m[1];
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        push(parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16));
+    }
+    const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/gi;
+    while ((m = rgb.exec(text))) push(+m[1], +m[2], +m[3]);
+    if (/["'\s:](black)["'\s;)]/i.test(text)) push(0, 0, 0);
+    if (/["'\s:](white)["'\s;)]/i.test(text)) push(255, 255, 255);
+    return found;
+}
+
+function logoChecks(add, logo, which) {
+    if (!logo.isSvg) {
+        add("warn", "The " + which + " is a PNG. SVG stays sharp on every screen; a PNG needs a transparent background and at least 3× the 20 px it is shown at.");
+    }
+    if (logo.size > 200 * 1024) {
+        add("warn", "The " + which + " is " + Math.round(logo.size / 1024) + " KB, which usually means a photo is embedded in it. Send outlines or paths only.");
+    }
+    if (logo.aspect && logo.aspect > LOGO_MAX_ASPECT) {
+        add("warn", "The " + which + " is " + logo.aspect.toFixed(1) + ":1, wider than the 7.2:1 box it is drawn in (144 × 20 px), so it will be squashed. Send a more compact lockup.");
+    }
+    if (logo.isSvg && logo.text) {
+        if (/<script|\son\w+\s*=/i.test(logo.text)) {
+            add("bad", "The " + which + " contains a script or an event handler. We cannot publish that; export a flattened, static file.");
+        }
+        if (/<image\b/i.test(logo.text)) {
+            add("warn", "The " + which + " embeds a bitmap image, so it will not stay sharp. Convert the artwork to paths.");
+        }
+        if (/(?:href|src)\s*=\s*["']https?:/i.test(logo.text)) {
+            add("warn", "The " + which + " references a remote file, which will not load on our site. Everything has to be inside the file.");
+        }
+        if (!/viewBox\s*=/i.test(logo.text)) {
+            add("warn", "The " + which + " has no viewBox, so it may not scale to the 20 px height. Re-export with one.");
+        }
+    }
+}
+
+function entryChecks(add) {
+    for (const column of COLUMNS) {
+        for (const item of state.details[column.key]) {
+            const entry = toEntry(item);
+            if (entry === null) continue;
+            const where = column.heading + ": ";
+            if (typeof entry === "string") {
+                if (entry.endsWith(".")) add("bad", where + "“" + entry + "” ends in a period. Entries are noun phrases, and our build rejects the period.");
+            } else if (entry.email !== undefined) {
+                if (!entry.email.includes("@")) add("bad", where + "“" + entry.email + "” is not an e-mail address.");
+            } else if (entry.url !== undefined) {
+                if (!entry.label) add("bad", where + "a link needs a label, the text the reader sees.");
+                if (!isHttp(entry.url)) add("bad", where + "“" + (entry.label || "link") + "” needs a full URL starting with https://.");
+                if (entry.note && entry.note.endsWith(".")) add("bad", where + "the note on “" + entry.label + "” ends in a period, which our build rejects.");
+                if (column.key === "acquire" && entry.url && entry.url.replace(/\/$/, "") === state.url.trim().replace(/\/$/, "")) {
+                    add("warn", where + "“" + entry.label + "” repeats your product page, which the device name already links to.");
+                }
+            }
+        }
+    }
+}
+
+function runChecks() {
+    const out = [];
+    const add = (level, text) => out.push({ level, text });
+    const marks = { ok: "\u2713", warn: "!", bad: "\u00d7", info: "i" };
+    const paint = () => {
+        $("checks").innerHTML = out.map((entry) =>
+            '<li class="' + entry.level + '"><span class="mark">' + marks[entry.level] +
+            "</span><span>" + esc(entry.text) + "</span></li>"
+        ).join("");
+    };
+
+    const stage = stages[0];
+    let doc = stage && stage.doc;
+    if (doc) {
+        const grid = doc.querySelector(".device-grid");
+        if (grid && doc.defaultView.getComputedStyle(grid).display !== "grid" && stage.width !== 358) {
+            add("bad", "The docs site's table styles did not load, so this preview is not what the site shows. Open this page from the Isaac Teleop docs site rather than a saved copy.");
+            doc = null;
+        }
+    }
+
+    const details = recordDetails();
+    if (!state.name.trim() && !state.url.trim() && !state.modes.trim() && !state.logo && !details) {
+        add("info", "Start with the device name, your product page, and its input modes. This panel flags anything that would look wrong in the table.");
+        add("info", "Nothing here is sent anywhere. Use “Load example” above to see a listed device first.");
+        return paint();
+    }
+
+    if (!state.name.trim()) add("bad", "Device name is missing. It is the row label.");
+    if (!state.url.trim()) add("bad", "Product page is missing. The device name links to it.");
+    else if (!isHttp(state.url)) add("bad", "Product page needs a full URL starting with https://.");
+    if (!state.modes.trim()) add("bad", "Input modes is missing. It is the second column.");
+    else if (state.modes.trim().endsWith(".")) add("warn", "Input modes is a phrase, not a sentence: drop the trailing period.");
+    if (state.modes.trim().length > MODES_LIMIT) add("warn", "Input modes runs to " + state.modes.trim().length + " characters. Every other row says it in a few words.");
+
+    if (doc && stage.width !== 358) {
+        const link = doc.querySelector(".device-name a");
+        const modes = doc.querySelector(".device-modes");
+        const nameLines = link ? link.getClientRects().length : 0;
+        if (nameLines > 2) add("warn", "The device name runs to " + nameLines + " lines in the " + stage.width + " px table. Shorten it.");
+        else if (nameLines === 2) add("info", "The device name wraps onto a second line in the " + stage.width + " px table. That is fine, but one line reads better.");
+        /* The text's own line boxes: the cell stretches to the tallest cell in its row. */
+        if (modes) {
+            const range = doc.createRange();
+            range.selectNodeContents(modes);
+            const lines = new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size;
+            if (lines > 2) add("warn", "Input modes wraps onto " + lines + " lines in the " + stage.width + " px table. Shorten it.");
+        }
+    }
+
+    if (state.logo) {
+        if (!state.company.trim()) add("bad", "Company name is required with a logo: it is the logo's alternative text.");
+        logoChecks(add, state.logo, "logo");
+        if (state.logoDark) {
+            logoChecks(add, state.logoDark, "dark-theme variant");
+            add("ok", "Light and dark variants supplied; the site swaps them with the theme.");
+        } else {
+            const lum = state.logo.isSvg && state.logo.text ? svgLuminance(state.logo.text) : [];
+            if (lum.length && Math.max.apply(null, lum) < 0.28) {
+                add("warn", "Every colour in the mark is dark, so it will nearly vanish in the dark theme. Switch the preview to Dark, and send a light variant as the dark-theme file.");
+            } else if (lum.length && Math.min.apply(null, lum) > 0.72) {
+                add("warn", "Every colour in the mark is very light, so it will nearly vanish in the light theme. Send a darker variant as the second file.");
+            } else {
+                add("info", "One file for both themes. Check the Dark preview; if the mark disappears, send a second version.");
+            }
+        }
+        if (!details) add("warn", "The logo shows inside the Details panel, and with no Details entries the row has no panel to show it in.");
+    } else if (state.company.trim()) {
+        add("info", "No logo yet, so the listing shows no company: the name is only the logo's alternative text.");
+    }
+
+    entryChecks(add);
+    if (!details) {
+        add("info", "All three Details columns are empty, so the row renders without a Details button.");
+    } else {
+        for (const column of COLUMNS) {
+            if (!details[column.key]) add("info", column.heading + " is empty and shows a dash, so the three columns stay aligned down the table.");
+        }
+    }
+
+    if (!out.some((entry) => entry.level === "bad")) add("ok", "Nothing blocking.");
+    paint();
+}
+
+/* ------------------------------------------------------------------- yaml -- */
+
+/* Senders type their own punctuation, and a colon or a leading dash would break the file we
+   paste into the repo. Quote anything that is not a safe plain scalar, including the words
+   YAML 1.1 reads as booleans. */
+const YAML_BOOLISH = /^(y|n|yes|no|true|false|on|off|null|~)$/i;
+
+function yamlScalar(value) {
+    const text = String(value);
+    const unsafe = text === ""
+        || /^[-?:,[\]{}#&*!|>'"%@`]/.test(text)
+        || /:\s|\s#|:$/.test(text)
+        || text !== text.trim()
+        || /[\n\t]/.test(text)
+        || YAML_BOOLISH.test(text)
+        || /^[-+.]?\d/.test(text) && !isNaN(Number(text));
+    if (!unsafe) return text;
+    return '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+function wrapText(text, width, indent) {
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const rows = [];
+    let row = "";
+    for (const word of words) {
+        if (row && (row + " " + word).length > width) { rows.push(row); row = word; }
+        else row = row ? row + " " + word : word;
+    }
+    if (row) rows.push(row);
+    return rows.map((r) => indent + r).join("\n");
+}
+
+/* devices.yaml folds a long string entry rather than running it past the line length. */
+function yamlEntry(entry) {
+    if (typeof entry === "string") {
+        if (entry.length <= 72) return ["        - " + yamlScalar(entry)];
+        return ["        - >-", wrapText(entry, 84, "          ")];
+    }
+    const pairs = Object.entries(entry);
+    return pairs.map(([key, value], index) =>
+        (index ? "          " : "        - ") + key + ": " + yamlScalar(value));
+}
+
+function yamlText() {
+    const lines = [];
+    lines.push("  - id: " + (slug(state.name) || "TODO"));
+    lines.push("    name: " + yamlScalar(state.name.trim() || "TODO"));
+    lines.push("    url: " + yamlScalar(state.url.trim() || "TODO"));
+    lines.push("    modes: " + yamlScalar(state.modes.trim() || "TODO"));
+    if (state.logo) {
+        lines.push("    company:");
+        lines.push("      name: " + yamlScalar(state.company.trim() || "TODO"));
+        lines.push("      logo: " + companyLogoName(state.logo, false));
+        if (state.logoDark) lines.push("      logo_dark: " + companyLogoName(state.logoDark, true));
+    }
+    const details = recordDetails();
+    if (details) {
+        lines.push("    details:");
+        for (const column of COLUMNS) {
+            if (!details[column.key]) continue;
+            lines.push("      " + column.key + ":");
+            for (const entry of details[column.key]) lines.push(...yamlEntry(entry));
+        }
+    }
+    return lines.join("\n");
+}
+
+function yamlFile() {
+    return [
+        "# Isaac Teleop — Supported Devices listing",
+        "# Written by the supported device listing preview: one record of the Ecosystem",
+        "# page's device data. The Isaac Teleop team adds `group` and `since`.",
+        "devices:",
+        yamlText(),
+        "",
+    ].join("\n");
+}
+
+function summaryText() {
+    const rows = [
+        "Device name:  " + (state.name.trim() || "-"),
+        "Product page: " + (state.url.trim() || "-"),
+        "Input modes:  " + (state.modes.trim() || "-"),
+        "Company:      " + (state.company.trim() || "-"),
+        "Logo file:    " + (state.logo ? state.logo.name : "none"),
+    ];
+    if (state.logoDark) rows.push("Dark variant: " + state.logoDark.name);
+    const details = recordDetails() || {};
+    for (const column of COLUMNS) {
+        for (const entry of details[column.key] || []) {
+            let text;
+            if (typeof entry === "string") text = entry;
+            else if (entry.email) text = entry.email;
+            else if (entry.phone) text = entry.phone;
+            else text = entry.label + " <" + entry.url + ">" + (entry.note ? " — " + entry.note : "");
+            rows.push((column.heading + ":").padEnd(14) + text);
+        }
+    }
+    return rows.join("\n");
+}
+
+/* ------------------------------------------------------------------- zip -- */
+
+/* Written by hand so the page needs no library. Every entry is a few kilobytes, so entries
+   are stored (method 0): a 30-byte local header, the bytes, a 46-byte central-directory
+   record, closed by a 22-byte end-of-central-directory. */
+const CRC_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i += 1) {
+        let value = i;
+        for (let bit = 0; bit < 8; bit += 1) {
+            value = value & 1 ? 0xEDB88320 ^ (value >>> 1) : value >>> 1;
+        }
+        table[i] = value >>> 0;
+    }
+    return table;
+})();
+
+function crc32(bytes) {
+    let value = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i += 1) {
+        value = CRC_TABLE[(value ^ bytes[i]) & 0xFF] ^ (value >>> 8);
+    }
+    return (value ^ 0xFFFFFFFF) >>> 0;
+}
+
+/* MS-DOS packed time: two-second resolution, years counted from 1980. */
+function dosStamp(when) {
+    return {
+        time: ((when.getHours() << 11) | (when.getMinutes() << 5) | (when.getSeconds() >> 1)) & 0xFFFF,
+        date: (((when.getFullYear() - 1980) << 9) | ((when.getMonth() + 1) << 5) | when.getDate()) & 0xFFFF,
+    };
+}
+
+function zipBlob(entries) {
+    const encoder = new TextEncoder();
+    const stamp = dosStamp(new Date());
+    const body = [];
+    const central = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+        const name = encoder.encode(entry.name);
+        const data = entry.bytes;
+        const crc = crc32(data);
+
+        const local = new DataView(new ArrayBuffer(30));
+        local.setUint32(0, 0x04034B50, true);
+        local.setUint16(4, 20, true);       // version needed
+        local.setUint16(6, 0x0800, true);   // UTF-8 filenames
+        local.setUint16(8, 0, true);        // stored
+        local.setUint16(10, stamp.time, true);
+        local.setUint16(12, stamp.date, true);
+        local.setUint32(14, crc, true);
+        local.setUint32(18, data.length, true);
+        local.setUint32(22, data.length, true);
+        local.setUint16(26, name.length, true);
+        local.setUint16(28, 0, true);       // extra field
+        body.push(new Uint8Array(local.buffer), name, data);
+
+        const dir = new DataView(new ArrayBuffer(46));
+        dir.setUint32(0, 0x02014B50, true);
+        dir.setUint16(4, 20, true);         // version made by
+        dir.setUint16(6, 20, true);         // version needed
+        dir.setUint16(8, 0x0800, true);
+        dir.setUint16(10, 0, true);
+        dir.setUint16(12, stamp.time, true);
+        dir.setUint16(14, stamp.date, true);
+        dir.setUint32(16, crc, true);
+        dir.setUint32(20, data.length, true);
+        dir.setUint32(24, data.length, true);
+        dir.setUint16(28, name.length, true);
+        dir.setUint16(30, 0, true);         // extra field
+        dir.setUint16(32, 0, true);         // comment
+        dir.setUint16(34, 0, true);         // disk number
+        dir.setUint16(36, 0, true);         // internal attributes
+        dir.setUint32(38, 0, true);         // external attributes
+        dir.setUint32(42, offset, true);
+        central.push(new Uint8Array(dir.buffer), name);
+        offset += 30 + name.length + data.length;
+    }
+
+    const centralSize = central.reduce((total, part) => total + part.length, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054B50, true);
+    end.setUint16(4, 0, true);
+    end.setUint16(6, 0, true);
+    end.setUint16(8, entries.length, true);
+    end.setUint16(10, entries.length, true);
+    end.setUint32(12, centralSize, true);
+    end.setUint32(16, offset, true);
+    end.setUint16(20, 0, true);            // archive comment
+
+    return new Blob(body.concat(central, [new Uint8Array(end.buffer)]), { type: "application/zip" });
+}
+
+function dataUrlBytes(dataUrl) {
+    const comma = dataUrl.indexOf(",");
+    const payload = dataUrl.slice(comma + 1);
+    if (/;base64/i.test(dataUrl.slice(0, comma))) {
+        const binary = atob(payload);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+    return new TextEncoder().encode(decodeURIComponent(payload));
+}
+
+/* The sender's local date: it records the day they filled the listing in. */
+function dateStamp() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return String(now.getFullYear()) + pad(now.getMonth() + 1) + pad(now.getDate());
+}
+
+function packageBase() {
+    return (slug(state.company) || slug(state.name) || "listing") + "-" + dateStamp();
+}
+
+/* One folder inside the archive, so unzipping never scatters loose files. Logos carry the
+   names the record points at. */
+function zipPackage() {
+    const base = packageBase();
+    const encoder = new TextEncoder();
+    const entries = [
+        { name: base + "/" + base + ".yaml", bytes: encoder.encode(yamlFile()) },
+        { name: base + "/summary.txt", bytes: encoder.encode(summaryText() + "\n") },
+    ];
+    if (state.logo) {
+        entries.push({ name: base + "/" + companyLogoName(state.logo, false), bytes: dataUrlBytes(state.logo.dataUrl) });
+    }
+    if (state.logoDark) {
+        entries.push({ name: base + "/" + companyLogoName(state.logoDark, true), bytes: dataUrlBytes(state.logoDark.dataUrl) });
+    }
+    return { name: base + ".zip", entries: entries };
+}
+
+function downloadBlob(filename, blob) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/* ------------------------------------------------------------------- form -- */
+
+function counter(el, value, limit) {
+    el.textContent = value.length + " / " + limit;
+    el.classList.toggle("over", value.length > limit);
+}
+
+function render() {
+    for (const stage of stages) if (stage.doc) paintStage(stage);
+    runChecks();
+    $("yaml").textContent = yamlText();
+    $("zip-filename").textContent = packageBase() + ".zip";
+    save();
+}
+
+function syncFromInputs() {
+    state.name = $("f-name").value;
+    state.url = $("f-url").value;
+    state.modes = $("f-modes").value;
+    state.company = $("f-company").value;
+    counter($("c-name"), state.name, NAME_LIMIT);
+    counter($("c-modes"), state.modes, MODES_LIMIT);
+    render();
+}
+
+function entryHtml(column, item, index) {
+    const kinds = KINDS.map(([value, text]) =>
+        '<option value="' + value + '"' + (item.kind === value ? " selected" : "") + ">" + text + "</option>"
+    ).join("");
+    let fields;
+    if (item.kind === "link") {
+        fields = '<input type="text" data-k="label" value="' + esc(item.label || "") + '" placeholder="' + esc(column.label) + '" aria-label="Link label">' +
+            "</div>" +
+            '<input type="url" data-k="value" value="' + esc(item.value || "") + '" placeholder="https://example.com/sdk" aria-label="Link URL">' +
+            '<input type="text" data-k="note" value="' + esc(item.note || "") + '" placeholder="Note, optional: runs on the workstation" aria-label="Note">';
+    } else {
+        const type = { text: "text", email: "email", phone: "tel" }[item.kind];
+        const placeholder = { text: column.text, email: "sales@example.com", phone: "+1 (555) 123-4567" }[item.kind];
+        fields = '<input type="' + type + '" data-k="value" value="' + esc(item.value || "") + '" placeholder="' + esc(placeholder) + '" aria-label="' + item.kind + '"></div>';
+    }
+    return '<div class="entry" data-col="' + column.key + '" data-i="' + index + '">' +
+        '<div class="row"><select class="entry-kind" data-k="kind" aria-label="Entry kind">' + kinds + "</select>" +
+        fields +
+        '<div class="entry-foot"><button class="btn link" type="button" data-act="remove">Remove</button></div></div>';
+}
+
+function renderColumns() {
+    $("columns").innerHTML = COLUMNS.map((column) =>
+        '<div class="col-block"><p class="col-head">' + column.heading +
+        ' <button class="btn link" type="button" data-act="add" data-col="' + column.key + '">Add entry</button></p>' +
+        '<p class="hint">' + esc(column.hint) + "</p>" +
+        state.details[column.key].map((item, index) => entryHtml(column, item, index)).join("") +
+        "</div>"
+    ).join("");
+}
+
+function syncToInputs() {
+    $("f-name").value = state.name;
+    $("f-url").value = state.url;
+    $("f-modes").value = state.modes;
+    $("f-company").value = state.company;
+    for (const [id, value] of [["seg-theme", state.theme], ["seg-width", state.width]]) {
+        for (const button of $(id).querySelectorAll("button")) {
+            button.setAttribute("aria-pressed", String(button.dataset.v === value));
+        }
+    }
+    renderColumns();
+    showLogoName("light", state.logo);
+    showLogoName("dark", state.logoDark);
+    buildStages();
+    syncFromInputs();
+}
+
+function showLogoName(which, logo) {
+    const name = which === "light" ? $("name-light") : $("name-dark");
+    const sub = which === "light" ? $("sub-light") : $("sub-dark");
+    if (logo) {
+        name.textContent = logo.name;
+        sub.textContent = (logo.isSvg ? "SVG" : "PNG") + " · " + Math.max(1, Math.round(logo.size / 1024)) + " KB";
+    } else if (which === "light") {
+        name.textContent = "Drop an SVG here, or click to choose";
+        sub.textContent = "SVG preferred · PNG accepted at 3× size";
+    } else {
+        name.textContent = "Drop a second file for dark mode";
+        sub.textContent = "Only needed if your mark is a single dark or light color";
+    }
+}
+
+/* The viewBox is the drawn aspect for an SVG; a PNG reports its pixels. */
+function measureAspect(record, done) {
+    if (record.isSvg && record.text) {
+        const box = /viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(record.text);
+        if (box && +box[2] > 0) {
+            record.aspect = +box[1] / +box[2];
+            return done();
+        }
+    }
+    const image = new Image();
+    image.onload = () => {
+        if (image.naturalHeight) record.aspect = image.naturalWidth / image.naturalHeight;
+        done();
+    };
+    image.onerror = done;
+    image.src = record.dataUrl;
+}
+
+/* Reads finish out of order, so each slot counts its selections and a read that is no
+   longer the latest one, or whose slot was cleared since, is dropped. */
+const logoSeq = { light: 0, dark: 0 };
+
+function storeLogo(record, which, seq) {
+    measureAspect(record, () => {
+        if (seq !== logoSeq[which]) return;
+        if (which === "light") state.logo = record; else state.logoDark = record;
+        showLogoName(which, record);
+        render();
+    });
+}
+
+function readLogo(file, which) {
+    if (!file) return;
+    const seq = ++logoSeq[which];
+    const isSvg = /svg/i.test(file.type) || /\.svg$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+        const record = { name: file.name, size: file.size, dataUrl: reader.result, isSvg: isSvg, text: "" };
+        if (!isSvg) return storeLogo(record, which, seq);
+        const textReader = new FileReader();
+        textReader.onload = () => { record.text = textReader.result; storeLogo(record, which, seq); };
+        textReader.readAsText(file);
+    };
+    reader.readAsDataURL(file);
+}
+
+function svgRecord(text, name) {
+    return {
+        name: name,
+        size: text.length,
+        isSvg: true,
+        text: text,
+        dataUrl: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(text),
+    };
+}
+
+/* The example is a listed row, logos included, fetched from the docs site beside this page. */
+function loadExample() {
+    Object.assign(state, JSON.parse(JSON.stringify(EXAMPLE)), { logo: null, logoDark: null });
+    syncToInputs();
+    const seq = { light: ++logoSeq.light, dark: ++logoSeq.dark };
+    const fetchSvg = (file) => fetch(LOGO_DIR + file).then((response) => {
+        if (!response.ok) throw new Error(response.status);
+        return response.text();
+    });
+    Promise.all([fetchSvg("manus.svg"), fetchSvg("manus-dark.svg")]).then(([light, dark]) => {
+        storeLogo(svgRecord(light, "manus.svg"), "light", seq.light);
+        storeLogo(svgRecord(dark, "manus-dark.svg"), "dark", seq.dark);
+    }, () => toast("The example logos load only from the docs site"));
+}
+
+/* --------------------------------------------------------------- plumbing -- */
+
+function save() {
+    try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } catch (error) {
+        /* A large logo can exceed the quota; the preview still works, it just will not
+           survive a reload. */
+    }
+}
+
+function load() {
+    try {
+        const raw = localStorage.getItem(STORE_KEY);
+        if (raw) Object.assign(state, JSON.parse(raw));
+    } catch (error) { /* corrupt or blocked storage: start clean */ }
+    if (!state.details || typeof state.details !== "object") state.details = emptyDetails();
+    for (const column of COLUMNS) {
+        if (!Array.isArray(state.details[column.key])) state.details[column.key] = [];
+    }
+}
+
+function copy(text, what) {
+    navigator.clipboard.writeText(text).then(
+        () => toast(what + " copied"),
+        () => toast("Copy failed; select the text and copy it manually")
+    );
+}
+
+for (const id of ["f-name", "f-url", "f-modes", "f-company"]) {
+    $(id).addEventListener("input", syncFromInputs);
+}
+
+for (const [id, key] of [["seg-theme", "theme"], ["seg-width", "width"]]) {
+    $(id).addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        state[key] = button.dataset.v;
+        for (const other of $(id).querySelectorAll("button")) {
+            other.setAttribute("aria-pressed", String(other === button));
+        }
+        buildStages();
+        render();
+    });
+}
+
+$("columns").addEventListener("input", (event) => {
+    const box = event.target.closest(".entry");
+    const key = event.target.dataset.k;
+    if (!box || !key) return;
+    const item = state.details[box.dataset.col][+box.dataset.i];
+    item[key] = event.target.value;
+    if (key === "kind") renderColumns();
+    render();
+});
+
+$("columns").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-act]");
+    if (!button) return;
+    if (button.dataset.act === "add") {
+        state.details[button.dataset.col].push({ kind: "text", value: "", label: "", note: "" });
+    } else {
+        const box = button.closest(".entry");
+        state.details[box.dataset.col].splice(+box.dataset.i, 1);
+    }
+    renderColumns();
+    render();
+});
+
+for (const [dropId, inputId, which] of [["drop-light", "f-logo", "light"], ["drop-dark", "f-logo-dark", "dark"]]) {
+    const drop = $(dropId);
+    $(inputId).addEventListener("change", (event) => readLogo(event.target.files[0], which));
+    drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("is-over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
+    drop.addEventListener("drop", (event) => {
+        event.preventDefault();
+        drop.classList.remove("is-over");
+        readLogo(event.dataTransfer.files[0], which);
+    });
+}
+
+$("clear-light").addEventListener("click", () => { logoSeq.light += 1; state.logo = null; $("f-logo").value = ""; showLogoName("light", null); render(); });
+$("clear-dark").addEventListener("click", () => { logoSeq.dark += 1; state.logoDark = null; $("f-logo-dark").value = ""; showLogoName("dark", null); render(); });
+
+$("copy-yaml").addEventListener("click", () => copy(yamlText(), "YAML"));
+$("copy-summary").addEventListener("click", () => copy(summaryText(), "Summary"));
+$("download-zip").addEventListener("click", () => {
+    const bundle = zipPackage();
+    downloadBlob(bundle.name, zipBlob(bundle.entries));
+    toast("Saved " + bundle.name + " (" + bundle.entries.length + " files)");
+});
+
+$("load-example").addEventListener("click", loadExample);
+
+$("reset").addEventListener("click", () => {
+    logoSeq.light += 1;
+    logoSeq.dark += 1;
+    Object.assign(state, { name: "", url: "", modes: "", company: "", details: emptyDetails(), logo: null, logoDark: null });
+    syncToInputs();
+    toast("Cleared");
+});
+
+document.head.insertAdjacentHTML("beforeend", "<style>" + FONT_FACES + "</style>");
+load();
+syncToInputs();
+</script>
+</body>
+</html>
