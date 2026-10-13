@@ -469,19 +469,21 @@ tracker → MCAP).</p>
 <section id="components">
 <h2><a class="toc-backref" href="#id1" role="doc-backlink">Components</a><a class="headerlink" href="#components" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>Schema</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/gamepad.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/gamepad.fbs</a> (<code class="docutils literal notranslate"><span class="pre">GamepadButton</span></code> and
-<code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code>, the standard layout; <code class="docutils literal notranslate"><span class="pre">GamepadOutput</span></code> / <code class="docutils literal notranslate"><span class="pre">GamepadOutputRecord</span></code>).</p></li>
+<li><p><strong>Schema</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/schema/fbs/gamepad.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/gamepad.fbs</a>: <code class="docutils literal notranslate"><span class="pre">GamepadInputState</span></code>, the standard
+layout as named fields, inside <code class="docutils literal notranslate"><span class="pre">GamepadSnapshot</span></code> / <code class="docutils literal notranslate"><span class="pre">GamepadSnapshotRecord</span></code>.</p></li>
 <li><p><strong>Plugin</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/gamepad" rel="noopener noreferrer" target="_blank">src/plugins/gamepad</a>: <code class="docutils literal notranslate"><span class="pre">core/</span></code> reads the pad through SDL3 and reopens it
 after an unplug; <code class="docutils literal notranslate"><span class="pre">app/</span></code> is the OpenXR push loop.</p></li>
 <li><p><strong>Tracker</strong> — <code class="docutils literal notranslate"><span class="pre">GamepadTracker</span></code>, generated at configure time from the <code class="docutils literal notranslate"><span class="pre">gamepad</span></code> entry in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>.</p></li>
-<li><p><strong>Source node</strong> — <code class="docutils literal notranslate"><span class="pre">GamepadSource</span></code> turns the tracker’s data into <code class="docutils literal notranslate"><span class="pre">gamepad_buttons</span></code> and
-<code class="docutils literal notranslate"><span class="pre">gamepad_axes</span></code> for retargeters.</p></li>
+<li><p><strong>Source node</strong> — <code class="docutils literal notranslate"><span class="pre">GamepadSource</span></code> turns the tracker’s data into a <code class="docutils literal notranslate"><span class="pre">gamepad</span></code> tensor group
+(<code class="docutils literal notranslate"><span class="pre">GamepadInput</span></code>, indexed by <code class="docutils literal notranslate"><span class="pre">GamepadInputIndex</span></code>) for retargeters.</p></li>
 </ul>
 </section>
 <section id="standard-layout">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Standard layout</a><a class="headerlink" href="#standard-layout" title="Link to this heading">#</a></h2>
-<p>Buttons are named by position, so a binding means the same on every pad:</p>
+<p><code class="docutils literal notranslate"><span class="pre">GamepadInputState</span></code> is a generic controller split in two, with the same naming as
+<code class="docutils literal notranslate"><span class="pre">ControllerInputState</span></code>. Face buttons are named by position, so a binding means the same on every
+pad:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 25.0%" />
@@ -490,34 +492,34 @@ after an unplug; <code class="docutils literal notranslate"><span class="pre">ap
 <col style="width: 25.0%" />
 </colgroup>
 <thead>
-<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">GamepadButton</span></code></p></th>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
 <th class="head"><p>Xbox</p></th>
 <th class="head"><p>PlayStation</p></th>
 <th class="head"><p>Nintendo</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SOUTH</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">south_click</span></code></p></td>
 <td><p>A</p></td>
 <td><p>Cross</p></td>
 <td><p>B</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">EAST</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">east_click</span></code></p></td>
 <td><p>B</p></td>
 <td><p>Circle</p></td>
 <td><p>A</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">WEST</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">west_click</span></code></p></td>
 <td><p>X</p></td>
 <td><p>Square</p></td>
 <td><p>Y</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">NORTH</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">north_click</span></code></p></td>
 <td><p>Y</p></td>
 <td><p>Triangle</p></td>
 <td><p>X</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">BACK</span></code> / <code class="docutils literal notranslate"><span class="pre">START</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">back_click</span></code> / <code class="docutils literal notranslate"><span class="pre">start_click</span></code></p></td>
 <td><p>View / Menu</p></td>
 <td><p>Create / Options</p></td>
 <td><p>− / +</p></td>
@@ -525,12 +527,11 @@ after an unplug; <code class="docutils literal notranslate"><span class="pre">ap
 </tbody>
 </table>
 </div>
-<p>The shoulders (<code class="docutils literal notranslate"><span class="pre">LEFT_SHOULDER</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_SHOULDER</span></code>), stick clicks (<code class="docutils literal notranslate"><span class="pre">LEFT_STICK</span></code>,
-<code class="docutils literal notranslate"><span class="pre">RIGHT_STICK</span></code>) and D-pad (<code class="docutils literal notranslate"><span class="pre">DPAD_UP</span></code> … <code class="docutils literal notranslate"><span class="pre">DPAD_RIGHT</span></code>) are buttons too. These 14 buttons are the
-ones every standard pad has, the same set as OpenXR’s <code class="docutils literal notranslate"><span class="pre">xbox_controller</span></code> profile; pad-specific
-extras such as the guide button, paddles and touchpad are not reported. <code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code> is
-<code class="docutils literal notranslate"><span class="pre">LEFT_X</span></code>, <code class="docutils literal notranslate"><span class="pre">LEFT_Y</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_X</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_Y</span></code> in <code class="docutils literal notranslate"><span class="pre">[-1,</span> <span class="pre">1]</span></code> (right and up positive, as in OpenXR) and
-<code class="docutils literal notranslate"><span class="pre">LEFT_TRIGGER</span></code>, <code class="docutils literal notranslate"><span class="pre">RIGHT_TRIGGER</span></code> in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>.</p>
+<p>The other buttons are <code class="docutils literal notranslate"><span class="pre">shoulder_[left|right]_click</span></code>, <code class="docutils literal notranslate"><span class="pre">thumbstick_[left|right]_click</span></code> and
+<code class="docutils literal notranslate"><span class="pre">dpad_[up|down|left|right]_click</span></code>; the axes are <code class="docutils literal notranslate"><span class="pre">thumbstick_[left|right]_[x|y]</span></code> in <code class="docutils literal notranslate"><span class="pre">[-1,</span> <span class="pre">1]</span></code>
+(right and up positive, as in OpenXR) and <code class="docutils literal notranslate"><span class="pre">trigger_[left|right]_value</span></code> in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>. These are the
+inputs every standard pad has, the same set as OpenXR’s <code class="docutils literal notranslate"><span class="pre">xbox_controller</span></code> profile; pad-specific
+extras such as the guide button, paddles and touchpad are not reported.</p>
 </section>
 <section id="device-access">
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Device access</a><a class="headerlink" href="#device-access" title="Link to this heading">#</a></h2>
@@ -599,11 +600,10 @@ own collection, read by a <code class="docutils literal notranslate"><span class
 </section>
 <section id="published-data">
 <h2><a class="toc-backref" href="#id7" role="doc-backlink">Published data</a><a class="headerlink" href="#published-data" title="Link to this heading">#</a></h2>
-<p>The plugin pushes <code class="docutils literal notranslate"><span class="pre">GamepadOutput</span></code> to collection <code class="docutils literal notranslate"><span class="pre">gamepad</span></code> (<code class="docutils literal notranslate"><span class="pre">--collection-id</span></code> changes it;
+<p>The plugin pushes <code class="docutils literal notranslate"><span class="pre">GamepadSnapshot</span></code> to collection <code class="docutils literal notranslate"><span class="pre">gamepad</span></code> (<code class="docutils literal notranslate"><span class="pre">--collection-id</span></code> changes it;
 match it in <code class="docutils literal notranslate"><span class="pre">GamepadSource</span></code> / <code class="docutils literal notranslate"><span class="pre">GamepadTracker</span></code>):</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">buttons</span></code> — indexed by <code class="docutils literal notranslate"><span class="pre">GamepadButton</span></code>, 1 while held.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">axes</span></code> — indexed by <code class="docutils literal notranslate"><span class="pre">GamepadAxis</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">inputs</span></code> — the <code class="docutils literal notranslate"><span class="pre">GamepadInputState</span></code> above.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">connected</span></code> — whether the plugin has the pad open.</p></li>
 </ul>
 <p>While no pad is open the plugin keeps pushing with <code class="docutils literal notranslate"><span class="pre">connected</span></code> false and nothing held, so a

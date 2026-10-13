@@ -25,55 +25,56 @@ tracker → MCAP).
 Components
 ----------
 
-- **Schema** — :code-file:`src/core/schema/fbs/gamepad.fbs` (``GamepadButton`` and
-  ``GamepadAxis``, the standard layout; ``GamepadOutput`` / ``GamepadOutputRecord``).
+- **Schema** — :code-file:`src/core/schema/fbs/gamepad.fbs`: ``GamepadInputState``, the standard
+  layout as named fields, inside ``GamepadSnapshot`` / ``GamepadSnapshotRecord``.
 - **Plugin** — :code-dir:`src/plugins/gamepad`: ``core/`` reads the pad through SDL3 and reopens it
   after an unplug; ``app/`` is the OpenXR push loop.
 - **Tracker** — ``GamepadTracker``, generated at configure time from the ``gamepad`` entry in
   :code-file:`src/core/deviceio_trackers/trackers.toml`.
-- **Source node** — ``GamepadSource`` turns the tracker's data into ``gamepad_buttons`` and
-  ``gamepad_axes`` for retargeters.
+- **Source node** — ``GamepadSource`` turns the tracker's data into a ``gamepad`` tensor group
+  (``GamepadInput``, indexed by ``GamepadInputIndex``) for retargeters.
 
 Standard layout
 ---------------
 
-Buttons are named by position, so a binding means the same on every pad:
+``GamepadInputState`` is a generic controller split in two, with the same naming as
+``ControllerInputState``. Face buttons are named by position, so a binding means the same on every
+pad:
 
 .. list-table::
    :header-rows: 1
    :widths: 25 25 25 25
 
-   * - ``GamepadButton``
+   * - Field
      - Xbox
      - PlayStation
      - Nintendo
-   * - ``SOUTH``
+   * - ``south_click``
      - A
      - Cross
      - B
-   * - ``EAST``
+   * - ``east_click``
      - B
      - Circle
      - A
-   * - ``WEST``
+   * - ``west_click``
      - X
      - Square
      - Y
-   * - ``NORTH``
+   * - ``north_click``
      - Y
      - Triangle
      - X
-   * - ``BACK`` / ``START``
+   * - ``back_click`` / ``start_click``
      - View / Menu
      - Create / Options
      - − / +
 
-The shoulders (``LEFT_SHOULDER``, ``RIGHT_SHOULDER``), stick clicks (``LEFT_STICK``,
-``RIGHT_STICK``) and D-pad (``DPAD_UP`` ... ``DPAD_RIGHT``) are buttons too. These 14 buttons are the
-ones every standard pad has, the same set as OpenXR's ``xbox_controller`` profile; pad-specific
-extras such as the guide button, paddles and touchpad are not reported. ``GamepadAxis`` is
-``LEFT_X``, ``LEFT_Y``, ``RIGHT_X``, ``RIGHT_Y`` in ``[-1, 1]`` (right and up positive, as in OpenXR) and
-``LEFT_TRIGGER``, ``RIGHT_TRIGGER`` in ``[0, 1]``.
+The other buttons are ``shoulder_[left|right]_click``, ``thumbstick_[left|right]_click`` and
+``dpad_[up|down|left|right]_click``; the axes are ``thumbstick_[left|right]_[x|y]`` in ``[-1, 1]``
+(right and up positive, as in OpenXR) and ``trigger_[left|right]_value`` in ``[0, 1]``. These are the
+inputs every standard pad has, the same set as OpenXR's ``xbox_controller`` profile; pad-specific
+extras such as the guide button, paddles and touchpad are not reported.
 
 Device access
 -------------
@@ -153,11 +154,10 @@ own collection, read by a ``GamepadSource`` with the same ``collection_id``:
 Published data
 --------------
 
-The plugin pushes ``GamepadOutput`` to collection ``gamepad`` (``--collection-id`` changes it;
+The plugin pushes ``GamepadSnapshot`` to collection ``gamepad`` (``--collection-id`` changes it;
 match it in ``GamepadSource`` / ``GamepadTracker``):
 
-- ``buttons`` — indexed by ``GamepadButton``, 1 while held.
-- ``axes`` — indexed by ``GamepadAxis``.
+- ``inputs`` — the ``GamepadInputState`` above.
 - ``connected`` — whether the plugin has the pad open.
 
 While no pad is open the plugin keeps pushing with ``connected`` false and nothing held, so a
