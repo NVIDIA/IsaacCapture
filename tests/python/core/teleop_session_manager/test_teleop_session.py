@@ -1563,6 +1563,38 @@ class TestPluginInitialization:
 class TestStatusMonitoringIntegration:
     """Test monitored-plugin inventory, refresh, and provider failure integration."""
 
+    def test_controller_sources_add_live_per_side_status(self):
+        class ControllerSample(float):
+            def __new__(cls, value, *, aim_valid=True, grip_valid=True):
+                sample = super().__new__(cls, value)
+                sample.aim_pose = SimpleNamespace(is_valid=aim_valid)
+                sample.grip_pose = SimpleNamespace(is_valid=grip_valid)
+                return sample
+
+        controllers = MockControllersSource()
+        controllers._tracker._left_controller = ControllerSample(3.0)
+        controllers._tracker._right_controller = ControllerSample(4.0)
+        config = make_config(MockPipeline(leaf_nodes=[controllers]))
+
+        with mock_session_dependencies():
+            with TeleopSession(config) as session:
+                assert {device.id for device in session.get_status().devices} == {
+                    "openxr/headset",
+                    "openxr/controller/left",
+                    "openxr/controller/right",
+                }
+
+                session.step()
+
+                assert (
+                    session.get_device_status("openxr/controller/left").status
+                    == teleop_session_manager.DeviceState.CONNECTED
+                )
+                assert (
+                    session.get_device_status("openxr/controller/right").status
+                    == teleop_session_manager.DeviceState.CONNECTED
+                )
+
     @pytest.mark.parametrize("plugin", ["spacemouse", "gamepad"])
     def test_device_plugin_is_monitored(self, tmp_path, plugin):
         manager = MockPluginManager(plugin_names=[plugin])
