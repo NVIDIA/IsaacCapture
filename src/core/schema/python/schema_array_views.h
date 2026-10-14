@@ -130,17 +130,6 @@ inline py::array_t<T> struct_vector_view(py::object owner, const ::flatbuffers::
                                  static_cast<py::ssize_t>(sizeof(StructT)), values->size(), Width);
 }
 
-// (count,) view over a FlatBuffers vector of scalars; absent reads as (0,).
-template <typename T>
-inline py::array_t<T> scalar_vector_view(py::object owner, const ::flatbuffers::Vector<T>* values)
-{
-    if (values == nullptr || values->size() == 0)
-    {
-        return py::array_t<T>(py::ssize_t{ 0 });
-    }
-    return strided_field_view<T>(owner, values->data(), static_cast<py::ssize_t>(sizeof(T)), values->size(), 0);
-}
-
 // Rows of a (count, Width) array as structs that are exactly Width packed T, for a table
 // constructor. Raises ValueError naming `field` on any other shape.
 template <typename StructT, typename T, py::ssize_t Width>
