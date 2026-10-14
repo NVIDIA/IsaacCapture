@@ -59,6 +59,12 @@ Table of Contents
 
 .. toctree::
    :maxdepth: 2
+   :caption: Ego Post Processing
+
+   ego_post_processing/egohand
+
+.. toctree::
+   :maxdepth: 2
    :caption: Development
 
    development/build_from_source/index
@@ -106,7 +112,6 @@ Table of Contents
    references/cloudxr
    references/oob_teleop_control
    references/haptic_feedback
-   references/egocentric_hand_reconstruction
 
 Indices and tables
 ------------------

@@ -122,3 +122,7 @@ share one maintained diagram.
 
 Group vendor device guides under category toctrees in the Devices navigation;
 folder placement alone does not create sidebar nesting.
+
+The sidebar's top layer is a root toctree `:caption:` in `index.rst`; pages and
+their own toctrees nest below it. When a request names a sidebar layer, change
+that layer: do not add a landing page where a caption was asked for.
