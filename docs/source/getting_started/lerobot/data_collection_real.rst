@@ -6,4 +6,4 @@
 Data Collection in Real
 =======================
 
-This page has moved to :doc:`/teleop/lerobot/data_collection_real`.
+This page has moved to :doc:`/integrations/lerobot/data_collection_real`.

@@ -6,4 +6,4 @@
 LeRobot and SO-101
 ==================
 
-This page has moved to :doc:`/teleop/lerobot/index`.
+This page has moved to :doc:`/integrations/lerobot/index`.

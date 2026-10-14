@@ -365,7 +365,7 @@ devices:
     details:
       setup:
         - label: LeRobot integration
-          doc: /teleop/lerobot/index
+          doc: /integrations/lerobot/index
         - label: LeRobot on GitHub
           url: https://github.com/huggingface/lerobot
 
