@@ -83,6 +83,7 @@ Table of Contents
    Joint-space devices <device/joint_space/index>
    device/tactile/oglo
    device/spatial_controllers/spacemouse
+   device/gamepad
 
 .. toctree::
    :maxdepth: 2
