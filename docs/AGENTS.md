@@ -97,3 +97,12 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## RST restructuring
+
+When moving a guide, keep its setup content until any deferred replacement pages
+exist. Preserve old URLs with compatibility pages and retain explicit labels in
+the destination. Recompute RST heading underlines when renaming their text.
+Device metadata containing docnames must come from `app.srcdir` so a multiversion
+build uses paths that exist in that ref, even when `conf.py` comes from the deploy
+checkout.

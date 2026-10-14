@@ -4,7 +4,7 @@
 Retargeting Interface
 =====================
 
-Isaac Teleop uses a graph-based retargeting pipeline. Data flows from **source nodes** through
+Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from **source nodes** through
 **retargeters** and is combined into a single action tensor.
 
 Source Nodes
@@ -361,7 +361,7 @@ Add a New Retargeter
 --------------------
 
 If the built-in retargeters do not cover your use case, you can implement a custom one in the
-`Isaac Teleop repository <https://github.com/NVIDIA/IsaacTeleop>`_:
+`Isaac Capture repository <https://github.com/NVIDIA/IsaacCapture>`_:
 
 #. Inherit from ``BaseRetargeter`` and implement ``input_spec()``, ``output_spec()``, and
    ``_compute_fn()``. (``compute()`` is concrete on the base class — it fills optional inputs
@@ -371,7 +371,7 @@ If the built-in retargeters do not cover your use case, you can implement a cust
 #. Connect to existing source nodes (``HandsSource``, ``ControllersSource``) or create a new
    ``IDeviceIOSource`` subclass for custom input devices.
 
-See the :doc:`Contributing Guide <../../getting_started/contributing>` for details.
+See the :doc:`Contributing Guide <../../development/contributing>` for details.
 
 .. toctree::
    :maxdepth: 1

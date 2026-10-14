@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ex
 
 # -- Project information -----------------------------------------------------
 
-project = "Isaac Teleop"
+project = "Isaac Capture"
 build_time = datetime.now(timezone.utc)
 copyright = f"2025-{build_time.year}, NVIDIA CORPORATION & AFFILIATES"
 copyright += f", last updated on {build_time.strftime('%B %d, %Y')}"
@@ -85,7 +85,7 @@ smv_tag_whitelist = os.getenv("SMV_TAG_WHITELIST", r"^v[1-9]\d*\.\d+\.\d+$")
 
 # -- Options for HTML output ---------------------------------------------------
 
-html_title = "Isaac Teleop Documentation"
+html_title = "Isaac Capture Documentation"
 html_theme = "nvidia_sphinx_theme"
 html_favicon = "_static/favicon.ico"
 html_show_copyright = True
@@ -100,7 +100,7 @@ _smv_name = _smv_ref_name()
 
 _DEFAULT_ICONS = {
     "teleop_version": "main",
-    "teleop_url": "https://github.com/NVIDIA/IsaacTeleop",
+    "teleop_url": "https://github.com/NVIDIA/IsaacCapture",
     "cloudxr_version": "6.2",
     "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk",
     "lab_version": "3.0",
@@ -109,7 +109,7 @@ _DEFAULT_ICONS = {
 _VERSION_ICON_MAP = {
     "release/1.0.x": {
         "teleop_version": "1.0",
-        "teleop_url": "https://github.com/NVIDIA/IsaacTeleop/tree/release/1.0.x",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.0.x",
         "cloudxr_version": "6.1",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
@@ -179,13 +179,13 @@ html_sidebars = {
 # Edit page button: link to GitHub so users can suggest edits (PyData theme uses html_context)
 html_context = {
     "github_user": "NVIDIA",
-    "github_repo": "IsaacTeleop",
+    "github_repo": "IsaacCapture",
     "github_version": _smv_name or "main",
     "doc_path": "docs/source",
 }
 
 # Base URL for linking to repository source (used by code-file and code-dir roles).
-_GH_BASE = "https://github.com/NVIDIA/IsaacTeleop"
+_GH_BASE = "https://github.com/NVIDIA/IsaacCapture"
 _GH_BRANCH = html_context["github_version"]
 
 
