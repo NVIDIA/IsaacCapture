@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Add a New Device &#8212; Isaac Teleop Documentation</title>
+    <title>Add a New Device &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -502,33 +502,33 @@ The reference implementation is the <strong>generic 3-axis foot pedal</strong>:<
 </thead>
 <tbody>
 <tr class="row-even"><td><p>Data Schema</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p></td>
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p></td>
 </tr>
 <tr class="row-odd"><td><p>Device Plugin</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.5.x/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a></p></td>
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a></p></td>
 </tr>
 <tr class="row-even"><td><p>Tracker facade (<code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalTracker</span></code>)</p></td>
-<td><p>Generated at configure time from <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>
+<td><p>Generated at configure time from <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>
 (see <a class="reference internal" href="#schema-based-tracker-manifest"><span class="std std-ref">Schema-based tracker manifest</span></a>)</p></td>
 </tr>
 <tr class="row-odd"><td><p>Live backend (<code class="docutils literal notranslate"><span class="pre">LiveGeneric3AxisPedalTrackerImpl</span></code>)</p></td>
 <td><p>Generated alongside the facade under <code class="docutils literal notranslate"><span class="pre">${CMAKE_BINARY_DIR}/generated/trackers/</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> / <code class="docutils literal notranslate"><span class="pre">SampleResult</span></code></p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp</a></p></td>
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp</a></p></td>
 </tr>
 <tr class="row-odd"><td><p>Debug printer</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/examples/schemaio/pedal_printer.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_printer.cpp</a></p></td>
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/examples/schemaio/pedal_printer.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_printer.cpp</a></p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <section id="step-1-define-the-data-schema">
 <h2>Step 1: Define the data schema<a class="headerlink" href="#step-1-define-the-data-schema" title="Link to this heading">#</a></h2>
-<p>Define a FlatBuffer schema (<cite>.fbs</cite>) under <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.5.x/src/core/schema/fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs</a>. The schema drives both
+<p>Define a FlatBuffer schema (<cite>.fbs</cite>) under <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x/src/core/schema/fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs</a>. The schema drives both
 serialization in the plugin and deserialization in the tracker; pusher and reader must agree
 on the same schema ahead of time (the schema is not sent over the wire).</p>
-<p>Reference schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p>
+<p>Reference schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p>
 <div class="code-100col highlight-idl notranslate"><div class="highlight"><pre><span></span>include<span class="w"> </span><span class="s2">"point.fbs"</span>;
 include<span class="w"> </span><span class="s2">"timestamp.fbs"</span>;
 
@@ -578,11 +578,11 @@ which uses <code class="docutils literal notranslate"><span class="pre">SchemaPu
 <span class="pre">sample_time_raw_device_clock_ns)</span></code>. Use a monotonic clock (e.g. <code class="docutils literal notranslate"><span class="pre">core::os_monotonic_now_ns()</span></code>)
 for the local common clock; use the device’s own clock for the raw device clock if available.</p></li>
 </ul>
-<p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.5.x/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
+<p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
 <code class="docutils literal notranslate"><span class="pre">core::SchemaPusher</span></code> member, opens the Linux joystick device, maps axes to
 <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalOutputT</span></code>, and calls <code class="docutils literal notranslate"><span class="pre">push_current_state()</span></code> from <code class="docutils literal notranslate"><span class="pre">update()</span></code>. See
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.hpp" rel="noopener noreferrer" target="_blank">generic_3axis_pedal_plugin.hpp</a> and
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp" rel="noopener noreferrer" target="_blank">generic_3axis_pedal_plugin.cpp</a>.</p>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.hpp" rel="noopener noreferrer" target="_blank">generic_3axis_pedal_plugin.hpp</a> and
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp" rel="noopener noreferrer" target="_blank">generic_3axis_pedal_plugin.cpp</a>.</p>
 </section>
 <section id="step-3-implement-a-tracker">
 <h2>Step 3: Implement a tracker<a class="headerlink" href="#step-3-implement-a-tracker" title="Link to this heading">#</a></h2>
@@ -594,12 +594,12 @@ serializes a table; the host reads or writes it via <code class="docutils litera
 seven-layer tracker stack. Instead:</p>
 <ol class="arabic simple">
 <li><p>Add or extend the FlatBuffer schema (Step 1).</p></li>
-<li><p>Add a <code class="docutils literal notranslate"><span class="pre">[[tracker]]</span></code> entry to <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>. Defaults
-in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/deviceio_trackers/defaults.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/defaults.toml</a> expand <code class="docutils literal notranslate"><span class="pre">%name%</span></code>, <code class="docutils literal notranslate"><span class="pre">%name_CamelCase%</span></code>,
+<li><p>Add a <code class="docutils literal notranslate"><span class="pre">[[tracker]]</span></code> entry to <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>. Defaults
+in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/defaults.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/defaults.toml</a> expand <code class="docutils literal notranslate"><span class="pre">%name%</span></code>, <code class="docutils literal notranslate"><span class="pre">%name_CamelCase%</span></code>,
 MCAP channel names, and class names; override only genuine exceptions (<code class="docutils literal notranslate"><span class="pre">se3_tracker</span></code> uses
 <code class="docutils literal notranslate"><span class="pre">class</span> <span class="pre">=</span> <span class="pre">&quot;Se3Tracker&quot;</span></code>; pedals use <code class="docutils literal notranslate"><span class="pre">schema</span> <span class="pre">=</span> <span class="pre">&quot;pedals&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">channel</span> <span class="pre">=</span> <span class="pre">&quot;pedals&quot;</span></code>).</p></li>
 <li><p>Reconfigure/rebuild. <code class="docutils literal notranslate"><span class="pre">cmake/GenerateTrackers.cmake</span></code> runs
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/codegen/generate_trackers.py" rel="noopener noreferrer" target="_blank">src/core/codegen/generate_trackers.py</a> and wires generated sources into
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/codegen/generate_trackers.py" rel="noopener noreferrer" target="_blank">src/core/codegen/generate_trackers.py</a> and wires generated sources into
 <code class="docutils literal notranslate"><span class="pre">deviceio_trackers</span></code>, <code class="docutils literal notranslate"><span class="pre">live_trackers</span></code>, and <code class="docutils literal notranslate"><span class="pre">replay_trackers</span></code>.</p></li>
 </ol>
 <p>Use <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;push&quot;</span></code> when Teleop <strong>pushes</strong> a typed table to a plugin (e.g.
@@ -674,11 +674,11 @@ locate tracker:</p>
 <code class="docutils literal notranslate"><span class="pre">live_trackers/live_generic_3axis_pedal_tracker_impl.cpp</span></code>
 (<code class="docutils literal notranslate"><span class="pre">LiveGeneric3AxisPedalTrackerImpl</span></code>). The live impl composes <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> and uses
 <code class="docutils literal notranslate"><span class="pre">read_all_samples()</span></code> with <code class="docutils literal notranslate"><span class="pre">std::vector&lt;SchemaTrackerBase::SampleResult&gt;</span></code>. See
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp</a> for
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp</a> for
 <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> / <code class="docutils literal notranslate"><span class="pre">SampleResult</span></code>.</p></li>
 <li><p><strong>Hand-written OpenXR locate tracker</strong> — facade
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/deviceio_trackers/cpp/hand_tracker.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/cpp/hand_tracker.cpp</a> (<code class="docutils literal notranslate"><span class="pre">HandTracker</span></code>) and live
-backend <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/live_trackers/cpp/live_hand_tracker_impl.cpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/live_hand_tracker_impl.cpp</a>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/cpp/hand_tracker.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/cpp/hand_tracker.cpp</a> (<code class="docutils literal notranslate"><span class="pre">HandTracker</span></code>) and live
+backend <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/live_trackers/cpp/live_hand_tracker_impl.cpp" rel="noopener noreferrer" target="_blank">src/core/live_trackers/cpp/live_hand_tracker_impl.cpp</a>
 (<code class="docutils literal notranslate"><span class="pre">LiveHandTrackerImpl</span></code>): same facade / <code class="docutils literal notranslate"><span class="pre">ITrackerImpl</span></code> split, but <code class="docutils literal notranslate"><span class="pre">update()</span></code> drives
 <code class="docutils literal notranslate"><span class="pre">xrLocate*</span></code> rather than <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code>.</p></li>
 </ul>
@@ -687,7 +687,7 @@ backend <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleo
 <section id="step-4-implement-a-simple-c-printer-optional">
 <h2>Step 4: Implement a simple C++ printer (optional)<a class="headerlink" href="#step-4-implement-a-simple-c-printer-optional" title="Link to this heading">#</a></h2>
 <p>A minimal reader app verifies the full path: plugin (or pusher) pushes; printer discovers
-the collection and prints samples. Pattern (see <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/examples/schemaio/pedal_printer.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_printer.cpp</a>):</p>
+the collection and prints samples. Pattern (see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/examples/schemaio/pedal_printer.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_printer.cpp</a>):</p>
 <ol class="arabic simple">
 <li><p>Create the tracker (e.g. <code class="docutils literal notranslate"><span class="pre">std::make_shared&lt;Generic3AxisPedalTracker&gt;(collection_id,</span>
 <span class="pre">max_flatbuffer_size)</span></code>).</p></li>
@@ -731,7 +731,7 @@ Both exit after 100 samples, or press Ctrl+C to exit early.</p>
 <li><p><strong>SchemaPusher</strong> (<code class="docutils literal notranslate"><span class="pre">pusherio</span></code> library) — Pushes serialized FlatBuffer data via OpenXR tensor
 extensions: takes externally-provided OpenXR session handles, creates a tensor collection with
 the configured identifier, provides <code class="docutils literal notranslate"><span class="pre">push_buffer()</span></code> for raw serialized data. Use composition
-to create typed wrappers (e.g. <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalPusher</span></code> in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/examples/schemaio/pedal_pusher.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_pusher.cpp</a>).</p></li>
+to create typed wrappers (e.g. <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalPusher</span></code> in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/examples/schemaio/pedal_pusher.cpp" rel="noopener noreferrer" target="_blank">examples/schemaio/pedal_pusher.cpp</a>).</p></li>
 <li><p><strong>SchemaTracker</strong> (<code class="docutils literal notranslate"><span class="pre">live_trackers</span></code>) — Helper for reading FlatBuffer schema data via
 OpenXR tensor collections: discovers collections by identifier, reads pending <code class="docutils literal notranslate"><span class="pre">SampleResult</span></code>
 values, records them when MCAP channels are attached, and publishes the final one as a

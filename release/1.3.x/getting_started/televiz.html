@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Televiz &#8212; Isaac Teleop Documentation</title>
+    <title>Televiz &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -520,12 +520,12 @@ Toolkit, and <code class="docutils literal notranslate"><span class="pre">glslan
 </section>
 <section id="overview">
 <h2><a class="toc-backref" href="#id4" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
-<p>The central object is <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.3.x/src/viz/session/cpp/inc/viz/session/viz_session.hpp" rel="noopener noreferrer" target="_blank">VizSession</a>,
+<p>The central object is <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.3.x/src/viz/session/cpp/inc/viz/session/viz_session.hpp" rel="noopener noreferrer" target="_blank">VizSession</a>,
 which owns the Vulkan context, the display target, the OpenXR session (in XR mode), and a registry
 of <strong>layers</strong>. Content producers submit GPU buffers to layers; the session composites every layer
 into one frame each time you call <code class="docutils literal notranslate"><span class="pre">render()</span></code>.</p>
 <p>The built-in layer type today is
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.3.x/src/viz/layers/cpp/inc/viz/layers/quad_layer.hpp" rel="noopener noreferrer" target="_blank">QuadLayer</a> — a CUDA-fed 2D texture
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.3.x/src/viz/layers/cpp/inc/viz/layers/quad_layer.hpp" rel="noopener noreferrer" target="_blank">QuadLayer</a> — a CUDA-fed 2D texture
 plane (mono or stereo), optionally placed in 3D space. Use it for camera feeds.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -919,7 +919,7 @@ symbols live in <code class="docutils literal notranslate"><span class="pre">nam
 </tbody>
 </table>
 </div>
-<p>Public headers live under <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.3.x/src/viz" rel="noopener noreferrer" target="_blank">src/viz/&lt;module&gt;/cpp/inc/viz/</a>. One difference from
+<p>Public headers live under <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.3.x/src/viz" rel="noopener noreferrer" target="_blank">src/viz/&lt;module&gt;/cpp/inc/viz/</a>. One difference from
 the Python bindings: in C++, layers are added with a single templated
 <code class="docutils literal notranslate"><span class="pre">VizSession::add_layer&lt;L&gt;(args...)</span></code> method, which also accepts your own <code class="docutils literal notranslate"><span class="pre">LayerBase</span></code> subclasses —
 the route for plugging in a custom renderer. See <a class="reference internal" href="../references/build.html"><span class="doc">Build System</span></a> for build options and
@@ -930,7 +930,7 @@ output locations.</p>
 <ul class="simple">
 <li><p><a class="reference internal" href="../references/camera_streaming.html"><span class="doc">Camera Streaming</span></a> — the reference <code class="docutils literal notranslate"><span class="pre">camera_viz</span></code> sample built on Televiz</p></li>
 <li><p><a class="reference internal" href="teleop_session.html"><span class="doc">Teleop Session</span></a> — how <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> works and how to share its OpenXR session</p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.3.x/src/viz" rel="noopener noreferrer" target="_blank">src/viz/</a> — module source, organized as <code class="docutils literal notranslate"><span class="pre">core</span></code> / <code class="docutils literal notranslate"><span class="pre">layers</span></code> / <code class="docutils literal notranslate"><span class="pre">session</span></code> /
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.3.x/src/viz" rel="noopener noreferrer" target="_blank">src/viz/</a> — module source, organized as <code class="docutils literal notranslate"><span class="pre">core</span></code> / <code class="docutils literal notranslate"><span class="pre">layers</span></code> / <code class="docutils literal notranslate"><span class="pre">session</span></code> /
 <code class="docutils literal notranslate"><span class="pre">xr</span></code> / <code class="docutils literal notranslate"><span class="pre">shaders</span></code> / <code class="docutils literal notranslate"><span class="pre">python</span></code> sub-modules</p></li>
 </ul>
 </section>

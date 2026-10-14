@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>reBot B601-RS on Jetson AGX Orin &#8212; Isaac Teleop Documentation</title>
+    <title>reBot B601-RS on Jetson AGX Orin &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -512,7 +512,7 @@ and motorbridge reaches Damiao hardware over its own <code class="docutils liter
 rather than SocketCAN. For that model, start from the
 <a class="reference external" href="https://wiki.seeedstudio.com/rebot_b601_dm_getting_started" rel="noopener noreferrer" target="_blank">B601-DM quick start</a>.</p>
 </div>
-<p>The working example, including the assets referenced below, lives in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.5.175/examples/rebot" rel="noopener noreferrer" target="_blank">examples/rebot</a>:</p>
+<p>The working example, including the assets referenced below, lives in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.5.175/examples/rebot" rel="noopener noreferrer" target="_blank">examples/rebot</a>:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 36.0%" />
@@ -524,17 +524,17 @@ rather than SocketCAN. For that model, start from the
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">SKILL.md</a></p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">SKILL.md</a></p></td>
 <td><p>The full procedure and troubleshooting tree, written as an agent skill.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/start-gateway.sh" rel="noopener noreferrer" target="_blank">start-gateway.sh</a></p></td>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/start-gateway.sh" rel="noopener noreferrer" target="_blank">start-gateway.sh</a></p></td>
 <td><p>Launches the motorbridge WebSocket gateway for Studio.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/assets/set_can_pinmux.py" rel="noopener noreferrer" target="_blank">assets/set_can_pinmux.py</a></p></td>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/assets/set_can_pinmux.py" rel="noopener noreferrer" target="_blank">assets/set_can_pinmux.py</a></p></td>
 <td><p>Routes the header pins to the CAN controller, via <code class="docutils literal notranslate"><span class="pre">/dev/mem</span></code>. Required on every boot;
 idempotent; needs sudo.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/assets/can0-rebot.service" rel="noopener noreferrer" target="_blank">assets/can0-rebot.service</a></p></td>
+<tr class="row-odd"><td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/assets/can0-rebot.service" rel="noopener noreferrer" target="_blank">assets/can0-rebot.service</a></p></td>
 <td><p>systemd oneshot that redoes the pinmux and brings <code class="docutils literal notranslate"><span class="pre">can0</span></code> up at 1 Mbit on boot.</p></td>
 </tr>
 </tbody>
@@ -759,7 +759,7 @@ your network and a moving arm, so make it a real one:</p>
 </section>
 <section id="let-an-agent-do-it">
 <h2>Let an agent do it<a class="headerlink" href="#let-an-agent-do-it" title="Link to this heading">#</a></h2>
-<p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">examples/rebot/SKILL.md</a> is written as an agent skill: it carries the full procedure
+<p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">examples/rebot/SKILL.md</a> is written as an agent skill: it carries the full procedure
 plus a troubleshooting tree covering the failure modes that actually bite (loopback passes but no
 motors answer, <code class="docutils literal notranslate"><span class="pre">MUX</span> <span class="pre">UNCLAIMED</span></code> pinmux red herrings, wedged TX FIFOs). Paste this into Claude Code,
 or any agent that can fetch a URL, from the Orin itself — the prompt is self-contained, so the agent
@@ -782,7 +782,7 @@ changing anything — start by confirming motor power.
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
-<p>The full tree is in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">examples/rebot/SKILL.md</a>. The rule that resolves most cases:</p>
+<p>The full tree is in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/SKILL.md" rel="noopener noreferrer" target="_blank">examples/rebot/SKILL.md</a>. The rule that resolves most cases:</p>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
 <p>On a single-node CAN bus, “nothing replies” almost always means <strong>no other powered node is
@@ -820,11 +820,11 @@ routed.</p>
 <p>Three things to sort out, in order:</p>
 <ol class="arabic simple">
 <li><p><strong>Pinmux.</strong> Find the CAN1 register offsets and add them to <code class="docutils literal notranslate"><span class="pre">REGS</span></code> in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/assets/set_can_pinmux.py" rel="noopener noreferrer" target="_blank">assets/set_can_pinmux.py</a>. Without this
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/assets/set_can_pinmux.py" rel="noopener noreferrer" target="_blank">assets/set_can_pinmux.py</a>. Without this
 nothing below matters.</p></li>
 <li><p><strong>Bring-up and persistence.</strong> <code class="docutils literal notranslate"><span class="pre">ip</span> <span class="pre">link</span></code> takes <code class="docutils literal notranslate"><span class="pre">can1</span></code> exactly as it takes <code class="docutils literal notranslate"><span class="pre">can0</span></code>. For
 reboot persistence, derive a second unit from
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/examples/rebot/assets/can0-rebot.service" rel="noopener noreferrer" target="_blank">assets/can0-rebot.service</a> with the
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/examples/rebot/assets/can0-rebot.service" rel="noopener noreferrer" target="_blank">assets/can0-rebot.service</a> with the
 interface name replaced and its <code class="docutils literal notranslate"><span class="pre">ExecStartPre</span></code> pointing at a CAN1-capable pinmux step. If you
 run both routinely, a systemd template unit (<code class="docutils literal notranslate"><span class="pre">can-rebot&#64;.service</span></code>, enabled as
 <code class="docutils literal notranslate"><span class="pre">can-rebot&#64;can0</span></code> and <code class="docutils literal notranslate"><span class="pre">can-rebot&#64;can1</span></code>) collapses the two files back into one.</p></li>

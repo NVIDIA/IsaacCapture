@@ -1,5 +1,14 @@
-Device Trackers
-===============
+.. SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+.. SPDX-License-Identifier: Apache-2.0
+
+Spatial Trackers and Device Data
+================================
+
+Spatial tracking includes headset and controller poses, articulated hands and
+bodies, and generic SE3 pose sources such as tracker pucks and mocap rigid bodies.
+This guide is the common tracker reference; device-specific setup belongs in the
+individual device guides. The same interfaces also carry camera metadata and
+joint-space inputs.
 
 Trackers (defined in :code-dir:`src/core/deviceio_trackers`) are the consumer-side API for reading device
 data from an active :code-file:`DeviceIOSession <src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp>`.
@@ -39,7 +48,7 @@ All trackers follow the same lifecycle:
 .. note::
 
     The ``DeviceIOSession`` is considered a low-level API. In practice, it is recommended to
-    use the :doc:`../getting_started/teleop_session` to manage a teleop session with multiple
+    use the :doc:`../teleop/teleop_session` to manage a teleop session with multiple
     device trackers and retargeters to work together.
 
 .. _data-schema-convention:
@@ -475,7 +484,7 @@ When driving devices through the higher-level teleop session manager, vendor
 selection is carried on the DeviceIO source itself via its ``vendor`` argument
 (e.g. ``FullBodySource(name="full_body", vendor=deviceio.TrackerVendor("body.pico-xr"))``),
 so it travels with the pipeline into both extension discovery and session
-construction; see :doc:`../getting_started/teleop_session`.
+construction; see :doc:`../teleop/teleop_session`.
 
 .. _tracker-usage-example:
 

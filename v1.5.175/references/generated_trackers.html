@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Generated Tracker Code &#8212; Isaac Teleop Documentation</title>
+    <title>Generated Tracker Code &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -493,16 +493,16 @@ would have to change to generate the rest.</p>
 <h2>How it works<a class="headerlink" href="#how-it-works" title="Link to this heading">#</a></h2>
 <p>Three inputs drive the generator:</p>
 <ul class="simple">
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> — one <code class="docutils literal notranslate"><span class="pre">[[tracker]]</span></code> entry per tracker,
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> — one <code class="docutils literal notranslate"><span class="pre">[[tracker]]</span></code> entry per tracker,
 carrying only the values that differ from the defaults.</p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/core/deviceio_trackers/defaults.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/defaults.toml</a> — the defaults, expressed with
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/core/deviceio_trackers/defaults.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/defaults.toml</a> — the defaults, expressed with
 <code class="docutils literal notranslate"><span class="pre">%placeholder%</span></code> substitutions (<code class="docutils literal notranslate"><span class="pre">%name%</span></code>, <code class="docutils literal notranslate"><span class="pre">%name_CamelCase%</span></code>, and so on).</p></li>
-<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.5.175/src/core/codegen" rel="noopener noreferrer" target="_blank">src/core/codegen</a> — <code class="docutils literal notranslate"><span class="pre">manifest.py</span></code> resolves the placeholders, <code class="docutils literal notranslate"><span class="pre">templates.py</span></code>
+<li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.5.175/src/core/codegen" rel="noopener noreferrer" target="_blank">src/core/codegen</a> — <code class="docutils literal notranslate"><span class="pre">manifest.py</span></code> resolves the placeholders, <code class="docutils literal notranslate"><span class="pre">templates.py</span></code>
 derives type and file names, <code class="docutils literal notranslate"><span class="pre">templates/</span></code> holds the C++ bodies as <code class="docutils literal notranslate"><span class="pre">*.hpp.template</span></code> /
 <code class="docutils literal notranslate"><span class="pre">*.cpp.template</span></code> under <code class="docutils literal notranslate"><span class="pre">pull/</span></code> and <code class="docutils literal notranslate"><span class="pre">push/</span></code> (<code class="docutils literal notranslate"><span class="pre">&#64;KEY&#64;</span></code> substitution via <code class="docutils literal notranslate"><span class="pre">template_renderer.py</span></code>),
 and <code class="docutils literal notranslate"><span class="pre">generate_trackers.py</span></code> renders the output.</p></li>
 </ul>
-<p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/cmake/GenerateTrackers.cmake" rel="noopener noreferrer" target="_blank">cmake/GenerateTrackers.cmake</a> runs the generator through <code class="docutils literal notranslate"><span class="pre">execute_process</span></code> at
+<p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/cmake/GenerateTrackers.cmake" rel="noopener noreferrer" target="_blank">cmake/GenerateTrackers.cmake</a> runs the generator through <code class="docutils literal notranslate"><span class="pre">execute_process</span></code> at
 <strong>configure</strong> time, not build time, because CMake needs the resulting source list before it can
 define targets. Output lands in <code class="docutils literal notranslate"><span class="pre">${CMAKE_BINARY_DIR}/generated/trackers/</span></code> and is <strong>not</strong> checked
 into git, exactly like the <code class="docutils literal notranslate"><span class="pre">flatc</span></code> output. Sources are wired through an explicit
@@ -534,12 +534,12 @@ replay_trackers/replay_&lt;header&gt;_impl.{hpp,cpp}
 so hand-written trackers keep their own rows. The fragments under <code class="docutils literal notranslate"><span class="pre">generated/trackers/inc/</span></code> cover
 the live and replay factories (includes, forward declarations, try-create thunks, dispatch rows,
 factory declarations and definitions), the MCAP recording traits in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/core/mcap/cpp/inc/mcap/recording_traits.hpp" rel="noopener noreferrer" target="_blank">src/core/mcap/cpp/inc/mcap/recording_traits.hpp</a>, the pybind blocks in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/core/deviceio_trackers/python/tracker_bindings.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/python/tracker_bindings.cpp</a>, and a
-<code class="docutils literal notranslate"><span class="pre">_generated_tracker_exports.py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/python/isaacteleop/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaacteleop/deviceio_trackers/__init__.py</a>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/core/mcap/cpp/inc/mcap/recording_traits.hpp" rel="noopener noreferrer" target="_blank">src/core/mcap/cpp/inc/mcap/recording_traits.hpp</a>, the pybind blocks in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/core/deviceio_trackers/python/tracker_bindings.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/python/tracker_bindings.cpp</a>, and a
+<code class="docutils literal notranslate"><span class="pre">_generated_tracker_exports.py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/python/isaacteleop/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaacteleop/deviceio_trackers/__init__.py</a>
 star-imports. Because that last one is spliced into <code class="docutils literal notranslate"><span class="pre">__all__</span></code>, a new manifest entry needs no
 Python edit at all.</p>
-<p><code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stubs need no work either: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.5.175/src/core/python/generate_stubs.py" rel="noopener noreferrer" target="_blank">src/core/python/generate_stubs.py</a> derives them from
+<p><code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stubs need no work either: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.5.175/src/core/python/generate_stubs.py" rel="noopener noreferrer" target="_blank">src/core/python/generate_stubs.py</a> derives them from
 the built module.</p>
 </section>
 <section id="generated-today">

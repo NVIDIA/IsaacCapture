@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Build from Source &#8212; Isaac Teleop Documentation</title>
+    <title>Build from Source &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -487,7 +487,7 @@
 <h1>Build from Source<a class="headerlink" href="#build-from-source" title="Link to this heading">#</a></h1>
 <p>This page describes how to build Isaac Teleop from source, including core libraries, plugins, and
 examples. The instructions align with the project’s CMake configuration and the CI workflow
-(<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository).</p>
+(<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository).</p>
 <nav class="contents local" id="steps">
 <p class="topic-title">Steps</p>
 <ul class="simple">
@@ -540,7 +540,7 @@ than quietly dropping the module. Most users do not need any of this:
 </section>
 <section id="one-time-setup">
 <span id="id1"></span><h2><a class="toc-backref" href="#id6" role="doc-backlink">One time setup</a><a class="headerlink" href="#one-time-setup" title="Link to this heading">#</a></h2>
-<p>Install build tools and dependencies, such as CMake, clang-format. See <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository for
+<p>Install build tools and dependencies, such as CMake, clang-format. See <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository for
 the list of dependencies. On <strong>Ubuntu</strong>, install build tools and clang-format:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
 sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libegl-dev<span class="w"> </span>libx11-dev<span class="w"> </span>libwayland-dev<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools
@@ -587,9 +587,9 @@ git submodule initialization is required.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>If you are using the default flow, skip this step. The
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/cloudxr/python/CMakeLists.txt" rel="noopener noreferrer" target="_blank">CMakeLists.txt</a>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/cloudxr/python/CMakeLists.txt" rel="noopener noreferrer" target="_blank">CMakeLists.txt</a>
 will automatically download the CloudXR SDK by calling the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/scripts/download_cloudxr_runtime_sdk.sh" rel="noopener noreferrer" target="_blank">download_cloudxr_runtime_sdk.sh</a>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/scripts/download_cloudxr_runtime_sdk.sh" rel="noopener noreferrer" target="_blank">download_cloudxr_runtime_sdk.sh</a>
 script.</p>
 </div>
 <p>Sometimes NVIDIA might share early access CloudXR SDKs with you. In that case, you may get
@@ -602,8 +602,8 @@ support (for example <a class="reference internal" href="../televiz.html"><span 
 those platforms.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version-for-web-sdk&gt;.tgz</span></code> (CloudXR Web SDK)</p></li>
 </ul>
-<p>You can place them in the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/deps/cloudxr/" rel="noopener noreferrer" target="_blank">deps/cloudxr/</a> directory and update the <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code>
-file to locally override the default version defined in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/deps/cloudxr/.env.default" rel="noopener noreferrer" target="_blank">deps/cloudxr/.env.default</a>,
+<p>You can place them in the <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/deps/cloudxr/" rel="noopener noreferrer" target="_blank">deps/cloudxr/</a> directory and update the <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code>
+file to locally override the default version defined in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/deps/cloudxr/.env.default" rel="noopener noreferrer" target="_blank">deps/cloudxr/.env.default</a>,
 like this:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CXR_RUNTIME_SDK_VERSION</span><span class="o">=</span>&lt;version-for-runtime-sdk&gt;
 <span class="nv">CXR_WEB_SDK_VERSION</span><span class="o">=</span>&lt;version-for-web-sdk&gt;
@@ -664,7 +664,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </section>
 <section id="other-build-options">
 <h3>Other Build options<a class="headerlink" href="#other-build-options" title="Link to this heading">#</a></h3>
-<p>The CMake options (defined in root <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/CMakeLists.txt" rel="noopener noreferrer" target="_blank">CMakeLists.txt</a> and <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/cmake/SetupPython.cmake" rel="noopener noreferrer" target="_blank">cmake/SetupPython.cmake</a>):</p>
+<p>The CMake options (defined in root <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/CMakeLists.txt" rel="noopener noreferrer" target="_blank">CMakeLists.txt</a> and <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/cmake/SetupPython.cmake" rel="noopener noreferrer" target="_blank">cmake/SetupPython.cmake</a>):</p>
 <div class="pst-scrollable-table-container"><table class="table" id="id2">
 <caption><span class="caption-text">Common CMake Options</span><a class="headerlink" href="#id2" title="Link to this table">#</a></caption>
 <colgroup>
@@ -795,7 +795,7 @@ cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </s
 cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>camera_plugin_oak<span class="w"> </span>--parallel
 </pre></div>
 </div>
-<p>Build only the teleop_ros2 example (e.g. for Docker, as in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> teleop-ros2-docker job):</p>
+<p>Build only the teleop_ros2 example (e.g. for Docker, as in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> teleop-ros2-docker job):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_EXAMPLES<span class="o">=</span>OFF<span class="w"> </span>-DBUILD_EXAMPLE_TELEOP_ROS2<span class="o">=</span>ON
 cmake<span class="w"> </span>--build<span class="w"> </span>build
 </pre></div>
@@ -816,7 +816,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build
 ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>--output-on-failure<span class="w"> </span>--parallel
 </pre></div>
 </div>
-<p>The CI uses <code class="docutils literal notranslate"><span class="pre">ctest</span></code> (see <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a>).</p>
+<p>The CI uses <code class="docutils literal notranslate"><span class="pre">ctest</span></code> (see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a>).</p>
 </section>
 <section id="install-the-isaacteleop-pip-package">
 <h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> pip package</a><a class="headerlink" href="#install-the-isaacteleop-pip-package" title="Link to this heading">#</a></h2>
@@ -844,7 +844,7 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <p>Check that the installed version ends in <code class="docutils literal notranslate"><span class="pre">+local</span></code> with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">list</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">isaacteleop</span></code>.</p>
 <section id="alternative-install-directly-from-source-with-pip">
 <h3>Alternative: install directly from source with pip<a class="headerlink" href="#alternative-install-directly-from-source-with-pip" title="Link to this heading">#</a></h3>
-<p>The repository also ships a root <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> using the
+<p>The repository also ships a root <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> using the
 <a class="reference external" href="https://scikit-build-core.readthedocs.io/" rel="noopener noreferrer" target="_blank">scikit-build-core</a> backend, which
 drives the same top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>. This lets you build and install
 with standard Python tooling, without running the <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">-B</span> <span class="pre">build</span></code> steps
@@ -893,7 +893,7 @@ unaffected.</p></li>
 non-CI/local build. The pip path is a from-source/dev build, so it is always
 tagged <code class="docutils literal notranslate"><span class="pre">+local</span></code>; the git-aware release versioning (tags, <code class="docutils literal notranslate"><span class="pre">a1</span></code> / <code class="docutils literal notranslate"><span class="pre">rc1</span></code> /
 <code class="docutils literal notranslate"><span class="pre">.devN</span></code> labels) stays with the classic flow via
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/cmake/IsaacTeleopVersion.cmake" rel="noopener noreferrer" target="_blank">cmake/IsaacTeleopVersion.cmake</a>.</p></li>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/cmake/IsaacTeleopVersion.cmake" rel="noopener noreferrer" target="_blank">cmake/IsaacTeleopVersion.cmake</a>.</p></li>
 </ul>
 <div class="admonition-editable-installs-and-iterating-on-pure-python-subpackages admonition">
 <p class="admonition-title">Editable installs and iterating on pure-Python subpackages</p>

@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Camera Streaming &#8212; Isaac Teleop Documentation</title>
+    <title>Camera Streaming &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -484,10 +484,10 @@ and streams them to an XR headset — one plane per camera, aspect-fit — eithe
 robot to a workstation over the network (split mode). It can also stream <a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">recorded camera
 data</span></a> — a video file replayed in place of a live camera — and render
 to a desktop window instead of the headset.</p>
-<p>The sample lives at <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz" rel="noopener noreferrer" target="_blank">examples/camera_viz/</a>. This page walks you
+<p>The sample lives at <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz" rel="noopener noreferrer" target="_blank">examples/camera_viz/</a>. This page walks you
 from setup and a hardware-free first run to real cameras and the robot → workstation split mode.
 For the exact command surface and flags, see the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a>.</p>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/examples/camera_viz/README.md" rel="noopener noreferrer" target="_blank">README</a>.</p>
 <figure class="align-default" id="id1">
 <a class="no-image-zoom reference internal image-reference" href="../_images/televiz_2d.gif"><img alt="camera_viz in window mode with synthetic multi-camera feeds" class="no-image-zoom" src="../_images/televiz_2d.gif" style="width: 420px;" />
 </a>
@@ -552,7 +552,7 @@ sample’s own environment: <code class="docutils literal notranslate"><span cla
 since XR is the default display mode and the viewer launches the runtime itself — plus every
 other Python dependency, into <code class="docutils literal notranslate"><span class="pre">.venv/</span></code> via <code class="docutils literal notranslate"><span class="pre">uv</span></code>. It resolves a version new enough for the
 sample on its own, falling back to a release candidate and then, after asking, to a source build
-of the surrounding checkout (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/examples/camera_viz/scripts/_install_deps.sh" rel="noopener noreferrer" target="_blank">scripts/_install_deps.sh</a> holds the minimum; <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> and
+of the surrounding checkout (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/examples/camera_viz/scripts/_install_deps.sh" rel="noopener noreferrer" target="_blank">scripts/_install_deps.sh</a> holds the minimum; <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> and
 <code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code> override the choice). Finally it probes the system packages it needs and
 prints the exact <code class="docutils literal notranslate"><span class="pre">apt-get</span></code> line to approve — declining, or a non-interactive run, aborts.</p>
 <p>By default <code class="docutils literal notranslate"><span class="pre">setup</span></code> provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
@@ -611,7 +611,7 @@ prompting — a full C++ / CUDA / Vulkan build (see
 <p>The recorded-camera source (<code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">video</span></code>) replays a video file through exactly the same
 source → layer → Televiz path a live camera uses. It is the supported way to stream recorded
 camera data, it needs no extra setup, and it is the quickest end-to-end check. A test clip ships
-with the repo, and <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/examples/camera_viz/configs/replay.yaml" rel="noopener noreferrer" target="_blank">configs/replay.yaml</a>
+with the repo, and <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/examples/camera_viz/configs/replay.yaml" rel="noopener noreferrer" target="_blank">configs/replay.yaml</a>
 already points at it:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/camera_viz
 ./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/replay.yaml<span class="w">                 </span><span class="c1"># XR headset (default)</span>
@@ -881,7 +881,7 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
 <span class="w">      </span><span class="c1"># cylinder_angle_deg: 90</span>
 </pre></div>
 </div>
-<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/configs" rel="noopener noreferrer" target="_blank">configs/</a> directory for a complete, commented
+<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/configs" rel="noopener noreferrer" target="_blank">configs/</a> directory for a complete, commented
 YAML per source kind.</p>
 </section>
 <section id="troubleshooting">
@@ -934,17 +934,17 @@ Televiz as the compositor at the end of the chain:</p>
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
-hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
+<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
+hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
 source produces GPU frames where possible — e.g. the ZED source uses <code class="docutils literal notranslate"><span class="pre">retrieve_image(MEM.GPU)</span></code> so
 BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.</p></li>
-<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
+<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and adds one <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> per enabled camera, then submits each frame to its layer
 and calls <code class="docutils literal notranslate"><span class="pre">render()</span></code> once per frame. Stereo cameras submit both eyes.</p></li>
-<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
+<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
 an RTP H.264 sender on the robot and a receiver on the workstation, with a native NVENC/NVDEC codec
-module (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
-<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
+module (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
+<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
 strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
 sets each frame.</p></li>
 </ul>

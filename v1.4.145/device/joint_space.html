@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Generic Joint-Space Device &#8212; Isaac Teleop Documentation</title>
+    <title>Generic Joint-Space Device &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -502,11 +502,11 @@ RobStride RS-series motors) is a second instance built from the same recipe.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>Schema</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/src/core/schema/fbs/joint_state.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/joint_state.fbs</a> – <code class="docutils literal notranslate"><span class="pre">JointState</span></code> (name + position +
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/src/core/schema/fbs/joint_state.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/joint_state.fbs</a> – <code class="docutils literal notranslate"><span class="pre">JointState</span></code> (name + position +
 optional velocity/effort) and <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> (a vector of joints + <code class="docutils literal notranslate"><span class="pre">device_id</span></code>).</p></td>
 </tr>
 <tr class="row-odd"><td><p>Plugin</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/src/plugins/so101_leader" rel="noopener noreferrer" target="_blank">src/plugins/so101_leader</a> – pushes <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> via <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>.
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/src/plugins/so101_leader" rel="noopener noreferrer" target="_blank">src/plugins/so101_leader</a> – pushes <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> via <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>.
 Reads the FEETECH STS3215 servos over serial (<code class="docutils literal notranslate"><span class="pre">FeetechBus</span></code>); synthetic fallback when no
 device path is given.</p></td>
 </tr>
@@ -568,7 +568,7 @@ converting ticks to radians with per-joint calibration. With no device path it f
 ./install/plugins/so101_leader/so101_leader_plugin<span class="w"> </span>/dev/ttyACM0<span class="w"> </span>so101_leader<span class="w"> </span>so101_leader.calib
 </pre></div>
 </div>
-<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/src/plugins/so101_leader/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> for hardware setup
+<p>See the <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/src/plugins/so101_leader/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> for hardware setup
 (unique servo ids, gear removal, back-driving) and the calibration file format.</p>
 <p>The consumer side creates a <code class="docutils literal notranslate"><span class="pre">JointStateSource(name=...,</span> <span class="pre">collection_id=&quot;so101_leader&quot;,</span>
 <span class="pre">joint_names=[...])</span></code> on the same <code class="docutils literal notranslate"><span class="pre">collection_id</span></code>; <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> discovers and polls the
@@ -589,7 +589,7 @@ With no device argument it falls back to a <strong>synthetic</strong> trajectory
 </pre></div>
 </div>
 <p>Both builds share the calibration file format; see the
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/v1.4.145/src/plugins/rebot_devarm_leader/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> for the format
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.4.145/src/plugins/rebot_devarm_leader/README.md" rel="noopener noreferrer" target="_blank">plugin README</a> for the format
 (name, command/feedback CAN ids, motor model, sign, zero offset) and hardware notes.</p>
 <section id="the-damiao-build">
 <span id="rebot-devarm-damiao-build"></span><h3>The Damiao build<a class="headerlink" href="#the-damiao-build" title="Link to this heading">#</a></h3>
@@ -661,8 +661,8 @@ OpenXR runtime, so a recorded session drives the retargeting graph headlessly:</
 <p>Reuse everything above by writing only:</p>
 <ol class="arabic simple">
 <li><p>A <strong>plugin</strong> that reads your hardware and fills <code class="docutils literal notranslate"><span class="pre">JointStateOutput</span></code> (positions; optionally
-velocity/effort), modeled on <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/src/plugins/so101_leader" rel="noopener noreferrer" target="_blank">src/plugins/so101_leader</a> (or
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/v1.4.145/src/plugins/rebot_devarm_leader" rel="noopener noreferrer" target="_blank">src/plugins/rebot_devarm_leader</a>, a second instance of the same recipe on a
+velocity/effort), modeled on <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/src/plugins/so101_leader" rel="noopener noreferrer" target="_blank">src/plugins/so101_leader</a> (or
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/v1.4.145/src/plugins/rebot_devarm_leader" rel="noopener noreferrer" target="_blank">src/plugins/rebot_devarm_leader</a>, a second instance of the same recipe on a
 different motor bus).</p></li>
 <li><p>A <strong>config</strong>: a <code class="docutils literal notranslate"><span class="pre">collection_id</span></code>, the device joint names, and – for <code class="docutils literal notranslate"><span class="pre">ee_pose</span></code> mode – a URDF
 and end-effector link.</p></li>

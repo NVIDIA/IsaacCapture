@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>OGLO Tactile Glove Plugin &#8212; Isaac Teleop Documentation</title>
+    <title>OGLO Tactile Glove Plugin &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -268,11 +268,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -354,7 +354,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -485,7 +485,7 @@
 <p>C++ plugin that streams <strong>OGLO</strong> tactile gloves over BLE into the standard
 DeviceIO recording path. Each glove (one BLE device per hand) provides <strong>80
 tactile taxels</strong> (5 fingers × 4×4) plus a <strong>6-axis IMU</strong> at 100 Hz. Source and
-plugin README: <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/plugins/oglo_tactile/README.md" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/README.md</a>.</p>
+plugin README: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/plugins/oglo_tactile/README.md" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/README.md</a>.</p>
 <p>This plugin follows the <a class="reference internal" href="add_device.html"><span class="doc">Add a New Device</span></a> pattern (FlatBuffer schema → plugin
 <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code> → tracker → MCAP) and is modeled on the OAK camera plugin.</p>
 <figure class="align-center" id="id1">
@@ -511,13 +511,13 @@ time-synced with the operator’s hand/head tracking.</span><a class="headerlink
 <section id="components">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Components</a><a class="headerlink" href="#components" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>Schema</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/schema/fbs/oglo_tactile.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/oglo_tactile.fbs</a>
+<li><p><strong>Schema</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/schema/fbs/oglo_tactile.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/oglo_tactile.fbs</a>
 (<code class="docutils literal notranslate"><span class="pre">OgloGloveSample</span></code> / <code class="docutils literal notranslate"><span class="pre">OgloGloveSampleRecord</span></code>).</p></li>
-<li><p><strong>Plugin</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.5.x/src/plugins/oglo_tactile" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile</a> (BLE read → parse → OpenXR push).</p></li>
+<li><p><strong>Plugin</strong> — <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x/src/plugins/oglo_tactile" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile</a> (BLE read → parse → OpenXR push).</p></li>
 <li><p><strong>Tracker</strong> — <code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code>, with live backend
 <code class="docutils literal notranslate"><span class="pre">LiveOgloTactileTrackerImpl</span></code>. Both are generated at configure time from the
 <code class="docutils literal notranslate"><span class="pre">oglo_tactile</span></code> entry in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>.</p></li>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a>.</p></li>
 </ul>
 </section>
 <section id="build">
@@ -534,7 +534,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 <p><strong>BLE backend.</strong> The plugin talks to BlueZ directly over <a class="reference external" href="https://www.freedesktop.org/wiki/Software/dbus/" rel="noopener noreferrer" target="_blank">libdbus</a> (AFL-2.1, permissive), so
 the build carries <strong>no copyleft dependency</strong> and works out of the box. The
 transport is isolated behind the <code class="docutils literal notranslate"><span class="pre">OgloBleClient</span></code> interface
-(<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/plugins/oglo_tactile/ble/oglo_ble_client.hpp" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/ble/oglo_ble_client.hpp</a>), so an
+(<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/plugins/oglo_tactile/ble/oglo_ble_client.hpp" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/ble/oglo_ble_client.hpp</a>), so an
 alternative backend can be dropped in via <code class="docutils literal notranslate"><span class="pre">make_ble_client()</span></code> without
 touching the parser, schema, or tracker.</p>
 </div>
@@ -592,7 +592,7 @@ hand side appended. For the <strong>left</strong> hand:</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">oglo_left/oglo</span></code>, <code class="docutils literal notranslate"><span class="pre">oglo_left/oglo_tracked</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p>Plugin device path</p></td>
-<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/release/1.5.x/src/plugins/oglo_tactile/plugin.yaml" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/plugin.yaml</a></p></td>
+<td><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/plugins/oglo_tactile/plugin.yaml" rel="noopener noreferrer" target="_blank">src/plugins/oglo_tactile/plugin.yaml</a></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">/glove/oglo_left</span></code></p></td>
 </tr>
 </tbody>
@@ -603,7 +603,7 @@ recording shows <code class="docutils literal notranslate"><span class="pre">ogl
 (+ <code class="docutils literal notranslate"><span class="pre">_tracked</span></code>).</p>
 <p>A complete data-collection demo (MetaQuest hand/head + both gloves + a live
 in-headset tactile heatmap) lives at
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/tree/release/1.5.x/examples/oglo_tactile" rel="noopener noreferrer" target="_blank">examples/oglo_tactile</a>; see its <code class="docutils literal notranslate"><span class="pre">README.md</span></code>.</p>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x/examples/oglo_tactile" rel="noopener noreferrer" target="_blank">examples/oglo_tactile</a>; see its <code class="docutils literal notranslate"><span class="pre">README.md</span></code>.</p>
 </section>
 <section id="imu-frame">
 <h2><a class="toc-backref" href="#id6" role="doc-backlink">IMU frame</a><a class="headerlink" href="#imu-frame" title="Link to this heading">#</a></h2>
