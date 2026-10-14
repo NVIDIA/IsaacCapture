@@ -158,9 +158,8 @@ The plugin pushes ``GamepadSnapshot`` to collection ``gamepad`` (``--collection-
 match it in ``GamepadSource`` / ``GamepadTracker``):
 
 - ``inputs`` — the ``GamepadInputState`` above.
-- ``connected`` — whether the plugin has the pad open.
 
-While no pad is open the plugin keeps pushing with ``connected`` false and nothing held, so a
+While no pad is open the plugin keeps pushing snapshots without ``inputs``, so a
 reader never holds the last stick deflection of an unplugged pad; ``GamepadSource`` then reports
 its outputs as absent. Recordings use MCAP channels ``gamepad`` and ``gamepad_tracked``.
 
