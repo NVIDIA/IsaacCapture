@@ -340,16 +340,6 @@ jobs:
             isaaccapture-sbom check --wheel "${wheel}"
         done
 
-    - name: Summarize wheel evidence (Release only)
-      if: matrix.build_type == 'Release'
-      run: |
-        set -euo pipefail
-        {
-          echo "## Wheel SBOM and license evidence"
-          echo
-          cat sbom/*.licenses.md
-        } >> "${GITHUB_STEP_SUMMARY}"
-
     - name: Create tarball to preserve permissions
       if: matrix.build_type == 'Release'
       run: tar -cvf isaacteleop-install.tar -C install .
