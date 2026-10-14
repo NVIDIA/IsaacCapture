@@ -6,4 +6,4 @@
 Data Collection in Sim
 ======================
 
-This page has moved to :doc:`/teleop/lerobot/data_collection_sim`.
+This page has moved to :doc:`/integrations/lerobot/data_collection_sim`.

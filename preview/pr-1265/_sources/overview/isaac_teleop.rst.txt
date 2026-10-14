@@ -27,7 +27,7 @@ Key features:
 
 Start with :doc:`/teleop/quick_start`, then use :doc:`/teleop/teleop_session`
 and :doc:`/teleop/control_state_machine` to integrate your application.
-The :doc:`/teleop/lerobot/index` guides cover SO-101 data collection and training.
+The :doc:`/integrations/lerobot/index` guides cover SO-101 data collection and training.
 
 Isaac Teleop uses Isaac Capture's :doc:`/device/trackers`,
 :doc:`/references/retargeting/index`, and :doc:`/references/mcap_record_replay`.
