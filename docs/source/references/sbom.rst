@@ -18,7 +18,7 @@ What a wheel carries
        ├── METADATA                       # License-Expression + one License-File per text below
        ├── licenses/
        │   ├── LICENSE.md                 # this project's own license
-       │   ├── LICENSES/*.txt             # texts the SPDX headers on this project's sources name
+       │   ├── LICENSES/<id>.txt          # the pool texts license-files in pyproject.toml names
        │   ├── THIRD-PARTY-NOTICES.md     # component -> license -> text, with roles
        │   └── third-party/<component>/   # its own file verbatim, or a reference text, labelled
        └── sboms/

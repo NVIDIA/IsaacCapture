@@ -15,7 +15,16 @@ description = "Isaac Teleop"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE.md", "LICENSES/*.txt"]
+# The license texts every isaaccapture wheel ships; src/core/python/CMakeLists.txt
+# reads this list for the setuptools wheel, so name a text here and nowhere else.
+# Not a glob over LICENSES/: that pool also licenses components no wheel carries.
+license-files = [
+    "LICENSE.md",
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/BSD-3-Clause.txt",
+    "LICENSES/BSL-1.0.txt",
+    "LICENSES/MIT.txt",
+]
 authors = [
     { name = "NVIDIA" },
 ]

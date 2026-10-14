@@ -12,6 +12,35 @@ if(NOT EXISTS "${ROBOTIC_GROUNDING_STAGED_DIR}/__init__.py")
 endif()
 message(STATUS "[grounding] bundling robotic_grounding/ from ${ROBOTIC_GROUNDING_STAGED_DIR}")
 
+# project.license-files is stated once, in the root pyproject.toml, and both
+# wheels ship that list: this one through pyproject.toml.in and the staging below.
+set(_root_pyproject "${CMAKE_SOURCE_DIR}/pyproject.toml")
+set(_license_files_script "${CMAKE_CURRENT_SOURCE_DIR}/license_files.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_root_pyproject}" "${_license_files_script}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${_license_files_script}" "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE _license_files_out
+    ERROR_VARIABLE _license_files_err
+    RESULT_VARIABLE _license_files_rc
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT _license_files_rc EQUAL 0)
+    message(FATAL_ERROR "Cannot read license-files from ${_root_pyproject}: ${_license_files_err}")
+endif()
+string(REPLACE "\n" ";" _license_files_out "${_license_files_out}")
+list(POP_FRONT _license_files_out ISAACCAPTURE_LICENSE_FILES)
+list(REMOVE_DUPLICATES _license_files_out)
+
+set(_license_staging_commands)
+foreach(_license_file IN LISTS _license_files_out)
+    get_filename_component(_license_dir "${_license_file}" DIRECTORY)
+    list(APPEND _license_staging_commands
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/${_license_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/${_license_file}" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/${_license_file}"
+    )
+endforeach()
+
 # Generate pyproject.toml from template with ISAAC_TELEOP_PYPROJECT_VERSION
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml.in"
@@ -42,12 +71,11 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_BINARY_DIR}/pyproject.toml" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/MANIFEST.in" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/LICENSE.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSE.md"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/README.md"
-    # project.license-files in pyproject.toml.in names these; without them the
-    # wheel redistributes the project under a license it does not carry.
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/LICENSE.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSE.md"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/LICENSES" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
+    # Without these the wheel redistributes the project under a license it does
+    # not carry. A text dropped from the list must not linger from an older build.
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
+    ${_license_staging_commands}
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-dev.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-ui.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"

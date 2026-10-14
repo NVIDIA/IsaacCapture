@@ -22,8 +22,8 @@ description = "Isaac Teleop - Teleoperation with Device I/O"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-# Staged beside this file by the python_package target.
-license-files = ["LICENSE.md", "LICENSES/*.txt"]
+# The root pyproject.toml's list, staged beside this file by python_package.
+license-files = @ISAACCAPTURE_LICENSE_FILES@
 authors = [
     {name = "NVIDIA"}
 ]
