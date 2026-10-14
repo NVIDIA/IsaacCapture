@@ -62,7 +62,7 @@ for non-HTML builders.
 
 ## The external marker follows the target, not the record
 
-The docs site and the IsaacTeleop repository are both this project, so a link into either
+The docs site and the IsaacCapture repository are both this project, so a link into either
 renders with no arrow and no screen-reader "(external)" — tracking links included. Only
 third-party domains get the marker, and other GitHub organizations (`isaac-sim`) count as
 third-party. `ecosystem_grid.PROJECT_REPO` is the one place that boundary is written down.
