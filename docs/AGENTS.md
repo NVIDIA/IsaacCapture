@@ -112,3 +112,6 @@ share one maintained diagram.
 
 Group vendor device guides under category toctrees in the Devices navigation;
 folder placement alone does not create sidebar nesting.
+
+When backporting device navigation, include only guides and plugins available on
+the target release branch; a new main-branch category is not a plugin backport.
