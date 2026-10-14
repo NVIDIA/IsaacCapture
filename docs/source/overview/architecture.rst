@@ -8,7 +8,7 @@ Isaac Capture provides shared capture infrastructure for teleoperation and
 egocentric data. It is a library used by applications and integration
 environments, including Isaac Lab and Sim, Isaac ROS, and other ROS stacks.
 
-.. figure:: /_static/isaac-capture-architecture.svg
+.. figure:: /_static/isaac-capture-architecture.png
    :alt: Isaac Capture contains Isaac Teleop and the Ego Pipeline above shared device plugins, retargeters, and data utilities. Integration environments use the library; GitHub and PyPI distribute it.
 
    Isaac Capture components, shared infrastructure, and integration environments.
