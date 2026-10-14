@@ -33,7 +33,7 @@ void @REPLAY_IMPL@::update(int64_t /*monotonic_time_ns*/)
     auto record = mcap_viewers_->read(0);
     if (record)
     {
-        tracked_ = recorded_payload<@FB_TABLE@>(record);
+        tracked_ = record.narrow(record->data());
         warned_no_data_ = false;
     }
     else

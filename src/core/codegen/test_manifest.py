@@ -189,6 +189,14 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertIn("record", message)
         self.assertIn("boolean", message)
 
+    def test_removed_record_type_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            resolve_tracker_entry(
+                {"name": "x", "table": "T", "record_type": "T"},
+                load_defaults(DEFAULTS_PATH),
+            )
+        self.assertIn("record_type", str(ctx.exception))
+
     def test_load_manifest_file(self) -> None:
         manifest = CORE_ROOT / "deviceio_trackers" / "trackers.toml"
         self.assertTrue(manifest.is_file(), f"missing required manifest: {manifest}")
@@ -218,28 +226,6 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertEqual(ctx.replay_impl_file, "replay_frame_metadata_tracker_oak_impl")
         self.assertEqual(ctx.cls, "FrameMetadataTrackerOak")
         self.assertEqual(ctx.traits, "OakRecordingTraits")
-
-
-class RecordTypeTest(unittest.TestCase):
-    def _resolve(self, **overrides) -> dict:
-        raw = {"name": "tactile_shape", "table": "TactileShape", **overrides}
-        return resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH))
-
-    def test_defaults_to_the_record_wrapper(self) -> None:
-        self.assertEqual(self._resolve()["record_type"], "TactileShapeRecord")
-
-    def test_table_recorded_as_itself(self) -> None:
-        from generate_trackers import render_for_entry
-        from templates import enrich_context
-
-        files = render_for_entry(
-            enrich_context(self._resolve(record_type="TactileShape"))
-        )
-        live = files["live_trackers/live_tactile_shape_tracker_impl.hpp"]
-        self.assertIn("SchemaTracker<TactileShape, TactileShape>", live)
-        self.assertIn("McapTrackerChannels<TactileShape>", live)
-        replay = files["replay_trackers/replay_tactile_shape_tracker_impl.hpp"]
-        self.assertIn("McapTrackerViewers<TactileShape>", replay)
 
 
 class MetadataTest(unittest.TestCase):

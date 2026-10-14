@@ -25,9 +25,6 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
   public `#include` stem stays `frame_metadata_tracker_oak`).
 - **`direction = "push"`** generates a typed `<Table>PushTracker` (Teleop → plugin) instead of a
   reader facade. `TensorPushTracker` stays as the untyped `bytes` escape hatch — keep it.
-- **A table with no capture time is its own `root_type`, not wrapped in a `Record`.** Set
-  `record_type = "<Table>"` on its entry: the generated tracker then records the table as itself.
-  Do not keep a `Record` only to satisfy the generator.
 - **Static per-device data is `metadata`, not a second tracker.** `metadata = "<Table>"` adds
   `get_metadata()` and the chunked companion collection; do not declare the table as its own
   `[[tracker]]`, which makes every consumer pair and cache two streams itself.

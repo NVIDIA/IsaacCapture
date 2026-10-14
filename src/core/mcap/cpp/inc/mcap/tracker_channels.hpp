@@ -24,7 +24,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -197,21 +196,6 @@ Serialized<typename record_payload_t<RecordT>::TableType> publish_and_record(Mca
     const auto record = pack_record<RecordT>(native, timestamp);
     channels->write(channel_index, record);
     return record.narrow(record->data());
-}
-
-//! The payload a recorded root carries: the Record's `data`, or the root itself for a table
-//! recorded without a Record wrapper. Shares the record's buffer either way.
-template <typename DataTableT, typename RecordT>
-Serialized<DataTableT> recorded_payload(const Serialized<RecordT>& record)
-{
-    if constexpr (std::is_same_v<RecordT, DataTableT>)
-    {
-        return record;
-    }
-    else
-    {
-        return record.narrow(record->data());
-    }
 }
 
 /**

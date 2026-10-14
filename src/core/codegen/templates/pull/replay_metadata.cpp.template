@@ -59,7 +59,7 @@ void @REPLAY_IMPL@::update(int64_t /*monotonic_time_ns*/)
     if (record)
     {
         // Mirrors live, which publishes data only with its metadata.
-        tracked_ = metadata_ ? recorded_payload<@FB_TABLE@>(record) : Serialized<@FB_TABLE@>();
+        tracked_ = metadata_ ? record.narrow(record->data()) : Serialized<@FB_TABLE@>();
         warned_no_data_ = false;
     }
     else

@@ -31,7 +31,6 @@ RESOLVED_REQUIRED = frozenset(
         "python_accessor",
         "max_flatbuffer_size",
         "record",
-        "record_type",
         "facade_tensor_constant",
         "metadata",
         "metadata_schema",
@@ -135,6 +134,11 @@ def resolve_tracker_entry(
         raise ValueError("tracker entry missing required key 'name'")
     if "table" not in raw:
         raise ValueError(f"tracker '{raw['name']}': missing required key 'table'")
+    if "record_type" in raw:
+        raise ValueError(
+            f"tracker '{raw['name']}': record_type is no longer supported; "
+            "generated trackers always record <Table>Record"
+        )
 
     direction = str(
         raw.get("direction", defaults_doc.get("defaults", {}).get("direction", "pull"))

@@ -111,7 +111,7 @@ def enrich_context(entry: dict[str, Any]) -> TrackerGenContext:
         live_impl_file=live_impl_file,
         replay_impl_file=replay_impl_file,
         iface=f"I{cls}Impl",
-        record_type=str(entry["record_type"]),
+        record_type=f"{table}Record",
         data_type=f"{table}T",
         fb_table=table,
         mcap_channels_type=f"{cls}McapChannels",
