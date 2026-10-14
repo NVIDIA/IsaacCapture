@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
 
@@ -123,6 +124,54 @@ class TestTeleopSessionConfigOxrHandles:
 
 class TestTeleopSessionExternalHandles:
     """Tests for TeleopSession when external OpenXR handles are provided."""
+
+    def test_factory_receives_aggregated_extensions_before_deviceio(self):
+        handles = _make_stub_handles()
+        tracker = MagicMock()
+        factory = MagicMock(return_value=handles)
+        config = TeleopSessionConfig(
+            app_name="test",
+            pipeline=_make_empty_pipeline(),
+            trackers=[tracker],
+            oxr_session_factory=factory,
+        )
+        with (
+            _mock_deviceio_and_oxr() as mocks,
+            patch(
+                "isaaccapture.deviceio.DeviceIOSession.get_required_extensions",
+                return_value=["XR_EXT_hand_tracking", "XR_NVX1_push_tensor"],
+            ) as extensions,
+        ):
+            factory.side_effect = lambda required: (
+                mocks.deviceio_run.assert_not_called() or handles
+            )
+            with TeleopSession(config):
+                assert tracker in extensions.call_args.args[0]
+                factory.assert_called_once_with(extensions.return_value)
+                assert mocks.deviceio_run.call_args.args[1] is handles
+                mocks.oxr_cls.assert_not_called()
+
+    def test_factory_failure_does_not_start_deviceio(self):
+        config = TeleopSessionConfig(
+            app_name="test",
+            pipeline=_make_empty_pipeline(),
+            oxr_session_factory=MagicMock(side_effect=RuntimeError("viz failed")),
+        )
+        with _mock_deviceio_and_oxr() as mocks:
+            with pytest.raises(RuntimeError, match="viz failed"):
+                with TeleopSession(config):
+                    pass
+            mocks.deviceio_run.assert_not_called()
+
+    @pytest.mark.parametrize("field", ["oxr_handles", "joint_publisher"])
+    def test_factory_rejects_competing_session_owners(self, field):
+        with pytest.raises(ValueError, match="oxr_session_factory requires LIVE"):
+            TeleopSessionConfig(
+                app_name="test",
+                pipeline=_make_empty_pipeline(),
+                oxr_session_factory=MagicMock(),
+                **{field: MagicMock()},
+            )
 
     def test_skips_oxr_session_creation(self):
         """When oxr_handles is set, OpenXRSession.create() must not be called."""

@@ -144,8 +144,10 @@ namespace
 {
 
 // Build stage-1 OpenXrSession + XR-bound VkContext, or SKIP if either
-// piece isn't available on the host.
-std::pair<std::unique_ptr<viz::OpenXrSession>, std::unique_ptr<viz::VkContext>> make_stage1(const char* app_name)
+// piece isn't available on the host. The pair destroys its second member first,
+// so the session goes before the VkContext it renders with; the other order
+// crashes in xrDestroySession on a connected runtime.
+std::pair<std::unique_ptr<viz::VkContext>, std::unique_ptr<viz::OpenXrSession>> make_stage1(const char* app_name)
 {
     std::unique_ptr<viz::OpenXrSession> sess;
     try
@@ -169,14 +171,14 @@ std::pair<std::unique_ptr<viz::OpenXrSession>, std::unique_ptr<viz::VkContext>> 
     {
         SKIP(std::string("XR-bound VkContext init failed: ") + e.what());
     }
-    return { std::move(sess), std::move(vk) };
+    return { std::move(vk), std::move(sess) };
 }
 
 } // namespace
 
 TEST_CASE("OpenXrSession attach_graphics constructs session + spaces + view config", "[xr][viz_xr]")
 {
-    auto [sess, vk] = make_stage1("viz_xr_test_attach");
+    auto [vk, sess] = make_stage1("viz_xr_test_attach");
     sess->attach_graphics(*vk);
 
     REQUIRE(sess->is_graphics_attached());
@@ -200,10 +202,36 @@ TEST_CASE("OpenXrSession attach_graphics constructs session + spaces + view conf
     }
 }
 
+// end_session(): xrRequestExitSession -> STOPPING -> xrEndSession, no
+// XR_ERROR_SESSION_NOT_STOPPING. Needs a connected headset to reach a running session.
+TEST_CASE("OpenXrSession::end_session stops a running session and is idempotent", "[xr][viz_xr]")
+{
+    auto [vk, sess] = make_stage1("viz_xr_test_end_session");
+    sess->attach_graphics(*vk);
+
+    // Never ran: nothing to end.
+    CHECK(sess->end_session());
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!sess->session_running() && std::chrono::steady_clock::now() < deadline)
+    {
+        sess->poll_events();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!sess->session_running())
+    {
+        SKIP("runtime did not start the session (no headset connected)");
+    }
+
+    CHECK(sess->end_session());
+    CHECK_FALSE(sess->session_running());
+    CHECK(sess->end_session()); // idempotent
+}
+
 // VIEW space + near/far Z plumbing.
 TEST_CASE("OpenXrSession exposes VIEW space and propagates near/far Z config", "[xr][viz_xr]")
 {
-    auto [sess, vk] = make_stage1("viz_xr_test_view_space");
+    auto [vk, sess] = make_stage1("viz_xr_test_view_space");
     viz::OpenXrSession::Config sess_cfg{};
     sess_cfg.near_z = 0.1f;
     sess_cfg.far_z = 250.0f;
@@ -224,7 +252,7 @@ TEST_CASE("OpenXrSession exposes VIEW space and propagates near/far Z config", "
 // Double-attach is a programming error.
 TEST_CASE("OpenXrSession::attach_graphics is single-shot", "[xr][viz_xr]")
 {
-    auto [sess, vk] = make_stage1("viz_xr_test_double_attach");
+    auto [vk, sess] = make_stage1("viz_xr_test_double_attach");
     sess->attach_graphics(*vk);
     CHECK_THROWS_AS(sess->attach_graphics(*vk), std::logic_error);
 }

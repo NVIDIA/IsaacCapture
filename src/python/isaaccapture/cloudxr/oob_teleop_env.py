@@ -18,6 +18,7 @@ from urllib.error import URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
+from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
@@ -33,24 +34,16 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
 
-CLIENT_RECONNECT_DEFAULT_ENABLED = True
+# OOB's own retry (relaunching the tab) is unconditional. The browser's own in-component
+# reconnect loop is a separate, client-owned concern: OOB never sets reconnectEnabled in the
+# generated URL at all (enabling it is left to the client's own default or a URL param the
+# user types directly), so there is deliberately no default-enabled constant here either.
 CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS = 10
 CLIENT_RECONNECT_DEFAULT_DELAY_MS = 3000
 
 
 def client_reconnect_config_from_env() -> dict:
     """Return validated WebXR retry settings shared by the URL and host lifecycle."""
-
-    def boolean(name: str, default: bool) -> bool:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        value = raw.strip().lower()
-        if value in {"1", "true", "yes", "on"}:
-            return True
-        if value in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"{name} must be a boolean")
 
     def nonnegative_int(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -63,9 +56,6 @@ def client_reconnect_config_from_env() -> dict:
         return value
 
     return {
-        "reconnectEnabled": boolean(
-            "TELEOP_CLIENT_RECONNECT_ENABLED", CLIENT_RECONNECT_DEFAULT_ENABLED
-        ),
         "reconnectMaxAttempts": nonnegative_int(
             "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
             CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS,
@@ -94,7 +84,6 @@ def resolve_oob_recovery_config():
     return RecoveryConfig(
         timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
         interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
-        client_reconnect_enabled=reconnect["reconnectEnabled"],
         client_reconnect_max_attempts=reconnect["reconnectMaxAttempts"],
         client_reconnect_delay_ms=reconnect["reconnectDelayMs"],
     )
@@ -337,10 +326,15 @@ def print_hosted_client_line(
     prefix: str = "web client:        ",
     file=None,
 ) -> None:
-    """Print ``prefix`` + *url* (cyan when *file* is a TTY)."""
+    """Print ``prefix`` + a credential-safe *url* (cyan when *file* is a TTY)."""
     out = sys.stdout if file is None else file
     use_color = bool(getattr(out, "isatty", lambda: False)())
-    left = f"{prefix}\033[36m{url}\033[0m" if use_color else f"{prefix}{url}"
+    display_url = redact_control_token(url)
+    left = (
+        f"{prefix}\033[36m{display_url}\033[0m"
+        if use_color
+        else f"{prefix}{display_url}"
+    )
     print(left, file=out)
 
 
@@ -411,8 +405,12 @@ def default_initial_stream_config(resolved_proxy_port: int) -> dict:
 def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
-    Keys match query params the WebXR client reads on page load, including
-    codec, panel visibility, and bounded stream-reconnect policy.
+    Keys match query params the WebXR client reads on page load
+    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
+    Deliberately excludes ``reconnectEnabled`` - OOB never sets it; the client's
+    own reconnect loop is opt-in via a URL param the user supplies directly.
     """
     out: dict = {}
     out.update(client_reconnect_config_from_env())
@@ -424,6 +422,21 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    # reconnectMaxAttempts/reconnectDelayMs are already set above by
+    # client_reconnect_config_from_env(), which validates them and raises on bad input - do not
+    # re-parse them here with this loop's silent-skip-on-ValueError semantics.
+    for env_name, key in (
+        ("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "streamAttachTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "warmupBeginTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "warmupEndTimeoutMs"),
+    ):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            out[key] = int(raw)
+        except ValueError:
+            continue
     return out
 
 
@@ -460,10 +473,12 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart`` — are plain form
-    overrides the client honours either way, so the headset still lands with
-    the right streaming target pre-filled.  Callers must not disable OOB while
-    the control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``reconnectEnabled``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
+    ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
+    the client honours either way, so the headset still lands with the right
+    streaming target pre-filled.  Callers must not disable OOB while the
+    control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
     CloudXR streaming backend rather than refused.
 
     A HashRouter fragment is appended at the end when ``TELEOP_CLIENT_ROUTE``
@@ -491,9 +506,17 @@ def build_headset_bookmark_url(
     v = cfg.get("reconnectEnabled")
     if isinstance(v, bool):
         params["reconnectEnabled"] = "true" if v else "false"
-    for key in ("reconnectMaxAttempts", "reconnectDelayMs"):
+    for key in (
+        "reconnectMaxAttempts",
+        "reconnectDelayMs",
+        "streamAttachTimeoutMs",
+        "warmupBeginTimeoutMs",
+        "warmupEndTimeoutMs",
+    ):
         v = cfg.get(key)
-        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        if isinstance(v, bool):
+            continue  # bool is an int subclass; exclude it from the numeric fields above.
+        if isinstance(v, int):
             params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
@@ -517,13 +540,17 @@ def build_headset_bookmark_url(
 
 
 def redact_control_token(text: str) -> str:
-    """Mask ``controlToken`` values in *text* for display or logging.
+    """Mask credential query values in display or log text.
 
-    Shared by every path that surfaces a bookmark URL — the startup banner,
-    the ``am start`` log line, and the standalone opener — so a token can
-    never reach a terminal or log file through one of them.
+    Shared by every path that surfaces a credential-bearing URL, including
+    the OOB WSS failure log and service status diagnostic.
     """
-    return re.sub(r"(controlToken=)[^&\s'\"]+", r"\1<REDACTED>", text)
+    return re.sub(
+        r"(?<![\w])((?:controlToken|turnCredential|token)=)[^&\s'\"#]+",
+        r"\1<REDACTED>",
+        text,
+        flags=re.IGNORECASE,
+    )
 
 
 def resolve_lan_host_for_oob() -> str:
@@ -541,14 +568,13 @@ def resolve_lan_host_for_oob() -> str:
 def oob_progress(stage: str, msg: str) -> None:
     """One-line progress update for ``--setup-oob`` / ``--usb-local`` steps.
 
-    Goes to stderr in dim cyan so the operator can see *where* the launcher
-    is in its sequence of steps without these lines competing with the
-    success banner (stdout) or error prints (red).
-
-    This stays a print so progress remains visible when the console log level
-    is set to warning.
+    Logged at INFO as ``[<stage>] <msg>``; printed to stderr instead when
+    ``ISAACCAPTURE_LOGGING=off``, where no handler of ours would show it.
     """
-    print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
+    if logging_enabled():
+        log.info("[%s] %s", stage, msg)
+    else:
+        print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
 
 def print_oob_hub_startup_banner(
@@ -611,9 +637,8 @@ def print_oob_hub_startup_banner(
         control_token=None,
     )
     if token:
-        bookmark_display = redact_control_token(
-            f"{bookmark_display}&controlToken={token}"
-        )
+        bookmark_display = f"{bookmark_display}&controlToken={token}"
+    bookmark_display = redact_control_token(bookmark_display)
     wss_primary = f"wss://{primary_host}:{port}{OOB_WS_PATH}"
 
     bar = "=" * 72

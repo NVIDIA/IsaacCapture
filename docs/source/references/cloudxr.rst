@@ -135,6 +135,36 @@ control how the headset connects and how the web client is delivered.
 prints a banner as it comes up, so ``run`` is often the more useful command
 while setting those modes up for the first time.
 
+USB-local startup checks
+------------------------
+
+On a clean ``--usb-local`` start, the service records the selected headset's
+negotiated USB speed, hub and controller path, and evidence of faster USB
+root hubs on the same controller. After its existing adb reverse rules are
+ready, it measures three seconds of host-to-headset transfer using the
+already served ``/client/bundle.js`` over HTTPS. This finishes before the
+browser is opened. The selected headset must first report
+``mWakefulness=Awake``; if that cannot be confirmed, no transfer or browser
+launch occurs and the JSON report records the incomplete check. If the headset
+lacks a usable curl or timer, the service uses a three-second ADB-only transfer
+and labels the narrower coverage in the result.
+
+One JSON report is saved under ``<CloudXR install dir>/logs/usb-health/`` for
+each USB-local start. It begins before ADB selection, records partial results
+when device preparation or a check fails, and refreshes link topology after
+a preserved browser reconnect without repeating the active transfer. It
+uses a hashed device serial, and keeps at most 20 reports or 14 days of
+history. A link below 5000 Mb/s or an incomplete transfer is logged as a
+warning and startup continues. ``hostToHeadsetMbps`` is the completed bytes
+divided by the full three-second wall-clock interval. Each curl request opens
+a new connection, so this includes request and TLS setup. The optional
+``hostToHeadsetResponseBodyMbps`` instead divides those same completed bytes
+by the sum of curl's ``time_total - time_starttransfer`` intervals. It excludes
+setup and gaps between requests; it is a response-body estimate, not sustained
+goodput or USB line rate. Neither metric measures headset-to-host traffic or
+CloudXR stream throughput. A faster root hub is a topology clue, not proof
+that an accessible physical port is free.
+
 Re-open the client on the headset
 ---------------------------------
 
@@ -246,6 +276,19 @@ container that way.
 Setting ``CI`` skips the interactive pause described under `Configuration`_,
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
+.. _cloudxr-deferred-oob-connect:
+
+Connect the OOB headset after application startup
+-------------------------------------------------
+
+Set ``defer_oob_connect=True`` on ``CloudXRService`` or ``CloudXRLauncher``
+to delay OOB automation and WebSocket signaling. Call ``connect_headset()``
+after the OpenXR session and renderer are ready.
+
+Requires ``setup_oob=True`` and a fixed ``NV_DEVICE_PROFILE`` (not ``auto*``).
+For ``CloudXRLauncher``, also set ``run_embedded=True``. The default ``False``
+keeps immediate connection.
+
 Configuration
 -------------
 
@@ -269,6 +312,14 @@ the launcher starts a service. When attaching, the launcher recovers the
 detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.
+
+A launcher requesting ``--setup-oob`` or ``--usb-local`` checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.
 
 .. code-block:: text
 

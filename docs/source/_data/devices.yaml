@@ -298,6 +298,41 @@ devices:
         - label: logitechg.com
           url: https://www.logitechg.com/en-us/shop/p/flight-simulator-rudder-pedals
 
+  - id: spacemouse
+    name: 3Dconnexion SpaceMouse
+    url: https://3dconnexion.com/product/spacemouse-compact/
+    group: peripheral
+    modes: 6-DoF end effector, base velocity
+    since: main
+    details:
+      setup:
+        - label: SpaceMouse Plugin
+          url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/spacemouse
+        - label: SpaceMouse docs
+          doc: /device/spacemouse
+      requirements:
+        - Linux workstation with USB or the 3Dconnexion Universal Receiver
+        - Plugin udev rule installed on the host
+      acquire:
+        - label: 3dconnexion.com
+          url: https://3dconnexion.com/
+
+  - id: gamepad
+    name: Gamepads
+    url: https://github.com/mdqinc/SDL_GameControllerDB
+    group: peripheral
+    modes: 6-DoF end effector, base velocity
+    since: main
+    details:
+      setup:
+        - label: Gamepad Plugin
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/gamepad
+        - label: Gamepad docs
+          doc: /device/gamepad
+      requirements:
+        - Linux workstation with the pad on USB or Bluetooth
+        - Xbox, PlayStation, Switch Pro, Steam or any pad SDL_GameControllerDB maps
+
   - id: oak-d-camera
     name: OAK-D Camera
     url: https://shop.luxonis.com/products/oak-d

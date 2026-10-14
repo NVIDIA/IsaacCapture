@@ -22,7 +22,9 @@ The source is located at :code-dir:`deps/cloudxr/webxr_client/`.
 Prerequisites
 -------------
 
-- Node.js (v20 or higher)
+- Node.js (v20 or higher). Ubuntu's ``nodejs`` apt package is older (18.x on Ubuntu 24.04), so
+  install a current release from `Node.js downloads <https://nodejs.org/en/download>`_ (for
+  example with nvm) and check it with ``node --version``. ``npm`` ships with it.
 
 1. Download CloudXR.js SDK
 --------------------------

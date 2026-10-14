@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Isaac Teleop Dependencies
+# Isaac Capture Dependencies
 
 This directory contains all project dependencies, organized by type.
 
@@ -91,7 +91,7 @@ machine and are located via `find_package`.
 ### pybind11
 - **Source**: https://github.com/pybind/pybind11.git
 - **Version**: a2e59f0e7065404b44dfe92a28aca47ba1378dc4 (v2.11.0-182)
-- **Purpose**: C++/Python bindings for Isaac Teleop Python API
+- **Purpose**: C++/Python bindings for Isaac Capture Python API
 - **Build**: Header-only library
 - **License**: BSD-style
 

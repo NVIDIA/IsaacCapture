@@ -76,6 +76,8 @@ wuji = [
 cloudxr = [
     "cryptography>=3.0",
     "websockets>=14.0",
+    "Pillow>=10.0; sys_platform == 'linux'",
+    "cupy-cuda12x>=13.0; sys_platform == 'linux'",
 ]
 
 # Derive the version from the VERSION file (MAJOR.MINOR.x) as MAJOR.MINOR+local,
@@ -104,6 +106,8 @@ package = false
 isaacteleop = { path = "src/compat" }
 
 [tool.scikit-build]
+# EgoPost is hosted here but is not part of the Isaac Capture distribution.
+sdist.exclude = ["src/python/isaaccapture_egopost/**", "LICENSES/LicenseRef-OpenMDW-1.1.txt"]
 # Floor matches CMakeLists' cmake_minimum_required (3.27, for cmake_file_api).
 # Ubuntu 22.04's apt CMake is 3.22 and no longer satisfies it, so scikit-build-core
 # fetches CMake from PyPI there; the <4 cap keeps that fetch on the 3.x line rather

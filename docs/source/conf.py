@@ -5,6 +5,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -176,6 +177,23 @@ html_sidebars = {
     "**": ["icon-links", "sidebar-nav-bs"],
 }
 
+
+def _sort_doc_branches(branches):
+    return sorted(
+        branches,
+        key=lambda item: (
+            item.name != "main",
+            tuple(map(int, re.findall(r"\d+", item.name))),
+            item.name,
+        ),
+    )
+
+
+def _versioning_context(app, pagename, templatename, context, doctree):
+    # Callables belong in page context; html_context must remain pickleable.
+    context["sort_doc_branches"] = _sort_doc_branches
+
+
 # Edit page button: link to GitHub so users can suggest edits (PyData theme uses html_context)
 html_context = {
     "github_user": "NVIDIA",
@@ -232,6 +250,7 @@ def _external_links_new_tab(app, doctree, docname):
 
 
 def setup(app):
+    app.connect("html-page-context", _versioning_context)
     app.add_role("code-file", _code_file_role)
     app.add_role("code-dir", _code_dir_role)
     app.add_config_value("html_external_links_new_tab", True, "html")

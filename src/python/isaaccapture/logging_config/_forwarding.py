@@ -23,7 +23,7 @@ import threading
 import time
 from pathlib import Path
 
-from ._core import ROOT_LOGGER_NAME, _move_above_std, ensure_private_dir
+from ._core import _move_above_std, ensure_private_dir, root_logger
 
 # Match the POSIX-only C++ forwarding transport.
 _HAS_UNIX_SOCKETS = os.name == "posix" and hasattr(socket, "AF_UNIX")
@@ -174,7 +174,7 @@ def ensure_handler(path: str) -> logging.Handler:
         if _handler is not None:
             return _handler
         handler = ForwardingHandler(path)
-        logging.getLogger(ROOT_LOGGER_NAME).addHandler(handler)
+        root_logger.addHandler(handler)
         _handler = handler
         return _handler
 
@@ -341,7 +341,7 @@ def _release_receiver(
 
 def _no_receiver(reason: str) -> str:
     """Warn that forwarding is disabled and return the empty-path sentinel."""
-    logging.getLogger(ROOT_LOGGER_NAME).warning(
+    root_logger.warning(
         "Log forwarding disabled: %s. Each process will keep its own console "
         "and log file.",
         reason,

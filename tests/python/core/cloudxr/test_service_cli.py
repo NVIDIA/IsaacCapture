@@ -109,6 +109,22 @@ class TestOobConsoleReporter:
             "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
         ]
 
+    def test_exact_adb_diagnostic_reaches_console(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        messages = reporter.observe(
+            {
+                "health": "degraded",
+                "state": "WAITING_FOR_ADB",
+                "reason": "Waiting for selected headset",
+                "selectedSerial": None,
+                "adbReady": False,
+                "adbDiagnostic": "adb: failed to connect to daemon at tcp:5037",
+            }
+        )
+        assert messages == [
+            "[setup-oob] ADB diagnostic: adb: failed to connect to daemon at tcp:5037"
+        ]
+
     def test_ready_loss_and_reconnection_are_reported(self):
         reporter = cli._OobConsoleReporter(clock=lambda: 0)
         ready = {
@@ -209,6 +225,67 @@ class TestOobConsoleReporter:
                 cli._cmd_run(args)
         summary.assert_called_once()
         assert capsys.readouterr().out.count("No USB-attached HMD detected") == 1
+
+
+@pytest.mark.parametrize("hub_only", [False, True])
+def test_foreground_fatal_emits_one_operator_diagnostic(
+    tmp_path, capsys, monkeypatch, hub_only
+):
+    if hub_only:
+        monkeypatch.setenv("TELEOP_OOB_HUB_ONLY", "1")
+    else:
+        monkeypatch.delenv("TELEOP_OOB_HUB_ONLY", raising=False)
+    service = MagicMock()
+    service.__enter__.return_value = service
+    fatal = {
+        "health": "fatal",
+        "state": "FATAL",
+        "reason": "OOB lifecycle worker failed: boom; check wss.log and restart",
+        "selectedSerial": None,
+        "adbReady": False,
+    }
+    service.drain_oob_updates.side_effect = [[], [], [fatal]]
+    service.oob_status.return_value = fatal
+    service.health_check.side_effect = RuntimeError("boom")
+    args = _run_args(setup_oob=True, cloudxr_install_dir=str(tmp_path))
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(cli, "CloudXRService", return_value=service),
+        patch.object(cli, "_print_service_summary"),
+    ):
+        assert cli._cmd_run(args) == 1
+    output = capsys.readouterr()
+    assert output.out.count("OOB stopped:") == 1
+    assert "restart" in output.out
+    assert output.err == ""
+    service.__exit__.assert_called_once()
+
+
+def test_foreground_fatal_with_stalled_writer_keeps_single_diagnostic(tmp_path, capsys):
+    service = object.__new__(cli.CloudXRService)
+    service._fatal_error = RuntimeError("worker failed")
+    service._runtime_proc = None
+    service._wss_log_path = tmp_path / "wss.log"
+    service.stop = MagicMock(side_effect=RuntimeError("status persistence draining"))
+    fatal = {
+        "health": "fatal",
+        "state": "FATAL",
+        "reason": "OOB worker failed; check wss.log and restart",
+    }
+    service.drain_oob_updates = MagicMock(side_effect=[[], [], [fatal]])
+    service.oob_status = MagicMock(return_value=fatal)
+    service.health_check = MagicMock(side_effect=RuntimeError("worker failed"))
+    args = _run_args(setup_oob=True, cloudxr_install_dir=str(tmp_path))
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(cli, "CloudXRService", return_value=service),
+        patch.object(cli, "_print_service_summary"),
+    ):
+        assert cli._cmd_run(args) == 1
+    output = capsys.readouterr()
+    assert output.out.count("OOB stopped:") == 1
+    assert output.err == ""
+    service.stop.assert_called_once()
 
 
 class TestStartEula:

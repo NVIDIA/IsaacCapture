@@ -380,7 +380,10 @@ class _OobConsoleReporter:
         self._last_ignored = ignored_signature
 
         if state == "WAITING_FOR_ADB" and not ready:
-            if serial is None and not any(
+            diagnostic = snapshot.get("adbDiagnostic")
+            if diagnostic:
+                emit(f"adb-diagnostic:{diagnostic}", f"ADB diagnostic: {diagnostic}")
+            elif serial is None and not any(
                 word in reason.lower()
                 for word in ("unauthorized", "offline", "multiple")
             ):
@@ -451,11 +454,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             include_oob=True,
         )
         _out_interactive("\033[33mKeep this terminal open, Ctrl+C to terminate.\033[0m")
-        reporter = (
-            _OobConsoleReporter()
-            if args.setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
-            else None
-        )
+        reporter = _OobConsoleReporter() if args.setup_oob else None
 
         def report_oob_updates() -> None:
             if reporter is not None:
@@ -477,7 +476,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
         while not stop:
             report_oob_updates()
-            service.health_check()
+            try:
+                service.health_check()
+            except RuntimeError:
+                status = service.oob_status()
+                if reporter is None or not status or status.get("health") != "fatal":
+                    raise
+                report_oob_updates()
+                return 1
             time.sleep(0.1)
 
     _out("Stopped.")

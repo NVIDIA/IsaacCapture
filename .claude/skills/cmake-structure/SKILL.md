@@ -1,7 +1,7 @@
 ---
 name: cmake-structure
 description: >-
-  IsaacTeleop CMake target layout and #include conventions. Use whenever you
+  Isaac Capture CMake target layout and #include conventions. Use whenever you
   create or edit a CMakeLists.txt, add or move a module/library/executable/test
   target, set up target_include_directories or target_link_libraries, decide
   where a header file goes (private vs public inc/), write or reorder #include
@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# IsaacTeleop CMake & include structure
+# Isaac Capture CMake & include structure
 
 The rules, recommended structure, repo conventions, and review checklist live in
 the repo's single source of truth:

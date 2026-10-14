@@ -150,7 +150,6 @@ private:
     mutable std::mutex m_sensor_mutex;
     std::array<uint32_t, 2> m_sensor_count{ { 0, 0 } };
     std::array<std::array<ManusTransform, kManusSensorCount>, 2> m_sensor_transforms{};
-    std::array<bool, 2> m_sensors_logged_on{ { false, false } };
 
     // OpenXR State
     std::shared_ptr<core::OpenXRSession> m_session;

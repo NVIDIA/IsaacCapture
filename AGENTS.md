@@ -22,30 +22,53 @@ SPDX-License-Identifier: Apache-2.0
   Repository owners: keep this block at the top of this file; do not delete it.
 -->
 
-# IsaacTeleop — agent notes
+# Isaac Capture — agent notes
+
+## Product naming
+
+Isaac Capture names the overall library and repository. Isaac Teleop remains its
+teleoperation component; preserve that brand and existing technical identifiers.
 
 ## CRITICAL — mandatory preflight (do not skip)
 
-**Hard requirement:** Do **not** edit or add code under `IsaacTeleop/` until you have **read** (e.g. with the Read tool) **every** relevant `AGENTS.md` file as defined below. This is **not** optional, **not** "only for large tasks," and **not** satisfiable by inferring from prior conversation. If you have not read those files in **this** session for **this** task, stop and read them first.
+**Hard requirement:** Do **not** edit or add code under `IsaacCapture/` until you have **read** (e.g. with the Read tool) **every** relevant `AGENTS.md` file as defined below. This is **not** optional, **not** "only for large tasks," and **not** satisfiable by inferring from prior conversation. If you have not read those files in **this** session for **this** task, stop and read them first.
 
 **You must:**
 
 1. List the **directories** you expect to edit or create files under (e.g. `src/core/live_trackers/cpp/`, `src/core/deviceio_base/cpp/inc/…`).
 2. For **each** such directory, **read** **`AGENTS.md` in that directory** if it exists.
-3. Walk **up** toward the **IsaacTeleop repo root** and **read** **`AGENTS.md` in every ancestor directory** that has one (e.g. `live_trackers/` → `src/core/` → **`IsaacTeleop/AGENTS.md` (this file)**).
+3. Walk **up** toward the **IsaacCapture repo root** and **read** **`AGENTS.md` in every ancestor directory** that has one (e.g. `live_trackers/` → `src/core/` → **`IsaacCapture/AGENTS.md` (this file)**).
 
 **You must not** assume that reading the single "closest" `AGENTS.md` is enough. **Multiple** `AGENTS.md` files can apply to one change (e.g. both `live_trackers` and `deviceio_base`).
 
 **Listing every `AGENTS.md` in this repo** (no curated table here—add new files under the tree without editing this document):
 
 ```bash
-# Run from the IsaacTeleop repository root (the directory that contains this file):
+# Run from the IsaacCapture repository root (the directory that contains this file):
 find . -name AGENTS.md ! -path '*/.git/*' | sort
 ```
 
 If you cannot run a shell, use your search/glob tools on the pattern `**/AGENTS.md` from the same root. That inventory is for orientation; you must still **read** every file that applies to the directories you will touch (steps 1–3 above).
 
 Optional context index: [`src/core/AGENTS.md`](src/core/AGENTS.md) (also on the ancestor walk—read it when working under `src/core/`).
+
+## Product naming
+
+- Spell the product name “Isaac Capture” in prose; avoid the ambiguous shorthand “Capture”.
+
+## Component licensing
+
+- Keep licensing summaries brief in README and CONTRIBUTING; automate routine
+  checks and updates rather than documenting manual header maintenance.
+
+- Preserve root `LICENSE.md` verbatim as Apache-2.0; explain component exceptions
+  in README/CONTRIBUTING and local license files, so GitHub can recognize the default.
+- EgoPost uses `LicenseRef-OpenMDW-1.1`; preserve upstream exceptions and notices.
+  Keep license-boundary changes separate from copyright-template and year-policy changes.
+- Keep canonical texts in `LICENSES/` unmodified, including template placeholders;
+  do not prepend project copyright or SPDX headers or include them in header repair.
+- Source hosting does not authorize wheel inclusion. Keep package discovery explicit
+  and verify license metadata/notices in each artifact before shipping a new component.
 
 ## CMake & include structure
 
@@ -100,7 +123,8 @@ the logging packages.
   names under `isaaccapture.` anyway; the naming rule above is a convention,
   not a runtime coupling.
 - **Configure through the public API instead:** `logging_config.set_console_level()`,
-  `set_console_filter()`, `set_logger_colors()`. A `--verbose` flag should call
+  `set_console_logger_name_filter()`, `set_console_content_filter()`,
+  `set_console_format()`, `set_logger_colors()`. A `--verbose` flag should call
   `set_console_level("debug")`, not build a handler.
 - **`print()` / `std::cout` are for deliberate terminal UX only** — CLI usage
   text, interactive prompts, operator banners, progress lines a log file would
@@ -222,7 +246,7 @@ pre-commit install --hook-type commit-msg
 
 ## Pre-commit — match CI before you stop
 
-- From the **IsaacTeleop repo root** (this directory), run pre-commit and **fix all failures** before you treat a change as finished (do not only rely on “should pass” reasoning).
+- From the **IsaacCapture repo root** (this directory), run pre-commit and **fix all failures** before you treat a change as finished (do not only rely on “should pass” reasoning).
 - **Use the same hook set as GitHub Actions:** `.github/workflows/pre-commit.yaml` runs pre-commit with **`SKIP=check-copyright-year`**. Mirror that locally:
 
   ```bash
@@ -233,6 +257,8 @@ pre-commit install --hook-type commit-msg
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.
   Stage first (`git add -A`), then run the hooks.
+- Format touched Python source with `ruff format` before staging. If the
+  pre-commit hook rewrites a file, restage it and rerun the hooks.
 - **REUSE:** files covered by the REUSE hook need **`SPDX-FileCopyrightText`** and **`SPDX-License-Identifier`** in the form the repo already uses (for example the HTML comment block at the top of `README.md` also applies to **`AGENTS.md`** and similar docs).
 - **C++ formatting is enforced by CI, not pre-commit.** The hook set runs `ruff` for Python but does **not** run `clang-format`; CI (`build-ubuntu.yml`) installs **`clang-format-14`** and rejects unformatted C++ as `-Wclang-format-violations`. Before pushing, format touched C++ with the system `clang-format` (match CI's version 14) and verify:
 

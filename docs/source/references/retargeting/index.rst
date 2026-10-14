@@ -17,6 +17,11 @@ Source Nodes
 * ``JointStateSource`` -- provides name-keyed joint positions from a generic joint-space device
   (leader arm, exoskeleton, ...). See :doc:`joint_space`.
 * ``FullBodySource`` -- provides full-body pose (e.g. Pico tracking).
+* ``SomaBodySource`` -- polls either a typed ``SomaBodyJointRotations`` or
+  ``SomaBodyJointPoses`` payload from a configured publisher collection. It
+  runs upstream FK for rotations or directly maps evaluated poses, then emits
+  an optional ``SomaBodyInput`` containing the 77 global SOMA joint poses.
+  See :doc:`/device/trackers` and :code-file:`examples/deviceio_live_view/README.md`.
 
 Available Retargeters
 ---------------------
@@ -280,7 +285,10 @@ Build a Retargeting Pipeline
 
 A pipeline builder is a callable that constructs the retargeting graph and returns an
 ``OutputCombiner`` with a single ``"action"`` key. Here is a complete example for a Franka
-manipulator (from ``stack_ik_abs_env_cfg.py``):
+manipulator, adapted from ``_build_franka_stack_pipeline()`` in Isaac Lab's
+`stack_ik_abs_env_cfg.py <https://github.com/isaac-sim/IsaacLab/blob/develop/source/isaaclab_tasks/isaaclab_tasks/contrib/stack/config/franka/stack_ik_abs_env_cfg.py>`__.
+``Se3AbsRetargeter`` needs ``scipy``, so install
+the ``retargeters-lite`` extra (or the full ``retargeters`` extra) to run it:
 
 .. code-block:: python
    :class: code-100col

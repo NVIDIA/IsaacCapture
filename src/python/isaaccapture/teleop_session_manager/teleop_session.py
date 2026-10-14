@@ -61,7 +61,8 @@ from .teleop_state_manager_types import teleop_control_states
 
 logger = logging.getLogger(__name__)
 
-_MONITORED_PLUGIN_NAME = "manus_hand_plugin"
+# Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
+_MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse", "gamepad"})
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
@@ -1086,10 +1087,14 @@ class TeleopSession:
         self._resolved_plugins = []
 
         live_mode = self.config.mode == SessionMode.LIVE
+        external_openxr = (
+            self.config.oxr_handles is not None
+            or self.config.oxr_session_factory is not None
+        )
         self._status_monitor.rebuild(
             (),
             include_openxr=live_mode,
-            external_openxr=live_mode and self.config.oxr_handles is not None,
+            external_openxr=live_mode and external_openxr,
         )
         if live_mode:
             self._resolve_monitored_plugins()
@@ -1100,7 +1105,7 @@ class TeleopSession:
                     if spec is not None
                 ),
                 include_openxr=True,
-                external_openxr=self.config.oxr_handles is not None,
+                external_openxr=external_openxr,
             )
 
         # Auto-populate mcap_config from pipeline sources if recording or replaying.
@@ -1164,6 +1169,8 @@ class TeleopSession:
             # Resolve OpenXR handles
             if self.config.oxr_handles is not None:
                 handles = self.config.oxr_handles
+            elif self.config.oxr_session_factory is not None:
+                handles = self.config.oxr_session_factory(required_extensions)
             elif self.config.joint_publisher is not None:
                 handles = oxr.OpenXRSessionHandles(
                     *self._start_twin(stack, required_extensions)
@@ -1265,7 +1272,7 @@ class TeleopSession:
         for plugin_config in self.config.plugins:
             if (
                 not plugin_config.enabled
-                or plugin_config.plugin_name != _MONITORED_PLUGIN_NAME
+                or plugin_config.plugin_name not in _MONITORED_PLUGIN_NAMES
             ):
                 continue
 
