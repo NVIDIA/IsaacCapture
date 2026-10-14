@@ -22,6 +22,7 @@ from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
+progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
 
@@ -565,15 +566,14 @@ def resolve_lan_host_for_oob() -> str:
     return h
 
 
-def oob_progress(stage: str, msg: str) -> None:
-    """One-line progress update for ``--setup-oob`` / ``--usb-local`` steps.
+def oob_progress(stage: str, msg: str, *, level: int = logging.INFO) -> None:
+    """Log OOB progress on its own filterable logger at the requested level.
 
-    Logged at INFO as ``[<stage>] <msg>``; printed to stderr instead when
-    ``ISAACCAPTURE_LOGGING=off``, where no handler of ours would show it.
+    With logging off, retain operator messages on stderr but omit DEBUG detail.
     """
     if logging_enabled():
-        log.info("[%s] %s", stage, msg)
-    else:
+        progress_log.log(level, "[%s] %s", stage, msg)
+    elif level >= logging.INFO:
         print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
 

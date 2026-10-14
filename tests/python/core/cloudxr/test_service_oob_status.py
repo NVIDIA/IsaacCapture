@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import asyncio
@@ -54,7 +55,32 @@ async def test_status_progress_reaches_embedded_owner_once(tmp_path):
         await service._publish_oob_status(waiting)
         await service._publish_oob_status(waiting)
     progress.assert_called_once_with(
-        "usb-local", "No USB-attached HMD detected; connect a headset to continue."
+        "usb-local",
+        "No USB-attached HMD detected; connect a headset to continue.",
+        level=logging.INFO,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_authorization_reaches_embedded_owner_as_warning(tmp_path):
+    service = _service_for_status(tmp_path)
+    service._usb_local = True
+    service._oob_progress_reporter = OobProgressReporter(clock=lambda: 0)
+    unauthorized = {
+        "health": "degraded",
+        "state": "WAITING_FOR_ADB",
+        "reason": "Selected headset unauthorized; accept the USB debugging prompt",
+        "selectedSerial": "HMD-1",
+        "adbDiagnostic": "adb detail",
+        "adbReady": False,
+    }
+    with patch("isaaccapture.cloudxr.service._service.oob_progress") as progress:
+        await service._publish_oob_status(unauthorized)
+    progress.assert_called_once_with(
+        "usb-local",
+        "ADB authorization required: unlock the headset and accept "
+        "the USB debugging prompt.",
+        level=logging.WARNING,
     )
 
 

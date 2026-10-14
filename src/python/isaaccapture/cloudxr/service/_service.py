@@ -177,6 +177,7 @@ class CloudXRService:
             oob_progress(
                 "usb-local" if usb_local else "setup-oob",
                 "host preflight: checking web client assets",
+                level=logging.DEBUG,
             )
         if self._usb_local or self._host_client:
             from ..oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
@@ -238,12 +239,17 @@ class CloudXRService:
                 stage,
                 f"recovery episode {self._recovery_config.timeout_sec:g}s, "
                 f"retry/observe {self._recovery_config.interval_sec:g}s",
+                level=logging.DEBUG,
             )
             oob_progress(
-                stage, "host preflight: checking adb and transport dependencies"
+                stage,
+                "host preflight: checking adb and transport dependencies",
+                level=logging.DEBUG,
             )
             if not usb_local and os.getenv("TELEOP_OOB_HUB_ONLY"):
-                oob_progress(stage, "hub-only mode; skipping adb preflight")
+                oob_progress(
+                    stage, "hub-only mode; skipping adb preflight", level=logging.DEBUG
+                )
             if usb_local or not os.getenv("TELEOP_OOB_HUB_ONLY"):
                 require_adb_on_path()
             if usb_local:
@@ -252,7 +258,11 @@ class CloudXRService:
             else:
                 resolve_lan_host_for_oob()
             print_host_preflight_warnings(usb_local=usb_local, emit_console=False)
-            oob_progress(stage, "host preflight OK; starting CloudXR runtime")
+            oob_progress(
+                stage,
+                "host preflight OK; starting CloudXR runtime",
+                level=logging.DEBUG,
+            )
         try:
             self._oob_status_path.unlink(missing_ok=True)
         except OSError as exc:
@@ -469,8 +479,8 @@ class CloudXRService:
             reporter = getattr(self, "_oob_progress_reporter", None)
             if reporter is not None:
                 stage = "usb-local" if self._usb_local else "setup-oob"
-                for message in reporter.observe(payload):
-                    oob_progress(stage, message)
+                for event in reporter.observe(payload):
+                    oob_progress(stage, event.message, level=event.level)
 
     def oob_status(self) -> dict | None:
         """Return the latest lifecycle snapshot without touching the WSS event loop."""

@@ -31,7 +31,7 @@ _SGR_ESCAPE = re.compile(r"(?:\x1b\[[0-9;]*m)+")
 
 # Logger name to ANSI emphasis; a name's colour also covers its dotted descendants.
 _logger_colors: dict[str, str] = {
-    # cloudxr.oob_teleop_env contains [setup-oob] / [usb-local] progress.
+    # OOB progress is a child; color the parent and its descendants.
     "isaaccapture.cloudxr.oob_teleop_env": "\033[36m",
 }
 
