@@ -139,7 +139,7 @@ devices:
     details:
       setup:
         - label: Body Tracking guide
-          doc: /device/body_tracking
+          doc: /device/body_tracking/index
         - Isaac Teleop Web Client
       requirements:
         - >-
@@ -192,7 +192,7 @@ devices:
         - label: MANUS Gloves Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/manus
         - label: MANUS Gloves docs
-          doc: /device/manus
+          doc: /device/hand_tracking/manus
       requirements:
         - MANUS SDK
         - USB receiver on the workstation
@@ -216,7 +216,7 @@ devices:
         - label: Haptikos Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/haptikos
         - label: Haptikos docs
-          doc: /device/haptikos
+          doc: /device/hand_tracking/haptikos
       requirements:
         - Haptikos Robotics API
       acquire:
@@ -238,7 +238,7 @@ devices:
         - label: OGLO Tactile Glove Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oglo_tactile
         - label: OGLO Tactile Glove docs
-          doc: /device/oglo
+          doc: /device/tactile/oglo
       requirements:
         - Linux with BlueZ
         - One BLE device per glove
@@ -257,7 +257,7 @@ devices:
     details:
       setup:
         - label: WUJI Glove docs
-          doc: /device/wuji_glove
+          doc: /device/hand_tracking/wuji_glove
         - label: WUJI Glove Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/wuji_glove
         - label: WUJI Hand retargeting
@@ -309,7 +309,7 @@ devices:
         - label: SpaceMouse Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/spacemouse
         - label: SpaceMouse docs
-          doc: /device/spacemouse
+          doc: /device/spatial_controllers/spacemouse
       requirements:
         - Linux workstation with USB or the 3Dconnexion Universal Receiver
         - Plugin udev rule installed on the host
@@ -344,7 +344,7 @@ devices:
         - label: OAK-D Camera Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oak
         - label: OAK Camera docs
-          doc: /device/oak
+          doc: /device/cameras/oak
       requirements:
         - USB 3 connection to the workstation
       acquire:
@@ -365,7 +365,7 @@ devices:
     details:
       setup:
         - label: LeRobot integration
-          doc: /getting_started/lerobot/index
+          doc: /teleop/lerobot/index
         - label: LeRobot on GitHub
           url: https://github.com/huggingface/lerobot
 
