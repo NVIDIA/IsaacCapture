@@ -71,19 +71,18 @@ Table of Contents
 .. toctree::
    :maxdepth: 2
    :caption: Devices
+   :titlesonly:
 
+   device/xr/index
+   device/hand_tracking/index
+   Body tracking <device/body_tracking/index>
+   device/cameras/index
+   Joint-space devices <device/joint_space/index>
+   device/tactile/index
+   device/spatial_controllers/index
+   device/gamepads/index
    Spatial trackers <device/trackers>
    device/add_device
-   device/hand_tracking/manus
-   device/hand_tracking/wuji_glove
-   device/hand_tracking/sharpa_avatar
-   device/hand_tracking/haptikos
-   device/body_tracking/index
-   device/cameras/oak
-   Joint-space devices <device/joint_space/index>
-   device/tactile/oglo
-   device/spatial_controllers/spacemouse
-   device/gamepad
 
 .. toctree::
    :maxdepth: 2
