@@ -172,7 +172,7 @@ def test_malformed_commands_raise(args: list[str]) -> None:
     [
         "am start -a android.intent.action.VIEW -d https://headset.local/",
         "am start -p com.oculus.browser -a android.intent.action.VIEW -d "
-        "'https://headset.local/?a=1&b=2'",
+        + "'https://headset.local/?a=1&b=2'",
     ],
 )
 def test_intent_launch_shapes_are_accepted(shell_cmd: str) -> None:
