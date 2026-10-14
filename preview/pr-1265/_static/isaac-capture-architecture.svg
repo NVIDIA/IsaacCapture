@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="880" viewBox="0 0 1200 880" role="img" aria-labelledby="title desc">
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<title id="title">Isaac Capture architecture</title>
+<desc id="desc">Isaac Teleop and the Ego Pipeline use shared device plugins, retargeters, and data utilities. Isaac Lab and Sim, Isaac ROS, and other ROS stacks use Isaac Capture. GitHub and PyPI distribute the library.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#65727b"/></marker></defs>
+<rect width="1200" height="880" fill="white"/>
+<text x="600" y="45" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle" fill="#202629">NVIDIA Isaac Capture</text>
+<text x="600" y="77" font-family="Arial, sans-serif" font-size="20" font-weight="400" text-anchor="middle" fill="#202629">Shared capture infrastructure for teleoperation and egocentric data</text>
+<rect x="25" y="120" width="360" height="90" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="205.0" y="154" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Isaac Lab &amp; Sim</text>
+<text x="205.0" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Robot in simulation</text>
+<path d="M205 250 L205 212" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="420" y="120" width="360" height="90" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="600.0" y="154" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Isaac ROS</text>
+<text x="600.0" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Real robot integration</text>
+<path d="M600 250 L600 212" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="815" y="120" width="360" height="90" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="995.0" y="154" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">GEAR &amp; other ROS stacks</text>
+<text x="995.0" y="184" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Research and custom integrations</text>
+<path d="M995 250 L995 212" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="25" y="250" width="1150" height="480" fill="#f4f9e9" stroke="#76b900" stroke-width="2"/>
+<text x="600.0" y="284" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Isaac Capture</text>
+<rect x="50" y="310" width="535" height="185" fill="white" stroke="#c4cbd0" stroke-width="2"/>
+<text x="317.5" y="344" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Isaac Teleop</text>
+<text x="317.5" y="374" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Robot-in-the-loop capture</text>
+<rect x="615" y="310" width="535" height="185" fill="white" stroke="#c4cbd0" stroke-width="2"/>
+<text x="882.5" y="344" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Ego Pipeline</text>
+<text x="882.5" y="374" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Human / egocentric data capture</text>
+<rect x="70" y="408" width="240" height="62" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="190.0" y="442" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Teleop Session</text>
+<rect x="325" y="408" width="240" height="62" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="445.0" y="442" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Remote Assist</text>
+<rect x="635" y="408" width="240" height="62" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="755.0" y="442" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Ego Capture</text>
+<rect x="890" y="408" width="240" height="62" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="1010.0" y="442" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Ego Post-Processing</text>
+<path d="M318 545 L318 500" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M882 545 L882 500" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="50" y="550" width="1100" height="155" fill="white" stroke="#76b900" stroke-width="2"/>
+<text x="600.0" y="584" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Shared infrastructure</text>
+<rect x="70" y="603" width="340" height="82" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="240.0" y="637" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Device plugins</text>
+<text x="240.0" y="667" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">MANUS, VIVE, PICO, Quest, OAK-D</text>
+<rect x="430" y="603" width="340" height="82" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="600.0" y="637" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Retargeters</text>
+<text x="600.0" y="667" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">Body and hand mappings</text>
+<rect x="790" y="603" width="340" height="82" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="960.0" y="637" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">Data utilities</text>
+<text x="960.0" y="667" font-family="Arial, sans-serif" font-size="17" font-weight="400" text-anchor="middle" fill="#202629">LeRobot, MCAP</text>
+<path d="M600 732 L600 775" fill="none" stroke="#65727b" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="6 5"/>
+<rect x="405" y="780" width="390" height="65" fill="#f3f4f5" stroke="#c4cbd0" stroke-width="2"/>
+<text x="600.0" y="814" font-family="Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle" fill="#202629">GitHub / PyPI</text>
+<text x="600" y="869" font-family="Arial, sans-serif" font-size="15" font-weight="400" text-anchor="middle" fill="#202629">Arrows show library use and distribution. Device names are examples, not a support-status claim.</text>
+</svg>
