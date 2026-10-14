@@ -5,9 +5,9 @@ Sharpa AvatarExo Glove
 ======================
 
 A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
-Isaac Capture framework. The gloves stream IMU and encoder data through the
-official Avatar SDK over USB. The plugin maps that stream into Isaac Capture's
-usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
+Isaac Capture framework. The gloves stream IMU and encoder data wirelessly
+through a USB dongle and the official Avatar SDK. The plugin maps that stream
+into Isaac Capture's usual surfaces: OpenXR hand tracking for the HUMAN skeleton,
 ``JointStateOutput`` tensors for the RAW and ROBOT 22-DoF joint sets, and
 inbound per-finger vibration on a haptic collection.
 
@@ -33,7 +33,7 @@ named joint-state collections:
 
 .. code-block:: text
 
-   Sharpa AvatarExo Gloves (USB)
+   Sharpa AvatarExo Gloves (wireless via USB dongle)
            │
            ▼
    avatar_hand_plugin  (Avatar SDK, production package)
@@ -56,9 +56,7 @@ Prerequisites
 - **Pinned production Avatar SDK** (``avatar-sdk`` 1.7.3-17) from Sharpa's
   signed APT repository. ``install_avatar_sdk.sh`` retrieves it; do not substitute
   ``avatar-sdk-dev`` or ``avatar-sdk-beta``.
-- **Sharpa AvatarExo Gloves** powered and connected over USB. Transport settings
-  are selected in ``<sdk-root>/share/sdk_config.json`` (default root
-  ``/opt/avatar-sdk``).
+- **Sharpa AvatarExo Gloves** powered and paired with the USB wireless dongle.
 - **CloudXR runtime** on the plugin host, unless a ``TeleopSession`` example
   launches it for you.
 - A built Isaac Capture checkout. CMake 3.24 or newer is required.
