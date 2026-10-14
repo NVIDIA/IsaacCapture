@@ -66,7 +66,7 @@ You should see output similar to:
 
    ``python -m isaaccapture.cloudxr`` still works and is equivalent to
    ``python -m isaaccapture.cloudxr.service run``. It warns on startup and is
-   removed in Isaac Teleop 1.7.
+   removed in Isaac Capture 1.7.
 
 Take note of the ``source ~/.cloudxr/run/cloudxr.env`` path in the output. You
 will need it in :ref:`load-cloudxr-environment-variables`.
@@ -327,7 +327,7 @@ could be watching — a non-interactive stdin, or ``CI`` set — so container
 entrypoints and automated runs continue immediately rather than waiting.
 
 On Jetson Orin the service already selects the experimental runtime package
-and main-thread join. The following are Isaac Teleop launcher overrides only
+and main-thread join. The following are Isaac Capture launcher overrides only
 (not CloudXR native settings). Export them in the process environment, or add
 them to ``--cloudxr-env-config`` if you need them:
 

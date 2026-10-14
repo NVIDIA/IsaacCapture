@@ -34,10 +34,10 @@ SINCE_MAIN = "main"
 # an earlier tag is listed from here rather than from a 0.x version.
 SINCE_FLOOR = "v1.0.191"
 
-# A link into the docs site or into the IsaacTeleop repository stays inside this
+# A link into the docs site or into the Isaac Capture repository stays inside this
 # project, so it carries no external marker -- arrow or screen-reader label. Every
 # other domain gets one, including other GitHub organizations such as isaac-sim.
-PROJECT_REPO = "https://github.com/NVIDIA/IsaacTeleop"
+PROJECT_REPO = "https://github.com/NVIDIA/IsaacCapture"
 
 # Group header rows within a table. The input wording is the old page's own table
 # titles, so a reader arriving from an old link recognizes them.
@@ -407,11 +407,10 @@ def _load_devices(env, relpath: str = DEVICE_DATA) -> tuple[list[dict], list[dic
     dependency, an incremental build reuses the cached doctree and renders the previous
     table after the data changes.
     """
-    confdir = env.app.confdir
-    env.note_dependency(os.path.join(confdir, relpath))
-    return _read(
-        confdir, relpath, lambda data: _validate_devices(data, relpath, confdir)
-    )
+    # Device docnames must match the ref being built, not the deploy config's ref.
+    srcdir = env.app.srcdir
+    env.note_dependency(os.path.join(srcdir, relpath))
+    return _read(srcdir, relpath, lambda data: _validate_devices(data, relpath, srcdir))
 
 
 def _line(classes: list[str], text: str = "") -> nodes.paragraph:
@@ -423,7 +422,9 @@ def _line(classes: list[str], text: str = "") -> nodes.paragraph:
 
 
 def _is_external(url: str) -> bool:
-    return not str(url).startswith(PROJECT_REPO)
+    return not str(url).startswith(
+        (PROJECT_REPO, "https://github.com/NVIDIA/IsaacTeleop")
+    )
 
 
 def _mark_external(ref: nodes.Element, *, arrow: bool = True) -> None:
