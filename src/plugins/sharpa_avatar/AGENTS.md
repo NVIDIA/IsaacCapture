@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rig
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sharpa Avatar plugin — agent notes
+# Sharpa AvatarExo plugin — agent notes
 
 **CRITICAL:** Before editing this tree, read this file and the repo root
 [`AGENTS.md`](../../../AGENTS.md).
@@ -34,6 +34,9 @@ SPDX-License-Identifier: Apache-2.0
 - Installers must not delete files derived from a configured install prefix.
 - Do not mutate loader environment variables or SDK configuration at runtime.
   Runtime paths come from the selected SDK root and its `sdk_config.json`.
+- Document the supported user workflow as wireless through the USB dongle. Do
+  not advertise wired, Ethernet, USB Type-C, or SDK link names outside focused
+  diagnostics.
 - Carry Avatar SDK enums such as `DeviceSide` and `DeviceDataCategory` through
   plugin internals; convert only at an existing external API boundary.
 - Adapt this plugin to shared APIs; do not refactor other plugins or shared
@@ -48,11 +51,18 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
+- Reconcile glove handles from the SDK manager's discovery inventory, not the
+  handle's cached `online` snapshot. Gate publication and haptics on a fresh
+  ingress callback; do not add transport-specific parameter probes for liveness.
+- Keep each side's HUMAN injector and RAW/ROBOT collections alive only while
+  that glove is streaming; destroy them on disconnect and recreate them after
+  fresh ingress so consumers cannot retain stale online data.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
   production SDK's landmark order. Do not read joint names from
   `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring
-  poses. Refresh that table and the example's RAW/ROBOT name snapshots together
-  with the package pin.
+  poses. Publish RAW/ROBOT with their pinned semantic name tables, never the
+  SDK frame's positional `joint_<index>` names. Refresh those tables and the
+  example's RAW/ROBOT name snapshots together with the package pin.
 - When reconciling the maintained feature branch, use it as the baseline and
   retain local divergence only for an explicit API or correctness requirement.
 - Keep this plugin tree C++-only (`core/` + `app/`). The TeleopSession sample
