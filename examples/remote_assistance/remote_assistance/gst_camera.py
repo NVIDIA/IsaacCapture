@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Jetson V4L2 hardware encoding with complete access units for LiveKit."""
+"""Jetson camera hardware encoding with complete access units for LiveKit."""
 
 import asyncio
 from collections import deque
@@ -13,6 +13,7 @@ from livekit import rtc
 
 from .connection import connect, disconnect
 from .encoded_source import EncodedSource
+from .gst_sources import camera_source
 
 logger = logging.getLogger("isaaccapture.remote_assistance.gst_camera")
 
@@ -21,10 +22,7 @@ def parameters(settings, spec):
     codec = str(settings.get("codec", "h264")).lower()
     if codec not in ("h264", "h265"):
         raise ValueError("gstreamer encoder supports h264 or h265")
-    if spec.get("type") != "v4l2" or spec.get("stereo", False):
-        raise ValueError("gstreamer encoder requires a mono V4L2 camera")
-    if spec.get("fourcc", "YUYV") != "YUYV":
-        raise ValueError("gstreamer camera currently requires fourcc: YUYV")
+    camera_source(spec)
     width, height = int(spec["width"]), int(spec["height"])
     fps = Fraction(str(spec["fps"])).limit_denominator(1001)
     bitrate = int(float(settings.get("bitrate_mbps", 15)) * 1_000_000)
@@ -79,7 +77,7 @@ class GstCapture:
         except (ImportError, ValueError) as exc:
             raise RuntimeError(
                 "Install python3-gi, gir1.2-gstreamer-1.0 and gir1.2-gst-plugins-base-1.0; "
-                "expose system dist-packages to this Python 3.12 venv (see README)"
+                "use bindings built for the bridge's Python version (see README)"
             ) from exc
         Gst.init(None)
         self.Gst, self.GstVideo = Gst, GstVideo
@@ -90,17 +88,16 @@ class GstCapture:
         self.force_key = threading.Event()
         self.count = self.bytes = 0
         self.last_frame = time.monotonic()
+        adapter = camera_source(spec)
+        self.startup_timeout = getattr(adapter, "startup_timeout", 10)
         self.pipeline = Gst.parse_launch(
-            f"v4l2src name=camera do-timestamp=true ! "
-            f"video/x-raw,format=YUY2,width={width},height={height},framerate={fps.numerator}/{fps.denominator} ! "
-            f"videoconvert ! video/x-raw,format=I420 ! nvvidconv ! "
-            f"video/x-raw(memory:NVMM),format=NV12 ! "
-            f"nvv4l2{codec}enc name=encoder bitrate={bitrate} iframeinterval={max(1, round(fps))} "
+            adapter.pipeline(width, height, f"{fps.numerator}/{fps.denominator}")
+            + f"nvv4l2{codec}enc name=encoder bitrate={bitrate} iframeinterval={max(1, round(fps))} "
             f"insert-sps-pps=true ! {codec}parse config-interval=-1 ! "
             f"video/x-{codec},stream-format=byte-stream,alignment=au ! "
             "appsink name=output emit-signals=true sync=false max-buffers=2 drop=false"
         )
-        self.pipeline.get_by_name("camera").set_property("device", str(spec["device"]))
+        adapter.configure(self.pipeline.get_by_name("camera"))
         self.encoder = self.pipeline.get_by_name("encoder")
         # Disable reordering where the platform exposes this property.
         if self.encoder.find_property("num-B-Frames"):
@@ -141,6 +138,7 @@ class GstCapture:
             return Gst.FlowReturn.ERROR
 
     def start(self):
+        self.last_frame = time.monotonic()
         if (
             self.pipeline.set_state(self.Gst.State.PLAYING)
             == self.Gst.StateChangeReturn.FAILURE
@@ -158,8 +156,9 @@ class GstCapture:
             raise RuntimeError("Camera pipeline ended unexpectedly")
         if self.error:
             raise RuntimeError("Encoded camera capture failed") from self.error
-        if time.monotonic() - self.last_frame > 10:
-            raise RuntimeError("No encoded camera frames for 10 seconds")
+        timeout = self.startup_timeout if self.count == 0 else 10
+        if time.monotonic() - self.last_frame > timeout:
+            raise RuntimeError(f"No encoded camera frames for {timeout} seconds")
 
     def feedback(self, feedback):
         if feedback.keyframe_requested or self.force_key.is_set():

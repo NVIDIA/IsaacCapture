@@ -332,6 +332,16 @@ Every five seconds the bridges report peer readiness, `control=waiting`,
 Check increasing target counts toward SONIC and `g1_debug` counts toward the
 manager. These are forwarding counts, not execution acknowledgments.
 
+If both bridges remain `ready=True` with empty Edge `counters` and `forwarded`,
+their readiness heartbeats work but Edge has sent no application messages.
+Check Pico Manager and its ZMQ publisher on port 5558 first. It waits for the
+first Isaac Teleop body sample before binding that port, then publishes
+`manager_state` even before robot activation. Missing body tracking, a stopped
+manager or a mismatched ZMQ endpoint/topic can explain this pattern; these
+counters alone cannot identify which. A single non-increasing `wrong_peer`
+count does not establish a persistent peer mismatch. Capture Pico Manager's
+startup output alongside both bridge logs when investigating intermittent starts.
+
 ### Input loss and delivery guarantees
 
 - Each endpoint accepts only its configured peer and topic allowlist. JWTs
@@ -452,6 +462,122 @@ still uses CPU `videoconvert`; this is not a zero-copy pipeline.
 
 To roll back, stop this sender and launch the original `camera.yaml` profile.
 
+### Sensing Astra S56 on Orin (GMSL2 / Argus)
+
+Camera selection stays in `cameras[].type`; encoding stays in
+`livekit.video_encoder`. Existing V4L2 and DepthAI profiles remain supported:
+
+| Camera source | `type` | `video_encoder` | Capture and encode |
+|---|---|---|---|
+| USB YUYV camera | `v4l2` | `gstreamer` | V4L2 → conversion → Jetson H.264/H.265 |
+| USB camera / synthetic test | `v4l2` / `synthetic` | `auto` / `software` | Existing raw-frame LiveKit encoder |
+| OAK | `depthai` | `depthai` | DepthAI → OAK onboard H.264 |
+| S56 | `argus` | `gstreamer` | Argus ISP → NVMM → Jetson H.264/H.265 |
+
+GStreamer source adapters in `gst_sources.py` supply a pipeline prefix and
+configure its camera element. They share the encoder, keyframe recovery,
+timestamps, feedback and LiveKit publisher. DepthAI retains its own capture
+adapter and shares that encoded publisher. Adding a camera source does not
+require changing the LiveKit transport. The prototype still publishes one
+camera per sender process.
+
+**One-time preparation on Orin:** install the matching Sensing driver/ISP
+package and select its device-tree overlay using the vendor guide. On the
+tested JetPack 6.2 / L4T 36.4.3 system, those files were already installed.
+Ubuntu 22.04's system Python 3.10 GI bindings cannot be imported into the bridge's
+Python 3.12 venv. Build matching bindings using the optional extra:
+
+```bash
+cd ~/IsaacTeleop
+sudo apt install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev \
+  gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+uv pip install --python examples/remote_assistance/.venv/bin/python \
+  -e 'examples/remote_assistance[gstreamer]'
+```
+
+**Initialize the camera after boot** using the installed vendor package:
+
+```bash
+cd ~/SG10A_AGON_G2M_A1_AGX_ORIN_S56x1_SHF3Lx6_JP6.2_L4TR36.4.3
+sudo bash ./load_modules.sh 30
+sudo systemctl restart nvargus-daemon
+v4l2-ctl --list-devices
+```
+
+The package documents S56 connections on J27 or J29 and a synchronization jumper
+between pins 2 and 4 of J19. Check the guide for your board. Select `60` instead
+of `30` when testing 60 fps; the external trigger must match the requested rate.
+Loading the vendor script reinitializes the camera drivers, so stop camera
+senders before running it.
+
+Bundle generation includes matching sender/viewer presets:
+
+| Profile | Output | Sensor mode | Status |
+|---|---|---|---|
+| `camera-s56-1080p30.yaml` | 1920×1080, 30 fps | 0 | Short LiveKit test verified |
+| `camera-s56-720p60.yaml` | 1280×720, 60 fps | 0 (ISP scaling) | Experimental |
+| `camera-s56-1080p60.yaml` | 1920×1080, 60 fps | 0 | Experimental |
+| `camera-s56-2560x1984-30.yaml` | 2560×1984, 30 fps | 1 | Experimental |
+
+For an existing bundle, generate presets on **Edge Compute** and transfer them
+with the usual helper. This preserves its current credentials and base camera
+configuration. Update the Robot Site code before selecting these new profiles.
+
+```bash
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python -m remote_assistance.camera_profiles
+bash examples/remote_assistance/deploy_robot_bundle.sh
+```
+
+On **Robot Site**, stop the previous sender, then launch:
+
+```bash
+cd ~/IsaacTeleop
+source "$HOME/remote-assistance-robot/credentials.env"
+# Use the active Orin desktop's DISPLAY and XAUTHORITY; these were :1 and
+# /run/user/1000/gdm/Xauthority on the tested Marvin session.
+export DISPLAY=:1
+export XAUTHORITY=/run/user/1000/gdm/Xauthority
+examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
+  "$HOME/remote-assistance-robot/camera-s56-1080p30.yaml"
+```
+
+Initial captures intermittently returned `NvBufSurfaceFromFd Failed`, even with
+the active display. Longer Argus event/frame waits (10/15 seconds) allowed
+repeated captures. The adapter allows 20 seconds for its first encoded frame,
+then retains the normal 10-second stall watchdog. S56 mode programming takes
+several seconds; allow startup to complete. Headless operation and long-duration
+restart reliability remain unverified. Check standalone capture before debugging
+LiveKit when this error appears. Do not hardcode session-specific display
+settings into the camera backend. No CPU color conversion is requested
+in the Argus path; this does not establish zero-copy behavior inside the SDK.
+
+On **Edge Compute**, restart the viewer with the matching profile:
+
+```bash
+cd ~/IsaacTeleop/examples/camera_viz
+source "$HOME/remote-assistance-network/edge/credentials.env"
+unset LK_DISABLE_NVDEC
+./camera_viz.sh run "$HOME/remote-assistance-network/edge/camera-s56-1080p30.yaml" --mode xr
+```
+
+S56 presets use `sensor_id: 0` and `flip_method: 2` (180°) for the tested mounting.
+Adjust these fields for another sensor or orientation; `sensor_mode: -1` allows
+Argus mode selection. Use `flip_method: 0` for no rotation. Start with H.264;
+H.265 compatibility for this camera has not been tested. To switch back, stop
+this sender and select the matching OAK or V4L2 profiles on the two sites.
+
+A short Orin→LiveKit→Edge test on 2026-10-14 settled at 30 encoded fps near
+15 Mbps, with zero native rejections or capture-queue drops. The automatic
+NVIDIA decoder delivered 649 distinct 1920×1080 images (about 26.1 fps over the
+observed receive interval). Sender acceptance does not establish loss-free
+delivery or 30 fps at the viewer. The received image confirmed the 180° correction.
+The operator subsequently confirmed the S56 camera working in the full stack.
+One native LiveKit SDK panic occurred near shutdown when the receiver ended
+first; two follow-up sender shutdowns completed cleanly. For now, stop the camera
+sender before the viewer. Subscriber-disconnect recovery remains a known issue
+to investigate; these short checks do not establish production reliability.
+
 ### Network setup for two computers
 
 This profile supports Linux hosts with direct IPv4 connectivity over a LAN or
@@ -498,6 +624,7 @@ This creates two private directories:
 
 - `edge/`: LiveKit and NGINX configurations, TLS keys/certificates, edge bridge,
   viewer and probe tokens, and application YAML files.
+- Both sites also receive matching `camera-oak-*.yaml` and `camera-s56-*.yaml` presets.
 - `robot/`: robot bridge and camera tokens, application YAML files and the public
   test CA certificate. It contains no server signing key or TLS private key.
 
@@ -523,7 +650,7 @@ It defaults to `~/remote-assistance-network`; pass another bundle directory as
 its only argument if needed. SSH may prompt for your Robot Site password.
 No separate Thor terminal or script installation on Thor is needed.
 
-The script streams the four Robot configuration/credential files over SSH into
+The script streams the Robot configuration/credential files and generated camera presets over SSH into
 a private staging directory. After transfer succeeds, it preserves any existing
 bundle at `~/remote-assistance-robot.backup.<unique suffix>/robot` and installs
 the new one at `~/remote-assistance-robot`. Failed uploads leave the existing
@@ -902,36 +1029,62 @@ If DepthAI reports USB permissions errors, install the
 [Luxonis Linux USB rules](https://docs.luxonis.com/software/depthai/manual-install/)
 and reconnect the camera. Run the sender on the host as your normal user.
 
-Create separate profiles from your current bundle, preserving its credentials:
+#### Select an OAK profile
+
+Network setup step 1 creates all four profiles on **Edge Compute**, in both
+`~/remote-assistance-network/edge/` and `~/remote-assistance-network/robot/`.
+Step 2 (`deploy_robot_bundle.sh`) creates or replaces
+`~/remote-assistance-robot/` on **Robot Site**, including these profiles and its
+credentials. It is a transferred bundle, not a directory created by cloning.
+
+| Filename | Encoded resolution | FPS |
+| --- | --- | --- |
+| `camera-oak-720p60.yaml` | 1280×720 | 60 |
+| `camera-oak-1080p60.yaml` | 1920×1080 | 60 |
+| `camera-oak-4k30.yaml` | 3840×2160 | 30 |
+| `camera-oak-2016x1520-60.yaml` | 2016×1520 | 60 |
+
+For an **existing bundle**, add or reset all four presets on Edge without
+rotating tokens or changing `camera.yaml`:
 
 ```bash
-examples/remote_assistance/.venv/bin/python - <<'PY'
-from pathlib import Path
-import copy
-import yaml
-base = Path.home() / 'remote-assistance-robot'
-original = yaml.safe_load((base / 'camera.yaml').read_text())
-for label, width, height in [('720p60', 1280, 720), ('1080p60', 1920, 1080)]:
-    cfg = copy.deepcopy(original)
-    cfg['livekit'].update(codec='h264', video_encoder='depthai', bitrate_mbps=15)
-    cfg['cameras'] = [dict(name='cam', type='depthai', width=width, height=height, fps=60)]
-    (base / f'camera-oak-{label}.yaml').write_text(yaml.safe_dump(cfg, sort_keys=False))
-PY
+cd ~/IsaacTeleop
+examples/remote_assistance/.venv/bin/python -m remote_assistance.camera_profiles
+bash examples/remote_assistance/deploy_robot_bundle.sh
+```
+
+The transfer uses `ROBOT_USER` and `ROBOT_IP` from step 0. Stop Robot Site clients
+before transferring; the helper backs up and replaces their bundle. This helper
+copies configurations, not source code or dependencies. Existing token expiry
+still applies. For a nondefault bundle path, pass `--bundle PATH` to the profile
+generator and `PATH` to the transfer script.
+
+Run **one sender and one viewer**, selecting the same filename on both sites.
+For example, on Robot Site:
+
+```bash
+cd ~/IsaacTeleop
 source "$HOME/remote-assistance-robot/credentials.env"
 examples/remote_assistance/.venv/bin/python -m remote_assistance camera \
   "$HOME/remote-assistance-robot/camera-oak-720p60.yaml"
 ```
 
-On **Edge Compute**, use the existing generated viewer profile and H.264 hardware
-decoding (`livekit.video_decoder: auto`), with `LK_DISABLE_NVDEC` unset before
-starting the viewer. Update that profile's camera width/height/fps to match the
-chosen test (1280/720/60 first, 1920/1080/60 second). The LiveKit room, track name
-and credentials must match the Robot Site bundle.
+On Edge Compute (start Pico Manager first when using robot control):
 
-For 1080p60, stop only the sender and restart with `camera-oak-1080p60.yaml`;
-restart the viewer with matching dimensions. Compare encoded fps, accepted/rejected
-counts, queue drops and received video smoothness. Sender fps alone does not prove
-60 decoded frames per second. Good lighting helps sustain short exposures.
+```bash
+cd ~/IsaacTeleop/examples/camera_viz
+source .venv/bin/activate
+source ~/.cloudxr/run/cloudxr.env
+source "$HOME/remote-assistance-network/edge/credentials.env"
+unset LK_DISABLE_NVDEC
+./camera_viz.sh run "$HOME/remote-assistance-network/edge/camera-oak-720p60.yaml" --mode xr
+```
+
+To switch modes, stop these two camera processes and change the filename in both
+commands. No Python editing, credential regeneration or server restart is needed.
+Profiles preserve the template's camera name, room, identity settings and display
+layout; they select H.264, 15 Mbps, and automatic decoding. Generated presets
+replace any previous presets of the same names.
 
 This experiment uses fixed 15 Mbps and no B-frames. It repeats keyframes every
 0.5 seconds and waits for a fresh IDR after queue loss. DepthAI v2 does not expose
@@ -949,28 +1102,8 @@ the [OAK H.264 encoder requires widths divisible by 32](https://docs.luxonis.com
 Exact 2024×1520 encoding is not supported by this backend. 4K60 is also rejected.
 Transfer the updated `oak_camera.py` to Robot Site before running these profiles.
 
-On Robot Site, generate the profiles from the current authenticated bundle:
-
-```bash
-cd ~/IsaacTeleop
-examples/remote_assistance/.venv/bin/python - <<'PYCODE'
-from pathlib import Path
-import copy
-import yaml
-base = Path.home() / 'remote-assistance-robot'
-original = yaml.safe_load((base / 'camera.yaml').read_text())
-for label, width, height, fps in [('4k30', 3840, 2160, 30), ('2016x1520-60', 2016, 1520, 60)]:
-    cfg = copy.deepcopy(original)
-    cfg['livekit'].update(codec='h264', video_encoder='depthai', bitrate_mbps=15)
-    cfg['cameras'] = [dict(name='cam', type='depthai', width=width, height=height, fps=fps)]
-    (base / f'camera-oak-{label}.yaml').write_text(yaml.safe_dump(cfg, sort_keys=False))
-PYCODE
-```
-
-Use the same sender command with `camera-oak-4k30.yaml` or
-`camera-oak-2016x1520-60.yaml`, running one at a time. Match the Edge viewer's
-camera dimensions and fps. Both retain 15 Mbps for comparison with the successful
-720p60/1080p60 tests.
+Select the matching profiles from the table above; all four are generated and
+transferred together.
 
 Operator tests on 2026-10-12 used OAK-D-W/IMX378 onboard H.264, Thor as
 Robot Site, and the Edge headset viewer:

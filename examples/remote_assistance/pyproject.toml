@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 camera = ["opencv-python>=4.5,<5"]
 oak = ["depthai==2.31.0.0"]
+gstreamer = ["PyGObject==3.48.2"]
 test = ["pytest>=8"]
 
 [tool.setuptools.packages.find]

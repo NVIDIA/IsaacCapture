@@ -125,6 +125,8 @@ class Capture:
 
 
 async def publish_camera(settings, spec, stop):
+    if spec.get("type") == "argus" and settings.get("video_encoder") != "gstreamer":
+        raise ValueError("Argus cameras require livekit.video_encoder: gstreamer")
     if settings.get("video_encoder") in ("gstreamer", "depthai"):
         from .gst_camera import publish_encoded_camera
 

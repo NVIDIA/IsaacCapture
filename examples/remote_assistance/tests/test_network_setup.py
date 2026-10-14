@@ -134,3 +134,59 @@ def test_cli_replaces_existing_bundle_by_default(tmp_path, monkeypatch, flags):
     assert len(backups) == 1
     assert (backups[0] / "edge/credentials.env").read_bytes() == old
     assert (output / "edge/credentials.env").read_bytes() != old
+
+
+def test_oak_profiles_preserve_site_settings(tmp_path):
+    from remote_assistance.camera_profiles import OAK_MODES
+    from remote_assistance.oak_camera import parameters
+
+    output = setup(tmp_path / "network")
+    for role in ("edge", "robot"):
+        original = yaml.safe_load((output / role / "camera.yaml").read_text())
+        for label, dimensions in OAK_MODES.items():
+            path = output / role / f"camera-oak-{label}.yaml"
+            cfg = yaml.safe_load(path.read_text())
+            assert path.stat().st_mode & 0o777 == 0o600
+            assert cfg["display"] == original["display"]
+            for key in ("url", "room", "token_env", "publisher", "viewer_identity"):
+                assert cfg["livekit"].get(key) == original["livekit"].get(key)
+            assert cfg["cameras"][0]["name"] == original["cameras"][0]["name"]
+            assert parameters(cfg["livekit"], cfg["cameras"][0])[1:4] == dimensions
+            assert cfg["livekit"]["video_decoder"] == "auto"
+
+
+def test_existing_bundle_profiles_do_not_rotate_credentials(tmp_path, monkeypatch):
+    from remote_assistance.camera_profiles import main
+
+    output = setup(tmp_path / "network")
+    before = {path: path.read_bytes() for path in output.rglob("*") if path.is_file()}
+    for path in (
+        *output.glob("*/camera-oak-*.yaml"),
+        *output.glob("*/camera-s56-*.yaml"),
+    ):
+        path.unlink()
+    monkeypatch.setattr("sys.argv", ["camera_profiles", "--bundle", str(output)])
+    main()
+    for path, content in before.items():
+        assert path.read_bytes() == content
+
+
+def test_s56_profiles_preserve_auth_and_select_argus(tmp_path):
+    from remote_assistance.camera_profiles import S56_MODES
+    from remote_assistance.gst_camera import parameters
+
+    output = setup(tmp_path / "network")
+    for role in ("edge", "robot"):
+        original = yaml.safe_load((output / role / "camera.yaml").read_text())
+        for label, (width, height, fps, mode) in S56_MODES.items():
+            path = output / role / f"camera-s56-{label}.yaml"
+            cfg = yaml.safe_load(path.read_text())
+            assert path.stat().st_mode & 0o777 == 0o600
+            assert cfg["display"] == original["display"]
+            for key in ("url", "room", "token_env", "publisher", "viewer_identity"):
+                assert cfg["livekit"].get(key) == original["livekit"].get(key)
+            spec = cfg["cameras"][0]
+            assert spec["name"] == original["cameras"][0]["name"]
+            assert spec["sensor_mode"] == mode and spec["flip_method"] == 2
+            assert parameters(cfg["livekit"], spec)[1:4] == (width, height, fps)
+            assert cfg["livekit"]["video_encoder"] == "gstreamer"

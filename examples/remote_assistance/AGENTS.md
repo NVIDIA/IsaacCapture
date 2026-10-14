@@ -94,3 +94,13 @@ SPDX-License-Identifier: Apache-2.0
 - Experimental remote-camera instructions must transfer uncommitted backend code
   and dependency metadata before generating profiles that select the new backend.
   Copying configuration does not update the Robot Site implementation.
+
+- Camera presets belong in Edge-generated bundles with matching viewer settings;
+  transfer them with the Robot bundle rather than requiring per-site YAML edits.
+- Keep camera source adapters separate from encoding and transport. Adding an
+  Argus source must preserve V4L2 and DepthAI profile behavior and optional imports.
+  Match GStreamer Python bindings to the venv interpreter, not just the OS.
+- Verify repeated camera starts and actual output frames before treating a
+  display/environment change as the fix for an intermittent Argus failure.
+- Put operator commands in copyable conversation code blocks, not question
+  widgets. Use SSH for authorized remote work; ask only for the sudo step needed.

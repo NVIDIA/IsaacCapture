@@ -15,6 +15,14 @@ if [[ ! $ROBOT_USER =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ || ! $ROBOT_IP =~ ^[a-zA-Z0
 fi
 bundle=${1:-"$HOME/remote-assistance-network"}
 files=(session.yaml camera.yaml credentials.env ca.crt)
+# Allow only the known camera profiles; never include Edge keys or arbitrary files.
+profiles=(camera-oak-720p60.yaml camera-oak-1080p60.yaml camera-oak-4k30.yaml camera-oak-2016x1520-60.yaml
+  camera-s56-720p60.yaml camera-s56-1080p30.yaml camera-s56-1080p60.yaml camera-s56-2560x1984-30.yaml)
+for file in "${profiles[@]}"; do
+  if [[ -e "$bundle/robot/$file" || -L "$bundle/robot/$file" ]]; then
+    files+=("$file")
+  fi
+done
 for file in "${files[@]}"; do
   if [[ ! -f "$bundle/robot/$file" || -L "$bundle/robot/$file" ]]; then
     echo "Missing regular Robot bundle file: $bundle/robot/$file" >&2
@@ -37,6 +45,11 @@ tar -xf - -C "$staging" --no-same-owner
 for file in session.yaml camera.yaml credentials.env ca.crt; do
   [[ -f "$staging/$file" && ! -L "$staging/$file" ]]
   chmod 600 "$staging/$file"
+done
+for file in "$staging"/camera-oak-*.yaml "$staging"/camera-s56-*.yaml; do
+  [[ -e "$file" ]] || continue
+  [[ -f "$file" && ! -L "$file" ]]
+  chmod 600 "$file"
 done
 bundle="$HOME/remote-assistance-robot"
 backup=""

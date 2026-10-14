@@ -17,6 +17,9 @@ from livekit import api
 import yaml
 
 
+from .camera_profiles import write_camera_profiles
+
+
 def write_private(path, text):
     with open(path, "x", opener=lambda p, flags: os.open(p, flags, 0o600)) as handle:
         handle.write(text)
@@ -155,6 +158,7 @@ def _generate(
         video = copy.deepcopy(camera)
         video["livekit"] = settings(video["livekit"], "RA_CAMERA_TOKEN")
         write_private(site / "camera.yaml", yaml.safe_dump(video, sort_keys=False))
+        write_camera_profiles(site, video)
         credentials = {
             "RA_SESSION_TOKEN": token(session[role]["identity"], data=True),
             "RA_CAMERA_TOKEN": token(publisher, publish=True)
