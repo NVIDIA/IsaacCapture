@@ -334,11 +334,8 @@ what surface it is mapped onto:
    * - ``Y``
      - Reset everything to the YAML values.
    * - Left stick
-     - Retunes the active shape: ``quad`` size / vertical position, ``cylinder`` arc width /
-       vertical position, ``equirect`` horizontal / vertical span.
-
-The left stick's horizontal / vertical axes adjust size (preserving aspect ratio) / height on
-a quad, arc width / height on a cylinder, and horizontal / vertical span on an equirect sphere.
+     - Horizontal / vertical axes adjust ``quad`` size (preserving aspect ratio) / height,
+       ``cylinder`` arc width / height, and ``equirect`` horizontal / vertical span.
 
 Changes apply to every camera at once and appear both on the terminal status panel and on a
 head-locked panel in the headset that auto-hides after about 2.5 seconds. Nothing is written
@@ -806,4 +803,4 @@ See the *Sharing the XR session* section of :doc:`/getting_started/televiz` for 
 :doc:`/getting_started/teleop_session` for the ``TeleopSession`` side.
 
 ``viz_session.get_oxr_handles()`` returns ``(instance, session, space, proc_addr)`` as raw
-``uint64`` values, or ``None`` outside ``kXr``.
+``uint64`` values, or ``None`` outside ``isaaccapture.viz.DisplayMode.kXr``.
