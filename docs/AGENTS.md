@@ -109,3 +109,6 @@ the destination. Recompute RST heading underlines when renaming their text.
 Device metadata containing docnames must come from `app.srcdir` so a multiversion
 build uses paths that exist in that ref, even when `conf.py` comes from the deploy
 checkout.
+
+Reuse the README architecture image in the RST overview so both entry points
+share one maintained diagram.
