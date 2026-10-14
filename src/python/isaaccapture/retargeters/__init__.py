@@ -26,6 +26,7 @@ Available Retargeters:
     - GamepadToSe3RelRetargeter: Gamepad stick/dpad axes -> relative EE delta control
     - GamepadGripperRetargeter: Gamepad X-button toggle -> gripper open/closed
     - GamepadToSe2Retargeter: Gamepad stick axes -> base velocity command (v_x, v_y, omega_z)
+    - ControllersToGamepadRetargeter: XR controllers -> the standard gamepad layout
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
@@ -202,6 +203,17 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
     "GamepadToSe2RetargeterConfig": (
         ".gamepad_se2_retargeter",
         "GamepadToSe2RetargeterConfig",
+        None,
+    ),
+    # .controllers_to_gamepad_retargeter
+    "ControllersToGamepadRetargeter": (
+        ".controllers_to_gamepad_retargeter",
+        "ControllersToGamepadRetargeter",
+        None,
+    ),
+    "ControllersToGamepadRetargeterConfig": (
+        ".controllers_to_gamepad_retargeter",
+        "ControllersToGamepadRetargeterConfig",
         None,
     ),
     # .keyboard_se2_retargeter
@@ -404,6 +416,8 @@ __all__ = [
     "GamepadGripperRetargeter",
     "GamepadToSe2Retargeter",
     "GamepadToSe2RetargeterConfig",
+    "ControllersToGamepadRetargeter",
+    "ControllersToGamepadRetargeterConfig",
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",

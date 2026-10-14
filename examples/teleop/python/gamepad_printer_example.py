@@ -14,6 +14,10 @@ Like a downstream app driving a robot, it also integrates the end-effector delta
 pose and the base velocity into a base pose, treating both as rates per second. Menu resets them.
 Stick drift above --dead-zone shows up as a pose that creeps with the pad at rest.
 
+With --source controllers it reads a headset's XR controllers instead, through
+ControllersToGamepadRetargeter, so the same retargeters run from controllers; --dpad-stick makes one
+thumbstick the D-pad while its grip is held. That needs a headset connected to the CloudXR runtime.
+
 The session starts the gamepad plugin bundled with isaaccapture; nothing else needs to run. Like
 every TeleopSession it opens an OpenXR session; the CloudXR launcher arguments start a runtime, and
 no headset needs to connect. GamepadToSe3RelRetargeter needs scipy (the retargeters-lite extra).
@@ -29,13 +33,18 @@ from scipy.spatial.transform import Rotation
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeters import (
+    ControllersToGamepadRetargeter,
+    ControllersToGamepadRetargeterConfig,
     GamepadGripperRetargeter,
     GamepadToSe2Retargeter,
     GamepadToSe2RetargeterConfig,
     GamepadToSe3RelRetargeter,
     GamepadToSe3RelRetargeterConfig,
 )
-from isaaccapture.retargeting_engine.deviceio_source_nodes import GamepadSource
+from isaaccapture.retargeting_engine.deviceio_source_nodes import (
+    ControllersSource,
+    GamepadSource,
+)
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 from isaaccapture.retargeting_engine.tensor_types import GamepadInputIndex
 from isaaccapture.teleop_session_manager import (
@@ -48,9 +57,23 @@ from isaaccapture.teleop_session_manager import (
 STATUS_LINES = 3
 
 
-def build_pipeline(dead_zone: float) -> OutputCombiner:
-    """The source's raw outputs next to the SE(3), SE(2) and gripper retargeters' outputs."""
-    source = GamepadSource(name="gamepad")
+def build_pipeline(
+    dead_zone: float, source_kind: str, dpad_stick: str | None
+) -> OutputCombiner:
+    """The gamepad input next to the SE(3), SE(2) and gripper retargeters' outputs."""
+    if source_kind == "controllers":
+        controllers = ControllersSource(name="controllers")
+        source = ControllersToGamepadRetargeter(
+            ControllersToGamepadRetargeterConfig(dpad_stick=dpad_stick),
+            name="controllers_to_gamepad",
+        ).connect(
+            {
+                ControllersSource.LEFT: controllers.output(ControllersSource.LEFT),
+                ControllersSource.RIGHT: controllers.output(ControllersSource.RIGHT),
+            }
+        )
+    else:
+        source = GamepadSource(name="gamepad")
     gamepad = {"gamepad": source.output("gamepad")}
     se3 = GamepadToSe3RelRetargeter(
         GamepadToSe3RelRetargeterConfig(dead_zone=dead_zone), name="se3"
@@ -128,6 +151,17 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
+        "--source",
+        choices=["gamepad", "controllers"],
+        default="gamepad",
+        help="Read a gamepad, or a headset's XR controllers as a gamepad",
+    )
+    parser.add_argument(
+        "--dpad-stick",
+        choices=["left", "right"],
+        help="With --source controllers: the thumbstick that is the D-pad while its grip is held",
+    )
+    parser.add_argument(
         "--player",
         type=int,
         default=1,
@@ -145,8 +179,10 @@ def main():
 
     session_config = TeleopSessionConfig(
         app_name="GamepadPrinterExample",
-        pipeline=build_pipeline(args.dead_zone),
-        plugins=[
+        pipeline=build_pipeline(args.dead_zone, args.source, args.dpad_stick),
+        plugins=[]
+        if args.source == "controllers"
+        else [
             PluginConfig(
                 plugin_name="gamepad",
                 plugin_root_id="gamepad",
@@ -182,7 +218,13 @@ def main():
                 f"Base cmd: [{_fmt(result['base_command'][0])}]  Gripper: {gripper}"
             )
             if result["gamepad"].is_none:
-                _show([f"[{elapsed:5.1f}s] (no gamepad)", retargeted, poses.describe()])
+                _show(
+                    [
+                        f"[{elapsed:5.1f}s] (no {args.source})",
+                        retargeted,
+                        poses.describe(),
+                    ]
+                )
                 time.sleep(0.01)
                 continue
 
