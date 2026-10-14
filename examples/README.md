@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Isaac Teleop examples
+# Isaac Capture examples
 
 Each subdirectory is a self-contained example. Read one, run it, or copy it into
 your own project — the last of those is the reason for the layout below.
