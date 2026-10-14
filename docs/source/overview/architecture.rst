@@ -51,7 +51,7 @@ Data utilities
 
 Shared :code-dir:`FlatBuffers schemas <src/core/schema/fbs>` define device data.
 :doc:`/references/mcap_record_replay` covers recording and playback;
-:doc:`/teleop/lerobot/index` covers LeRobot data collection workflows.
+:doc:`/integrations/lerobot/index` covers LeRobot data collection workflows.
 
 Visualization and streaming
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
