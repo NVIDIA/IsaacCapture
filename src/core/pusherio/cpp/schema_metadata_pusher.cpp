@@ -14,16 +14,6 @@ namespace core
 namespace
 {
 
-std::vector<Serialized<TrackerMetadataChunk>> split_checked(std::span<const uint8_t> metadata, size_t max_chunk_size)
-{
-    if (max_chunk_size > TRACKER_METADATA_CHUNK_SIZE)
-    {
-        throw std::invalid_argument("SchemaMetadataPusher: max_chunk_size " + std::to_string(max_chunk_size) +
-                                    " exceeds TRACKER_METADATA_CHUNK_SIZE, which consumers reject");
-    }
-    return split_tracker_metadata(metadata, max_chunk_size);
-}
-
 SchemaPusherConfig metadata_pusher_config(const std::string& collection_id, size_t max_chunk_size)
 {
     std::string metadata_collection_id = tracker_metadata_collection_id(collection_id);
@@ -45,7 +35,7 @@ SchemaMetadataPusher::SchemaMetadataPusher(const OpenXRSessionHandles& handles,
                                            const std::string& collection_id,
                                            std::span<const uint8_t> metadata,
                                            size_t max_chunk_size)
-    : m_chunks(split_checked(metadata, max_chunk_size)),
+    : m_chunks(split_tracker_metadata(metadata, max_chunk_size)),
       m_pusher(handles, metadata_pusher_config(collection_id, max_chunk_size))
 {
 }
