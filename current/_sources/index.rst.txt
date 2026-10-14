@@ -73,6 +73,7 @@ Table of Contents
    device/sharpa_avatar
    device/haptikos
    device/spacemouse
+   device/gamepad
 
 .. toctree::
    :maxdepth: 2

@@ -116,6 +116,9 @@ Generated today
    * - ``spacemouse``
      - ``SpaceMouseTracker``
      - Overrides ``class`` and ``traits``; the defaults would spell ``Spacemouse``
+   * - ``gamepad``
+     - ``GamepadTracker``
+     - Gamepad state pushed by the gamepad plugin (SDL3); only ``python_accessor`` is overridden
 
 Still hand-written
 ------------------
