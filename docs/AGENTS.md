@@ -112,3 +112,6 @@ checkout.
 
 Reuse the README architecture image in the RST overview so both entry points
 share one maintained diagram.
+
+Group vendor device guides under category toctrees in the Devices navigation;
+folder placement alone does not create sidebar nesting.
