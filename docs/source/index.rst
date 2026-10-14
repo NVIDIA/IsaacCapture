@@ -49,7 +49,6 @@ Table of Contents
    teleop/quick_start
    teleop/teleop_session
    teleop/control_state_machine
-   teleop/lerobot/index
 
 .. toctree::
    :maxdepth: 2
@@ -62,11 +61,13 @@ Table of Contents
    development/license
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: Integrations
+   :titlesonly:
 
    integrations/isaac_lab_sim
    integrations/isaac_ros
+   integrations/lerobot/index
 
 .. toctree::
    :maxdepth: 2

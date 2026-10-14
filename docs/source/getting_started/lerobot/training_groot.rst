@@ -6,4 +6,4 @@
 Model Training with GR00T
 =========================
 
-This page has moved to :doc:`/teleop/lerobot/training_groot`.
+This page has moved to :doc:`/integrations/lerobot/training_groot`.

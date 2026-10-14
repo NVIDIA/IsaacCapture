@@ -6,4 +6,4 @@
 Supported Teleop devices
 ========================
 
-This page has moved to :doc:`/teleop/lerobot/devices`.
+This page has moved to :doc:`/integrations/lerobot/devices`.

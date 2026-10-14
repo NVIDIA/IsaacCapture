@@ -6,4 +6,4 @@
 reBot B601-RS on Jetson AGX Orin
 ================================
 
-This page has moved to :doc:`/teleop/lerobot/rebot`.
+This page has moved to :doc:`/integrations/lerobot/rebot`.
