@@ -48,7 +48,13 @@ above first. `uv pip install -e` pulls `viser`; CloudXR comes from the
 --no-launch-cloudxr-runtime   connect to an already running CloudXR runtime
 --world-frame                 display the unmodified OpenXR poses
 --plugin-search-path DIR      directory that contains sharpa_avatar/
+--sdk-config FILE             Avatar SDK configuration file
+--datasets LIST               comma-separated human,raw,robot,haptic selection
 ```
+
+All four datasets and haptics are enabled by default, so they do not need to be
+listed for a normal run. The supported workflow uses the USB dongle for a
+wireless glove connection. This plugin does not accept a `--transport` option.
 
 ## Behavior
 
