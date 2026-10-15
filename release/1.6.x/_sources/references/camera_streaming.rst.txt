@@ -5,7 +5,7 @@ Camera Streaming
 ================
 
 ``camera_viz`` is the reference camera-streaming sample built on :doc:`Televiz
-</getting_started/televiz>` (``isaaccapture.viz``). It captures frames from one or more cameras
+</development/televiz>` (``isaaccapture.viz``). It captures frames from one or more cameras
 and streams them to an XR headset — one plane per camera, aspect-fit — either directly or from a
 robot to a workstation over the network (split mode). It can also stream :ref:`recorded camera
 data <recorded-camera-streaming>` — a video file replayed in place of a live camera — and render
@@ -38,7 +38,7 @@ Requirements
     `7.2.x <https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.2>`__
   - **Thor:** `JetPack 7.x <https://developer.nvidia.com/embedded/jetpack>`__
 - For the default XR mode, a headset to connect as the CloudXR client — follow the
-  :doc:`quick start </getting_started/quick_start>` step :ref:`connect-xr-headset`. The viewer
+  :doc:`quick start </teleop/quick_start>` step :ref:`connect-xr-headset`. The viewer
   launches the CloudXR runtime itself; nothing to start separately. No headset handy?
   ``--mode window`` renders to a desktop window instead.
 
@@ -96,11 +96,11 @@ needs. Flags trim or extend that:
      - Install into an existing virtual environment instead of creating ``.venv/``.
    * - ``--wheel PATH``
      - Install a locally built ``isaaccapture`` wheel instead of resolving one from the index — for
-       developing Isaac Teleop itself.
+       developing Isaac Capture itself.
    * - ``--build-from-source``
      - Skip the package index and build ``isaaccapture`` from the surrounding checkout without
        prompting — a full C++ / CUDA / Vulkan build (see
-       :doc:`/getting_started/build_from_source/index`).
+       :doc:`/development/build_from_source/index`).
 
 .. _recorded-camera-streaming:
 
@@ -596,6 +596,6 @@ extensions and forwards the handles through ``TeleopSessionConfig.oxr_handles``:
        oxr_handles=OpenXRSessionHandles(*viz_session.get_oxr_handles()),
    )
 
-See the *Sharing the XR session* section of :doc:`/getting_started/televiz` for the full pattern
+See the *Sharing the XR session* section of :doc:`/development/televiz` for the full pattern
 (imports, frame loop, and how the two sessions' lifecycles relate), and
-:doc:`/getting_started/teleop_session` for the ``TeleopSession`` side.
+:doc:`/teleop/teleop_session` for the ``TeleopSession`` side.

@@ -9,7 +9,7 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
 .. code-block:: text
    :class: code-100col
 
-   IsaacTeleop/
+   IsaacCapture/
    ├── CMakeLists.txt              # Top-level: deps, core, examples, plugins, etc.
    ├── cmake/
    │   ├── DepthAIVcpkgManifest.cmake  # OAK/DepthAI vcpkg manifest (pre-project)
@@ -72,7 +72,7 @@ After building, install the wheels with ``uv`` or ``pip``:
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
-``import isaacteleop`` resolves without a second install; see :doc:`migration`.
+``import isaacteleop`` resolves without a second install; see :doc:`../development/migration`.
 
 Installing from source with pip (scikit-build-core)
 ---------------------------------------------------
@@ -91,7 +91,7 @@ driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
 For the walkthrough — how this scoped build differs from the classic flow (ABI,
 omitted type stubs, versioning) and the caveat on iterating on pure-Python
 subpackages under an editable install — see
-:doc:`/getting_started/build_from_source/index`.
+:doc:`/development/build_from_source/index`.
 
 Build directory layout and per-Python-version builds
 ----------------------------------------------------
