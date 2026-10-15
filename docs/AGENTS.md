@@ -115,3 +115,9 @@ share one maintained diagram.
 
 Group vendor device guides under category toctrees in the Devices navigation;
 folder placement alone does not create sidebar nesting.
+
+## Synthetic XR preview narrative
+
+Lead with the automated robot task and show where human and generated input
+join the same native path. Keep manual controller controls and recording tools
+in the optional reference; do not present them as prerequisites for task automation.

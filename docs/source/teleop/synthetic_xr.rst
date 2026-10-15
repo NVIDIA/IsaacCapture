@@ -4,162 +4,112 @@
 Synthetic XR Teleoperation
 ==========================
 
-Control virtual XR inputs from your desktop browser, without a physical headset.
-Use interactive controls or generated controller trajectories to develop Isaac
-Teleop applications, record inputs and reproduce behavior. This preview uses the
-existing IWER fallback in the WebXR client and the normal CloudXR transport.
-
-Requirements
-------------
-
-Complete the host setup in :doc:`quick_start`. The same CloudXR runtime, GPU,
-network and certificate requirements apply. Isaac Lab is needed only for the
-Franka simulation example. Desktop operation requires neither ADB nor a headset.
-Native headset sessions retain their own XR runtime; this feature does not
-replace it with IWER.
-
-Build the client from this checkout following
-:doc:`/development/build_from_source/webxr`. Start the service with that build:
-
-.. code-block:: bash
-
-   export TELEOP_WEB_CLIENT_STATIC_DIR="$PWD/deps/cloudxr/webxr_client/build"
-   python -m isaaccapture.cloudxr.service start --host-client
-
-Use the client URL printed by the service. Open **Synthetic XR controls** to
-reload with the panel enabled, or add ``syntheticXR=1`` to the URL query.
-For an optional desktop launcher, install the example from this checkout:
-
-.. code-block:: bash
-
-   python -m pip install -e ./examples/synthetic_xr
-   synthetic-xr --client-url 'https://HOST:PORT/client/'
-
-Replace the URL with the service's actual URL, keeping its query parameters and
-application fragment. The launcher preserves them. It opens the client; it does
-not start another runtime. For unattended hub setup without ADB, see
-:doc:`/references/oob_teleop_control` and ``TELEOP_OOB_HUB_ONLY=1``.
-
-Move controllers
-----------------
-
-#. Connect the WebXR client and start a native input viewer or robot application.
-#. Select the **Left** or **Right** controller in the Synthetic XR panel.
-#. Change X/Y/Z in metres or rotate around an axis using the ten-degree buttons.
-#. Use **Grip / clutch** and **Trigger** according to the application's mapping.
-#. Use **Stop input** to cancel synthetic playback and release both buttons.
-
-**Reset virtual poses** resets input poses, not the simulator. **Stop input**
-is an input stop, not an application emergency stop: use the robot application's
-stop control to stop its task. Switching to a hidden browser tab also stops
-synthetic playback and releases buttons.
-
-Controller poses use IWER local coordinates: X right, Y up, Z backward, with
-quaternions in x/y/z/w order. They describe the controller's target-ray pose;
-its grip pose additionally includes the selected IWER profile's grip offset.
-The browser produces poses and buttons; host retargeting and a simulation task's
-IK solver determine robot joint motion.
-
-Run and record a generated sequence
------------------------------------
-
-**Run controller sweep** generates a nine-second sequence with separate left
-and right movement, a grip interval and a trigger interval. It runs once and
-releases buttons on completion. It requires no captured manual demonstration.
-
-Use **Record input** while moving the virtual controllers, then **Save input
-trace**. Load that JSON with **Load trace**, then select **Replay once**.
-This trace records complete synthetic input states at command times; playback
-holds each state until the next timestamp. It is distinct from the client's
-existing XR-frame recording JSON and from native MCAP.
-
-Only one input producer may own synthetic control. Manual/API pose changes are
-rejected while a trace is playing. The client suspends synthetic controls while
-its existing browser-recording replay owns the CloudXR tracking adapter.
-
-Native MCAP record and single replay
-------------------------------------
-
-Install the existing :doc:`/references/mcap_record_replay` example. With the
-native runtime and desktop client connected, record a controller sequence:
-
-.. code-block:: bash
-
-   python -m isaaccapture_examples.mcap_record_replay.record_controller 15 controllers.mcap
-
-Run the sweep during that recording. Then replay the MCAP once using this
-package's wrapper around the native example's replay pipeline:
-
-.. code-block:: bash
-
-   python -m isaaccapture_examples.synthetic_xr.replay_once controllers.mcap
-
-For an Isaac Teleop 1.5 installation, add ``--legacy-example-dir`` pointing to
-that SDK checkout's ``examples/mcap_record_replay/python`` directory. This
-explicitly selects its native replay implementation. The default command
-requires the current Isaac Capture example package. The native example polls at
-60 Hz; a lower-rate recording may exhaust its payloads before its duration timer
-expires and then show invalid inputs. Payload equality and order are verified;
-original sample timing is not part of this preview's qualification.
-
-Open the printed viewer URL. The wrapper plays one sequence, holds the final
-view for five seconds and closes. Native MCAP replay needs no live XR session.
-The main MCAP example retains its existing repeated-playback behavior.
-
-Script your own input
----------------------
-
-In a desktop client opened with ``syntheticXR=1``, the preview API is available
-as ``window.syntheticXR``. For example, in browser developer tools:
-
-.. code-block:: javascript
-
-   const input = window.syntheticXR;
-   input.setController('right', {
-     position: [0.3, 1.3, -0.4],
-     quaternion: [0, 0, 0, 1],
-     grip: 1,
-     trigger: 0.5,
-   });
-   input.stop();
-
-The reusable implementation is
-:code-file:`src/syntheticXR/controller.ts <deps/cloudxr/webxr_client/src/syntheticXR/controller.ts>`.
-``setHead``, ``getState``, ``record``, ``finishRecording``, ``play`` and ``stop``
-provide input generation and reproduction. ``play(trace)`` runs once;
-``play(trace, {loop: true})`` repeats until stopped. ``lastFrame`` exposes observed
-WebXR aim/grip poses and gamepad values for debugging, not host acknowledgements.
-
-Inputs must be finite, positions within ten metres per axis, normalized
-quaternions and button values in [0, 1]. Trace version 1 uses
-``referenceSpace: 'iwer-local'`` and strictly increasing ``timeMs`` values
-starting at zero, with complete ``head``, ``left`` and ``right`` state in each
-frame. Traces are limited to ten minutes and 36,000 frames. Schedule button
-transitions far enough apart to be observed by the application's frame loop.
+**Build and automate teleoperation from your desktop, without an XR headset.**
+Supply virtual controller inputs through IWER and use the same WebXR, CloudXR
+and native robot-control path as a human operator. Start with Franka stacking,
+then bring your own task logic.
 
 Franka simulation example
 -------------------------
 
-The :code-file:`Franka walkthrough <examples/synthetic_xr/README.md>` runs the
-native Lab recording script with read-only scene observations. Its
-``stack_logic`` computes targets and submits them to the same browser API;
-robot actuation still passes through WebXR, CloudXR, retargeting and native IK.
-It uses the Lab task's ground truth rather than a learned policy or perception.
-The observer depends on the documented Lab integration hooks listed in the
-walkthrough; verify compatibility before using another Lab revision.
+The example locates a cube, approaches it, closes the gripper, lifts it and
+places it on another cube. It repeats the transfer to build a three-cube stack
+and stops after one successful native episode export. No recorded human
+movement or manual controller positioning is required.
 
-Scope and troubleshooting
+The host-side ``stack_logic.py`` reads cube and gripper poses from Lab and
+chooses the next gripper target. A bridge converts that target into synthetic
+XR controller input. **Lab's native IK calculates the joint commands.** The
+Franka you see in the browser is the streamed result of the simulation.
+
+One shared robot-control path
+-----------------------------
+
+A human observes the streamed scene and moves a physical controller. Automation
+reads numerical scene feedback and generates virtual controller poses. Both
+feed the same downstream path in this Franka example:
+
+.. figure:: /_static/synthetic-xr-shared-flow.svg
+   :alt: Human: streamed scene, visual decisions, physical controller movement and tracked poses. Automation: numerical Lab feedback, task logic, coordinate conversion and IWER poses. Both converge at WebXR and CloudXR, then native retargeting, Lab IK and simulated robot motion. Rendered images return to the browser; added numerical feedback returns to the script.
+   :width: 100%
+   :target: ../_static/synthetic-xr-shared-flow.svg
+
+   Different input producers; shared transport, retargeting, IK and simulation.
+   Open the diagram to view it at full size.
+
+The numerical feedback is an extra, read-only observation path for the script.
+In the human workflow, the operator sees the cubes and robot in streamed images;
+this example's structured cube-pose feed is not part of that browser view.
+
+The script generates intermediate **3D positions and orientations**, rather
+than joint angles or directional button presses. The bridge accounts for robot,
+world and XR coordinates and the controller/gripper offsets. Native retargeting
+maps the resulting controller poses back to robot targets; IK acts inside Lab.
+Trigger values close or open the gripper, just as a physical trigger would.
+
+Try the example
+---------------
+
+Use a configured CloudXR and Isaac Lab host, this preview's built WebXR client
+and the example's optional Franka dependencies. A headset and ADB are not needed;
+CloudXR's GPU, network and certificate requirements still apply.
+
+Follow the :download:`Franka setup and run commands <../../../examples/synthetic_xr/README.md>`:
+
+#. Start the CloudXR service and Lab recording task with the read-only observer.
+#. Connect the desktop WebXR client with ``syntheticXR=1`` enabled.
+#. Run ``stack_logic``. It drives the synthetic controller through the browser
+   API, including task start, movement and gripping.
+
+The Synthetic XR panel lets you see the input being applied. **You do not need
+to select Left/Right or operate its movement buttons for this example.**
+
+The preview's native result is one successful seed-42 episode on the prepared
+TeleOp 1.5 / CloudXR 6.3 / Lab compatibility stack. Targets use current cube
+poses, but repeated randomized episodes have not been qualified. See the
+:download:`validation scope <../../../examples/synthetic_xr/VALIDATION.txt>` for component
+identities and evidence limits.
+
+Bring your own task logic
 -------------------------
 
-* **Controls unavailable:** check that desktop IWER loaded and the URL has
-  ``syntheticXR=1``. Native immersive XR sessions intentionally keep their input.
-* **No movement:** verify connection, fresh native poses, clutch and application
-  start state. Moving a controller is not itself a robot task success signal.
-* **Replay rejected:** synthetic traces, browser recordings and MCAP are separate
-  formats. Use the corresponding replay path.
-* **No WebGL:** use a browser/driver combination that supports WebGL2. Do not
-  treat an unavailable renderer as a successful transport test.
+Keep the virtual controller and native pipeline; change the decisions that
+drive them. For example, a pick-and-place script could choose a destination
+region instead of another cube as the placement target.
 
-This controller preview does not emulate physical tracking accuracy, haptics,
-Pico/Quest device behavior or glove protocols. Hand/body adapters are outside
-this release. Scripted simulation data is synthetic, not a human demonstration.
+.. code-block:: text
+
+   Your task logic
+     observe object and gripper poses
+     choose approach -> grasp -> lift -> destination -> release
+     generate gripper targets and open/close commands
+         |
+         v
+   Robot-specific pose bridge -> browser API / IWER
+         |
+         v
+   Shared WebXR -> CloudXR -> retargeting -> IK -> robot simulation
+
+Use these pieces as the starting point:
+
+* :download:`stack_logic.py <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/stack_logic.py>`
+  chooses targets and checks grasp, placement and task completion. Replace these
+  task decisions with your own; this is scripted logic, not a learned model.
+* :download:`xr_controller_bridge.py <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/xr_controller_bridge.py>`
+  interpolates movement, converts Franka targets into XR controller poses and
+  checks that the corresponding action reaches the native task. Reuse its
+  mapping for the same configured Franka task; another robot needs its own
+  retargeting and coordinate mapping.
+* ``window.syntheticXR.setController(...)`` supplies controller poses and
+  buttons. The :doc:`browser API reference <synthetic_xr_reference>` describes
+  coordinates and optional inspection/recording tools.
+
+The feedback source and task checks belong to your application. New tasks need
+their own validation; the stacking example is not a general motion planner.
+This preview covers controller input, not physical headset tracking, glove
+protocols or hand/body input.
+
+.. toctree::
+   :hidden:
+
+   synthetic_xr_reference
