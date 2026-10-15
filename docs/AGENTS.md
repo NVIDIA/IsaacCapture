@@ -130,5 +130,5 @@ that layer: do not add a landing page where a caption was asked for.
 ## Synthetic XR preview narrative
 
 Lead with the automated robot task and show where human and generated input
-join the same native path. Keep manual controller controls and recording tools
-in the optional reference; do not present them as prerequisites for task automation.
+join the same native path. Keep the phase-one guide to one main page; defer
+manual controller and recording walkthroughs rather than adding reference pages.
