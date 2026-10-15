@@ -40,6 +40,19 @@ template <typename T>
 py::class_<Serialized<T>> serialized_class(py::module& m, const char* name, const char* doc)
 {
     return py::class_<Serialized<T>>(m, name, doc)
+        .def_static(
+            "from_bytes",
+            [](py::bytes payload)
+            {
+                const std::string encoded = payload;
+                flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size());
+                if (!verifier.VerifyBuffer<T>(nullptr))
+                {
+                    throw py::value_error("payload is not a valid FlatBuffer for this schema type");
+                }
+                return Serialized<T>::adopt(std::vector<uint8_t>(encoded.begin(), encoded.end()));
+            },
+            py::arg("payload"), "Validate and adopt standalone FlatBuffer bytes rooted at this table type.")
         .def(
             "to_bytes",
             [](const Serialized<T>& self)

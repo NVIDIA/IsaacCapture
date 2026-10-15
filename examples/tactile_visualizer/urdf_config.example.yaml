@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# URDF meshes and translations are scaled uniformly before the root placement.
+scale: 1.0
+offset_cm: [0.0, 0.0, -1.0]
+rotation_xyzw: [0.0, 0.0, 0.0, 1.0]
+
+# Keys are actuated URDF joint names; values are names in avatar_raw_left/right.
+# Unlisted URDF joints use the same name, then fall back to zero if absent.
+joint_map:
+  thumb_CMC_FE: thumb_CMC_FE
+  index_MCP_FE: index_MCP_FE

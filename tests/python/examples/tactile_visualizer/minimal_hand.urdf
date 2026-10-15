@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<robot name="minimal_hand">
+  <link name="base"/>
+  <link name="finger">
+    <visual>
+      <geometry><box size="0.01 0.04 0.01"/></geometry>
+    </visual>
+  </link>
+  <joint name="index_MCP_FE" type="revolute">
+    <parent link="base"/>
+    <child link="finger"/>
+    <origin xyz="0 0.02 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1.5" upper="1.5" effort="1" velocity="1"/>
+  </joint>
+</robot>
