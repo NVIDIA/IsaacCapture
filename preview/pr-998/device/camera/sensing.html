@@ -598,7 +598,7 @@ src/plugins/sensing/scripts/setup.sh
 src/plugins/sensing/scripts/validate.sh
 
 <span class="c1"># 3. Only if you want a container:</span>
-src/plugins/sensing/scripts/run_docker_example.sh<span class="w">   </span><span class="c1"># ready-made, drops you at a shell</span>
+src/plugins/sensing/scripts/run_docker_example.py<span class="w">   </span><span class="c1"># ready-made, drops you at a shell</span>
 src/plugins/sensing/docker/setup_container.sh<span class="w">      </span><span class="c1"># or adapt your own</span>
 </pre></div>
 </div>
@@ -724,15 +724,15 @@ one by hand instead:</p>
 <section id="validating-in-a-container">
 <h3><a class="toc-backref" href="#id7" role="doc-backlink">Validating in a container</a><a class="headerlink" href="#validating-in-a-container" title="Link to this heading">#</a></h3>
 <p>Before adapting your own image, prove the rig works from a throwaway one:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.sh
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.py
 <span class="c1"># ... builds, then drops you at a shell in the container:</span>
-./validate.sh
+scripts/validate.sh
 </pre></div>
 </div>
 <p>The script builds <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/sensing/docker/Dockerfile.example" rel="noopener noreferrer" target="_blank">docker/Dockerfile.example</a> — which does nothing but add
 the EGL runtime and run <code class="docutils literal notranslate"><span class="pre">image_setup.sh</span></code> — and starts it with the flags no
 Dockerfile can express. <code class="docutils literal notranslate"><span class="pre">--print-args</span></code> and <code class="docutils literal notranslate"><span class="pre">--json</span></code> emit those flags for
-your own container instead; <code class="docutils literal notranslate"><span class="pre">--</span> <span class="pre">validate.sh</span></code> runs the check and exits rather
+your own container instead; <code class="docutils literal notranslate"><span class="pre">--</span> <span class="pre">scripts/validate.sh</span></code> runs the check and exits rather
 than opening a shell.</p>
 <p>Five ingredients, and leaving any one out fails in a way that names something
 else:</p>
@@ -779,7 +779,7 @@ gids in the image and no <code class="docutils literal notranslate"><span class=
 reverse does not hold: <code class="docutils literal notranslate"><span class="pre">--group-add</span></code> <em>alone</em> leaves an interactive shell
 without them, because <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">exec</span></code> ignores <code class="docutils literal notranslate"><span class="pre">HostConfig.GroupAdd</span></code>.</p>
 <p>The gids are host-specific, so read them off the host rather than copying:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>src/plugins/sensing/scripts/run_docker_example.sh<span class="w"> </span>--print-gids
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>src/plugins/sensing/scripts/run_docker_example.py<span class="w"> </span>--print-gids
 <span class="go">114:i2c 985:gpio 44:video</span>
 </pre></div>
 </div>
@@ -799,12 +799,12 @@ To layer onto an existing image instead of editing its Dockerfile:</p>
 </pre></div>
 </div>
 <p>The runtime half comes from the same script:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>run<span class="w"> </span><span class="k">$(</span>src/plugins/sensing/scripts/run_docker_example.sh<span class="w"> </span>--print-args<span class="k">)</span><span class="w"> </span>my-image:sensing<span class="w"> </span>...
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.py<span class="w"> </span>--print-args
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as <code class="docutils literal notranslate"><span class="pre">devcontainer.json</span></code> <code class="docutils literal notranslate"><span class="pre">runArgs</span></code> elements.
-<code class="docutils literal notranslate"><span class="pre">--with-groups</span></code> adds <code class="docutils literal notranslate"><span class="pre">--group-add</span></code> for an image built <em>without</em>
-<code class="docutils literal notranslate"><span class="pre">image_setup.sh</span></code>; it is redundant otherwise.</p>
+<p>Paste the printed flags after <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span></code> and before your image name.
+<code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as a JSON array for <code class="docutils literal notranslate"><span class="pre">devcontainer.json</span></code>
+<code class="docutils literal notranslate"><span class="pre">runArgs</span></code>. Run <code class="docutils literal notranslate"><span class="pre">image_setup.sh</span></code> in your image to configure the groups.</p>
 </section>
 </section>
 <section id="nvsipl-camera">

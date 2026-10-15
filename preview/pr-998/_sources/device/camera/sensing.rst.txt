@@ -110,7 +110,7 @@ only decides what comes after:
    src/plugins/sensing/scripts/validate.sh
 
    # 3. Only if you want a container:
-   src/plugins/sensing/scripts/run_docker_example.sh   # ready-made, drops you at a shell
+   src/plugins/sensing/scripts/run_docker_example.py   # ready-made, drops you at a shell
    src/plugins/sensing/docker/setup_container.sh      # or adapt your own
 
 :code-dir:`scripts/ <src/plugins/sensing/scripts>` holds what you run —
@@ -245,15 +245,15 @@ Before adapting your own image, prove the rig works from a throwaway one:
 
 .. code-block:: bash
 
-   src/plugins/sensing/scripts/run_docker_example.sh
+   src/plugins/sensing/scripts/run_docker_example.py
    # ... builds, then drops you at a shell in the container:
-   ./validate.sh
+   scripts/validate.sh
 
 The script builds :code-file:`docker/Dockerfile.example
 <src/plugins/sensing/docker/Dockerfile.example>` — which does nothing but add
 the EGL runtime and run ``image_setup.sh`` — and starts it with the flags no
 Dockerfile can express. ``--print-args`` and ``--json`` emit those flags for
-your own container instead; ``-- validate.sh`` runs the check and exits rather
+your own container instead; ``-- scripts/validate.sh`` runs the check and exits rather
 than opening a shell.
 
 Five ingredients, and leaving any one out fails in a way that names something
@@ -294,7 +294,7 @@ The gids are host-specific, so read them off the host rather than copying:
 
 .. code-block:: console
 
-   $ src/plugins/sensing/scripts/run_docker_example.sh --print-gids
+   $ src/plugins/sensing/scripts/run_docker_example.py --print-gids
    114:i2c 985:gpio 44:video
 
 The image half is one ``RUN``. Expose the directory as a named build context —
@@ -321,11 +321,11 @@ The runtime half comes from the same script:
 
 .. code-block:: bash
 
-   docker run $(src/plugins/sensing/scripts/run_docker_example.sh --print-args) my-image:sensing ...
+   src/plugins/sensing/scripts/run_docker_example.py --print-args
 
-``--json`` emits the same flags as ``devcontainer.json`` ``runArgs`` elements.
-``--with-groups`` adds ``--group-add`` for an image built *without*
-``image_setup.sh``; it is redundant otherwise.
+Paste the printed flags after ``docker run`` and before your image name.
+``--json`` emits the same flags as a JSON array for ``devcontainer.json``
+``runArgs``. Run ``image_setup.sh`` in your image to configure the groups.
 
 nvsipl_camera
 -------------
