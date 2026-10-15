@@ -266,8 +266,8 @@ beside it (to check on another machine, copy the whole directory):
        ~/isaaccapture-cts/<take>/<take>-body.mcap
 
 The command prints the verdict and one
-line per check, and exits 0 ``pass``, 1 ``fail``, 2 ``retake`` or 3 ``insufficient_data``;
-:ref:`cts-overview-verdicts` says what each means. Add ``--json`` for the machine-readable
+line per check, and exits 0 ``pass``, 1 ``fail``, 2 ``retake`` or 3 ``insufficient_data``, or
+4 when the check could not run; :ref:`cts-overview-verdicts` says what each means. Add ``--json`` for the machine-readable
 report, or run ``--list-checks`` alone to see all 38 checks. The output for a synthetic
 reference take, shortened:
 
@@ -336,8 +336,11 @@ Troubleshooting
    * - A press does nothing
      - It came outside *ready when you are*, or the key went to another window. Click the
        capture panel page, then press space.
-   * - An error naming ``aplay`` or a Git LFS pointer
-     - Install ``alsa-utils`` or run ``git lfs pull`` (:doc:`setup`), then record again.
+   * - The capture panel says **Spoken cues are off**
+     - ``aplay`` is missing. Install ``alsa-utils`` and restart the panel to hear the cues, or
+       record with the on-screen cues only.
+   * - An error naming a Git LFS pointer
+     - Run ``git lfs pull`` (:doc:`setup`), then record again.
    * - *the session did not open: …*, on the capture panel
      - Nothing was recorded. *Required plugin … was not discovered*: ``--plugin`` must match the
        ``plugin.yaml`` ``name:`` of an installed plugin. *no live vendor* or *does not support

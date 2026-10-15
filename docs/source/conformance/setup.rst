@@ -39,9 +39,10 @@ Run the commands from the repository root.
    * - ``uv``, ``curl`` and ``unzip``
      - The setup scripts use them to build the environments and fetch ``flatc``.
    * - ``aplay`` (``alsa-utils``)
-     - The capture panel plays every cue through it; without it the take stops at the first cue.
-       Install with ``sudo apt install alsa-utils``. Speakers are optional: the cues play on the
-       workstation, not the headset, and the capture panel also shows each one as text.
+     - The capture panel plays the spoken cues through it. Without it the panel says so and the
+       take runs with on-screen cues only. Install with ``sudo apt install alsa-utils``. Speakers
+       are optional: the cues play on the workstation, not the headset, and the capture panel
+       also shows each one as text.
    * - An XR headset and CloudXR
      - Needed even when your device produces the joints: the capture's OpenXR session comes from
        CloudXR. See step 4.
