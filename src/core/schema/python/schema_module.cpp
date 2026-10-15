@@ -61,7 +61,7 @@ PYBIND11_MODULE(_schema, m)
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
 
-    // Bind the helpers for producers of tracker metadata.
+    // Bind the chunking helpers for producers of tracker metadata.
     core::bind_tracker_metadata(m);
 
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.

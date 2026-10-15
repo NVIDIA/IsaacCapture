@@ -24,7 +24,7 @@ SchemaTrackerConfig metadata_reader_config(const std::string& collection_id)
                                     "' does not fit XR_MAX_TENSOR_IDENTIFIER_SIZE");
     }
     return SchemaTrackerConfig{ .collection_id = std::move(metadata_collection_id),
-                                .max_flatbuffer_size = TRACKER_METADATA_SAMPLE_SIZE,
+                                .max_flatbuffer_size = TRACKER_METADATA_CHUNK_SIZE,
                                 .tensor_identifier = std::string(TRACKER_METADATA_TENSOR_IDENTIFIER),
                                 .localized_name = "Tracker metadata" };
 }
@@ -36,13 +36,54 @@ SchemaMetadataReaderBase::SchemaMetadataReaderBase(const OpenXRSessionHandles& h
 {
 }
 
-std::vector<uint8_t> SchemaMetadataReaderBase::drain()
+SchemaMetadataReaderBase::DrainResult SchemaMetadataReaderBase::drain()
 {
     m_samples.clear();
     m_reader.read_all_samples(m_samples);
-    // Every sample carries the whole table, padded to the sample size with zeros the
-    // FlatBuffer does not reach; the latest one is enough.
-    return m_samples.empty() ? std::vector<uint8_t>() : std::move(m_samples.back().buffer);
+
+    DrainResult result;
+    for (const auto& sample : m_samples)
+    {
+        flatbuffers::Verifier verifier(sample.buffer.data(), sample.buffer.size());
+        if (!verifier.VerifyBuffer<TrackerMetadataChunk>(nullptr))
+        {
+            if (!m_warned_rejection)
+            {
+                m_logger->warn("dropping a sample that is not a TrackerMetadataChunk");
+                m_warned_rejection = true;
+            }
+            continue;
+        }
+
+        const auto& chunk = *flatbuffers::GetRoot<TrackerMetadataChunk>(sample.buffer.data());
+        const auto status = m_assembler.add(chunk);
+        if (status != TrackerMetadataAssembler::Status::Rejected)
+        {
+            result.last_observed_hash = chunk.metadata_hash();
+        }
+        switch (status)
+        {
+        case TrackerMetadataAssembler::Status::Pending:
+            break;
+        case TrackerMetadataAssembler::Status::Complete:
+            result.completed = m_assembler.take();
+            m_warned_rejection = false;
+            break;
+        case TrackerMetadataAssembler::Status::Rejected:
+            if (!m_warned_rejection)
+            {
+                m_logger->warn("dropping a metadata chunk: {}", m_assembler.rejection());
+                m_warned_rejection = true;
+            }
+            break;
+        }
+    }
+    return result;
+}
+
+void SchemaMetadataReaderBase::restart()
+{
+    m_assembler.reset();
 }
 
 } // namespace core

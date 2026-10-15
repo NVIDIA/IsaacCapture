@@ -73,6 +73,28 @@ Python edit at all.
 ``.pyi`` stubs need no work either: :code-file:`src/core/python/generate_stubs.py` derives them from
 the built module.
 
+.. _generated-trackers-metadata:
+
+Trackers with metadata
+----------------------
+
+Set ``metadata = "<Table>"`` on a ``pull`` entry when the device also has a table that is fixed per
+producer and too large, or too static, to repeat in every frame (a sensor layout, a calibration).
+The table lives in its own ``.fbs`` with that table as ``root_type`` and no ``Record`` wrapper;
+``metadata_schema`` defaults to the table name in ``snake_case``.
+
+- **Transport.** The producer encodes the table once and pushes it with ``SchemaMetadataPusher``
+  (:code-file:`src/core/pusherio/cpp/inc/pusherio/schema_metadata_pusher.hpp`) as a loop of
+  ``TrackerMetadataChunk`` samples on ``<collection_id>/metadata``, a few per frame, for as long as
+  the data collection exists. :code-file:`src/core/schema/cpp/inc/schema/tracker_metadata.hpp` holds
+  the chunking and reassembly rules.
+- **Consumer.** The facade gains ``get_metadata()``. The tracker adopts the first complete metadata
+  and keeps it for the session, and ``get_data()`` stays empty unless the producer's metadata is the
+  adopted one, so a frame that reaches a consumer can always be read with ``get_metadata()``.
+- **Recording.** The metadata is written once to ``<channel>_metadata``, before any data it lets
+  through; data is recorded only while it would be published. Replay reads the metadata when the
+  session opens.
+
 Generated today
 ---------------
 

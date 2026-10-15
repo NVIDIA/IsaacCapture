@@ -25,6 +25,9 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
   public `#include` stem stays `frame_metadata_tracker_oak`).
 - **`direction = "push"`** generates a typed `<Table>PushTracker` (Teleop → plugin) instead of a
   reader facade. `TensorPushTracker` stays as the untyped `bytes` escape hatch — keep it.
+- **Static per-device data is `metadata`, not a second tracker.** `metadata = "<Table>"` adds
+  `get_metadata()` and the chunked companion collection; do not declare the table as its own
+  `[[tracker]]`, which makes every consumer pair and cache two streams itself.
 - **Do not hand-register a manifest tracker.** Factory dispatch rows, factory methods, pybind
   blocks, MCAP recording traits, and the Python `__all__` are emitted as `.inc` fragments that the
   hand-written files `#include`; adding a row yourself produces a duplicate definition.

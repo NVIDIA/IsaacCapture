@@ -1,0 +1,26 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace core;
+
+// One slice of a tracker's metadata buffer. A producer splits the encoded metadata table
+// into chunks and pushes them, cyclically, on the tracker's metadata collection; see
+// schema/tracker_metadata.hpp for the collection name and the reassembly rules.
+table TrackerMetadataChunk {
+  // FNV-1a 64 of the whole metadata buffer. Chunks with different hashes belong to
+  // different metadata, and the reassembled buffer must hash to this value.
+  metadata_hash: uint64 (id: 0);
+
+  // Byte size of the whole metadata buffer.
+  total_size: uint32 (id: 1);
+
+  chunk_index: uint32 (id: 2);
+  chunk_count: uint32 (id: 3);
+
+  // Byte offset of `bytes` within the whole metadata buffer.
+  offset: uint32 (id: 4);
+
+  bytes: [ubyte] (id: 5);
+}
+
+root_type TrackerMetadataChunk;
