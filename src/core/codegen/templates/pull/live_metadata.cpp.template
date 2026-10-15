@@ -1,0 +1,70 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include "@LIVE_IMPL_FILE@.hpp"
+
+#include <mcap/recording_traits.hpp>
+#include <schema/@METADATA_SCHEMA@_bfbs_generated.h>
+#include <schema/@SCHEMA@_bfbs_generated.h>
+
+namespace core
+{
+namespace
+{
+SchemaTrackerConfig make_@NAME@_tensor_config(const @CLASS@* tracker)
+{
+    SchemaTrackerConfig cfg;
+    cfg.collection_id = tracker->collection_id();
+    cfg.max_flatbuffer_size = tracker->max_flatbuffer_size();
+    cfg.tensor_identifier = @TENSOR_IDENTIFIER_EXPR@;
+    cfg.localized_name = "@LOCALIZED_NAME@";
+    return cfg;
+}
+} // namespace
+@MCAP_CHANNELS_TYPE@::@MCAP_CHANNELS_TYPE@(mcap::McapWriter& writer, std::string_view base_name)
+    : data(writer,
+           base_name,
+           std::vector<std::string>(@TRAITS@::recording_channels.begin(), @TRAITS@::recording_channels.end())),
+      metadata(writer,
+               base_name,
+               std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()))
+{
+    // No-op: members set in the initializer list.
+}
+std::unique_ptr<@MCAP_CHANNELS_TYPE@> @LIVE_IMPL@::create_mcap_channels(mcap::McapWriter& writer,
+                                                                        std::string_view base_name)
+{
+    return std::make_unique<@MCAP_CHANNELS_TYPE@>(writer, base_name);
+}
+@LIVE_IMPL@::@LIVE_IMPL@(const OpenXRSessionHandles& handles,
+                         const @CLASS@* tracker,
+                         std::unique_ptr<@MCAP_CHANNELS_TYPE@> mcap_channels)
+    : mcap_channels_(std::move(mcap_channels)),
+      m_schema_reader(handles, make_@NAME@_tensor_config(tracker), mcap_channels_ ? &mcap_channels_->data : nullptr, 0, 1),
+      m_metadata_reader(handles, tracker->collection_id(), mcap_channels_ ? &mcap_channels_->metadata : nullptr)
+{
+    // No-op: members set in the initializer list.
+}
+void @LIVE_IMPL@::update(int64_t monotonic_time_ns)
+{
+    // Metadata first, so data drained on the tick it is verified is already recorded.
+    m_metadata_reader.update(monotonic_time_ns);
+    const bool present = m_schema_reader.update(m_received, m_metadata_reader.verified());
+    m_metadata_reader.set_data_present(present);
+    if (!m_metadata_reader.verified())
+    {
+        // Do not retain a sample received before this producer's metadata was verified.
+        m_received.reset();
+    }
+    m_tracked = m_metadata_reader.verified() ? m_received : Serialized<@FB_TABLE@>();
+}
+const Serialized<@FB_TABLE@>& @LIVE_IMPL@::get_data() const
+{
+    return m_tracked;
+}
+const Serialized<@METADATA@>& @LIVE_IMPL@::get_metadata() const
+{
+    return m_metadata_reader.get();
+}
+
+} // namespace core

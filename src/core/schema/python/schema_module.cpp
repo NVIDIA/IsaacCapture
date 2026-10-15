@@ -29,6 +29,7 @@
 #include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
 #include "timestamp_bindings.h"
+#include "tracker_metadata_bindings.h"
 
 namespace py = pybind11;
 
@@ -59,6 +60,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
+
+    // Bind the helpers for producers of tracker metadata.
+    core::bind_tracker_metadata(m);
 
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.
     core::bind_joint_state(m);

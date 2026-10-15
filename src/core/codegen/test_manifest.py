@@ -8,7 +8,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from manifest import load_defaults, load_manifest, resolve_tracker_entry, snake_to_camel
+from manifest import (
+    camel_to_snake,
+    load_defaults,
+    load_manifest,
+    resolve_tracker_entry,
+    snake_to_camel,
+)
 
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +27,13 @@ class SnakeToCamelTest(unittest.TestCase):
 
     def test_se3(self) -> None:
         self.assertEqual(snake_to_camel("se3_tracker"), "Se3Tracker")
+
+
+class CamelToSnakeTest(unittest.TestCase):
+    def test_metadata_tables(self) -> None:
+        self.assertEqual(camel_to_snake("TactileShape"), "tactile_shape")
+        self.assertEqual(camel_to_snake("Se3TrackerPose"), "se3_tracker_pose")
+        self.assertEqual(camel_to_snake("HTTPHeader"), "http_header")
 
 
 class ManifestResolverTest(unittest.TestCase):
@@ -176,6 +189,14 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertIn("record", message)
         self.assertIn("boolean", message)
 
+    def test_removed_record_type_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            resolve_tracker_entry(
+                {"name": "x", "table": "T", "record_type": "T"},
+                load_defaults(DEFAULTS_PATH),
+            )
+        self.assertIn("record_type", str(ctx.exception))
+
     def test_load_manifest_file(self) -> None:
         manifest = CORE_ROOT / "deviceio_trackers" / "trackers.toml"
         self.assertTrue(manifest.is_file(), f"missing required manifest: {manifest}")
@@ -205,6 +226,60 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertEqual(ctx.replay_impl_file, "replay_frame_metadata_tracker_oak_impl")
         self.assertEqual(ctx.cls, "FrameMetadataTrackerOak")
         self.assertEqual(ctx.traits, "OakRecordingTraits")
+
+
+class MetadataTest(unittest.TestCase):
+    def _resolve(self, **overrides) -> dict:
+        raw = {"name": "tactile", "table": "TactileData", **overrides}
+        return resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH))
+
+    def test_unset_by_default(self) -> None:
+        self.assertEqual(self._resolve()["metadata"], "")
+
+    def test_schema_and_channel_derive_from_the_table(self) -> None:
+        entry = self._resolve(metadata="TactileShape")
+        self.assertEqual(entry["metadata_schema"], "tactile_shape")
+        self.assertEqual(entry["metadata_channel"], "tactile_metadata")
+
+    def test_push_direction_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            self._resolve(direction="push", metadata="TactileShape")
+        self.assertIn("metadata", str(ctx.exception))
+
+    def test_renders_metadata_impls_with_no_placeholder_left(self) -> None:
+        from generate_trackers import _render_fragment, render_for_entry
+        from templates import enrich_context
+
+        ctx = enrich_context(self._resolve(metadata="TactileShape"))
+        files = render_for_entry(ctx)
+        files["factory"] = _render_fragment(
+            "replay_factory_pull_metadata.template", ctx
+        )
+        for name, text in files.items():
+            self.assertNotRegex(text, r"@[A-Z_]+@", name)
+        self.assertIn(
+            "SchemaMetadataReader<TactileShape>",
+            files["live_trackers/live_tactile_tracker_impl.hpp"],
+        )
+        self.assertIn(
+            "if (!m_metadata_reader.verified())\n    {\n"
+            "        // Do not retain a sample received before this producer's metadata was verified.\n"
+            "        m_received.reset();",
+            files["live_trackers/live_tactile_tracker_impl.cpp"],
+        )
+        self.assertIn(
+            "get_metadata",
+            files["deviceio_trackers/inc/deviceio_trackers/tactile_tracker.hpp"],
+        )
+
+    def test_trackers_without_metadata_keep_their_impls(self) -> None:
+        from generate_trackers import render_for_entry
+        from templates import enrich_context
+
+        files = render_for_entry(enrich_context(self._resolve()))
+        self.assertNotIn(
+            "SchemaMetadataReader", files["live_trackers/live_tactile_tracker_impl.hpp"]
+        )
 
 
 if __name__ == "__main__":

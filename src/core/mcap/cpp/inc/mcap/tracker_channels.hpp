@@ -38,8 +38,10 @@ inline std::string mcap_topic(std::string_view base_name, const std::string& sub
 /**
  * @brief Type-safe MCAP channel writer for FlatBuffer record types.
  *
- * @tparam RecordT The FlatBuffer record wrapper type (e.g. HeadPoseRecord).
- *                 Must expose BinarySchema; records are encoded by pack_record().
+ * @tparam RecordT The FlatBuffer root written to the channels: a record wrapper (e.g.
+ *                 HeadPoseRecord, encoded by pack_record()), or a table recorded as itself,
+ *                 which has no timestamp and is written with an explicit log time.
+ *                 Must expose BinarySchema.
  *
  * The factory creates a unique_ptr<McapTrackerChannels<...>> only when recording
  * is active and passes it to the impl. Impls null-check before calling write().
@@ -74,6 +76,13 @@ public:
      */
     void write(size_t channel_index, const Serialized<RecordT>& record)
     {
+        const auto* timestamp = record ? record->timestamp() : nullptr;
+        write(channel_index, record, timestamp != nullptr ? timestamp->available_time_local_common_clock() : 0);
+    }
+
+    //! Writes a root with no timestamp of its own, such as a table recorded as itself, at `log_time_ns`.
+    void write(size_t channel_index, const Serialized<RecordT>& record, int64_t log_time_ns)
+    {
         if (channel_index >= channel_ids_.size())
         {
             throw std::out_of_range(
@@ -87,11 +96,9 @@ public:
             throw std::invalid_argument("McapTrackerChannels: write called with a record that owns no buffer");
         }
 
-        const auto* timestamp = record->timestamp();
         mcap::Message msg;
         msg.channelId = channel_ids_[channel_index];
-        msg.logTime =
-            timestamp != nullptr ? static_cast<mcap::Timestamp>(timestamp->available_time_local_common_clock()) : 0;
+        msg.logTime = static_cast<mcap::Timestamp>(log_time_ns);
         msg.publishTime = msg.logTime;
         msg.sequence = sequence_++;
         msg.data = reinterpret_cast<const std::byte*>(bytes.data());

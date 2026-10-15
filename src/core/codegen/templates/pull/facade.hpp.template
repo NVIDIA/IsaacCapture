@@ -4,6 +4,9 @@
 #pragma once
 #include <deviceio_base/@BASE_HEADER@.hpp>
 #include <schema/@SCHEMA@_generated.h>
+#if @HAS_METADATA@
+#include <schema/@METADATA_SCHEMA@_generated.h>
+#endif
 
 #include <cstddef>
 #include <string>
@@ -25,6 +28,11 @@ public:
         return TRACKER_NAME;
     }
     const Serialized<@FB_TABLE@>& get_data(const ITrackerSession& session) const;
+#if @HAS_METADATA@
+    //! The producer's metadata: empty until it arrives, then fixed for the session. get_data()
+    //! stays empty while the producer's metadata is not the one held here.
+    const Serialized<@METADATA@>& get_metadata(const ITrackerSession& session) const;
+#endif
     const std::string& collection_id() const
     {
         return collection_id_;
