@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>SENSING GMSL Camera &#8212; Isaac Teleop Documentation</title>
+    <title>SENSING GMSL Camera &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Wuji Glove" href="wuji_glove.html" />
-    <link rel="prev" title="OGLO Tactile Glove Plugin" href="oglo.html" />
+    <link rel="next" title="Generic Joint-Space Device" href="joint_space/index.html" />
+    <link rel="prev" title="OAK Camera Plugin" href="cameras/oak.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -243,11 +243,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -304,7 +304,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -338,33 +338,46 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="cameras/index.html">Cameras</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="cameras/oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">SENSING GMSL Camera</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">SENSING GMSL Camera</a></li>
-<li class="toctree-l1"><a class="reference internal" href="wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="haptikos.html">Haptikos Exoskeletons</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -376,10 +389,9 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/rig.html">Rig Launcher</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
 </nav></div>
@@ -414,6 +426,9 @@
         <i class="fa-solid fa-home"></i>
       </a>
     </li>
+    
+    <li class="breadcrumb-item"><a href="cameras/index.html" class="nav-link">Cameras</a></li>
+    
     <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">SENSING GMSL Camera</span></li>
   </ul>
 </nav>
@@ -436,7 +451,7 @@
 <p>Bring-up for SENSING GMSL2 cameras on a Jetson AGX Orin, where capture goes
 through <strong>SIPL</strong> rather than Argus or V4L2. This page covers provisioning the
 rig and confirming it streams with the vendor’s own tool; scripts live in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/sensing" rel="noopener noreferrer" target="_blank">src/plugins/sensing</a>.</p>
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/sensing" rel="noopener noreferrer" target="_blank">src/plugins/sensing</a>.</p>
 <nav class="contents local" id="on-this-page">
 <p class="topic-title">On this page</p>
 <ul class="simple">
@@ -574,9 +589,9 @@ src/plugins/sensing/scripts/run_docker_example.sh<span class="w">   </span><span
 src/plugins/sensing/docker/setup_container.sh<span class="w">      </span><span class="c1"># or adapt your own</span>
 </pre></div>
 </div>
-<p><a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/sensing/scripts" rel="noopener noreferrer" target="_blank">scripts/</a> holds what you run —
+<p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/sensing/scripts" rel="noopener noreferrer" target="_blank">scripts/</a> holds what you run —
 on the host, or on either side in the case of <code class="docutils literal notranslate"><span class="pre">validate.sh</span></code> and
-<code class="docutils literal notranslate"><span class="pre">verify.sh</span></code>. <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/sensing/docker" rel="noopener noreferrer" target="_blank">docker/</a> holds what
+<code class="docutils literal notranslate"><span class="pre">verify.sh</span></code>. <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/sensing/docker" rel="noopener noreferrer" target="_blank">docker/</a> holds what
 runs <em>inside</em> a container: the example image and the two scripts that only
 make sense there. <code class="docutils literal notranslate"><span class="pre">verify.sh</span></code> is a read-only report and is what to
 paste into a bug. Every script names the privileged actions it will take before
@@ -701,7 +716,7 @@ one by hand instead:</p>
 ./validate.sh
 </pre></div>
 </div>
-<p>The script builds <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/src/plugins/sensing/docker/Dockerfile.example" rel="noopener noreferrer" target="_blank">docker/Dockerfile.example</a> — which does nothing but add
+<p>The script builds <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/sensing/docker/Dockerfile.example" rel="noopener noreferrer" target="_blank">docker/Dockerfile.example</a> — which does nothing but add
 the EGL runtime and run <code class="docutils literal notranslate"><span class="pre">image_setup.sh</span></code> — and starts it with the flags no
 Dockerfile can express. <code class="docutils literal notranslate"><span class="pre">--print-args</span></code> and <code class="docutils literal notranslate"><span class="pre">--json</span></code> emit those flags for
 your own container instead; <code class="docutils literal notranslate"><span class="pre">--</span> <span class="pre">validate.sh</span></code> runs the check and exits rather
@@ -906,20 +921,20 @@ and <code class="docutils literal notranslate"><span class="pre">50_mesa.json</s
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="oglo.html"
+       href="cameras/oak.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">OGLO Tactile Glove Plugin</p>
+        <p class="prev-next-title">OAK Camera Plugin</p>
       </div>
     </a>
     <a class="right-next"
-       href="wuji_glove.html"
+       href="joint_space/index.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Wuji Glove</p>
+        <p class="prev-next-title">Generic Joint-Space Device</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1041,7 +1056,7 @@ and <code class="docutils literal notranslate"><span class="pre">50_mesa.json</s
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on September 12, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
       <br/>
     
   </p>

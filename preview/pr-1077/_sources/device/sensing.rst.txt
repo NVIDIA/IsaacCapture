@@ -7,7 +7,7 @@ SENSING GMSL Camera
 Bring-up for SENSING GMSL2 cameras on a Jetson AGX Orin, where capture goes
 through **SIPL** rather than Argus or V4L2. This page covers provisioning the
 rig and confirming it streams with the vendor's own tool; scripts live in
-:code-file:`src/plugins/sensing`.
+:code-dir:`src/plugins/sensing`.
 
 .. contents:: On this page
    :local:
@@ -112,9 +112,9 @@ only decides what comes after:
    src/plugins/sensing/scripts/run_docker_example.sh   # ready-made, drops you at a shell
    src/plugins/sensing/docker/setup_container.sh      # or adapt your own
 
-:code-file:`scripts/ <src/plugins/sensing/scripts>` holds what you run —
+:code-dir:`scripts/ <src/plugins/sensing/scripts>` holds what you run —
 on the host, or on either side in the case of ``validate.sh`` and
-``verify.sh``. :code-file:`docker/ <src/plugins/sensing/docker>` holds what
+``verify.sh``. :code-dir:`docker/ <src/plugins/sensing/docker>` holds what
 runs *inside* a container: the example image and the two scripts that only
 make sense there. ``verify.sh`` is a read-only report and is what to
 paste into a bug. Every script names the privileged actions it will take before
