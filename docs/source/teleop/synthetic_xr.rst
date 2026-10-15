@@ -101,15 +101,9 @@ Use these pieces as the starting point:
   mapping for the same configured Franka task; another robot needs its own
   retargeting and coordinate mapping.
 * ``window.syntheticXR.setController(...)`` supplies controller poses and
-  buttons. The :doc:`browser API reference <synthetic_xr_reference>` describes
-  coordinates and optional inspection/recording tools.
+  buttons through the virtual controller.
 
 The feedback source and task checks belong to your application. New tasks need
 their own validation; the stacking example is not a general motion planner.
 This preview covers controller input, not physical headset tracking, glove
 protocols or hand/body input.
-
-.. toctree::
-   :hidden:
-
-   synthetic_xr_reference
