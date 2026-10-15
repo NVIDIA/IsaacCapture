@@ -52,6 +52,10 @@ from ._schema import (
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
+    # Tactile types.
+    TactileData,
+    TactileDataRecord,
+    TactileShape,
     # Tracker metadata chunking, for producers of a tracker's metadata.
     TRACKER_METADATA_CHUNK_SIZE,
     TRACKER_METADATA_TENSOR_IDENTIFIER,
@@ -185,6 +189,10 @@ __all__ = [
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
+    # Tactile types.
+    "TactileData",
+    "TactileDataRecord",
+    "TactileShape",
     # Tracker metadata chunking.
     "TRACKER_METADATA_CHUNK_SIZE",
     "TRACKER_METADATA_TENSOR_IDENTIFIER",
