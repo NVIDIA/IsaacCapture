@@ -763,7 +763,8 @@ beside it (to check on another machine, copy the whole directory):</p>
 </pre></div>
 </div>
 <p>It prints the verdict and one line per check, and exits 0 <code class="docutils literal notranslate"><span class="pre">pass</span></code>, 1 <code class="docutils literal notranslate"><span class="pre">fail</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">retake</span></code>
-or 3 <code class="docutils literal notranslate"><span class="pre">insufficient_data</span></code>; <a class="reference internal" href="overview.html#cts-overview-verdicts"><span class="std std-ref">Verdicts</span></a> says what each means and what to do.
+or 3 <code class="docutils literal notranslate"><span class="pre">insufficient_data</span></code>, or 4 when the check could not run; <a class="reference internal" href="overview.html#cts-overview-verdicts"><span class="std std-ref">Verdicts</span></a>
+says what each means and what to do.
 Each <code class="docutils literal notranslate"><span class="pre">[FAIL]</span></code> line names the check and what it measured;
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/cts/hand/checker/README.md" rel="noopener noreferrer" target="_blank">hand/checker/README.md</a>
 explains every check. The output for a synthetic reference take, shortened:</p>
@@ -830,8 +831,9 @@ source is tracked. Headset: hand tracking is off or the hands are out of view.</
 <tr class="row-even"><td><p>The capture panel shows <code class="docutils literal notranslate"><span class="pre">21</span> <span class="pre">/</span> <span class="pre">26</span> <span class="pre">valid</span></code> in red</p></td>
 <td><p>Expected for a 21-joint glove; only the 21 required joints are judged.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">FileNotFoundError</span></code> naming <code class="docutils literal notranslate"><span class="pre">aplay</span></code></p></td>
-<td><p>Install <code class="docutils literal notranslate"><span class="pre">alsa-utils</span></code> and record again.</p></td>
+<tr class="row-odd"><td><p>The capture panel says <strong>Spoken cues are off</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aplay</span></code> is missing. Install <code class="docutils literal notranslate"><span class="pre">alsa-utils</span></code> and restart the panel to hear the cues, or
+record with the on-screen cues only.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">…</span> <span class="pre">is</span> <span class="pre">a</span> <span class="pre">Git</span> <span class="pre">LFS</span> <span class="pre">pointer,</span> <span class="pre">not</span> <span class="pre">audio</span></code> at startup</p></td>
 <td><p>Install <code class="docutils literal notranslate"><span class="pre">git-lfs</span></code> and run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">lfs</span> <span class="pre">pull</span></code>.</p></td>

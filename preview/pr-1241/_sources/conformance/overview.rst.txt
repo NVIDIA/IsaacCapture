@@ -161,6 +161,11 @@ Verdicts
      - The recording cannot answer the question: too short, no channel, or a required check could
        not run.
      - Check that the device streamed on its channel for the whole take, then record again.
+   * - (none)
+     - 4
+     - The check could not run: a usage error, an unknown check, or a recording or labels file
+       that cannot be read.
+     - Fix the command or the file named in the error, then run the check again.
 
 A take checked without its labels file still gets a verdict, even ``pass``, but every step check
 reads ``n/a``: keep the labels file beside the recording. You can submit any verdict with its
@@ -180,8 +185,8 @@ What you need
 - A Linux workstation with the repository built for Python 3.12.
 - An XR headset connected through CloudXR, even when your device produces the joints.
 - Your device's plugin built and installed, if it has one.
-- ``aplay`` (``alsa-utils``) installed. Speakers are optional: the capture panel also shows every
-  cue as text.
+- ``aplay`` (``alsa-utils``) for the spoken cues. Without it, or without speakers, the capture
+  panel's on-screen cues still guide every step.
 - Room for the script (a table and chair for hand, standing space for full body), and ideally a
   second person at the screen.
 - A Google account to sign in to the submission form.

@@ -290,7 +290,8 @@ beside it (to check on another machine, copy the whole directory):
        ~/isaaccapture-cts/<take>/<take>-hand.mcap
 
 It prints the verdict and one line per check, and exits 0 ``pass``, 1 ``fail``, 2 ``retake``
-or 3 ``insufficient_data``; :ref:`cts-overview-verdicts` says what each means and what to do.
+or 3 ``insufficient_data``, or 4 when the check could not run; :ref:`cts-overview-verdicts`
+says what each means and what to do.
 Each ``[FAIL]`` line names the check and what it measured;
 :code-file:`hand/checker/README.md <src/python/isaaccapture/cts/hand/checker/README.md>`
 explains every check. The output for a synthetic reference take, shortened:
@@ -359,8 +360,9 @@ Troubleshooting
        source is tracked. Headset: hand tracking is off or the hands are out of view.
    * - The capture panel shows ``21 / 26 valid`` in red
      - Expected for a 21-joint glove; only the 21 required joints are judged.
-   * - ``FileNotFoundError`` naming ``aplay``
-     - Install ``alsa-utils`` and record again.
+   * - The capture panel says **Spoken cues are off**
+     - ``aplay`` is missing. Install ``alsa-utils`` and restart the panel to hear the cues, or
+       record with the on-screen cues only.
    * - ``… is a Git LFS pointer, not audio`` at startup
      - Install ``git-lfs`` and run ``git lfs pull``.
    * - *the session did not open: … Required plugin … was not discovered*, or ``--plugin given

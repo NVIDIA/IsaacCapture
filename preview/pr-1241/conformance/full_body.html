@@ -727,8 +727,8 @@ beside it (to check on another machine, copy the whole directory):</p>
 </pre></div>
 </div>
 <p>The command prints the verdict and one
-line per check, and exits 0 <code class="docutils literal notranslate"><span class="pre">pass</span></code>, 1 <code class="docutils literal notranslate"><span class="pre">fail</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">retake</span></code> or 3 <code class="docutils literal notranslate"><span class="pre">insufficient_data</span></code>;
-<a class="reference internal" href="overview.html#cts-overview-verdicts"><span class="std std-ref">Verdicts</span></a> says what each means. Add <code class="docutils literal notranslate"><span class="pre">--json</span></code> for the machine-readable
+line per check, and exits 0 <code class="docutils literal notranslate"><span class="pre">pass</span></code>, 1 <code class="docutils literal notranslate"><span class="pre">fail</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">retake</span></code> or 3 <code class="docutils literal notranslate"><span class="pre">insufficient_data</span></code>, or
+4 when the check could not run; <a class="reference internal" href="overview.html#cts-overview-verdicts"><span class="std std-ref">Verdicts</span></a> says what each means. Add <code class="docutils literal notranslate"><span class="pre">--json</span></code> for the machine-readable
 report, or run <code class="docutils literal notranslate"><span class="pre">--list-checks</span></code> alone to see all 38 checks. The output for a synthetic
 reference take, shortened:</p>
 <div class="code-100col highlight-text notranslate"><div class="highlight"><pre><span></span>source   full_body/oracle/fixtures/posture/posture_golden_full_script.mcap
@@ -797,16 +797,20 @@ goes on. Ctrl+C does not work here; close the terminal to get out.</p></td>
 <td><p>It came outside <em>ready when you are</em>, or the key went to another window. Click the
 capture panel page, then press space.</p></td>
 </tr>
-<tr class="row-odd"><td><p>An error naming <code class="docutils literal notranslate"><span class="pre">aplay</span></code> or a Git LFS pointer</p></td>
-<td><p>Install <code class="docutils literal notranslate"><span class="pre">alsa-utils</span></code> or run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">lfs</span> <span class="pre">pull</span></code> (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>), then record again.</p></td>
+<tr class="row-odd"><td><p>The capture panel says <strong>Spoken cues are off</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aplay</span></code> is missing. Install <code class="docutils literal notranslate"><span class="pre">alsa-utils</span></code> and restart the panel to hear the cues, or
+record with the on-screen cues only.</p></td>
 </tr>
-<tr class="row-even"><td><p><em>the session did not open: …</em>, on the capture panel</p></td>
+<tr class="row-even"><td><p>An error naming a Git LFS pointer</p></td>
+<td><p>Run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">lfs</span> <span class="pre">pull</span></code> (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>), then record again.</p></td>
+</tr>
+<tr class="row-odd"><td><p><em>the session did not open: …</em>, on the capture panel</p></td>
 <td><p>Nothing was recorded. <em>Required plugin … was not discovered</em>: <code class="docutils literal notranslate"><span class="pre">--plugin</span></code> must match the
 <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code> <code class="docutils literal notranslate"><span class="pre">name:</span></code> of an installed plugin. <em>no live vendor</em> or <em>does not support
 parameter</em>: the backend is not in the installed wheel, or the <code class="docutils literal notranslate"><span class="pre">--vendor-param</span></code> key is
 wrong; rebuild and re-run <code class="docutils literal notranslate"><span class="pre">capture/setup_env.sh</span></code>. Then run <code class="docutils literal notranslate"><span class="pre">record.sh</span></code> again.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Verdict <code class="docutils literal notranslate"><span class="pre">pass</span></code>, posture checks <code class="docutils literal notranslate"><span class="pre">n/a</span></code>, and the note <em>no motion-step labels beside the
+<tr class="row-even"><td><p>Verdict <code class="docutils literal notranslate"><span class="pre">pass</span></code>, posture checks <code class="docutils literal notranslate"><span class="pre">n/a</span></code>, and the note <em>no motion-step labels beside the
 recording</em></p></td>
 <td><p>The checker found no labels. Run it on the recording in its take directory.</p></td>
 </tr>
