@@ -106,3 +106,11 @@ class = "SpaceMouseTracker"
 traits = "SpaceMouseRecordingTraits"
 max_flatbuffer_size = 256
 python_accessor = "get_spacemouse_data"
+
+# Defaults fit about 1300 taxels (12 B each); larger devices pass max_flatbuffer_size.
+# The TactileShape metadata is chunked, so its size is not bounded by a sample.
+[[tracker]]
+name = "tactile"
+table = "TactileData"
+metadata = "TactileShape"
+max_flatbuffer_size = 16384
