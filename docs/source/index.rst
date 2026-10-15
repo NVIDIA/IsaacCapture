@@ -54,6 +54,7 @@ Table of Contents
    :caption: Isaac Teleop
 
    teleop/quick_start
+   teleop/synthetic_xr
    teleop/teleop_session
    teleop/control_state_machine
 

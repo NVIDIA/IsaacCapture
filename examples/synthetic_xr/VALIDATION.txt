@@ -1,0 +1,48 @@
+Synthetic XR Teleoperation 0.1.0 preview — validation, 2026-10-15
+
+Qualified configuration:
+- New WebXR client based on Isaac Capture e07a2cc8c3fcbc8d0aac9f9bdc7919a792983e44 plus this feature branch.
+- Isaac Teleop 1.5+local native backend; CloudXR Runtime 6.3.0.
+- Isaac Lab cb9628bee016c532feb5fc36c3b012fe707bed1b.
+- IsaacContrib-Stack-Cube-Franka-IK-Abs, seed 42, exactly one episode.
+- Desktop Chromium/IWER; real OOB/CDP CONNECT; no ADB or physical headset.
+- SwiftShader and CPU compositing, requested 512x448 per eye.
+
+Observed run unattended-1792077046755219888:
+PASS one native HDF5 episode, 1484 samples.
+PASS native last-ten-frame success and independent settled stack geometry.
+PASS 194 distinct browser command acknowledgements matched native actions;
+maximum position difference 1.6069864620120102e-7 metres.
+PASS clean native/browser shutdown; no forced SDK process cleanup.
+Host video 80.25 seconds shows browser input on the left and Lab on the right.
+The successful native export triggers a scene reset in the streamed browser;
+that is not a second recorded episode.
+
+Native controller MCAP replay:
+PASS exactly one offline replay session, no OpenXR session created.
+72.63292288-second MCAP; 2158 records per controller, one absent record and
+2157 present records. Every present aim/grip position, validity, button and
+axis payload reproduced exactly and in order. Right controller: 196 distinct
+states including trigger 0 and 1. Altered-position negative control rejected.
+Quaternion equality is not covered by this viewer projection.
+Native replay polls at 60 Hz and consumes records faster than this recording's
+rate: present payloads end at approximately 38 seconds, followed by empty polls
+until the duration timer expires. This verifies values/order, not pacing.
+The 78.2-second viewer video preserves this behavior instead of trimming it.
+
+Software checks:
+130 JavaScript unit tests, 4 browser tests, 7 Python example tests.
+TypeScript checks, production build, Sphinx warnings-as-errors docs build,
+and repository-wide pre-commit checks are required for the release archive.
+The browser-only tests mock CloudXR transport; the native Franka run does not.
+
+Limits:
+This is a developer preview for the exact compatibility configuration above.
+It is not qualification of the current Isaac Capture native backend, physical
+Pico/Quest tracking, hand/glove protocols, SO101, body tracking or real robots.
+Four failed setup/integration attempts are retained before the successful fifth
+attempt; these runs are not a reliability sample. No official SDK release or
+main-branch merge is implied.
+
+Detailed evidence, source hashes, logs, videos and the final check receipts are
+in the accompanying release evidence archive and SHA256 manifest.

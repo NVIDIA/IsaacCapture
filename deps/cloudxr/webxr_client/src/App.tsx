@@ -70,6 +70,7 @@ import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
 import { TraceVisualization } from './TraceVisualization';
+import { SyntheticXRFrameObserver, SyntheticXRPanel } from './syntheticXR/SyntheticXRPanel';
 import {
   SystemNotice,
   formatSystemNotice,
@@ -1058,7 +1059,8 @@ function AppContent() {
 
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    () =>
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
     [config?.controlPanelPosition, controlPanelLayout]
   );
 
@@ -1159,6 +1161,13 @@ function AppContent() {
 
   return (
     <>
+      <SyntheticXRPanel
+        ready={iwerLoaded}
+        connected={isConnected}
+        replaying={recorder.mode === 'replaying'}
+        onStartTeleop={handleStartTeleop}
+        startingOrRunning={isCountingDown || isTeleopRunning}
+      />
       <Canvas
         events={noEvents}
         style={{
@@ -1187,6 +1196,7 @@ function AppContent() {
         }}
       >
         <SuppressWebGLRendererWhenHeadless headless={!!config?.headless} />
+        <SyntheticXRFrameObserver />
         <PointerEvents batchEvents={false} />
         <XR store={store}>
           <SimpleEnvironment />
