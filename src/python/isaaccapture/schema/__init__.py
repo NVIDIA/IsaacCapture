@@ -52,10 +52,11 @@ from ._schema import (
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
-    # Tracker metadata, for producers of a tracker's metadata.
-    TRACKER_METADATA_SAMPLE_SIZE,
+    # Tracker metadata chunking, for producers of a tracker's metadata.
+    TRACKER_METADATA_CHUNK_SIZE,
     TRACKER_METADATA_TENSOR_IDENTIFIER,
     tracker_metadata_collection_id,
+    split_tracker_metadata,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
     JointState,
     JointStateOutput,
@@ -184,10 +185,11 @@ __all__ = [
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
-    # Tracker metadata.
-    "TRACKER_METADATA_SAMPLE_SIZE",
+    # Tracker metadata chunking.
+    "TRACKER_METADATA_CHUNK_SIZE",
     "TRACKER_METADATA_TENSOR_IDENTIFIER",
     "tracker_metadata_collection_id",
+    "split_tracker_metadata",
     # Joint-state types (generic joint-space devices).
     "JointState",
     "JointStateOutput",
