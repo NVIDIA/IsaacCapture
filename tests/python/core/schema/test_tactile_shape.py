@@ -44,6 +44,21 @@ class TestTactileShape:
             assert value.dtype == expected.dtype, name
             np.testing.assert_array_equal(value, expected, err_msg=name)
 
+    def test_bytes_round_trip(self):
+        shape = TactileShape(**shape_arrays())
+
+        restored = TactileShape.from_bytes(shape.to_bytes())
+
+        np.testing.assert_array_equal(
+            restored.taxel_joint_weights, shape.taxel_joint_weights
+        )
+        assert restored.to_bytes() == shape.to_bytes()
+
+    @pytest.mark.parametrize("payload", [b"", b"not a flatbuffer"])
+    def test_from_bytes_rejects_invalid_payload(self, payload):
+        with pytest.raises(ValueError, match="valid FlatBuffer"):
+            TactileShape.from_bytes(payload)
+
     def test_rejects_mismatched_joint_lengths(self):
         arrays = shape_arrays()
         arrays["joint_parents"] = arrays["joint_parents"][:1]

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "tactile-visualizer-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = [
+    "mcap>=1.2.0",
+    "numpy",
+    "pytest",
+    "pyyaml>=6.0",
+    "viser>=1.1.1,<2",
+    "yourdfpy>=0.0.58",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["../../../../examples/tactile_visualizer/python"]

@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-tactile-visualizer"
+version = "0.0.0"
+description = "Developer tactile shape editor and live DeviceIO visualizer"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "isaaccapture[cloudxr]",
+    "mcap>=1.2.0",
+    "numpy>=1.23.0",
+    "pyyaml>=6.0",
+    "viser>=1.1.1,<2",
+    "yourdfpy>=0.0.58",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/tactile_visualizer"]
+sources = ["python"]
+
+[tool.uv.sources]
+isaaccapture = { path = "../..", editable = true }
