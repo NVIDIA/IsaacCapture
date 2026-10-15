@@ -527,7 +527,8 @@ current snapshot was assembled; it is not an observation-history field.</p>
 <li><p>A monitored plugin device ID is
 <code class="docutils literal notranslate"><span class="pre">&lt;plugin_root_id&gt;&lt;manifest</span> <span class="pre">device</span> <span class="pre">path&gt;</span></code>.</p></li>
 <li><p>The live OpenXR provider is <code class="docutils literal notranslate"><span class="pre">openxr/runtime</span></code> and owns
-<code class="docutils literal notranslate"><span class="pre">openxr/headset</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">openxr/headset</span></code>. When a controller input source is configured, it also
+owns <code class="docutils literal notranslate"><span class="pre">openxr/controller/left</span></code> and <code class="docutils literal notranslate"><span class="pre">openxr/controller/right</span></code>.</p></li>
 <li><p>Replay sessions expose neither a live OpenXR provider nor configured plugin
 providers.</p></li>
 </ul>
@@ -763,7 +764,7 @@ integration.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 14, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
       <br/>
     
   </p>
