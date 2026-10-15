@@ -5,6 +5,7 @@
 
 #include <oxr_utils/math.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <string>
 
@@ -26,6 +27,10 @@ namespace
 //!
 //! If a rig numbers its links differently, this table is the only thing to change; the plugin logs
 //! every slot it resolved, so a take's log shows what each joint actually bound to.
+//! Palm length the synthesised wrist sits behind the glove's knuckle line, in metres. An adult palm
+//! is 8-11 cm; the conformance suite only needs a plausible one to measure proportions against.
+constexpr float kGlovePalmLength = 0.09f;
+
 constexpr HandJointSlot kLeftSlots[kHandJointSlotCount] = {
     { XR_HAND_JOINT_WRIST_EXT, { "joint_LeftSkeletonBase", "left_hand", "joint_left_hand" } },
     { XR_HAND_JOINT_THUMB_METACARPAL_EXT, { "link_LeftSkeletonThumbBase", "", "" } },
@@ -170,18 +175,102 @@ HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand)
     HandSkeleton skeleton;
     const auto slots = make_hand_joint_slots(hand);
 
-    // The wrist first: every other pose is expressed relative to it, and a hand without a wrist
-    // frame is a hand this message does not carry.
-    const auto* wrist = find_frame(msg, slots[0].frames);
-    if (wrist == nullptr)
+    // The glove's static root frame. It carries the hand's articulation but sits at the knuckle line,
+    // so it is an anchor for "is this hand in the message", not the wrist itself.
+    const auto* anchor = find_frame(msg, slots[0].frames);
+    if (anchor == nullptr)
     {
         return skeleton;
     }
-    skeleton.wrist_frame = wrist->child_frame_id;
-    skeleton.wrist_pose = to_pose(wrist->transform);
+    skeleton.wrist_frame = anchor->child_frame_id;
     skeleton.resolved[0] = skeleton.wrist_frame;
 
-    // The WRIST joint is the origin of the frame the other joints are relative to.
+    // Every slot the message carries, still in the glove's own frame.
+    std::array<XrPosef, kHandJointSlotCount> poses{};
+    std::array<bool, kHandJointSlotCount> present{};
+    for (std::size_t i = 0; i < kHandJointSlotCount; ++i)
+    {
+        const auto* frame = find_frame(msg, slots[i].frames);
+        if (frame == nullptr)
+        {
+            continue; // Sparse rig: a link the exoskeleton does not carry stays untracked.
+        }
+        poses[i] = to_pose(frame->transform);
+        present[i] = true;
+        skeleton.resolved[i] = frame->child_frame_id;
+    }
+
+    const auto slot_of = [&slots](XrHandJointEXT joint)
+    {
+        for (std::size_t i = 0; i < kHandJointSlotCount; ++i)
+        {
+            if (slots[i].joint == joint)
+            {
+                return i;
+            }
+        }
+        return kHandJointSlotCount;
+    };
+    const auto mean_position = [&poses, &present, &slot_of](
+                                   const XrHandJointEXT* joints, std::size_t count, XrVector3f& out, std::size_t& seen)
+    {
+        out = XrVector3f{ 0.0f, 0.0f, 0.0f };
+        seen = 0;
+        for (std::size_t j = 0; j < count; ++j)
+        {
+            const std::size_t slot = slot_of(joints[j]);
+            if (slot >= kHandJointSlotCount || !present[slot])
+            {
+                continue;
+            }
+            out.x += poses[slot].position.x;
+            out.y += poses[slot].position.y;
+            out.z += poses[slot].position.z;
+            ++seen;
+        }
+        if (seen > 0)
+        {
+            out.x /= static_cast<float>(seen);
+            out.y /= static_cast<float>(seen);
+            out.z /= static_cast<float>(seen);
+        }
+    };
+
+    // The wrist OpenXR asks for is the anatomical one: the conformance suite measures the palm as
+    // WRIST -> MIDDLE_PROXIMAL and expects a middle finger roughly 0.6-1.5 palms long. The glove's
+    // root sits on the knuckle line, where that distance is ~0 and every proportion blows up, so the
+    // wrist is placed one palm length back along the direction the fingertips point.
+    skeleton.wrist_pose = poses[0];
+    {
+        const XrHandJointEXT knuckles[] = { XR_HAND_JOINT_INDEX_PROXIMAL_EXT, XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT,
+                                            XR_HAND_JOINT_RING_PROXIMAL_EXT, XR_HAND_JOINT_LITTLE_PROXIMAL_EXT };
+        const XrHandJointEXT fingertips[] = { XR_HAND_JOINT_THUMB_TIP_EXT, XR_HAND_JOINT_INDEX_TIP_EXT,
+                                              XR_HAND_JOINT_MIDDLE_TIP_EXT, XR_HAND_JOINT_RING_TIP_EXT,
+                                              XR_HAND_JOINT_LITTLE_TIP_EXT };
+        XrVector3f knuckle_center{};
+        XrVector3f fingertip_center{};
+        std::size_t knuckles_seen = 0;
+        std::size_t fingertips_seen = 0;
+        mean_position(knuckles, 4, knuckle_center, knuckles_seen);
+        mean_position(fingertips, 5, fingertip_center, fingertips_seen);
+        if (knuckles_seen > 0 && fingertips_seen > 0)
+        {
+            XrVector3f axis{ fingertip_center.x - knuckle_center.x, fingertip_center.y - knuckle_center.y,
+                             fingertip_center.z - knuckle_center.z };
+            const float length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+            if (length > 1e-4f)
+            {
+                axis.x /= length;
+                axis.y /= length;
+                axis.z /= length;
+                skeleton.wrist_pose.position = XrVector3f{ knuckle_center.x - kGlovePalmLength * axis.x,
+                                                           knuckle_center.y - kGlovePalmLength * axis.y,
+                                                           knuckle_center.z - kGlovePalmLength * axis.z };
+            }
+        }
+    }
+
+    // The WRIST joint is the origin of the frame every other joint is expressed in.
     skeleton.joints[XR_HAND_JOINT_WRIST_EXT] =
         make_valid_joint(XrPosef{ XrQuaternionf{ 0.0f, 0.0f, 0.0f, 1.0f }, XrVector3f{ 0.0f, 0.0f, 0.0f } });
     ++skeleton.filled;
@@ -189,14 +278,11 @@ HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand)
     const XrPosef wrist_inverse = invert_pose(skeleton.wrist_pose);
     for (std::size_t i = 1; i < kHandJointSlotCount; ++i)
     {
-        const auto* frame = find_frame(msg, slots[i].frames);
-        if (frame == nullptr)
+        if (!present[i])
         {
-            continue; // Sparse rig: a link the exoskeleton does not carry stays untracked.
+            continue;
         }
-        skeleton.resolved[i] = frame->child_frame_id;
-        skeleton.joints[slots[i].joint] =
-            make_valid_joint(oxr_utils::multiply_poses(wrist_inverse, to_pose(frame->transform)));
+        skeleton.joints[slots[i].joint] = make_valid_joint(oxr_utils::multiply_poses(wrist_inverse, poses[i]));
         ++skeleton.filled;
     }
 

@@ -488,17 +488,43 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side, std::unique_ptr<plugin_ut
     }
     else if (m_alignment == Alignment::Auto)
     {
-        if (!m_auto_alignment[side].has_value() && wrist.tracked)
+        if (!m_auto_alignment[side].has_value())
         {
-            m_auto_alignment[side] = multiply_quaternions(
-                wrist.pose.orientation, conjugate_quaternion(frame.skeleton.wrist_pose.orientation));
-            const XrQuaternionf captured = *m_auto_alignment[side];
-            RCLCPP_INFO(get_logger(),
-                        "hand %s: wrist alignment captured as x,y,z,w = %.4f,%.4f,%.4f,%.4f; put it in "
-                        "wrist_alignment to make it reproducible",
-                        hand_name(side), captured.x, captured.y, captured.z, captured.w);
+            if (wrist.tracked)
+            {
+                m_auto_alignment[side] = multiply_quaternions(
+                    wrist.pose.orientation, conjugate_quaternion(frame.skeleton.wrist_pose.orientation));
+                const XrQuaternionf captured = *m_auto_alignment[side];
+                RCLCPP_INFO(get_logger(),
+                            "hand %s: wrist alignment captured as x,y,z,w = %.4f,%.4f,%.4f,%.4f; put it in "
+                            "wrist_alignment to make it reproducible",
+                            hand_name(side), captured.x, captured.y, captured.z, captured.w);
+            }
+            else
+            {
+                // The source handed us a pose it does not vouch for (a cached one, most likely because
+                // the headset cannot see this hand). Warn per hand -- the two calls are separate
+                // statements so each gets its own throttle window -- and keep the skeleton at the
+                // pose without the frame alignment, rather than dereferencing an alignment that was
+                // never captured.
+                if (side == 0)
+                {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                         "hand left: wrist pose is not tracked (is the headset seeing this "
+                                         "hand?); injecting without the frame alignment");
+                }
+                else
+                {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                         "hand right: wrist pose is not tracked (is the headset seeing this "
+                                         "hand?); injecting without the frame alignment");
+                }
+            }
         }
-        alignment = *m_auto_alignment[side];
+        if (m_auto_alignment[side].has_value())
+        {
+            alignment = *m_auto_alignment[side];
+        }
     }
 
     std::array<XrHandJointLocationEXT, kOpenXrHandJointCount> joints = frame.skeleton.joints;
