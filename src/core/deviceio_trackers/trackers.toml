@@ -111,3 +111,11 @@ python_accessor = "get_spacemouse_data"
 name = "gamepad"
 table = "GamepadSnapshot"
 python_accessor = "get_gamepad_data"
+
+# Defaults fit about 1300 taxels (12 B each); larger devices pass max_flatbuffer_size. The
+# TactileShape metadata must fit TRACKER_METADATA_MAX_SIZE, which holds 26 joints and 1000 taxels.
+[[tracker]]
+name = "tactile"
+table = "TactileData"
+metadata = "TactileShape"
+max_flatbuffer_size = 16384

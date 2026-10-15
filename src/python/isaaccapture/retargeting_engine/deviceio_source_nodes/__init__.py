@@ -42,6 +42,12 @@ from .message_channel_config import (
     messageChannelConfig,
 )
 from .haptic_sink import HapticSink
+from .tactile_source import (
+    TactileForces,
+    TactileShapeIndex,
+    TactileShapeLayout,
+    TactileSource,
+)
 from .deviceio_tensor_types import (
     HeadPoseTrackedType,
     HandPoseTrackedType,
@@ -56,6 +62,8 @@ from .deviceio_tensor_types import (
     SomaBodyJointPosesTrackedType,
     SomaHandJointRotationsTrackedType,
     SomaHandJointPosesTrackedType,
+    TactileDataTrackedType,
+    TactileShapeTrackedType,
     DeviceIOHeadPoseTracked,
     DeviceIOHandPoseTracked,
     DeviceIOControllerSnapshotTracked,
@@ -69,6 +77,7 @@ from .deviceio_tensor_types import (
     DeviceIOSomaBodyJointPosesTracked,
     DeviceIOSomaHandJointRotationsTracked,
     DeviceIOSomaHandJointPosesTracked,
+    DeviceIOTactileTracked,
     MessageChannelMessagesTrackedType,
     MessageChannelConnectionStatus,
     MessageChannelStatusType,
@@ -110,6 +119,10 @@ __all__ = [
     "message_channel_config",
     "messageChannelConfig",
     "HapticSink",
+    "TactileSource",
+    "TactileShapeIndex",
+    "TactileForces",
+    "TactileShapeLayout",
     "HeadPoseTrackedType",
     "HandPoseTrackedType",
     "ControllerSnapshotTrackedType",
@@ -123,6 +136,8 @@ __all__ = [
     "SomaBodyJointPosesTrackedType",
     "SomaHandJointRotationsTrackedType",
     "SomaHandJointPosesTrackedType",
+    "TactileDataTrackedType",
+    "TactileShapeTrackedType",
     "MessageChannelMessagesTrackedType",
     "MessageChannelConnectionStatus",
     "MessageChannelStatusType",
@@ -139,6 +154,7 @@ __all__ = [
     "DeviceIOSomaBodyJointPosesTracked",
     "DeviceIOSomaHandJointRotationsTracked",
     "DeviceIOSomaHandJointPosesTracked",
+    "DeviceIOTactileTracked",
     "DeviceIOMessageChannelMessagesTracked",
     "MessageChannelMessagesTrackedGroup",
     "MessageChannelStatusGroup",
