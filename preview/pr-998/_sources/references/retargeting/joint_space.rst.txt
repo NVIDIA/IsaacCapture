@@ -5,7 +5,7 @@ Retargeter: Joint-Space Device
 ==============================
 
 ``JointStateRetargeter`` maps a name-keyed joint-state input (from
-:doc:`/device/joint_space`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
+:doc:`/device/joint_space/index`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
 It is the generic retargeter for leader arms, exoskeletons, and other joint-encoder devices; the
 SO-101 leader arm is the reference instance.
 
@@ -47,7 +47,7 @@ command. Config: ``urdf_path``, ``ee_link``, ``gripper_joint`` (and optional ``g
 ``gripper_close`` to emit normalized closedness in ``[0, 1]`` instead of the raw value).
 
 * FK uses ``pinocchio`` (imported lazily; ``joint`` mode never needs it). Install via
-  ``pip install 'isaacteleop[retargeters]'``.
+  ``pip install 'isaaccapture[retargeters]'``.
 * Assumes a fixed-base model of single-DOF joints (the common leader-arm / exoskeleton case).
 * The schema's device ``ee_pose`` field is **not** consumed yet -- FK is always computed from the
   joint positions.
@@ -69,9 +69,9 @@ environment's action space expects):
 
 .. code-block:: python
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import JointStateSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import JointStateSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner
+   from isaaccapture.retargeters import (
        JointStateRetargeter,
        JointStateRetargeterConfig,
        TensorReorderer,
@@ -108,7 +108,11 @@ The repo ships ``examples/teleop/python/joint_space_device_example.py``:
 
    # Consumes the so101_leader plugin over OpenXR (source cloudxr.env first):
    $ python joint_space_device_example.py --launch-plugin --mode joint --frames 8
-   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf so101_new_calib.urdf
+   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
+
+``so101_new_calib.urdf`` is not shipped in this repo. It is ``Simulation/SO101/so101_new_calib.urdf``
+in `TheRobotStudio/SO-ARM100 <https://github.com/TheRobotStudio/SO-ARM100>`_; pass its path to
+``--urdf``. Run the commands from ``examples/teleop/python/``.
 
 Validate
 --------
@@ -122,7 +126,7 @@ rebasing, and the flattened action width/order):
 
 .. seealso::
 
-   :doc:`/device/joint_space` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
+   :doc:`/device/joint_space/index` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
    SO-101 plugin, and MCAP record/replay.
 
    :doc:`index` -- the broader retargeting interface and pipeline-builder pattern.

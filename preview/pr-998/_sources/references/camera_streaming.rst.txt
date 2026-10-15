@@ -5,7 +5,7 @@ Camera Streaming
 ================
 
 ``camera_viz`` is the reference camera-streaming sample built on :doc:`Televiz
-</getting_started/televiz>` (``isaacteleop.viz``). It captures frames from one or more cameras
+</development/televiz>` (``isaaccapture.viz``). It captures frames from one or more cameras
 and streams them to an XR headset — one plane per camera, aspect-fit — either directly or from a
 robot to a workstation over the network (split mode). It can also stream :ref:`recorded camera
 data <recorded-camera-streaming>` — a video file replayed in place of a live camera — and render
@@ -38,7 +38,7 @@ Requirements
     `7.2.x <https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.2>`__
   - **Thor:** `JetPack 7.x <https://developer.nvidia.com/embedded/jetpack>`__
 - For the default XR mode, a headset to connect as the CloudXR client — follow the
-  :doc:`quick start </getting_started/quick_start>` step :ref:`connect-xr-headset`. The viewer
+  :doc:`quick start </teleop/quick_start>` step :ref:`connect-xr-headset`. The viewer
   launches the CloudXR runtime itself; nothing to start separately. No headset handy?
   ``--mode window`` renders to a desktop window instead.
 
@@ -53,8 +53,8 @@ run the sample's one-time setup:
    examples/camera_viz/camera_viz.sh setup
    source examples/camera_viz/.venv/bin/activate
 
-There is no need to install the ``isaacteleop`` pip package yourself. ``setup`` builds the
-sample's own environment: ``isaacteleop[cloudxr]`` — the ``cloudxr`` extra is not optional here,
+There is no need to install the ``isaaccapture`` pip package yourself. ``setup`` builds the
+sample's own environment: ``isaaccapture[cloudxr]`` — the ``cloudxr`` extra is not optional here,
 since XR is the default display mode and the viewer launches the runtime itself — plus every
 other Python dependency, into ``.venv/`` via ``uv``. It resolves a version new enough for the
 sample on its own, falling back to a release candidate and then, after asking, to a source build
@@ -62,6 +62,10 @@ of the surrounding checkout (:code-file:`scripts/_install_deps.sh
 <examples/camera_viz/scripts/_install_deps.sh>` holds the minimum; ``--wheel`` and
 ``--build-from-source`` override the choice). Finally it probes the system packages it needs and
 prints the exact ``apt-get`` line to approve — declining, or a non-interactive run, aborts.
+
+Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
+``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
+kernel before reporting success.
 
 By default ``setup`` provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
@@ -91,12 +95,12 @@ needs. Flags trim or extend that:
    * - ``--venv PATH``
      - Install into an existing virtual environment instead of creating ``.venv/``.
    * - ``--wheel PATH``
-     - Install a locally built ``isaacteleop`` wheel instead of resolving one from the index — for
-       developing Isaac Teleop itself.
+     - Install a locally built ``isaaccapture`` wheel instead of resolving one from the index — for
+       developing Isaac Capture itself.
    * - ``--build-from-source``
-     - Skip the package index and build ``isaacteleop`` from the surrounding checkout without
+     - Skip the package index and build ``isaaccapture`` from the surrounding checkout without
        prompting — a full C++ / CUDA / Vulkan build (see
-       :doc:`/getting_started/build_from_source/index`).
+       :doc:`/development/build_from_source/index`).
 
 .. _recorded-camera-streaming:
 
@@ -232,6 +236,59 @@ In XR, how a plane follows the operator's head is the per-camera ``lock_mode`` u
 Lazy-mode knobs live under ``placements.<name>``: ``look_away_angle_deg``,
 ``reposition_distance``, ``reposition_delay_s``, ``transition_duration_s``.
 
+Controller bindings
+^^^^^^^^^^^^^^^^^^^
+
+In XR the controllers retune the view live, without editing the YAML and restarting. The right
+hand changes how the feed looks; the left, what surface it is mapped onto:
+
+.. Use concise titles and Televiz branding; name camera_viz in the prose.
+
+.. figure:: ../_static/camera-viz-controls.png
+   :alt: camera_viz XR controller bindings: left controller adjusts surface and shape;
+         right controller adjusts depth and placement.
+   :width: 100%
+
+   Bindings at a glance. The table below is the same thing in words.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Input
+     - Effect
+   * - Right stick ←/→
+     - Stereo plane gap — how far apart the two eyes' planes sit
+       (``placements.<cam>.stereo_plane_distance_cm``). Widening it pushes the scene back
+       instead of packing it into the space in front of the planes. Stereo cameras only; on
+       ``equirect``, which has no gap to set, the same stick pans the panorama.
+   * - Right stick click
+     - Recenter on your view: an ``equirect`` yaws so the middle of the panorama lands dead
+       ahead, and a placed surface re-snaps its anchor.
+   * - ``A``
+     - Cycle the lock mode: ``world`` → ``head`` → ``gimbal`` → ``lazy``.
+   * - ``B``
+     - Toggle mono / stereo. Stereo cameras only.
+   * - ``X``
+     - Cycle the shape: ``quad`` → ``cylinder`` → ``equirect``.
+   * - ``Y``
+     - Reset everything to the YAML values.
+   * - Left stick
+     - Retunes the active shape: ``quad`` size / vertical position, ``cylinder`` arc width /
+       vertical position, ``equirect`` horizontal / vertical span.
+
+Changes apply to every camera at once and appear both on the terminal status panel and on a
+head-locked panel in the headset that auto-hides shortly after. Neither toggle reallocates:
+``B`` sends the left frame to both eyes, and ``X`` flips visibility between shapes built at
+startup, so the extra shapes cost VRAM (reported at startup) rather than a stall on the press.
+
+The stereo gap is bounded below **divergent parallax** — a gap wider than your IPD would need
+the eyes to splay outward — and the headset's measured IPD sets that ceiling, not the config.
+The HUD suggests a gap derived from the plane distance and that IPD.
+
+Bindings, rates and limits live under ``display.controls``; see the
+:code-file:`README <examples/camera_viz/README.md>` for the full set.
+
 Display surfaces
 ----------------
 
@@ -254,7 +311,10 @@ panoramic sources look better on a curved surface: set ``shape`` per camera unde
        visor).
    * - ``equirect``
      - Full 360°×180° sphere around the operator, for equirectangular panorama / VR-video
-       sources. Lock modes don't apply.
+       sources. The middle of the texture points along ``equirect_yaw_deg`` (0 = the
+       direction the headset last recentered on, positive to the left), which is how a camera
+       mounted facing another way gets aimed. Lock modes don't apply — the sphere is centred
+       on the operator and follows them everywhere.
 
 Curved shapes exist only in XR mode — the viewer exits with an error in window mode. Stereo
 sources render per-eye textures on the same surface, and ``stereo_baseline_mm`` adds a per-eye
@@ -265,7 +325,8 @@ CloudXR stream them efficiently (see
 :ref:`OpenXR composition layers <openxr-composition-layers>`). For flat planes only,
 ``compositor: televiz`` opts a camera back into Televiz's built-in compositor. On Jetson Orin
 (CloudXR experimental runtime), set ``compositor: televiz`` so the plane is not left black; see
-Troubleshooting below.
+Troubleshooting below. On the Televiz 2D API the same switch is
+``openxr_composition = False`` (see :ref:`Jetson Orin, XR <orin-openxr-composition>`).
 
 CloudXR runtime flags
 ---------------------
@@ -275,8 +336,44 @@ serving. Useful flags:
 
 - ``--accept-eula`` — accept the CloudXR EULA non-interactively (first run only).
 - ``--cloudxr-device-profile PROFILE`` — ``NV_DEVICE_PROFILE`` (default ``Quest3``).
+- ``--no-host-client`` — disable serving CloudXR.js at
+  ``https://<host>:48322/client/``. Only applies when this run starts the
+  service; stop and restart the service to change hosting.
+
+When the viewer starts a CloudXR service with hosting enabled (the default;
+``--no-host-client`` disables it), it prints the local ``/client/`` URL. To
+inspect or stop an already-running service, activate the example venv (or any
+environment with ``isaaccapture``) and run::
+
+   python -m isaaccapture.cloudxr.service status
+   python -m isaaccapture.cloudxr.service stop
 
 Run ``camera_viz.py --help`` for the rest (install dir, env-config file, WSS proxy toggle).
+
+Runtime settings themselves are declared in the config rather than exported. The viewer ships
+defaults (pose wait off, runtime foveation on), and ``display.cloudxr`` overrides them per
+deployment — list only what you want to change:
+
+.. code-block:: yaml
+
+   display:
+     cloudxr:
+       NV_DEVICE_PROFILE: apple-vision-pro
+       NV_ENABLE_POSE_WAIT: null   # null drops a viewer default
+
+The viewer writes these to a generated ``--cloudxr-env-config`` file, which outranks the process
+environment — so a value left in your shell (for example after sourcing
+``~/.cloudxr/run/cloudxr.env``, as ``--no-launch-cloudxr-runtime`` suggests) cannot silently
+override the config, and neither can it override ``--cloudxr-device-profile``. Booleans are
+written in the lowercase spelling the runtime's parser recognises; the launcher-computed keys
+(``XR_RUNTIME_JSON``, ``NV_CXR_RUNTIME_DIR``, ``NV_CXR_OUTPUT_DIR``, ``XRT_NO_STDIN``) are
+rejected by name. Passing ``--cloudxr-env-config`` yourself takes precedence over the generated
+file.
+
+An unknown variable name warns with a suggestion before the runtime launches, and is passed
+through regardless — the runtime has more settings than the viewer lists. To confirm what the
+runtime resolved, read the settings dump at the top of the newest
+``~/.cloudxr/logs/cxr_server.*.log``.
 
 .. _split-mode:
 
@@ -325,7 +422,15 @@ Loopback
 Loopback is a testing / debugging aid, not a deployment mode: ``./camera_viz.sh loopback
 configs/v4l2.yaml`` runs the sender and viewer together on ``127.0.0.1`` — the quickest way to
 smoke-test the RTP path on one machine. It also works camera-free with a mono ``type: video``
-entry (set ``width`` / ``height`` / ``fps``).
+entry: ``./camera_viz.sh loopback configs/replay.yaml`` runs as shipped.
+
+Two things to know when running it:
+
+- Use the config that matches the attached camera. ``configs/v4l2.yaml`` is a ZED Mini template
+  (``/dev/video0``, 2560x720); on any other camera it fails to open and the viewer reports
+  ``submit/s 0.0``. For a RealSense, run ``configs/realsense.yaml``.
+- ``loopback`` does not forward ``--mode``, so it opens in the YAML's ``display.mode`` (``xr`` by
+  default). Set ``display.mode: window`` in the YAML for a desktop window.
 
 Configuration
 -------------
@@ -358,15 +463,19 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
    display:
      mode: xr | window           # default: xr
      window: { width, height }
-     xr:     { near_z, far_z }
+     xr:
+       near_z: 0.05              # default
+       far_z: 100.0              # default
+       system_wait_seconds: -1   # default; wait forever (0 fails fast)
      clear_color: [r, g, b, a]
      placements:
        cam:
          lock_mode: lazy         # world | head | lazy | gimbal
          distance: 1.5
          # size: [w_m, h_m]
-         # stereo_baseline_mm: 0
+         # stereo_plane_distance_cm: 0   # gap between the eyes' planes
          # shape: quad           # quad | cylinder | equirect (cylinder/equirect are XR-only)
+         # equirect_yaw_deg: 0.0  # equirect: heading the middle of the feed points at
          # compositor: openxr    # openxr (default) | televiz — quads only
          # cylinder_radius_m: 2.0
          # cylinder_angle_deg: 90
@@ -378,8 +487,14 @@ Troubleshooting
 ---------------
 
 - **The XR session fails to create** — check ``~/.cloudxr/logs/cxr_server.*.log`` and
-  ``runtime_stderr.log`` for the startup failure. Pass ``--mode window`` to render to a
-  desktop window instead (no runtime involved).
+  ``~/.cloudxr/logs/runtime_worker_stderr.log`` (``runtime_stderr.log`` with
+  ``ISAACCAPTURE_LOGGING=off``) for the startup failure.
+  ``XR_ERROR_FORM_FACTOR_UNAVAILABLE``
+  (-35) means the runtime is up but no headset has clicked CONNECT yet; XR mode waits
+  according to ``display.xr.system_wait_seconds`` (default ``-1`` to wait
+  indefinitely; ``0`` fails fast; positive values wait that many seconds;
+  override with ``--xr-wait``). Pass ``--mode window`` to
+  render to a desktop window instead (no runtime involved).
 - **No window appears over SSH** — ``--mode window`` needs a local display; run on the machine
   you're sitting at, or use a video-capable remote desktop.
 - **"video source: no such file"** — relative ``path:`` values resolve against the YAML's
@@ -404,6 +519,25 @@ Troubleshooting
 - **Split mode renders nothing** — check the sender is up (``./camera_viz.sh service-status``),
   ``$STREAMING_HOST`` was the workstation's IP at deploy time, and UDP ports (default 5000+)
   aren't firewalled.
+- **CUDA kernel errors** — rerun the setup check from ``examples/camera_viz``. It prints
+  CUDA diagnostics on failure; a driver version from ``nvidia-smi`` does not identify
+  the installed toolkit:
+
+  .. code-block:: bash
+
+     .venv/bin/python scripts/check_cuda.py
+
+- **Thor: ``CUDA_ERROR_NO_BINARY_FOR_GPU``** — an older NVRTC compiler can produce kernels
+  incompatible with Thor. Select your JetPack's CUDA 13.x toolkit and rerun setup. As a
+  temporary workaround for CuPy kernels, try:
+
+  .. code-block:: bash
+
+     CUPY_COMPILE_WITH_PTX=1 ./camera_viz.sh run configs/synthetic.yaml
+
+  This lets the driver compile the kernel for the GPU (`CuPy PTX option
+  <https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx>`__).
+
 - **Not sure which side is stuck?** — set ``verbose: true`` at the top of the YAML for periodic
   per-source breadcrumbs on both ends.
 
@@ -462,6 +596,6 @@ extensions and forwards the handles through ``TeleopSessionConfig.oxr_handles``:
        oxr_handles=OpenXRSessionHandles(*viz_session.get_oxr_handles()),
    )
 
-See the *Sharing the XR session* section of :doc:`/getting_started/televiz` for the full pattern
+See the *Sharing the XR session* section of :doc:`/development/televiz` for the full pattern
 (imports, frame loop, and how the two sessions' lifecycles relate), and
-:doc:`/getting_started/teleop_session` for the ``TeleopSession`` side.
+:doc:`/teleop/teleop_session` for the ``TeleopSession`` side.
