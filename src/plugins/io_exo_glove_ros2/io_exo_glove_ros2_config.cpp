@@ -33,7 +33,8 @@ constexpr std::string_view kKnownKeys[] = { "joints_topic",
                                             "tips_right_collection_id",
                                             "tips_reference_frame",
                                             "wrist_source",
-                                            "wrist_alignment" };
+                                            "wrist_alignment",
+                                            "wrist_smoothing_ms" };
 
 std::string known_keys_as_text()
 {
@@ -91,6 +92,33 @@ void assign(const YAML::Node& root, const char* key, std::string& target, const 
     }
 
     target = value;
+}
+
+//! Applies a numeric `key` to @p target; a non-numeric value is rejected rather than truncated.
+void assign_number(const YAML::Node& root, const char* key, double& target, const std::string& path)
+{
+    const YAML::Node node = root[key];
+    if (!node)
+    {
+        return;
+    }
+    if (!node.IsScalar())
+    {
+        throw std::runtime_error("config '" + path + "': '" + key + "' must be a single number");
+    }
+    try
+    {
+        const double value = node.as<double>();
+        if (!(value >= 0.0))
+        {
+            throw std::runtime_error("config '" + path + "': '" + key + "' must not be negative");
+        }
+        target = value;
+    }
+    catch (const YAML::Exception& e)
+    {
+        throw std::runtime_error("config '" + path + "': '" + key + "' must be a number: " + std::string(e.what()));
+    }
 }
 
 //! Implicit candidates, used only when no file was named explicitly.
@@ -167,6 +195,7 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     assign(root, "tips_reference_frame", options.tips_reference_frame, path);
     assign(root, "wrist_source", options.wrist_source, path);
     assign(root, "wrist_alignment", options.wrist_alignment, path);
+    assign_number(root, "wrist_smoothing_ms", options.wrist_smoothing_ms, path);
 
     resolution.loaded_path = path;
     return resolution;

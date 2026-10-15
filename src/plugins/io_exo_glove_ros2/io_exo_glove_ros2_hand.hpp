@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 
 namespace plugins
@@ -56,8 +57,14 @@ struct HandSkeleton
     //! Slots resolved from this message, including the wrist.
     std::size_t filled = 0;
 
-    //! Glove frame the wrist came from; empty when this hand is absent from the message.
+    //! Glove frame the wrist came from (the rig's anchor); empty when this hand is absent.
     std::string wrist_frame;
+
+    //! Anchor -> wrist offset, in the anchor's own axes. A rig constant: the wrist is a fixed point on
+    //! the glove, so the caller freezes the first one it sees and passes it back, which keeps the
+    //! wrist still while the fingers move. Filled when @c wrist_offset_valid.
+    XrVector3f wrist_offset{ 0.0f, 0.0f, 0.0f };
+    bool wrist_offset_valid = false;
 
     //! Wrist pose in the glove's own frame, for the one-time alignment onto the tracked wrist.
     XrPosef wrist_pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
@@ -71,10 +78,17 @@ struct HandSkeleton
     }
 };
 
-//! Reads one hand's skeleton out of @p msg, expressed relative to that hand's wrist frame (the
-//! wrist itself is the identity pose). Returning a skeleton whose @c wrist_frame is empty means the
-//! hand is absent: the exoskeleton publishes it only while the glove streams.
-HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand);
+//! Reads one hand's skeleton out of @p msg, expressed relative to that hand's wrist (the wrist itself
+//! is the identity pose, and every orientation is built from the bones so it carries OpenXR's joint
+//! axes rather than the rig's). Returning a skeleton whose @c wrist_frame is empty means the hand is
+//! absent: the exoskeleton publishes it only while the glove streams.
+//!
+//! @p frozen_wrist_offset is the anchor -> wrist offset a previous frame reported; pass it to keep
+//! the wrist at a fixed point on the glove. With no value the offset is derived from this frame's
+//! fingertip geometry and reported back in @c HandSkeleton::wrist_offset, for the caller to freeze.
+HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg,
+                                 Hand hand,
+                                 const std::optional<XrVector3f>& frozen_wrist_offset = std::nullopt);
 
 //! Composes @p rotation onto @p pose: the rotation is applied to the pose's orientation and to its
 //! position, i.e. the pose is re-expressed one frame further out.
@@ -82,6 +96,9 @@ XrPosef rotate_pose(const XrQuaternionf& rotation, const XrPosef& pose);
 
 //! Inverse of a rigid pose, for the wrist-relative step.
 XrPosef invert_pose(const XrPosef& pose);
+
+//! Spherical interpolation between two unit quaternions, for smoothing a tracked wrist.
+XrQuaternionf slerp_quaternions(const XrQuaternionf& from, const XrQuaternionf& to, float t);
 
 //! Hamilton product, and conjugate (the inverse for a unit quaternion).
 XrQuaternionf multiply_quaternions(const XrQuaternionf& a, const XrQuaternionf& b);

@@ -11,7 +11,7 @@
 #   2. this file
 #   3. command-line flags (--joints-topic=..., --links-topic=..., --joints-collection-id=...,
 #      --tips-left-collection-id=..., --tips-right-collection-id=..., --tips-reference-frame=...,
-#      --wrist-source=..., --wrist-alignment=...)
+#      --wrist-source=..., --wrist-alignment=..., --wrist-smoothing-ms=...)
 #
 # Run the plugin with --print-config to see which file was loaded and the effective values.
 
@@ -41,6 +41,12 @@ wrist_source: "auto"
 # frame where both are tracked and logs it (a good default, and the log line gives you the value to
 # paste here), "identity" when the frames already agree, or an explicit "x,y,z,w" rotation.
 wrist_alignment: "auto"
+
+# Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is noisy (and a
+# glove in front of the headset makes it worse) while the glove's own articulation is not, so the
+# anchor is filtered to keep the injected hand still; 0 disables the filter. The finger joints are
+# never filtered -- they come from the glove.
+wrist_smoothing_ms: 60
 
 # OpenXR tensor collection ids this plugin pushes to. These must match the collection_id used by the
 # consumer side (JointStateTracker / JointSe3PoseTracker), so changing them means changing the

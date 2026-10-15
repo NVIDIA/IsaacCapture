@@ -83,6 +83,11 @@ public:
         //! frame both are tracked), "identity" (the frames already agree) or an explicit "x,y,z,w"
         //! rotation.
         std::string wrist_alignment = "auto";
+        //! Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is
+        //! noisy -- and a glove in front of the headset makes it noisier -- while the glove's own
+        //! articulation is not, so the anchor is smoothed to keep the injected hand still. 0 disables
+        //! the filter.
+        double wrist_smoothing_ms = 60.0;
     };
 
     //! Tensor size for the joint collection, in bytes. It is ``JointStateTracker``'s own default, so a
@@ -129,7 +134,10 @@ private:
     void hand_tick();
 
     //! Places one hand's skeleton at the tracked wrist and pushes it to the runtime.
-    void push_hand(std::size_t side, std::unique_ptr<plugin_utils::HandInjector>& injector, XrTime time);
+    void push_hand(std::size_t side, std::unique_ptr<plugin_utils::HandInjector>& injector, XrTime time, float dt_s);
+
+    //! Runs the tracked wrist through the low-pass filter and returns the pose to place the hand at.
+    XrPosef smooth_wrist(std::size_t side, const XrPosef& pose, float dt_s);
 
     //! Logs, once, which frame each OpenXR joint resolved to; empty entries are not published.
     void log_resolved_slots(const HandSkeleton& skeleton, std::size_t side);
@@ -162,6 +170,21 @@ private:
     std::mutex m_hand_mutex;
     std::array<HandFrame, kSideCount> m_hand_frames;
     bool m_slots_logged = false;
+
+    //! Anchor -> wrist offset frozen from the first frame that carried each hand (see
+    //! build_hand_skeleton): the wrist is a fixed point on the glove, so re-deriving it every frame
+    //! would slide the hand as the fingers move.
+    std::array<std::optional<XrVector3f>, kSideCount> m_wrist_offsets;
+
+    //! Filtered wrist pose per hand; @c has is false until the source first tracks it.
+    struct SmoothedWrist
+    {
+        XrPosef pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+        bool has = false;
+    };
+    std::array<SmoothedWrist, kSideCount> m_smoothed_wrists;
+    //! Time of the previous injection tick, for the smoothing filter's time step.
+    std::chrono::steady_clock::time_point m_last_tick = std::chrono::steady_clock::now();
 
     rclcpp::TimerBase::SharedPtr m_hand_timer;
 };

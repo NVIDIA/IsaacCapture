@@ -241,11 +241,11 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
 
     RCLCPP_INFO(get_logger(),
                 "io_exo_glove_ros2_plugin: joints '%s' -> '%s' (%zu B); tips '%s' -> '%s', '%s' (%zu B each, frame "
-                "'%s'); hands -> XR_HAND_{LEFT,RIGHT}_EXT (wrist '%s', alignment '%s')",
+                "'%s'); hands -> XR_HAND_{LEFT,RIGHT}_EXT (wrist '%s', alignment '%s', smoothing %.0f ms)",
                 m_opts.joints_topic.c_str(), m_opts.joints_collection_id.c_str(), kJointsMaxFlatbufferSize,
                 m_opts.links_topic.c_str(), m_opts.tips_left_collection_id.c_str(),
                 m_opts.tips_right_collection_id.c_str(), kTipMaxFlatbufferSize, m_opts.tips_reference_frame.c_str(),
-                wrist_source_name(wrist_config.mode), m_opts.wrist_alignment.c_str());
+                wrist_source_name(wrist_config.mode), m_opts.wrist_alignment.c_str(), m_opts.wrist_smoothing_ms);
 }
 
 void IoExoGloveRos2Plugin::push_joint_state(const sensor_msgs::msg::JointState& msg)
@@ -355,8 +355,18 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         std::lock_guard<std::mutex> lock(m_hand_mutex);
         for (const Hand hand : { Hand::Left, Hand::Right })
         {
-            HandFrame& frame = m_hand_frames[side_index(hand)];
-            frame.skeleton = build_hand_skeleton(msg, hand);
+            const std::size_t side = side_index(hand);
+            HandFrame& frame = m_hand_frames[side];
+            frame.skeleton = build_hand_skeleton(msg, hand, m_wrist_offsets[side]);
+            if (!m_wrist_offsets[side].has_value() && frame.skeleton.wrist_offset_valid)
+            {
+                // Freeze the wrist offset: it is a rig constant, and letting it follow the fingertips
+                // would drag the wrist (and the whole hand) as the fingers close.
+                m_wrist_offsets[side] = frame.skeleton.wrist_offset;
+                RCLCPP_INFO(get_logger(), "hand %s: wrist offset frozen at (%.4f, %.4f, %.4f) m behind the anchor frame",
+                            hand_name(side), frame.skeleton.wrist_offset.x, frame.skeleton.wrist_offset.y,
+                            frame.skeleton.wrist_offset.z);
+            }
             frame.stamp = now;
             frame.valid = frame.skeleton.tracked();
         }
@@ -434,12 +444,39 @@ void IoExoGloveRos2Plugin::hand_tick()
         return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    const float dt_s = std::chrono::duration<float>(now - m_last_tick).count();
+    m_last_tick = now;
+
     const XrTime time = m_time_converter->os_monotonic_now();
-    push_hand(0, m_left_injector, time);
-    push_hand(1, m_right_injector, time);
+    push_hand(0, m_left_injector, time, dt_s);
+    push_hand(1, m_right_injector, time, dt_s);
 }
 
-void IoExoGloveRos2Plugin::push_hand(std::size_t side, std::unique_ptr<plugin_utils::HandInjector>& injector, XrTime time)
+XrPosef IoExoGloveRos2Plugin::smooth_wrist(std::size_t side, const XrPosef& pose, float dt_s)
+{
+    SmoothedWrist& smoothed = m_smoothed_wrists[side];
+    if (!smoothed.has)
+    {
+        smoothed.pose = pose;
+        smoothed.has = true;
+        return smoothed.pose;
+    }
+    const float tau_s = static_cast<float>(m_opts.wrist_smoothing_ms) / 1000.0f;
+    const float alpha = (tau_s > 0.0f && dt_s > 0.0f) ? 1.0f - std::exp(-dt_s / tau_s) : 1.0f;
+    smoothed.pose.position = XrVector3f{
+        smoothed.pose.position.x + alpha * (pose.position.x - smoothed.pose.position.x),
+        smoothed.pose.position.y + alpha * (pose.position.y - smoothed.pose.position.y),
+        smoothed.pose.position.z + alpha * (pose.position.z - smoothed.pose.position.z),
+    };
+    smoothed.pose.orientation = slerp_quaternions(smoothed.pose.orientation, pose.orientation, alpha);
+    return smoothed.pose;
+}
+
+void IoExoGloveRos2Plugin::push_hand(std::size_t side,
+                                     std::unique_ptr<plugin_utils::HandInjector>& injector,
+                                     XrTime time,
+                                     float dt_s)
 {
     HandFrame frame;
     {
@@ -464,6 +501,13 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side, std::unique_ptr<plugin_ut
     if (m_wrist_source != nullptr)
     {
         wrist = m_wrist_source->query(side == 0, time);
+    }
+
+    if (wrist.valid && wrist.tracked)
+    {
+        // Optical hand tracking is noisy, and a glove in front of the headset makes it worse; the
+        // glove's own articulation is not, so only the anchor is filtered.
+        wrist.pose = smooth_wrist(side, wrist.pose, dt_s);
     }
 
     if (!wrist.valid)

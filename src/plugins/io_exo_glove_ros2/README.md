@@ -208,6 +208,17 @@ reproducible; `identity` says the frames already agree, and an explicit `x,y,z,w
 With no wrist source tracked the skeleton is still injected, at the origin and flagged untracked:
 honest degradation rather than a frozen pose at the last known place.
 
+The wrist OpenXR asks for is the anatomical one, not the rig's anchor frame: the glove's root sits on
+the knuckle line, so the reference is placed one palm length (0.09 m) behind it, along the direction
+the fingertips point. That offset is a rig constant derived on the first frame that carries the hand
+and then frozen -- re-deriving it per frame would slide the whole hand as the fingers close. Joint
+orientations are built from the bones (`-Z` along the segment, roll pinned to the palm normal), so
+they carry OpenXR's joint axes rather than the rig's.
+
+`wrist_smoothing_ms` (default 60, 0 disables) low-passes the tracked wrist. Optical hand tracking is
+noisy -- and a glove in front of the headset makes it noisier -- while the glove's own articulation
+is not, so only the anchor is filtered.
+
 Poses are metres in the session's base space, as OpenXR requires, and the injected rate follows the
 glove's 120 Hz TF stream -- above the 30 Hz the conformance suite asks for. A hand with no data for
 200 ms has its push device dropped, so the runtime reports it inactive instead of holding a stale pose.

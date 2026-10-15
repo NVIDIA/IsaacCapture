@@ -30,6 +30,7 @@ struct CliOverrides
     std::optional<std::string> tips_reference_frame;
     std::optional<std::string> wrist_source;
     std::optional<std::string> wrist_alignment;
+    std::optional<double> wrist_smoothing_ms;
 };
 
 void print_usage(const char* prog)
@@ -50,6 +51,7 @@ void print_usage(const char* prog)
               << "                                 (auto | hand_tracking | controller)\n"
               << "  --wrist-alignment=ROTATION     Override how the glove's wrist frame is aligned with it\n"
               << "                                 (auto | identity | x,y,z,w)\n"
+              << "  --wrist-smoothing-ms=MS        Override the tracked wrist's low-pass time constant (0 = off)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
@@ -197,6 +199,23 @@ try
             }
             cli.wrist_alignment = *value;
         }
+        else if (const auto value = flag_value(arg, "wrist-smoothing-ms"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "wrist-smoothing-ms");
+            }
+            try
+            {
+                cli.wrist_smoothing_ms = std::stod(*value);
+            }
+            catch (const std::exception&)
+            {
+                std::cerr << "Error: --wrist-smoothing-ms= must be a number." << std::endl;
+                print_usage(argv[0]);
+                return 1;
+            }
+        }
         else
         {
             std::cerr << "Unknown option: " << arg << std::endl;
@@ -245,6 +264,10 @@ try
     {
         options.wrist_alignment = *cli.wrist_alignment;
     }
+    if (cli.wrist_smoothing_ms)
+    {
+        options.wrist_smoothing_ms = *cli.wrist_smoothing_ms;
+    }
 
     if (print_config)
     {
@@ -263,6 +286,7 @@ try
                   << "tips_reference_frame    = " << options.tips_reference_frame << "\n"
                   << "wrist_source            = " << options.wrist_source << "\n"
                   << "wrist_alignment         = " << options.wrist_alignment << "\n"
+                  << "wrist_smoothing_ms      = " << options.wrist_smoothing_ms << "\n"
                   << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
                   << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
                   << "\n(Both sizes are the consumer trackers' own defaults -- JointStateTracker and "
