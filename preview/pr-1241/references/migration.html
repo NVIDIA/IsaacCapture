@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Migrating to isaaccapture &#8212; Isaac Teleop Documentation</title>
+    <title>Migrating to isaaccapture &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -59,8 +59,6 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="License" href="license.html" />
-    <link rel="prev" title="Egocentric Hand Reconstruction" href="egocentric_hand_reconstruction.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -142,11 +140,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -208,10 +206,6 @@
   
 
   
-    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
-      <span class="fa-solid fa-outdent"></span>
-    </button>
-  
 </div>
 
     </header>
@@ -243,11 +237,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -304,7 +298,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -338,34 +332,42 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/soma.html">SOMA Pose Transport</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Device Conformance</span></p>
 <ul class="nav bd-sidenav">
@@ -376,7 +378,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../conformance/submit.html">Submit Your Results</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
-<ul class="current nav bd-sidenav">
+<ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
@@ -386,9 +388,8 @@
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
 </nav></div>
@@ -442,97 +443,7 @@
                   
   <section id="migrating-to-isaaccapture">
 <h1>Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code><a class="headerlink" href="#migrating-to-isaaccapture" title="Link to this heading">#</a></h1>
-<p>In 1.6 the Python import package and the distribution were both renamed from
-<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>. <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> keeps working for now
-through an alias shipped inside the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel, which <strong>will be
-removed in 1.9</strong>.</p>
-<p>Depend on <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and pin <code class="docutils literal notranslate"><span class="pre">isaaccapture&lt;1.9</span></code> if you need the alias
-to stay available while you migrate imports.</p>
-<section id="in-short">
-<h2>In short<a class="headerlink" href="#in-short" title="Link to this heading">#</a></h2>
-<ol class="arabic simple">
-<li><p>Upgrade with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-U</span> <span class="pre">isaaccapture[...]</span></code> – see
-<a class="reference internal" href="#migration-upgrading"><span class="std std-ref">Upgrading an existing install</span></a>.</p></li>
-<li><p>Rewrite <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> in imports, <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span></code> commands
-and dependency pins; <code class="docutils literal notranslate"><span class="pre">isaacteleop_examples</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture_examples</span></code>.</p></li>
-</ol>
-</section>
-<section id="upgrading-an-existing-install">
-<span id="migration-upgrading"></span><h2>Upgrading an existing install<a class="headerlink" href="#upgrading-an-existing-install" title="Link to this heading">#</a></h2>
-<p>Installing <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> replaces the old <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> distribution with
-a small transition package that contains no code. Pip removes the legacy
-implementation automatically:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"isaaccapture[cloudxr]"</span>
-</pre></div>
-</div>
-<p>The same command works on a fresh environment. Both import names resolve to
-<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>. Existing <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-U</span> <span class="pre">isaacteleop[...]</span></code> commands also
-install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and forward the requested extras.</p>
-</section>
-<section id="imports">
-<h2>Imports<a class="headerlink" href="#imports" title="Link to this heading">#</a></h2>
-<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-import isaacteleop</span>
-<span class="gd">-from isaacteleop.teleop_session_manager import DeviceState</span>
-<span class="gi">+import isaaccapture</span>
-<span class="gi">+from isaaccapture.teleop_session_manager import DeviceState</span>
-</pre></div>
-</div>
-<p>Every submodule keeps its name; only the top-level package changes. Both names
-resolve to the same module objects until 1.9, so a partially migrated process
-shares state, singletons and extension registrations rather than loading two
-copies.</p>
-<p>The same rename applies to <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span></code> entry points, for example
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">run</span></code>.</p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p><code class="docutils literal notranslate"><span class="pre">isaacteleop_examples</span></code> became <code class="docutils literal notranslate"><span class="pre">isaaccapture_examples</span></code>, and the alias
-does <strong>not</strong> cover it – it serves <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> alone. Every
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaacteleop_examples.*</span></code> command fails with a bare
-<code class="docutils literal notranslate"><span class="pre">ModuleNotFoundError</span></code> and no notice attached. The example distributions
-renamed with it: <code class="docutils literal notranslate"><span class="pre">isaacteleop-examples-*</span></code> to <code class="docutils literal notranslate"><span class="pre">isaaccapture-examples-*</span></code>.</p>
-</div>
-</section>
-<section id="what-importing-the-old-name-does">
-<h2>What importing the old name does<a class="headerlink" href="#what-importing-the-old-name-does" title="Link to this heading">#</a></h2>
-<p>Until 1.9 the old name emits a standard <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code> on first import.
-Python’s warning filters control its visibility; use <code class="docutils literal notranslate"><span class="pre">-W</span> <span class="pre">default</span></code> to see it.
-With <code class="docutils literal notranslate"><span class="pre">-W</span> <span class="pre">error::DeprecationWarning</span></code>, the import raises until migrated or filtered.</p>
-</section>
-<section id="installing">
-<h2>Installing<a class="headerlink" href="#installing" title="Link to this heading">#</a></h2>
-<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-pip install isaacteleop[cloudxr]</span>
-<span class="gi">+pip install isaaccapture[cloudxr]</span>
-</pre></div>
-</div>
-<p>Update dependency pins and extras to the new name:</p>
-<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-isaacteleop[retargeters,ui,cloudxr]~=1.5.0</span>
-<span class="gi">+isaaccapture[retargeters,ui,cloudxr]~=1.6.0</span>
-</pre></div>
-</div>
-<p>The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel ships the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> alias inside it, so
-<code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> keeps working after the requirement is renamed. Pip
-installs the transition dependency automatically.</p>
-<p>A <code class="docutils literal notranslate"><span class="pre">sys.meta_path</span></code> finder is invisible to a type checker, so everything under
-<code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> is typed <code class="docutils literal notranslate"><span class="pre">Any</span></code> and <strong>pyright reports every submodule import as
-unresolved</strong> (<code class="docutils literal notranslate"><span class="pre">reportMissingImports</span></code>). The alias promises runtime identity only.</p>
-</section>
-<section id="logging">
-<h2>Logging<a class="headerlink" href="#logging" title="Link to this heading">#</a></h2>
-<p>Loggers are named after the module they live in, and the alias hands back the
-real module, so the whole hierarchy moved to <code class="docutils literal notranslate"><span class="pre">isaaccapture.*</span></code> even for code
-that still imports the old name. No alias can reach a string key, so a
-<code class="docutils literal notranslate"><span class="pre">dictConfig</span></code> or <code class="docutils literal notranslate"><span class="pre">getLogger</span></code> call naming <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> silently stops
-matching – the logger is created, and nothing ever logs to it:</p>
-<div class="highlight-diff notranslate"><div class="highlight"><pre><span></span><span class="gd">-logging.getLogger("isaacteleop.cloudxr").setLevel(logging.DEBUG)</span>
-<span class="gi">+logging.getLogger("isaaccapture.cloudxr").setLevel(logging.DEBUG)</span>
-</pre></div>
-</div>
-</section>
-<section id="the-asset-cache">
-<h2>The asset cache<a class="headerlink" href="#the-asset-cache" title="Link to this heading">#</a></h2>
-<p>The SO101 and reBot asset-directory overrides have been removed. The
-<code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_*</span></code> runtime switches keep their names.</p>
-</section>
+<p>This page has moved to <a class="reference internal" href="../development/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 </section>
 
 
@@ -545,24 +456,6 @@ matching – the logger is created, and nothing ever logs to it:</p>
                 <footer class="prev-next-footer d-print-none">
                   
 <div class="prev-next-area">
-    <a class="left-prev"
-       href="egocentric_hand_reconstruction.html"
-       title="previous page">
-      <i class="fa-solid fa-angle-left"></i>
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Egocentric Hand Reconstruction</p>
-      </div>
-    </a>
-    <a class="right-next"
-       href="license.html"
-       title="next page">
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">License</p>
-      </div>
-      <i class="fa-solid fa-angle-right"></i>
-    </a>
 </div>
                 </footer>
               
@@ -570,31 +463,9 @@ matching – the logger is created, and nothing ever logs to it:</p>
             
             
 
-
-              
-                <dialog id="pst-secondary-sidebar-modal"></dialog>
-                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="bd-sidebar-secondary"></div>
 
 
-  <div class="sidebar-secondary-item">
-<div
-    id="pst-page-navigation-heading-2"
-    class="page-toc tocsection onthispage">
-    <i class="fa-solid fa-list"></i> On this page
-  </div>
-  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
-    <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#in-short">In short</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#upgrading-an-existing-install">Upgrading an existing install</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#imports">Imports</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-importing-the-old-name-does">What importing the old name does</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installing">Installing</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#logging">Logging</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-asset-cache">The asset cache</a></li>
-</ul>
-  </nav></div>
-
-</div></div>
               
             
 
@@ -673,7 +544,7 @@ matching – the logger is created, and nothing ever logs to it:</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
       <br/>
     
   </p>
