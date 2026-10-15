@@ -72,7 +72,9 @@ core::SchemaCompatResult compare(const std::string& recorded_source, const std::
 
 // head.fbs and the schemas it includes, re-declared so a test can mutate one piece.
 // `stamp_fields` is the body of DeviceDataTimestamp.
-std::string head_schema_source(const std::string& stamp_fields)
+std::string head_schema_source(
+    const std::string& stamp_fields,
+    const std::string& head_fields = "pose: Pose (id: 0); is_valid: bool (id: 1); is_tracked: bool (id: 2);")
 {
     return R"(
 namespace core;
@@ -80,8 +82,7 @@ struct Point { x: float; y: float; z: float; }
 struct Quaternion { x: float; y: float; z: float; w: float; }
 struct Pose { position: Point (id: 0); orientation: Quaternion (id: 1); }
 struct DeviceDataTimestamp { )" +
-           stamp_fields + R"( }
-table HeadPose { pose: Pose (id: 0); is_valid: bool (id: 1); is_tracked: bool (id: 2); }
+           stamp_fields + " }\ntable HeadPose { " + head_fields + R"( }
 table HeadPoseRecord { data: HeadPose (id: 0); timestamp: DeviceDataTimestamp (id: 1); }
 root_type HeadPoseRecord;
 )";
@@ -109,6 +110,13 @@ std::vector<uint8_t> faithful_head_bfbs()
 std::vector<uint8_t> grown_stamp_head_bfbs()
 {
     return bfbs_from(head_schema_source(std::string(kRealStampFields) + "sample_time_extra_clock: long;"));
+}
+
+//! HeadPose before its optional is_tracked field was appended. The generic metadata
+//! mechanism is type-agnostic, so this existing root can exercise it in isolation.
+std::vector<uint8_t> older_metadata_bfbs()
+{
+    return bfbs_from(head_schema_source(kRealStampFields, "pose: Pose (id: 0); is_valid: bool (id: 1);"));
 }
 
 mcap::Schema head_schema(std::string_view name, const std::vector<uint8_t>& bfbs, std::string_view encoding = "flatbuffer")
@@ -246,6 +254,32 @@ void write_head_records(const std::string& path,
                         Summary summary = Summary::Written)
 {
     write_records(path, { { "head", schema } }, count, summary);
+}
+
+//! Writes a table-root metadata sample, either through the production channel writer or
+//! against a supplied historical schema declaration.
+void write_metadata(const std::string& path, const std::optional<std::vector<uint8_t>>& declared_bfbs = std::nullopt)
+{
+    if (declared_bfbs.has_value())
+    {
+        write_records(
+            path, { { "metadata", head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), *declared_bfbs) } });
+        return;
+    }
+
+    mcap::McapWriter writer;
+    mcap::McapWriterOptions options("teleop-test");
+    options.compression = mcap::Compression::None;
+    REQUIRE(writer.open(path, options).ok());
+
+    core::HeadPoseT native;
+    native.is_valid = true;
+    native.pose = std::make_shared<core::Pose>(core::Point(1.0f, 2.0f, 3.0f), core::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
+    const auto metadata = core::pack_record<core::HeadPoseRecord>(&native, core::DeviceDataTimestamp(5, 5, 5));
+
+    HeadChannels channel(writer, "tracking", { "metadata" });
+    channel.write(0, metadata, 17);
+    writer.close();
 }
 
 //! Redirects std::cerr for its lifetime so a test can count what was logged.
@@ -619,4 +653,54 @@ TEST_CASE("McapTrackerViewers asks every channel on a topic, not just one of the
     const CapturedCerr log;
     const auto recorded = recorded_schemas(path);
     CHECK_THROWS_AS(HeadViewers(open_reader(path), "tracking", { "head" }, recorded), std::runtime_error);
+}
+
+// =============================================================================
+// Metadata uses the same MCAP writer, viewer and compatibility gate as data records.
+// =============================================================================
+
+TEST_CASE("MCAP replays a sample recorded on a metadata channel", "[unit][schema_compat][metadata]")
+{
+    const auto path = temp_mcap_path();
+    const TempFileCleanup cleanup(path);
+    write_metadata(path);
+
+    const auto recorded = recorded_schemas(path);
+    HeadViewers viewers(open_reader(path), "tracking", { "metadata" }, recorded);
+    const auto metadata = viewers.read(0);
+
+    REQUIRE(metadata);
+    REQUIRE(metadata->data());
+    CHECK(metadata->data()->is_valid());
+    REQUIRE(metadata->data()->pose());
+    CHECK(metadata->data()->pose()->position().x() == 1.0f);
+}
+
+TEST_CASE("MCAP replays metadata recorded with a backward-compatible schema", "[unit][schema_compat][metadata]")
+{
+    const auto path = temp_mcap_path();
+    const TempFileCleanup cleanup(path);
+    write_metadata(path, older_metadata_bfbs());
+
+    // The metadata viewer is the one generated replay trackers construct. It grades the
+    // recorded metadata schema against the current metadata table before returning a sample.
+    const CapturedCerr log;
+    const auto recorded = recorded_schemas(path);
+    HeadViewers viewers(open_reader(path), "tracking", { "metadata" }, recorded);
+    const auto metadata = viewers.read(0);
+
+    REQUIRE(metadata);
+    REQUIRE(metadata->data());
+    CHECK(metadata->data()->is_valid());
+    CHECK(log.count("MCAP schema mismatch") == 1);
+}
+
+TEST_CASE("MCAP refuses metadata recorded with an incompatible schema", "[unit][schema_compat][metadata]")
+{
+    const auto path = temp_mcap_path();
+    const TempFileCleanup cleanup(path);
+    write_metadata(path, grown_stamp_head_bfbs());
+
+    const auto recorded = recorded_schemas(path);
+    CHECK_THROWS_AS(HeadViewers(open_reader(path), "tracking", { "metadata" }, recorded), std::runtime_error);
 }

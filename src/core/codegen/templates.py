@@ -39,6 +39,10 @@ class TrackerGenContext:
     facade_tensor_constant: bool
     mcap_channels: tuple[str, ...] | None
     replay_channels: tuple[str, ...] | None
+    # Metadata table, its .fbs stem and its MCAP sub-channel; metadata is None when unset.
+    metadata: str | None
+    metadata_schema: str
+    metadata_channel: str
     header: str
     base_header: str
     live_impl_file: str
@@ -99,6 +103,9 @@ def enrich_context(entry: dict[str, Any]) -> TrackerGenContext:
         facade_tensor_constant=bool(entry["facade_tensor_constant"]),
         mcap_channels=mcap_channels,
         replay_channels=replay_channels,
+        metadata=str(entry["metadata"]) or None,
+        metadata_schema=str(entry["metadata_schema"]),
+        metadata_channel=str(entry["metadata_channel"]),
         header=header,
         base_header=base,
         live_impl_file=live_impl_file,

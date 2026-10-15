@@ -6,4 +6,13 @@
             [](const core::@CLASS@& self, const core::ITrackerSession& session)
             { return to_python(self.get_data(session)); },
             py::arg("session"),
-            "Get the current state (None when no data available)");
+            "Get the current state (None when no data available)")
+#if @HAS_METADATA@
+        .def(
+            "get_metadata",
+            [](const core::@CLASS@& self, const core::ITrackerSession& session)
+            { return to_python(self.get_metadata(session)); },
+            py::arg("session"),
+            "Get the producer's metadata (None until it arrives; fixed for the session after that)")
+#endif
+        ;
