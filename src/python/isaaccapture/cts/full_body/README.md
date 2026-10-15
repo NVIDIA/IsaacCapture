@@ -21,9 +21,9 @@ Nothing under [`capture/`](capture) is meant to be read or edited — see
   or `build/wheels/`.
 - **`uv`, `curl` and `unzip`** on the same Linux host.
 - **`git-lfs`**, so the clone holds the spoken cues as audio rather than LFS pointers.
-- **`aplay`** — the spoken cues go through it. It comes from `alsa-utils`
-  (`apt install alsa-utils` on Debian or Ubuntu). Install it before your first take: a
-  missing `aplay` fails part way into the recording rather than at startup.
+- **`aplay`** — the spoken cues and tones need it. It comes from `alsa-utils`
+  (`sudo apt install alsa-utils` on Debian or Ubuntu). Without it the panel says so
+  before you start, and the take records with on-screen cues only.
 - **A headset**, plus CloudXR installed (by default at `~/.cloudxr`) — see
   [Get the headset streaming](#get-the-headset-streaming). It has to be connected even
   when your own device produces the joints, because the OpenXR session comes from
@@ -258,7 +258,7 @@ verdict and packaging a take to send.
 | The service prints `running` but a second one will not start | The runtime is a host singleton on 48322. One is already up — `service status` names it, `service stop` ends a detached one, Ctrl+C a foreground one. |
 | **no joint has been valid yet**, in the cue column | On PICO this is usually the browser, not the hardware or a licence: use the headset's own browser, which grants WebXR body tracking on a consumer 4 Ultra. |
 | **No body data after 10 s**, in red under the skeleton | The same thing as the row above, once it has lasted ten seconds, with the causes spelled out. Two red things, one problem. Nothing has been lost: no joint has been valid since you pressed **Start recording**, so the script has not begun. Fix what the box names and the script starts on its own — same take, same file, nothing to redo. |
-| No sound, or a `FileNotFoundError` naming `aplay` | `aplay` is missing. Install `alsa-utils` and record again. |
+| **Spoken cues are off**, on the panel | `aplay` is missing. The take still records, paced the same, with on-screen cues only. To hear the cues, install `alsa-utils` and restart the panel. |
 | `… is a Git LFS pointer, not audio; run git lfs pull` | The clone was made without git-lfs, so the cue WAVs are placeholders. Install git-lfs and run `git lfs pull` in the repository. |
 | The panel is not at 8081 | Something else held that port, so it moved to the next free one. Use the `http://localhost:…` line the run prints, which is always the real one. |
 | The headset's browser cannot load the panel | The port is not reachable from the headset. Check the host firewall; the panel itself listens on every interface. |

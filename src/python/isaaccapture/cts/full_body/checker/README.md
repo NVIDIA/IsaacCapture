@@ -15,6 +15,7 @@ recording and returns one verdict:
 | `fail` | 1 | A CTS failure attributable to the device or its plugin. |
 | `retake` | 2 | The capture is unusable because of how it was performed. The device is not implicated. |
 | `insufficient_data` | 3 | The recording cannot answer the question — too short, no skeleton in it, or a prerequisite check failed. |
+| — | 4 | The check could not run: a usage error, an unknown `--check` name, or the recording or its labels cannot be read. One line on stderr says which. Nothing is concluded about the device. |
 
 `fail` and `retake` are deliberately separate. Telling a vendor their device is broken
 when the operator simply squatted too shallow is the specific mistake this process exists

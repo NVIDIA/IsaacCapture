@@ -18,6 +18,7 @@ the checker itself.
 | `fail` | 1 | A failure attributable to the device or its plugin. |
 | `retake` | 2 | The capture is unusable because of how it was performed — a step was not held. The device is not implicated. |
 | `insufficient_data` | 3 | The recording cannot answer the question: too short, no hand channel, or a required check could not answer. |
+| — | 4 | The check could not run: a usage error, an unknown `--check` name, or the recording or its labels cannot be read. One line on stderr says which. Nothing is concluded about the device. |
 
 `fail` and `retake` are kept apart on purpose: a performer who did not press the palms
 together has not shown that the glove is broken.

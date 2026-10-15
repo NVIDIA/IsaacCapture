@@ -126,6 +126,13 @@ class CapturePanel:
 
     def _build_gui(self) -> None:
         gui = self._server.gui
+        if not cues.available():
+            gui.add_html(render.audio_off())
+            print(
+                "[capture] spoken cues off -- aplay not found; "
+                "sudo apt install alsa-utils and restart to hear them",
+                file=sys.stderr,
+            )
         attached, detail = self._runtime()
         source = ", ".join(p.plugin_name for p in self._plugins) or "headset optical"
         self._idle = gui.add_html(

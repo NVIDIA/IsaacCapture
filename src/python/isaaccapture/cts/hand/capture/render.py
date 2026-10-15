@@ -47,6 +47,18 @@ def ready_to_start(attached: bool, runtime: str, destination: str, source: str) 
     )
 
 
+def audio_off() -> str:
+    """The notice shown before and during the take when ``aplay`` is missing."""
+    return (
+        f'<div style="{_BLOCK};background:#fff4e0;border:1px solid #e8c48a;'
+        f'border-radius:5px;padding:9px 12px;color:#412402;font-size:12.5px">'
+        f'<div style="font-weight:700;margin:0 0 4px">Spoken cues are off</div>'
+        f"<code>aplay</code> was not found. Install it with "
+        f"<code>sudo apt install alsa-utils</code> and restart the panel to hear "
+        f"them; the on-screen cues still guide every step.</div>"
+    )
+
+
 def session_failed(reason: object) -> str:
     return (
         f'<div style="{_BLOCK};background:#fcebeb;border-radius:5px;padding:9px 11px;'

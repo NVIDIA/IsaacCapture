@@ -39,6 +39,10 @@ class Defect:
     detail: str
 
 
+class UnreadableLabels(Exception):
+    """The label sidecar cannot be read, or does not hold step windows."""
+
+
 @dataclass(frozen=True)
 class StepTimeline:
     """Subclassed per schema to name the script's still windows."""
@@ -52,24 +56,34 @@ class StepTimeline:
 
     @classmethod
     def load(cls, path: str | Path) -> StepTimeline:
-        payload = json.loads(Path(path).read_text())
-        steps = tuple(
-            Step(
-                index=int(raw["index"]),
-                label=str(raw["label"]),
-                start_ns=int(raw["start_ns"]),
-                end_ns=int(raw["end_ns"]),
-                is_still_window=bool(
-                    raw.get("is_still_window", raw["label"] in cls.still_labels)
-                ),
+        """Reads a sidecar; any failure to read or parse it raises ``UnreadableLabels``."""
+        try:
+            payload = json.loads(Path(path).read_text())
+            steps = tuple(
+                Step(
+                    index=int(raw["index"]),
+                    label=str(raw["label"]),
+                    start_ns=int(raw["start_ns"]),
+                    end_ns=int(raw["end_ns"]),
+                    is_still_window=bool(
+                        raw.get("is_still_window", raw["label"] in cls.still_labels)
+                    ),
+                )
+                for raw in payload["steps"]
             )
-            for raw in payload["steps"]
-        )
-        return cls(
-            steps=steps,
-            nominal_rate_hz=payload.get("nominal_rate_hz"),
-            source=str(path),
-        )
+            nominal_rate_hz = payload.get("nominal_rate_hz")
+        except OSError as error:
+            raise UnreadableLabels(
+                f"cannot read labels {path}: {error.strerror or error}"
+            ) from error
+        except KeyError as error:
+            raise UnreadableLabels(
+                f"{path} is not a label sidecar: no {error.args[0]!r} field"
+            ) from error
+        # JSONDecodeError and UnicodeDecodeError are ValueErrors too.
+        except (TypeError, ValueError) as error:
+            raise UnreadableLabels(f"{path} is not a label sidecar: {error}") from error
+        return cls(steps=steps, nominal_rate_hz=nominal_rate_hz, source=str(path))
 
     @classmethod
     def beside(cls, recording: str | Path) -> StepTimeline | None:

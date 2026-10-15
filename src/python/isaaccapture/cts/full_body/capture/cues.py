@@ -3,13 +3,15 @@
 
 """The spoken cues and the two window tones, played through ``aplay``.
 
-The WAVs in ``cues/`` are pre-rendered; nothing is synthesised at run time.
+The WAVs in ``cues/`` are pre-rendered; nothing is synthesised at run time. Without
+``aplay`` on PATH nothing is played; the pacing comes from the WAV lengths either way.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import wave
 from pathlib import Path
@@ -58,10 +60,18 @@ def duration_of(path: Path) -> float:
         return handle.getnframes() / handle.getframerate()
 
 
-def play(path: Path) -> subprocess.Popen:
-    """Start a sound and return its process handle without waiting."""
+def available() -> bool:
+    """Whether ``aplay`` is on PATH, so the cues can be heard."""
+    return shutil.which("aplay") is not None
+
+
+def play(path: Path) -> subprocess.Popen | None:
+    """Start a sound without waiting; ``None``, with nothing started, when ``aplay`` is missing."""
+    aplay = shutil.which("aplay")
+    if aplay is None:
+        return None
     return subprocess.Popen(
-        ["aplay", "-q", str(path)],
+        [aplay, "-q", str(path)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

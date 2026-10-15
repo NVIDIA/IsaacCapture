@@ -6,9 +6,15 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
+import flatbuffers
+from mcap.writer import CompressionType, Writer
 
 from cts_common.vectors import multiply, rotate
 
+import hand_cts._schema  # noqa: F401  puts generated/ on sys.path
+from core import DeviceDataTimestamp, HandJoints, HandPose, HandPoseRecord
 from hand_cts.frames import SCHEMA_NAME, Frame, JointPose, SourceMetadata
 
 KNUCKLES = {
@@ -133,3 +139,61 @@ class StubSource:
 
     def __iter__(self):
         return iter(self._frames)
+
+
+def encode(frame_: Frame) -> bytes:
+    """One frame as the wire bytes of a ``core.HandPoseRecord``."""
+    joints = frame_.joints
+    builder = flatbuffers.Builder(1100)
+    HandPose.Start(builder)
+    offset = HandJoints.CreateHandJoints(
+        builder,
+        *([j.position[axis] for j in joints] for axis in range(3)),
+        *([j.orientation[axis] for j in joints] for axis in range(4)),
+        [j.is_valid for j in joints],
+        [j.radius for j in joints],
+    )
+    HandPose.AddJoints(builder, offset)
+    data = HandPose.End(builder)
+    HandPoseRecord.Start(builder)
+    HandPoseRecord.AddTimestamp(
+        builder,
+        DeviceDataTimestamp.CreateDeviceDataTimestamp(
+            builder,
+            frame_.available_time_ns,
+            frame_.sample_time_ns,
+            frame_.device_time_ns,
+        ),
+    )
+    HandPoseRecord.AddData(builder, data)
+    builder.Finish(HandPoseRecord.End(builder))
+    return bytes(builder.Output())
+
+
+def write_recording(path: Path, frames: list[Frame]) -> Path:
+    """An MCAP of ``frames`` on one ``hands/<side>_hand`` channel per side."""
+    bfbs = Path(__file__).resolve().parents[1] / "build" / "bfbs" / "hand.bfbs"
+    with path.open("wb") as handle:
+        writer = Writer(handle, compression=CompressionType.NONE)
+        writer.start(profile="teleop", library="hand-cts-tests")
+        schema_id = writer.register_schema(
+            name=SCHEMA_NAME, encoding="flatbuffer", data=bfbs.read_bytes()
+        )
+        channels = {
+            side: writer.register_channel(
+                topic=f"hands/{side}_hand",
+                message_encoding="flatbuffer",
+                schema_id=schema_id,
+            )
+            for side in ("left", "right")
+        }
+        for sequence, item in enumerate(frames):
+            writer.add_message(
+                channel_id=channels[item.side],
+                log_time=item.log_time_ns,
+                publish_time=item.publish_time_ns,
+                sequence=sequence,
+                data=encode(item),
+            )
+        writer.finish()
+    return path

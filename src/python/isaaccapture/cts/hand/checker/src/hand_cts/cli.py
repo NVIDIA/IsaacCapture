@@ -7,14 +7,19 @@ Usage:
     python -m hand_cts.cli RECORDING.mcap [--json] [--check NAME ...] [--labels SIDECAR]
     python -m hand_cts.cli --list-checks
 
-Exit status is 0 for a pass, 1 for a fail, 2 for a retake and 3 when there was not
-enough data to conclude.
+Exit status is 0 for a pass, 1 for a fail, 2 for a retake, 3 when there was not
+enough data to conclude, and 4 when the check could not run: a usage error, an unknown
+check, or a recording or label sidecar that cannot be read.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from typing import NoReturn
+
+from cts_common.labels import UnreadableLabels
+from cts_common.mcap_reader import UnreadableRecording
 
 from .checks import build, build_all
 from .labels import StepTimeline
@@ -27,10 +32,17 @@ EXIT_STATUS = {
     Verdict.RETAKE: 2,
     Verdict.INSUFFICIENT_DATA: 3,
 }
+EXIT_ERROR = 4
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        """One line on stderr and ``EXIT_ERROR``, never a verdict's status."""
+        self.exit(EXIT_ERROR, f"{self.prog}: error: {message}\n")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m hand_cts.cli", description=__doc__)
+    parser = _Parser(prog="python -m hand_cts.cli", description=__doc__)
     parser.add_argument("recording", nargs="?", help="MCAP file to check")
     parser.add_argument(
         "--json", action="store_true", help="emit the machine-readable report"
@@ -64,14 +76,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.recording is None:
         parser.error("a recording is required unless --list-checks is given")
 
-    source = McapFrameSource(args.recording)
-    timeline = (
-        StepTimeline.load(args.labels)
-        if args.labels
-        else StepTimeline.beside(args.recording)
-    )
-    checks = build(args.checks, timeline) if args.checks else build_all(timeline)
-    report = run(source, checks, timeline)
+    try:
+        timeline = (
+            StepTimeline.load(args.labels)
+            if args.labels
+            else StepTimeline.beside(args.recording)
+        )
+    except UnreadableLabels as unreadable:
+        parser.error(str(unreadable))
+    if args.checks:
+        try:
+            checks = build(args.checks, timeline)
+        except KeyError as unknown:
+            parser.error(f"{unknown.args[0]}; --list-checks prints the names")
+    else:
+        checks = build_all(timeline)
+    try:
+        report = run(McapFrameSource(args.recording), checks, timeline)
+    except UnreadableRecording as unreadable:
+        parser.error(str(unreadable))
     print(report.to_json() if args.json else report.to_text())
     return EXIT_STATUS[report.verdict]
 

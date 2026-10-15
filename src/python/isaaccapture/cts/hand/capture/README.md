@@ -72,9 +72,10 @@ step was missed.
 ## Cues
 
 `cues/*.wav` are pre-rendered speech and three tones, played with `aplay`; nothing is
-synthesised at run time. `cues/index.json` holds a hash of each cue's wording, and the
-panel exits at start-up when a cue in `session.py` no longer matches its WAV. The script
-is part of the specification: do not edit it.
+synthesised at run time. Without `aplay` on PATH the panel shows a notice and plays
+nothing; the pacing comes from the WAV lengths either way. `cues/index.json` holds a
+hash of each cue's wording, and the panel exits at start-up when a cue in `session.py`
+no longer matches its WAV. The script is part of the specification: do not edit it.
 
 A WAV that is a Git LFS pointer (a clone without git-lfs) stops the panel with a message
 to run `git lfs pull`.

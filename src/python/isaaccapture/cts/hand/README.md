@@ -34,9 +34,9 @@ Nothing under [`capture/`](capture) is meant to be edited — see
   or `build/wheels/`.
 - **`uv`, `curl` and `unzip`** on the same host.
 - **`git-lfs`**, so the clone holds the spoken cues as audio rather than LFS pointers.
-- **`aplay`** — the spoken cues and tones go through it. It comes from `alsa-utils`
-  (`apt install alsa-utils` on Debian or Ubuntu). Install it before your first take: a
-  missing `aplay` stops the take part way through rather than at startup.
+- **`aplay`** — the spoken cues and tones need it. It comes from `alsa-utils`
+  (`sudo apt install alsa-utils` on Debian or Ubuntu). Without it the panel says so
+  before you start, and the take records with on-screen cues only.
 - **A headset**, plus CloudXR installed (by default at `~/.cloudxr`) — see
   [Get the headset streaming](#get-the-headset-streaming). The headset has to be
   connected even when a glove produces the joints, because the OpenXR session comes
@@ -251,7 +251,8 @@ src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.cli \
 ```
 
 This needs only the checker's environment, not the capture one. It prints one verdict and
-one line per check, and exits with a status that says which verdict it was:
+one line per check, and exits with a status that says which verdict it was, or that the
+check could not run:
 
 | Verdict | Exit status | Meaning |
 |---|---|---|
@@ -259,6 +260,7 @@ one line per check, and exits with a status that says which verdict it was:
 | `fail` | 1 | A failure attributable to the device or its plugin. |
 | `retake` | 2 | The capture is unusable because of how it was performed — a step was not held. The device is not implicated. Record again. |
 | `insufficient_data` | 3 | The recording cannot answer the question: too short, no hand channel, or a prerequisite check could not run. |
+| — | 4 | The check could not run: a usage error, an unknown `--check` name, or the recording or its labels cannot be read. One line on stderr says which. Nothing is concluded about the device. |
 
 Each line in the report starts with a mark:
 
@@ -356,7 +358,7 @@ companion that was never there is not an error; `inputs.missing` names it.
 | A second CloudXR service will not start | The runtime is a host singleton on 48322. One is already up; `service status` names it, `service stop` ends a detached one, Ctrl+C a foreground one. |
 | **No hand data after 10 s**, in red | With a plugin: it is not running or exited; the glove is off, unpaired, uncalibrated, or its vendor service is down; or the plugin needs a wrist from the headset or a controller and neither is tracked. Without one: the headset is not streaming, hand tracking is off in the headset, or the hands are out of view. The take is still running and starts on its own once both hands are valid. |
 | One hand shows `inactive`, or `n / 26 valid` in red, in the sidebar | That hand's channel is missing or has invalid joints right now. The sidebar shows it live; the script waits for both hands to have had a valid joint, not for all 26. |
-| No sound, or a `FileNotFoundError` naming `aplay` | `aplay` is missing. Install `alsa-utils` and record again. |
+| **Spoken cues are off**, on the panel | `aplay` is missing. The take still records, paced the same, with on-screen cues only. To hear the cues, install `alsa-utils` and restart the panel. |
 | `… is a Git LFS pointer, not audio; run git lfs pull` | The clone was made without git-lfs, so the cue WAVs are placeholders. Install git-lfs and run `git lfs pull` in the repository. |
 | The headset's browser cannot load the panel | The port is not reachable from the headset. Check the host firewall; the panel listens on every interface. |
 | One `BAD` row in the label audit, the rest `ok` | That pose was not held. Record another take. |
