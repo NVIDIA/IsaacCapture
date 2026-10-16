@@ -1,13 +1,21 @@
 .. SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 .. SPDX-License-Identifier: Apache-2.0
 
-EGO Camera Plugin
-=================
+ORBBEC Data Collection Suite Plugin
+===================================
 
-The ``ego_camera`` plugin connects EGO stereo cameras to Isaac Capture.
-It records ColorLeft and ColorRight video, and captures accelerometer,
-gyroscope, microphone, calibration, and device state when the device exposes
-them. Detailed operator commands live in
+The ORBBEC Data Collection Suite comprises a set of robot-free data capture
+devices, including EGO (Egocentric Vision Data Collection Module), UMI (Handheld
+Manipulation Data Collection Module), WristCam (Wrist-level Near-field
+Interaction Capture Module), and Hub (Central Connection Device).
+
+At present, Orbbec EGO stereo cameras have been integrated with Isaac Capture.
+Support for the remaining devices will be added in upcoming releases. The
+system records ``ColorLeft`` and ``ColorRight`` video streams, and captures
+accelerometer, gyroscope, microphone, calibration data, and device status,
+where available from the hardware.
+
+Detailed operation instructions can be found in
 :code-file:`src/plugins/ego/README.md`.
 
 .. contents:: On this page
@@ -17,12 +25,13 @@ them. Detailed operator commands live in
 Supported streams and profiles
 ------------------------------
 
-The plugin captures ``ColorLeft`` and ``ColorRight`` in MJPEG, H.264, or H.265.
-The recording wrapper defaults to stereo H.264 ``1600x1300@30``. Use
-``capabilities`` to inspect the connected device's available profiles;
-unsupported simultaneous combinations fail without a fallback. The current
-plugin rejects H.264/H.265 profiles above 30 FPS and does not capture depth or
-infrared streams.
+This plugin captures ``ColorLeft`` and ``ColorRight`` streams in MJPEG, H.264,
+or H.265 encoding. The recording wrapper uses stereo H.264 at
+``1600×1300@30`` as its default configuration. Use device ``capabilities`` to
+inspect available profiles of the connected hardware. Unsupported simultaneous
+profile combinations will fail with no fallback mechanism. The current plugin
+rejects H.264/H.265 profiles exceeding 30 FPS, and does not support depth or
+infrared stream capture.
 
 Installation
 ------------
