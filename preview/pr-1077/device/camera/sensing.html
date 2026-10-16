@@ -585,7 +585,7 @@ src/plugins/sensing/scripts/setup.sh
 src/plugins/sensing/scripts/validate.sh
 
 <span class="c1"># 3. Only if you want a container:</span>
-src/plugins/sensing/scripts/run_docker_example.py<span class="w">   </span><span class="c1"># ready-made, drops you at a shell</span>
+src/plugins/sensing/scripts/run_docker_example.sh<span class="w">   </span><span class="c1"># ready-made, drops you at a shell</span>
 src/plugins/sensing/docker/setup_container.sh<span class="w">      </span><span class="c1"># or adapt your own</span>
 </pre></div>
 </div>
@@ -711,7 +711,7 @@ one by hand instead:</p>
 <section id="validating-in-a-container">
 <h3><a class="toc-backref" href="#id7" role="doc-backlink">Validating in a container</a><a class="headerlink" href="#validating-in-a-container" title="Link to this heading">#</a></h3>
 <p>Before adapting your own image, prove the rig works from a throwaway one:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.py
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.sh
 <span class="c1"># ... builds, then drops you at a shell in the container:</span>
 scripts/validate.sh
 </pre></div>
@@ -766,7 +766,7 @@ gids in the image and no <code class="docutils literal notranslate"><span class=
 reverse does not hold: <code class="docutils literal notranslate"><span class="pre">--group-add</span></code> <em>alone</em> leaves an interactive shell
 without them, because <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">exec</span></code> ignores <code class="docutils literal notranslate"><span class="pre">HostConfig.GroupAdd</span></code>.</p>
 <p>The gids are host-specific, so read them off the host rather than copying:</p>
-<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>src/plugins/sensing/scripts/run_docker_example.py<span class="w"> </span>--print-gids
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>src/plugins/sensing/scripts/run_docker_example.sh<span class="w"> </span>--print-gids
 <span class="go">114:i2c 985:gpio 44:video</span>
 </pre></div>
 </div>
@@ -786,11 +786,11 @@ To layer onto an existing image instead of editing its Dockerfile:</p>
 </pre></div>
 </div>
 <p>The runtime half comes from the same script:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.py<span class="w"> </span>--print-args
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/run_docker_example.sh<span class="w"> </span>--print-args
 </pre></div>
 </div>
 <p>Paste the printed flags after <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span></code> and before your image name.
-<code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as a JSON array for <code class="docutils literal notranslate"><span class="pre">devcontainer.json</span></code>
+<code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as elements for <code class="docutils literal notranslate"><span class="pre">devcontainer.json</span></code>
 <code class="docutils literal notranslate"><span class="pre">runArgs</span></code>. Run <code class="docutils literal notranslate"><span class="pre">image_setup.sh</span></code> in your image to configure the groups.</p>
 </section>
 </section>
