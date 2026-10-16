@@ -7,6 +7,8 @@
 
 // Include binding definitions.
 #include "controller_bindings.h"
+#include "ego_bindings.h"
+#include "ego_camera_bindings.h"
 #include "full_body_bindings.h"
 #include "gamepad_bindings.h"
 #include "hand_bindings.h"
@@ -91,6 +93,8 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind OAK types (StreamType enum, FrameMetadataOak table).
     core::bind_oak(m);
+    core::bind_ego_camera(m);
+    core::bind_ego(m);
 
     // Bind full body types (BodyJointPose, BodyJoints structs, FullBodyPose table).
     core::bind_full_body(m);

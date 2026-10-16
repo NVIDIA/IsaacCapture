@@ -90,6 +90,6 @@ PYBIND11_MODULE(_plugin_manager, m)
         .def("query_devices", &PluginManager::query_devices, py::arg("plugin_name"),
              "Query available devices from a plugin")
         .def("start", &PluginManager::start, py::arg("plugin_name"), py::arg("plugin_root_id"),
-             py::arg("plugin_args") = std::vector<std::string>{},
+             py::arg("plugin_args") = std::vector<std::string>{}, py::arg("shutdown_timeout_seconds") = 2.0,
              "Start a plugin and return a RAII handle. plugin_args are appended after plugin.yaml args.");
 }

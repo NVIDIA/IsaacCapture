@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -43,12 +44,24 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    if (arguments[0] == "wait")
+    if (arguments[0] == "wait" || arguments[0] == "finalize")
     {
         std::signal(SIGINT, request_stop);
         while (!stop_requested)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (arguments[0] == "finalize")
+        {
+            if (arguments.size() != 3)
+            {
+                return 2;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(arguments[1])));
+            std::ofstream marker(arguments[2]);
+            marker << "finalized\n";
+            marker.close();
+            return marker.fail() ? 3 : 0;
         }
         return 0;
     }

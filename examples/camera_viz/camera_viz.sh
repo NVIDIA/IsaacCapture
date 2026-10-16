@@ -391,12 +391,14 @@ cmd_service_restart() {
 # ──────────────────────────────────────────────────────────────────────
 
 show_help() {
-    cat <<EOF
+    # Literal usage text contains backticks and shell variable examples.
+    cat <<'EOF'
 camera_viz.sh — local development + Jetson deployment for camera_viz
 
 LOCAL
     setup [--venv PATH] [--sender-only] [--jetson]
           [--no-v4l2] [--no-oakd] [--with-rtp] [--with-zed]
+          [--with-ego --sdk-root PATH]
           [--wheel PATH | --build-from-source]
                           Create .venv, install Python deps via uv into
                           the venv, build native codec. Python deps stay
@@ -429,7 +431,7 @@ LOCAL
 
     loopback CONFIG       Run camera_streamer + camera_viz on 127.0.0.1.
 
-    run CONFIG [--mode xr|window]
+    run CONFIG [--mode xr|window] [--stereo-debug off|sbs]
                           Run the viewer with the YAML as-is. ``source:
                           local`` opens cameras directly; ``source: rtp``
                           listens on rtp.port (sender IP irrelevant — the

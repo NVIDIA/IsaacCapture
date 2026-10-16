@@ -160,7 +160,8 @@ std::vector<std::string> PluginManager::query_devices(const std::string& plugin_
 
 std::unique_ptr<Plugin> PluginManager::start(const std::string& plugin_name,
                                              const std::string& plugin_root_id,
-                                             const std::vector<std::string>& plugin_args)
+                                             const std::vector<std::string>& plugin_args,
+                                             double shutdown_timeout_seconds)
 {
     auto it = m_discovered_plugins.find(plugin_name);
     if (it == m_discovered_plugins.end())
@@ -171,7 +172,7 @@ std::unique_ptr<Plugin> PluginManager::start(const std::string& plugin_name,
     const auto& info = it->second;
     std::vector<std::string> args = info.args;
     args.insert(args.end(), plugin_args.begin(), plugin_args.end());
-    return std::make_unique<Plugin>(info.command, info.working_dir, plugin_root_id, args);
+    return std::make_unique<Plugin>(info.command, info.working_dir, plugin_root_id, args, shutdown_timeout_seconds);
 }
 
 } // namespace core

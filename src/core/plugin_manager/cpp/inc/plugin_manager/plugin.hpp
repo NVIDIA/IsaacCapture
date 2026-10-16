@@ -68,11 +68,13 @@ public:
      * @param working_dir The directory to run the plugin in (where metadata was found)
      * @param plugin_root_id The root ID for the plugin
      * @param plugin_args Optional list of arguments to append to the command
+     * @param shutdown_timeout_seconds Grace period before forcing the process to stop
      */
     Plugin(const std::string& command,
            const std::string& working_dir,
            const std::string& plugin_root_id,
-           const std::vector<std::string>& plugin_args = {});
+           const std::vector<std::string>& plugin_args = {},
+           double shutdown_timeout_seconds = 2.0);
 
     /**
      * @brief Destructor - stops the plugin process
@@ -114,6 +116,7 @@ private:
     int m_pid = -1;
 #endif
     bool m_stop_requested = false;
+    const double m_shutdown_timeout_seconds;
     ProcessSnapshot m_process_snapshot;
     std::mutex m_process_mutex;
 };

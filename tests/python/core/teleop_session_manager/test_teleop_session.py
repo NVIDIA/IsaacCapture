@@ -707,12 +707,19 @@ class MockPluginManager:
     def get_plugin_info(self, plugin_name):
         return SimpleNamespace(name=plugin_name, devices=())
 
-    def start(self, plugin_name, plugin_root_id, plugin_args=None):
+    def start(
+        self,
+        plugin_name,
+        plugin_root_id,
+        plugin_args=None,
+        shutdown_timeout_seconds=2.0,
+    ):
         self.start_calls.append(
             {
                 "plugin_name": plugin_name,
                 "plugin_root_id": plugin_root_id,
                 "plugin_args": plugin_args,
+                "shutdown_timeout_seconds": shutdown_timeout_seconds,
             }
         )
         return self._contexts[plugin_name]
@@ -1515,8 +1522,9 @@ class TestPluginInitialization:
                 assert len(session.plugin_managers) == 0
                 assert len(session.plugin_contexts) == 0
 
-    def test_plugin_args_passed_through(self, tmp_path):
-        """Plugin args from config are forwarded to manager.start()."""
+    @pytest.mark.parametrize("shutdown_timeout_seconds", [2.0, 15.0])
+    def test_plugin_args_passed_through(self, tmp_path, shutdown_timeout_seconds):
+        """Plugin launch and teardown settings reach manager.start()."""
         pipeline = MockPipeline(leaf_nodes=[])
 
         mock_pm = MockPluginManager(plugin_names=["test_plugin"])
@@ -1527,6 +1535,7 @@ class TestPluginInitialization:
             search_paths=[tmp_path],
             enabled=True,
             plugin_args=["--flag", "value"],
+            shutdown_timeout_seconds=shutdown_timeout_seconds,
         )
 
         config = make_config(pipeline, plugins=[plugin_config])
@@ -1538,6 +1547,7 @@ class TestPluginInitialization:
                 assert call["plugin_name"] == "test_plugin"
                 assert call["plugin_root_id"] == "/root"
                 assert call["plugin_args"] == ["--flag", "value"]
+                assert call["shutdown_timeout_seconds"] == shutdown_timeout_seconds
 
     def test_plugin_args_default_empty(self, tmp_path):
         """Plugin args default to an empty list when not specified."""
@@ -1627,8 +1637,15 @@ class TestStatusMonitoringIntegration:
                 tracker_cls.assert_called_once_with(f"{plugin}/device_status")
                 assert session.get_device_status(f"{plugin}/{plugin}") is not None
 
-    def test_only_manus_is_monitored_and_plugin_launch_order_is_preserved(
-        self, tmp_path
+    @pytest.mark.parametrize(
+        "plugin_name,root,path",
+        [
+            ("manus_hand_plugin", "/manus", "/hand/left"),
+            ("ego_camera", "ego_instance", "/camera/ego"),
+        ],
+    )
+    def test_supported_inventory_preserves_plugin_launch_order(
+        self, tmp_path, plugin_name, root, path
     ):
         class StatusTracker:
             def __init__(self):
@@ -1646,18 +1663,16 @@ class TestStatusMonitoringIntegration:
                 self.process_poll_count += 1
                 return super().get_process_snapshot()
 
-        manager = MockPluginManager(plugin_names=["legacy_plugin", "manus_hand_plugin"])
+        manager = MockPluginManager(plugin_names=["legacy_plugin", plugin_name])
         legacy_context = CountingContext()
         manus_context = CountingContext()
         manager._contexts["legacy_plugin"] = legacy_context
-        manager._contexts["manus_hand_plugin"] = manus_context
+        manager._contexts[plugin_name] = manus_context
         manager.get_plugin_info = MagicMock(
             return_value=SimpleNamespace(
                 name="Manus",
                 devices=(
-                    SimpleNamespace(
-                        path="/hand/left", type="hand", description="Left hand"
-                    ),
+                    SimpleNamespace(path=path, type="hand", description="Left hand"),
                 ),
             )
         )
@@ -1672,8 +1687,8 @@ class TestStatusMonitoringIntegration:
                     search_paths=[tmp_path],
                 ),
                 PluginConfig(
-                    plugin_name="manus_hand_plugin",
-                    plugin_root_id="/manus",
+                    plugin_name=plugin_name,
+                    plugin_root_id=root,
                     search_paths=[tmp_path],
                 ),
             ],
@@ -1691,12 +1706,12 @@ class TestStatusMonitoringIntegration:
         ):
             session = TeleopSession(config)
             with session:
-                tracker_cls.assert_called_once_with("/manus/device_status")
-                manager.get_plugin_info.assert_called_once_with("manus_hand_plugin")
+                tracker_cls.assert_called_once_with(f"{root}/device_status")
+                manager.get_plugin_info.assert_called_once_with(plugin_name)
                 assert collected_trackers == [tracker]
                 assert [call["plugin_name"] for call in manager.start_calls] == [
                     "legacy_plugin",
-                    "manus_hand_plugin",
+                    plugin_name,
                 ]
                 assert len(session.plugin_managers) == 2
                 assert len(session.plugin_contexts) == 2
@@ -1704,11 +1719,11 @@ class TestStatusMonitoringIntegration:
                 snapshot = session.get_status()
                 assert {provider.id for provider in snapshot.providers} == {
                     "openxr/runtime",
-                    "plugin//manus",
+                    f"plugin/{root}",
                 }
                 assert {device.id for device in snapshot.devices} == {
                     "openxr/headset",
-                    "/manus/hand/left",
+                    f"{root}{path}",
                 }
                 assert session.get_provider_status("plugin//legacy") is None
                 assert session.get_device_status("/legacy/device") is None
@@ -2893,6 +2908,17 @@ class TestConfiguration:
 
         assert config.enabled is True
         assert config.required is False
+        assert config.shutdown_timeout_seconds == 2.0
+
+    @pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
+    def test_plugin_config_rejects_invalid_shutdown_timeout(self, tmp_path, timeout):
+        with pytest.raises(ValueError, match="finite and positive"):
+            PluginConfig(
+                plugin_name="test",
+                plugin_root_id="/root",
+                search_paths=[tmp_path],
+                shutdown_timeout_seconds=timeout,
+            )
 
     def test_plugin_config_disabled_and_required(self, tmp_path):
         """PluginConfig accepts explicit lifecycle policy flags."""

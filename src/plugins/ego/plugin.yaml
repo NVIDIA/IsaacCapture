@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ego_camera
+description: "EGO stereo video, IMU, audio, calibration, and state plugin"
+command: "./ego_camera_plugin"
+version: "1.0.0"
+devices:
+  - path: "/camera/ego"
+    type: "camera"
+    description: "EGO ColorLeft/ColorRight, IMU, audio, calibration, and state"

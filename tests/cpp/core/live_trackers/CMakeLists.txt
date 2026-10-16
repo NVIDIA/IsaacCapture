@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.20)
 
 add_executable(live_trackers_tests
     test_vendor_validation.cpp
+    test_ego_dispatch.cpp
     test_keyboard_session.cpp
 )
 

@@ -30,6 +30,7 @@ v4l2 = ["opencv-python>=4.5"]
 # wheel as v4l2, listed separately so --no-v4l2 setups can still ask for it.
 video = ["opencv-python>=4.5"]
 oakd = ["depthai>=3.0"]
+ego = ["pybind11>=2.11"]
 # pyzed isn't on PyPI — the ZED SDK's bundled ``get_python_api.py``
 # produces a Python-version-specific wheel. ``camera_viz.sh setup --with-zed``
 # runs that and installs the result.

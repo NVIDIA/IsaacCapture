@@ -94,6 +94,30 @@ header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
 
 [[tracker]]
+name = "ego_audio"
+table = "EgoAudioChunk"
+tensor_identifier = "audio_chunk"
+max_flatbuffer_size = 32768
+mcap_channels = ["Audio", "Audio_tracked"]
+replay_channels = ["Audio"]
+
+[[tracker]]
+name = "ego_calibration"
+table = "EgoCalibration"
+tensor_identifier = "calibration"
+max_flatbuffer_size = 32768
+mcap_channels = ["Calibration", "Calibration_tracked"]
+replay_channels = ["Calibration"]
+
+[[tracker]]
+name = "ego_device_state"
+table = "EgoDeviceState"
+tensor_identifier = "device_state"
+max_flatbuffer_size = 32768
+mcap_channels = ["DeviceState", "DeviceState_tracked"]
+replay_channels = ["DeviceState"]
+
+[[tracker]]
 name = "steering_wheel"
 table = "SteeringWheelOutput"
 max_flatbuffer_size = 1024

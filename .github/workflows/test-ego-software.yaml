@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Test EGO Software
+
+on:
+  push:
+    branches: [main, 'release/*.*.x', feature/Orbbec-Ego-stereo-camera, feature/Orbbec-EgoPro-quad-camera]
+    paths: &ego_paths
+    - '.github/workflows/test-ego-software.yaml'
+    - 'CMakeLists.txt'
+    - 'pyproject.toml'
+    - 'cmake/**'
+    - 'src/plugins/CMakeLists.txt'
+    - 'src/plugins/ego/**'
+    - 'src/core/schema/**'
+    - 'src/core/codegen/**'
+    - 'src/core/mcap/**'
+    - 'src/core/deviceio_base/**'
+    - 'src/core/deviceio_session/**'
+    - 'src/core/deviceio_trackers/**'
+    - 'src/core/live_trackers/**'
+    - 'src/core/replay_trackers/**'
+    - 'src/core/plugin_manager/**'
+    - 'src/core/python/**'
+    - 'src/compat/**'
+    - 'src/python/isaaccapture/**'
+    - 'examples/camera_viz/**'
+    - 'examples/mcap_record_replay/**'
+    - 'tests/**'
+  pull_request:
+    paths: *ego_paths
+  workflow_dispatch:
+
+concurrency:
+  group: ego-software-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test-ego-software:
+    # The SDK runner must never execute untrusted fork code.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    # Verify repository/workflow access and an online runner with all labels.
+    # A blocked or unassigned job provides no build or test result.
+    runs-on: [self-hosted, linux, orbbec-sdk]
+    timeout-minutes: 45
+    env:
+      ORBBEC_SDK_ROOT: ${{ vars.ORBBEC_SDK_ROOT }}
+      UV_CACHE_DIR: /tmp/isaaccapture-ego-uv-cache
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Install pinned uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Check runner SDK
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -z "${ORBBEC_SDK_ROOT}" ]]; then
+          echo "Set the protected ORBBEC_SDK_ROOT Actions variable for the orbbec-sdk runner."
+          exit 1
+        fi
+        for required in \
+          "${ORBBEC_SDK_ROOT}/include/libobsensor/ObSensor.hpp" \
+          "${ORBBEC_SDK_ROOT}/lib/OrbbecSDKConfig.cmake" \
+          "${ORBBEC_SDK_ROOT}/lib/libOrbbecSDK.so.2"; do
+          [[ -f "${required}" ]] || { echo "Missing Orbbec SDK file: ${required}"; exit 1; }
+        done
+        printf 'EGO_BUILD_DIR=%s\n' "${RUNNER_TEMP}/ego-software-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+
+    - name: Configure and build
+      shell: bash
+      run: |
+        set -euo pipefail
+        env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH \
+          cmake -S . -B "${EGO_BUILD_DIR}" \
+          -DISAAC_TELEOP_PYTHON_VERSION=3.11 \
+          -DBUILD_VIZ=OFF \
+          -DBUILD_TESTING=ON \
+          -DBUILD_PLUGIN_EGO_CAMERA=ON \
+          -DORBBEC_SDK_ROOT="${ORBBEC_SDK_ROOT}"
+        cmake --build "${EGO_BUILD_DIR}" --parallel 4
+
+    - name: Run hardware-free EGO tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH \
+          ctest --test-dir "${EGO_BUILD_DIR}" --output-on-failure --parallel 4 \
+          --no-tests=error -R '[Ee][Gg][Oo]'
+
+    - name: Run full software suite
+      shell: bash
+      run: |
+        set -euo pipefail
+        env -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH \
+          ctest --test-dir "${EGO_BUILD_DIR}" --output-on-failure --parallel 4
+
+    - name: Upload CTest failure logs
+      if: failure()
+      uses: actions/upload-artifact@v6
+      with:
+        name: ego-software-ctest-logs
+        path: ${{ env.EGO_BUILD_DIR }}/Testing/Temporary
+        if-no-files-found: warn
+        retention-days: 14
