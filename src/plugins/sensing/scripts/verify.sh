@@ -107,9 +107,17 @@ fi
 # --- Build SDKs -------------------------------------------------------------
 step "Build SDKs"
 if mmapi="$(find_mmapi)"; then ok "multimedia api: $mmapi"
-else bad "jetson_multimedia_api not found — docker/setup_container.sh fetches it"; note_fail; fi
+elif in_container; then
+    bad "jetson_multimedia_api not found — docker/setup_container.sh fetches it"; note_fail
+else
+    info "jetson_multimedia_api not installed (only needed to build the plugin)"
+fi
 if sipl="$(find_sipl_api)"; then ok "sipl api: $sipl"
-else bad "jetson_sipl_api not found — docker/setup_container.sh fetches it"; note_fail; fi
+elif in_container; then
+    bad "jetson_sipl_api not found — docker/setup_container.sh fetches it"; note_fail
+else
+    info "jetson_sipl_api not installed (only needed to build the plugin)"
+fi
 
 # --- Vendor package ---------------------------------------------------------
 step "Vendor package"

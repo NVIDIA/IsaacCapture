@@ -245,7 +245,7 @@ else
 fi
 
 step "Verifying"
-"$SCRIPT_DIR/verify.sh" || true
+"$SCRIPT_DIR/../scripts/verify.sh" || true
 
 printf '\n'
 if [[ "$BLOCKED" -eq 0 ]]; then
