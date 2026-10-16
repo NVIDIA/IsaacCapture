@@ -175,7 +175,7 @@ _VERSION_ICON_MAP = {
 }
 _icons = _VERSION_ICON_MAP.get(_smv_name, _DEFAULT_ICONS)
 
-# Branch-specific CloudXR web client ("CloudXR.js") deployment.  docs.yaml
+# Branch-specific CloudXR web client ("CloudXR.js") deployment.  docs-build-and-deploy.yaml
 # publishes the prebuilt web client to ``/client/<slug>/`` where ``<slug>`` is
 # the built ref name with ``/`` replaced by ``-`` (e.g. ``main``,
 # ``release-1.3.x``, ``v1.2.3``).  Resolving the same slug here lets each
