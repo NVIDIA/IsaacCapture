@@ -12,10 +12,12 @@ process that dropped the address), and a destination.
 from __future__ import annotations
 
 import json
+import re
 import stat
 
 import pytest
 from conftest import (
+    CPP_CONSOLE_LINE_RE,
     LINE_RE,
     capture_logs,
     clean_env,
@@ -73,7 +75,11 @@ class TestPythonLeader:
         assert "python info" in logged
         assert "python debug" in logged
         assert LINE_RE.fullmatch(line_with(logged, "python info")) is not None
-        assert LINE_RE.fullmatch(line_with(result.stderr, "python info")) is not None
+        # The console defaults to the short columns: no pid, last name segment.
+        assert re.fullmatch(
+            r"\[\d{2}:\d{2}:\d{2}\.\d{3}\] \[INFO \] \[routing\] python info",
+            line_with(result.stderr, "python info"),
+        )
 
 
 @requires_emitter
@@ -99,7 +105,9 @@ class TestStandaloneCpp:
         assert match["pid"].isdigit()
 
         # Diagnostics go to stderr, so `tool > data.txt` keeps both intact.
-        assert LINE_RE.fullmatch(line_with(result.stderr, "standalone speaking"))
+        assert CPP_CONSOLE_LINE_RE.fullmatch(
+            line_with(result.stderr, "standalone speaking")
+        )
         assert result.stdout == ""
 
     def test_the_console_threshold_comes_from_the_environment(self, tmp_path):

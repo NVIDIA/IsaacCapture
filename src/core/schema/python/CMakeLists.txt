@@ -5,11 +5,13 @@ pybind11_add_module(schema_py
     oak_bindings.h
     controller_bindings.h
     full_body_bindings.h
+    gamepad_bindings.h
     hand_bindings.h
     haptic_command_bindings.h
     head_bindings.h
     joint_se3_pose_bindings.h
     joint_state_bindings.h
+    keyboard_bindings.h
     message_channel_bindings.h
     oglo_tactile_bindings.h
     pedals_bindings.h
@@ -18,7 +20,14 @@ pybind11_add_module(schema_py
     schema_array_views.h
     schema_serialized.h
     se3_tracker_bindings.h
+    soma_common_bindings.h
+    soma_body_joint_poses_bindings.h
+    soma_body_joint_rotations_bindings.h
+    soma_hand_joint_poses_bindings.h
+    soma_hand_joint_rotations_bindings.h
     schema_module.cpp
+    spacemouse_bindings.h
+    steering_wheel_bindings.h
 )
 
 target_link_libraries(schema_py

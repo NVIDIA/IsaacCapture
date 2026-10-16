@@ -47,7 +47,7 @@ adapter on top of it.
 
 .. seealso::
 
-   :doc:`/device/manus` -- installing the Manus plugin so its tracking
+   :doc:`/device/hand_tracking/manus` -- installing the Manus plugin so its tracking
    shows up on the OpenXR hand layer that this retargeter consumes.
 
    :doc:`index` -- the broader retargeting interface and pipeline-builder
@@ -64,8 +64,8 @@ the public Sharpa MJCFs and license notices, and generated mesh-free
 variants. V2D's meshes, Git LFS pointers, and unrelated packages are not
 included.
 
-Every Isaac Teleop Python wheel contains that small staged source bundle.
-The implementation remains lazy-loaded, so importing other Isaac Teleop
+Every Isaac Capture Python wheel contains that small staged source bundle.
+The implementation remains lazy-loaded, so importing other Isaac Capture
 features does not import its heavier numerical stack. The
 ``[grounding]`` extra installs that runtime stack:
 

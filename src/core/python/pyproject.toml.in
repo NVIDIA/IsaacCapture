@@ -9,7 +9,7 @@
 # See: numpy.org/devdocs/dev/depending_on_numpy.html
 
 [build-system]
-requires = ["setuptools>=64", "wheel", "numpy>=2.0"]
+requires = ["setuptools>=77", "wheel", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,6 +19,7 @@ description = "Isaac Teleop - Teleoperation with Device I/O"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+license-files = ["LICENSE.md"]
 authors = [
     {name = "NVIDIA"}
 ]
@@ -55,15 +56,18 @@ py-modules = ["isaacteleop"]  # TODO(1.9): drop the compatibility module.
 where = ["."]
 namespaces = false
 include = [
-    "isaaccapture*",
+    "isaaccapture",
+    "isaaccapture.*",
     "robotic_grounding",
     "robotic_grounding.retarget",
 ]
 
 [tool.setuptools.package-data]
-isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed"]
+# plugins/: device plugins bundled so wheel installs can start them (BUNDLED_PLUGINS_DIR); not packages.
+isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed", "plugins/*/*"]
 "isaaccapture.deviceio" = ["*.so", "*.pyd", "*.pyi"]
-"isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi"]
+# CHROMIUM_LICENSE: the notice for the key table compiled into _deviceio_trackers.
+"isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi", "CHROMIUM_LICENSE"]
 "isaaccapture.deviceio_session" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.mcap" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.oxr" = ["*.so", "*.pyd", "*.pyi"]
@@ -85,6 +89,7 @@ isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed"]
     "*.pyd",
     "*.pyi",
     "assets/*.xml",
+    "controller-guide-*.png",
     "MUJOCO_LICENSE",
 ]
 robotic_grounding = [

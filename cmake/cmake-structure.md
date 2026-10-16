@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# IsaacTeleop CMake & include structure
+# Isaac Capture CMake & include structure
 
 Single source of truth for how CMake targets, directories, and `#include` paths
 are organized in this repo. These rules apply to **all** coding agents and AI

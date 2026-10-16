@@ -19,8 +19,15 @@ from isaaccapture.schema import (
     HandPose,
     ControllerSnapshot,
     Generic3AxisPedalOutput,
+    KeyboardOutput,
+    SpaceMouseOutput,
+    GamepadSnapshot,
     JointStateOutput,
     FullBodyPose,
+    SomaBodyJointPoses,
+    SomaBodyJointRotations,
+    SomaHandJointPoses,
+    SomaHandJointRotations,
     MessageChannelMessagesTracked,
 )
 
@@ -92,6 +99,24 @@ class Generic3AxisPedalOutputTrackedType(_PayloadTensorType):
     _payload_cls = Generic3AxisPedalOutput
 
 
+class KeyboardOutputTrackedType(_PayloadTensorType):
+    """KeyboardOutput payload from DeviceIO KeyboardTracker."""
+
+    _payload_cls = KeyboardOutput
+
+
+class SpaceMouseOutputTrackedType(_PayloadTensorType):
+    """SpaceMouseOutput payload from DeviceIO SpaceMouseTracker."""
+
+    _payload_cls = SpaceMouseOutput
+
+
+class GamepadSnapshotTrackedType(_PayloadTensorType):
+    """GamepadSnapshot payload from DeviceIO GamepadTracker."""
+
+    _payload_cls = GamepadSnapshot
+
+
 class JointStateOutputTrackedType(_PayloadTensorType):
     """JointStateOutput payload from DeviceIO JointStateTracker."""
 
@@ -106,6 +131,30 @@ class FullBodyPoseTrackedType(_PayloadTensorType):
     """
 
     _payload_cls = FullBodyPose
+
+
+class SomaBodyJointRotationsTrackedType(_PayloadTensorType):
+    """SomaBodyJointRotations payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointRotations
+
+
+class SomaBodyJointPosesTrackedType(_PayloadTensorType):
+    """SomaBodyJointPoses payload from a generated SOMA body tracker."""
+
+    _payload_cls = SomaBodyJointPoses
+
+
+class SomaHandJointRotationsTrackedType(_PayloadTensorType):
+    """SomaHandJointRotations payload from a generated SOMA hand tracker."""
+
+    _payload_cls = SomaHandJointRotations
+
+
+class SomaHandJointPosesTrackedType(_PayloadTensorType):
+    """SomaHandJointPoses payload from a generated SOMA hand tracker."""
+
+    _payload_cls = SomaHandJointPoses
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -172,6 +221,42 @@ def DeviceIOGeneric3AxisPedalOutputTracked() -> TensorGroupType:
     )
 
 
+def DeviceIOKeyboardOutputTracked() -> TensorGroupType:
+    """Tracked keyboard data from DeviceIO KeyboardTracker.
+
+    Contains:
+        keyboard_tracked: KeyboardOutput handle, or None when inactive
+    """
+    return TensorGroupType(
+        "deviceio_keyboard_output",
+        [KeyboardOutputTrackedType("keyboard_tracked")],
+    )
+
+
+def DeviceIOSpaceMouseOutputTracked() -> TensorGroupType:
+    """Tracked SpaceMouse data from DeviceIO SpaceMouseTracker.
+
+    Contains:
+        spacemouse_tracked: SpaceMouseOutput handle, or None while the plugin is not pushing
+    """
+    return TensorGroupType(
+        "deviceio_spacemouse_output",
+        [SpaceMouseOutputTrackedType("spacemouse_tracked")],
+    )
+
+
+def DeviceIOGamepadSnapshotTracked() -> TensorGroupType:
+    """Tracked gamepad snapshot from DeviceIO GamepadTracker.
+
+    Contains:
+        gamepad_tracked: GamepadSnapshot handle, or None while the plugin is not pushing
+    """
+    return TensorGroupType(
+        "deviceio_gamepad_snapshot",
+        [GamepadSnapshotTrackedType("gamepad_tracked")],
+    )
+
+
 def DeviceIOJointStateOutputTracked() -> TensorGroupType:
     """Tracked joint-state data from DeviceIO JointStateTracker.
 
@@ -193,6 +278,38 @@ def DeviceIOFullBodyPoseTracked() -> TensorGroupType:
     return TensorGroupType(
         "deviceio_full_body_pose",
         [FullBodyPoseTrackedType("full_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointRotationsTracked() -> TensorGroupType:
+    """SOMA body controls, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_rotations",
+        [SomaBodyJointRotationsTrackedType("soma_body_tracked")],
+    )
+
+
+def DeviceIOSomaBodyJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA body poses, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_body_joint_poses",
+        [SomaBodyJointPosesTrackedType("soma_body_tracked")],
+    )
+
+
+def DeviceIOSomaHandJointRotationsTracked() -> TensorGroupType:
+    """SOMA hand controls, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_hand_joint_rotations",
+        [SomaHandJointRotationsTrackedType("soma_hand_tracked")],
+    )
+
+
+def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
+    """Evaluated SOMA hand poses, or None when the tracker is inactive."""
+    return TensorGroupType(
+        "deviceio_soma_hand_joint_poses",
+        [SomaHandJointPosesTrackedType("soma_hand_tracked")],
     )
 
 

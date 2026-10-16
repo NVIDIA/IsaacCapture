@@ -312,6 +312,26 @@ session's headset selection, and ``ignoredSerials`` lists other observed ADB
 devices (up to eight display-safe serials). Selection is scoped to the current
 service session; a previous status file never pins a new session.
 
+The snapshot exposes separate readiness facts: ``socketBound`` means the WSS
+listener is serving; ``transportReady`` means the selected headset's network
+and, in USB-local mode, TURN and reverse rules have been verified;
+``clientLoaded`` means the browser's CONNECT control is actionable or a
+matching browser health report was received; ``connectDispatched`` records a
+host CONNECT click; and ``streamConfirmed`` requires a streaming report with
+fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
+milestone and when it was entered. ``lastMetricsAt`` is the host-received
+metrics time in epoch milliseconds; the launcher accepts ``streamConfirmed``
+only while those metrics and the lifecycle status are less than five seconds
+old. Recovery can move the stage backward, and a surviving browser can resume
+a stream without another host CONNECT click.
+
+``CloudXRLauncher.wait_for_oob_stage("streamConfirmed", timeout_sec=90)``
+waits for live status and raises on a fatal worker failure or timeout. Call it
+after creating the OpenXR session when the application needs a confirmed
+headset stream before announcing startup. Starting the standalone CloudXR
+service confirms its listener only; headset setup continues with bounded
+retries and is visible through the OOB status.
+
 If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
 service publishes a terminal snapshot with ``health=fatal`` and ``state=FATAL``,
 clears readiness and streaming flags, and stops the runtime. Unlike a normal
@@ -556,13 +576,20 @@ Environment variables
        mode supports WiFi setup only; the launcher rejects the
        combination at startup.
    * - ``ANDROID_SERIAL``
-     - Pin a specific adb device when more than one is connected. The
-       lifecycle waits if multiple devices are ready before its first
-       selection. Once selected, every device command uses ``-s <serial>``.
-       If the selected serial disappears, becomes offline, or is unauthorized,
-       the service waits for it and ignores other devices. When it returns,
-       recovery resumes even if the other devices remain connected. Without
-       ``ANDROID_SERIAL``, exactly one ready device is required for selection.
+     - Pin the intended headset before starting OOB when more than one ADB
+       transport is visible. Without it, the first observation must contain
+       exactly one serial; that serial is pinned even while ``unauthorized``
+       or ``offline``. An ambiguous first observation fails with a restart
+       instruction, rather than selecting by list order or by which device
+       becomes ready first. Every device command then uses ``-s <serial>``.
+       If the selected serial disappears or loses authorization, the service
+       waits for it and ignores later devices. Once accessible, the selected
+       device must identify as a Meta Quest or PICO headset through Android
+       manufacturer/brand and a nonempty model property. Connect a supported
+       HMD and set ``ANDROID_SERIAL`` if the wrong device was selected.
+       Before each new browser launch, ADB must confirm
+       ``mWakefulness=Awake``; wear or unlock the headset (or cover its
+       proximity sensor) when the service reports that it is asleep.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host. If this is
@@ -570,12 +597,14 @@ Environment variables
        early enough to leave one retry interval for a bounded fallback.
    * - ``TELEOP_OOB_RETRY_INTERVAL_SEC``
      - Positive finite retry and observation interval in seconds (default ``5``).
-   * - ``TELEOP_CLIENT_RECONNECT_ENABLED``
-     - Enable the WebXR client's stream reconnect loop (default ``true``).
-       The OOB lifecycle waits for this client-owned loop before taking over.
    * - ``TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS``
      - Non-negative number of browser-local reconnect attempts (default ``10``).
-       The value is also included in the generated headset URL.
+       The WebXR client's stream reconnect loop is opt-in — off unless an
+       explicit ``reconnectEnabled=true`` URL param or the 2D debug UI's
+       checkbox turns it on — and OOB has no way to know which, so the host
+       always waits out this budget before taking over, whether or not the
+       client is actually retrying. The value is also included in the
+       generated headset URL.
    * - ``TELEOP_CLIENT_RECONNECT_DELAY_MS``
      - Non-negative delay between browser-local attempts in milliseconds
        (default ``3000``). The host derives its bounded recovery grace from
@@ -607,7 +636,7 @@ On startup the launcher:
 2. Resolves the WebXR static directory from
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
-   the published client (see :doc:`../getting_started/build_from_source/webxr`).
+   the published client (see :doc:`../development/build_from_source/webxr`).
 3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
    proxy's existing TLS listener.
 4. After the selected headset is ready, checks its non-loopback network,
@@ -675,7 +704,7 @@ and ``bundle.emulator.js`` (desktop emulation only). If the static cache under
 **Fix:** Ensure ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` are present
 under the static dir — run the launcher once with network, copy a full ``npm run build``
 output, or use the GitHub Pages URL directly. See
-:doc:`../getting_started/build_from_source/webxr`.
+:doc:`../development/build_from_source/webxr`.
 
 CDP: startButton marked failed / not actionable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

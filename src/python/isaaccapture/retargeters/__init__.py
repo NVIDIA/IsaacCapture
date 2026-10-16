@@ -15,7 +15,17 @@ Available Retargeters:
     - LocomotionFixedRootCmdRetargeter: Fixed root command (standing still)
     - LocomotionRootCmdRetargeter: Locomotion from controller inputs
     - FootPedalRootCmdRetargeter: Root command from 3-axis foot pedal (horizontal/vertical + rudder)
+    - VehicleControlRetargeter: Vehicle command retargeting from steering wheel input
     - GripperRetargeter: Pinch-based gripper control
+    - KeyboardToSe3RelRetargeter: Keyboard press state -> relative EE delta control
+    - KeyboardGripperRetargeter: Keyboard K-key toggle -> gripper open/closed
+    - KeyboardToSe2Retargeter: Keyboard press state -> base velocity command (v_x, v_y, omega_z)
+    - SpaceMouseToSe3RelRetargeter: SpaceMouse axes -> relative EE delta control
+    - SpaceMouseGripperRetargeter: SpaceMouse left-button toggle -> gripper open/closed
+    - SpaceMouseToSe2Retargeter: SpaceMouse axes -> base velocity command (v_x, v_y, omega_z)
+    - GamepadToSe3RelRetargeter: Gamepad stick/dpad axes -> relative EE delta control
+    - GamepadGripperRetargeter: Gamepad X-button toggle -> gripper open/closed
+    - GamepadToSe2Retargeter: Gamepad stick axes -> base velocity command (v_x, v_y, omega_z)
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
@@ -104,9 +114,107 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "FootPedalRootCmdRetargeterConfig",
         None,
     ),
+    # .vehicle_control_retargeter
+    "VehicleControlCommand": (
+        ".vehicle_control_retargeter",
+        "VehicleControlCommand",
+        None,
+    ),
+    "VehicleControlRetargeter": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeter",
+        None,
+    ),
+    "VehicleControlRetargeterConfig": (
+        ".vehicle_control_retargeter",
+        "VehicleControlRetargeterConfig",
+        None,
+    ),
+    "axis_to_pedal": (".vehicle_control_retargeter", "axis_to_pedal", None),
     # .gripper_retargeter
     "GripperRetargeter": (".gripper_retargeter", "GripperRetargeter", None),
     "GripperRetargeterConfig": (".gripper_retargeter", "GripperRetargeterConfig", None),
+    "SpaceMouseGripperRetargeter": (
+        ".gripper_retargeter",
+        "SpaceMouseGripperRetargeter",
+        None,
+    ),
+    "GamepadGripperRetargeter": (
+        ".gripper_retargeter",
+        "GamepadGripperRetargeter",
+        None,
+    ),
+    "KeyboardGripperRetargeter": (
+        ".gripper_retargeter",
+        "KeyboardGripperRetargeter",
+        None,
+    ),
+    # .keyboard_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "KeyboardToSe3RelRetargeter": (
+        ".keyboard_se3_retargeter",
+        "KeyboardToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "KeyboardToSe3RelRetargeterConfig": (
+        ".keyboard_se3_retargeter",
+        "KeyboardToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    # .spacemouse_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "SpaceMouseToSe3RelRetargeter": (
+        ".spacemouse_se3_retargeter",
+        "SpaceMouseToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "SpaceMouseToSe3RelRetargeterConfig": (
+        ".spacemouse_se3_retargeter",
+        "SpaceMouseToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    # .spacemouse_se2_retargeter
+    "SpaceMouseToSe2Retargeter": (
+        ".spacemouse_se2_retargeter",
+        "SpaceMouseToSe2Retargeter",
+        None,
+    ),
+    "SpaceMouseToSe2RetargeterConfig": (
+        ".spacemouse_se2_retargeter",
+        "SpaceMouseToSe2RetargeterConfig",
+        None,
+    ),
+    # .gamepad_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "GamepadToSe3RelRetargeter": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "GamepadToSe3RelRetargeterConfig": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    # .gamepad_se2_retargeter
+    "GamepadToSe2Retargeter": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2Retargeter",
+        None,
+    ),
+    "GamepadToSe2RetargeterConfig": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2RetargeterConfig",
+        None,
+    ),
+    # .keyboard_se2_retargeter
+    "KeyboardToSe2Retargeter": (
+        ".keyboard_se2_retargeter",
+        "KeyboardToSe2Retargeter",
+        None,
+    ),
+    "KeyboardToSe2RetargeterConfig": (
+        ".keyboard_se2_retargeter",
+        "KeyboardToSe2RetargeterConfig",
+        None,
+    ),
     # .SO101 (SO-101 5-DOF arm: clutch EE-pose, analog gripper)
     "SO101ClutchRetargeter": (
         ".SO101.clutch_retargeter",
@@ -269,6 +377,10 @@ __all__ = [
     "TriHandMotionControllerConfig",
     "FootPedalRootCmdRetargeter",
     "FootPedalRootCmdRetargeterConfig",
+    "VehicleControlCommand",
+    "VehicleControlRetargeter",
+    "VehicleControlRetargeterConfig",
+    "axis_to_pedal",
     # Locomotion retargeters
     "LocomotionFixedRootCmdRetargeter",
     "LocomotionFixedRootCmdRetargeterConfig",
@@ -277,6 +389,21 @@ __all__ = [
     # Manipulator retargeters
     "GripperRetargeter",
     "GripperRetargeterConfig",
+    "KeyboardToSe3RelRetargeter",
+    "KeyboardToSe3RelRetargeterConfig",
+    "KeyboardGripperRetargeter",
+    "KeyboardToSe2Retargeter",
+    "KeyboardToSe2RetargeterConfig",
+    "SpaceMouseToSe3RelRetargeter",
+    "SpaceMouseToSe3RelRetargeterConfig",
+    "SpaceMouseGripperRetargeter",
+    "SpaceMouseToSe2Retargeter",
+    "SpaceMouseToSe2RetargeterConfig",
+    "GamepadToSe3RelRetargeter",
+    "GamepadToSe3RelRetargeterConfig",
+    "GamepadGripperRetargeter",
+    "GamepadToSe2Retargeter",
+    "GamepadToSe2RetargeterConfig",
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",

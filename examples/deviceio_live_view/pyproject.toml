@@ -17,6 +17,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "isaaccapture[cloudxr]",
     "numpy>=1.23.0",
+    "py-soma-x==0.3.1",
     "viser>=0.2.0",
 ]
 

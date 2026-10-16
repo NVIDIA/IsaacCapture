@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rig
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sharpa Avatar Glove
+# Sharpa AvatarExo Glove
 
-C++ plugin that connects Sharpa Avatar gloves to Isaac Capture. It publishes
+C++ plugin that connects Sharpa AvatarExo Gloves to Isaac Capture. It publishes
 OpenXR hand poses and glove joint state, and consumes inbound haptic commands.
 
 The plugin talks to the gloves directly, so do not run `avatar-backend` or
@@ -22,7 +22,7 @@ The visualization example is separate:
 
 - Linux x86_64 (Ubuntu 22.04)
 - A built Isaac Capture checkout
-- Sharpa Avatar gloves connected through the USB dongle or wired Ethernet
+- Sharpa AvatarExo Gloves connected through a USB dongle or USB cable
 
 `install_avatar_sdk.sh` retrieves a pinned production `avatar-sdk` version from Sharpa's
 signed production APT repository, without selecting the `avatar-sdk-dev` or
@@ -102,7 +102,7 @@ wrist source is used when one is available.
 | Symptom | Resolution |
 |---|---|
 | Avatar SDK installation fails | Check access to Sharpa's production APT endpoint and rerun `install_avatar_sdk.sh` |
-| CMake skipped the Sharpa Avatar plugin | The SDK is missing; run `install_avatar_sdk.sh` and reconfigure with `-DBUILD_PLUGIN_SHARPA_AVATAR=ON` |
+| CMake skipped the Sharpa AE Glove plugin | The SDK is missing; run `install_avatar_sdk.sh` and reconfigure with `-DBUILD_PLUGIN_SHARPA_AVATAR=ON` |
 | CMake rejected the Avatar SDK | Install the pinned production package with `install_avatar_sdk.sh`, or point `AVATAR_SDK_ROOT` at a complete SDK tree |
 | USB glove is not detected | Run `install_udev_rules.sh` on the host, then unplug and reconnect the glove or dongle |
 | CMake 3.24 or newer is required | Install a newer CMake in the Isaac Capture environment and rerun the configure/build/install commands above |

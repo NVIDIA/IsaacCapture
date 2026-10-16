@@ -184,6 +184,11 @@ def mock_service_deps(tmp_path, ready=True, wss=True):
         patch(
             "isaaccapture.cloudxr.service._service.check_eula",
         ) as m_eula,
+        # The worker is mocked, so lifecycle tests need no installed native SDK.
+        patch(
+            "isaaccapture.cloudxr.service._service.get_sdk_path",
+            return_value=str(tmp_path / "sdk"),
+        ),
         patch(
             "isaaccapture.cloudxr.service._service.wait_for_runtime_ready_sync",
             return_value=ready,

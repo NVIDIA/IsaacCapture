@@ -109,6 +109,22 @@ class TestOobConsoleReporter:
             "[setup-oob] No USB-attached HMD detected; connect a headset to continue."
         ]
 
+    def test_exact_adb_diagnostic_reaches_console(self):
+        reporter = cli._OobConsoleReporter(clock=lambda: 0)
+        messages = reporter.observe(
+            {
+                "health": "degraded",
+                "state": "WAITING_FOR_ADB",
+                "reason": "Waiting for selected headset",
+                "selectedSerial": None,
+                "adbReady": False,
+                "adbDiagnostic": "adb: failed to connect to daemon at tcp:5037",
+            }
+        )
+        assert messages == [
+            "[setup-oob] ADB diagnostic: adb: failed to connect to daemon at tcp:5037"
+        ]
+
     def test_ready_loss_and_reconnection_are_reported(self):
         reporter = cli._OobConsoleReporter(clock=lambda: 0)
         ready = {

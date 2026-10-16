@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "point.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+// State of a 3Dconnexion SpaceMouse-family HID device, pushed by the spacemouse plugin.
+// Axis values are normalized to [-1, 1] in the device's own axis order. Carries no semantic
+// mapping: which axis or button means what is up to the consuming retargeter.
+//
+// Validated devices:
+// - SpaceMouse Compact, SpaceMouse Wireless, SpaceNavigator, SpaceNavigator for Notebooks,
+//   3Dconnexion Universal Receiver.
+table SpaceMouseOutput {
+  translation: Point (id: 0);
+
+  rotation: Point (id: 1);
+
+  // One entry per button the device reports, 1 while held and 0 otherwise.
+  buttons: [ubyte] (id: 2);
+
+  // Whether the plugin has the device open. While false, the axes and buttons are zero.
+  connected: bool (id: 3);
+}
+
+// MCAP recording wrapper for SpaceMouseOutput.
+table SpaceMouseOutputRecord {
+    data: SpaceMouseOutput (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type SpaceMouseOutputRecord;

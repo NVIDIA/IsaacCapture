@@ -380,7 +380,10 @@ class _OobConsoleReporter:
         self._last_ignored = ignored_signature
 
         if state == "WAITING_FOR_ADB" and not ready:
-            if serial is None and not any(
+            diagnostic = snapshot.get("adbDiagnostic")
+            if diagnostic:
+                emit(f"adb-diagnostic:{diagnostic}", f"ADB diagnostic: {diagnostic}")
+            elif serial is None and not any(
                 word in reason.lower()
                 for word in ("unauthorized", "offline", "multiple")
             ):

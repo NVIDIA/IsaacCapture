@@ -17,10 +17,10 @@ from pathlib import Path
 from ._core import (
     DATE_FORMAT,
     LINE_FORMAT,
-    ROOT_LOGGER_NAME,
     TRACE,
     _move_above_std,
     ensure_log_dir,
+    root_logger,
 )
 
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
@@ -110,7 +110,7 @@ def ensure_handler() -> logging.Handler:
         )
         handler.setFormatter(logging.Formatter(LINE_FORMAT, datefmt=DATE_FORMAT))
         handler.setLevel(TRACE)
-        logging.getLogger(ROOT_LOGGER_NAME).addHandler(handler)
+        root_logger.addHandler(handler)
         # Preserve identity so exit cleanup cannot unlink a replacement.
         opened = os.fstat(handler.stream.fileno())
         atexit.register(
