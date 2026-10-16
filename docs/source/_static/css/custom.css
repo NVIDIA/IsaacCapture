@@ -74,6 +74,15 @@ a:focus {
     text-decoration: underline !important;
 }
 
+.doc-video {
+    display: block;
+    width: 100%;
+    margin: 1rem 0 0.5rem;
+    border: 1px solid var(--pst-color-border);
+    border-radius: 0.5rem;
+    background: #000;
+}
+
 /* for the announcement link */
 .bd-header-announcement a,
 .bd-header-version-warning a {

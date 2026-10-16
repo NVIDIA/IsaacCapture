@@ -14,13 +14,20 @@ Franka simulation example
 
 The example locates a cube, approaches it, closes the gripper, lifts it and
 places it on another cube. It repeats the transfer to build a three-cube stack
-and stops after one successful native episode export. No recorded human
-movement or manual controller positioning is required.
+and the default command stops after one successful native episode export. No
+recorded human movement or manual controller positioning is required.
 
 The host-side ``stack_logic.py`` reads cube and gripper poses from Lab and
 chooses the next gripper target. A bridge converts that target into synthetic
 XR controller input. **Lab's native IK calculates the joint commands.** The
 Franka you see in the browser is the streamed result of the simulation.
+
+.. doc-video:: ../_static/franka-synthetic-xr-multi-episode-2x.mp4
+
+**Three episodes at 2× speed.** The browser and Synthetic XR input are on the
+left; Isaac Lab is on the right. After each native export, Lab randomizes the
+cube layout and the same action logic starts the next episode. The original
+full-speed recording and native artifacts are retained with the run evidence.
 
 One shared robot-control path
 -----------------------------
@@ -64,9 +71,10 @@ Follow the :download:`Franka setup and run commands <../../../examples/synthetic
 The Synthetic XR panel lets you see the input being applied. **You do not need
 to select Left/Right or operate its movement buttons for this example.**
 
-The preview's native result is one successful seed-42 episode on the prepared
-TeleOp 1.5 / CloudXR 6.3 / Lab compatibility stack. Targets use current cube
-poses, but repeated randomized episodes have not been qualified. See the
+The preview's packaged native result is one successful seed-42 episode on the
+prepared TeleOp 1.5 / CloudXR 6.3 / Lab compatibility stack. The accelerated
+recording above additionally demonstrates three successful randomized episodes
+in one continuous session; three successes are not a reliability claim. See the
 :download:`validation scope <../../../examples/synthetic_xr/VALIDATION.txt>` for component
 identities and evidence limits.
 
