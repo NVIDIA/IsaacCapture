@@ -197,6 +197,7 @@ def mock_service_deps(tmp_path, ready=True, wss=True):
             "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
             return_value=static_dir,
         ) as m_static_client,
+        patch("isaaccapture.cloudxr.oob_teleop_env.print_host_preflight_warnings"),
         patch(
             "isaaccapture.cloudxr.service._service.subprocess.Popen",
             return_value=mock_proc,
