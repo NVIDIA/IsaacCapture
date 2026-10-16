@@ -70,6 +70,13 @@ def test_chromium_notice_ships_beside_the_key_table() -> None:
     assert shipped == vendored
 
 
+def test_wheel_does_not_ship_cts() -> None:
+    wheel = _wheel()
+    with zipfile.ZipFile(wheel) as archive:
+        shipped = [n for n in archive.namelist() if n.startswith(f"{DIST}/cts/")]
+    assert shipped == []
+
+
 def test_the_shim_ships_beside_the_real_package() -> None:
     wheel = _wheel()
     with zipfile.ZipFile(wheel) as archive:

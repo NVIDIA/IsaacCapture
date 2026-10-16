@@ -1,0 +1,199 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""A minimal analytic hand for unit tests: four fingers curling in one plane each."""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+
+import flatbuffers
+from mcap.writer import CompressionType, Writer
+
+from cts_common.vectors import multiply, rotate
+
+import hand_cts._schema  # noqa: F401  puts generated/ on sys.path
+from core import DeviceDataTimestamp, HandJoints, HandPose, HandPoseRecord
+from hand_cts.frames import SCHEMA_NAME, Frame, JointPose, SourceMetadata
+
+KNUCKLES = {
+    7: (-0.024, 0.0, -0.094),
+    12: (-0.004, 0.0, -0.097),
+    17: (0.015, 0.0, -0.091),
+    22: (0.032, -0.004, -0.082),
+}
+BONES = (0.040, 0.025, 0.020)
+THUMB = ((-0.022, -0.012, -0.028), (-0.6, -0.2, -0.77), (0.045, 0.032, 0.026))
+PERIOD_NS = 16_666_667
+IDENTITY = (0.0, 0.0, 0.0, 1.0)
+
+
+def axis_angle(axis, angle):
+    n = math.sqrt(sum(c * c for c in axis))
+    s = math.sin(angle / 2) / n
+    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(angle / 2))
+
+
+def right_local(curl: float = 0.0, knuckle: float = 0.0) -> list[tuple[tuple, tuple]]:
+    """26 (position, xyzw) pairs of a right hand in its wrist frame.
+
+    ``curl`` bends every finger joint; ``knuckle`` adds a bend at the knuckle only.
+    """
+    joints: list = [((0.0, 0.0, 0.0), IDENTITY)] * 26
+    for root, base in KNUCKLES.items():
+        point, phi = base, 0.0
+        joints[root - 1] = (tuple(0.2 * c for c in base), IDENTITY)
+        for k, bone in enumerate(BONES):
+            phi += curl + (knuckle if k == 0 else 0.0)
+            q = axis_angle((1.0, 0.0, 0.0), -phi)
+            joints[root + k] = (point, q)
+            d = (0.0, -math.sin(phi), -math.cos(phi))
+            point = tuple(p + bone * c for p, c in zip(point, d))
+        joints[root + 3] = (point, joints[root + 2][1])
+    base, direction, bones = THUMB
+    n = math.sqrt(sum(c * c for c in direction))
+    direction = tuple(c / n for c in direction)
+    point = base
+    for k, bone in enumerate(bones):
+        joints[2 + k] = (point, IDENTITY)
+        point = tuple(p + bone * c for p, c in zip(point, direction))
+    joints[5] = (point, IDENTITY)
+    middle_mc, middle_prox = joints[11][0], joints[12][0]
+    joints[0] = (tuple((a + b) / 2 for a, b in zip(middle_mc, middle_prox)), IDENTITY)
+    return joints
+
+
+def mirrored(joints):
+    return [((-p[0], p[1], p[2]), (q[0], -q[1], -q[2], q[3])) for p, q in joints]
+
+
+def frame(
+    tick: int,
+    side: str = "right",
+    local=None,
+    wrist=(0.2, 1.1, -0.3),
+    orientation=IDENTITY,
+    valid=None,
+    radius: float = 0.01,
+) -> Frame:
+    local = local if local is not None else right_local()
+    if side == "left" and local is not None:
+        local = mirrored(local)
+    t = 1_000_000_000 + tick * PERIOD_NS
+    joints = tuple(
+        JointPose(
+            position=tuple(w + c for w, c in zip(wrist, rotate(orientation, p))),
+            orientation=multiply(orientation, q),
+            is_valid=True if valid is None else i in valid,
+            radius=radius,
+        )
+        for i, (p, q) in enumerate(local)
+    )
+    return Frame(
+        sequence=tick,
+        log_time_ns=t,
+        publish_time_ns=t,
+        has_payload=True,
+        side=side,
+        available_time_ns=t,
+        sample_time_ns=t,
+        device_time_ns=t + 5,
+        joints=joints,
+    )
+
+
+def take(count: int, side: str = "right", transform=None, **kwargs) -> list[Frame]:
+    """``count`` frames curling open to closed and back, so extremes exist."""
+    frames = []
+    for tick in range(count):
+        curl = math.radians(70) * (1 - math.cos(2 * math.pi * tick / count)) / 2
+        local = right_local(curl)
+        if transform is not None:
+            local = transform(local)
+        frames.append(frame(tick, side, local=local, **kwargs))
+    return frames
+
+
+def both_hands(count: int) -> list[Frame]:
+    """``take(count)`` for each hand, interleaved left then right."""
+    left = take(count, "left")
+    right = take(count, "right")
+    return [item for pair in zip(left, right) for item in pair]
+
+
+class StubSource:
+    """A FrameSource over frames held in memory."""
+
+    def __init__(self, frames):
+        self._frames = frames
+        self.metadata = SourceMetadata(
+            schema_name=SCHEMA_NAME,
+            schema_encoding="flatbuffer",
+            schema_data=None,
+            message_encoding="flatbuffer",
+            topic="hands/left_hand",
+            profile=None,
+            channel_found=True,
+        )
+
+    def __iter__(self):
+        return iter(self._frames)
+
+
+def encode(frame_: Frame) -> bytes:
+    """One frame as the wire bytes of a ``core.HandPoseRecord``."""
+    joints = frame_.joints
+    builder = flatbuffers.Builder(1100)
+    HandPose.Start(builder)
+    offset = HandJoints.CreateHandJoints(
+        builder,
+        *([j.position[axis] for j in joints] for axis in range(3)),
+        *([j.orientation[axis] for j in joints] for axis in range(4)),
+        [j.is_valid for j in joints],
+        [j.radius for j in joints],
+    )
+    HandPose.AddJoints(builder, offset)
+    data = HandPose.End(builder)
+    HandPoseRecord.Start(builder)
+    HandPoseRecord.AddTimestamp(
+        builder,
+        DeviceDataTimestamp.CreateDeviceDataTimestamp(
+            builder,
+            frame_.available_time_ns,
+            frame_.sample_time_ns,
+            frame_.device_time_ns,
+        ),
+    )
+    HandPoseRecord.AddData(builder, data)
+    builder.Finish(HandPoseRecord.End(builder))
+    return bytes(builder.Output())
+
+
+def write_recording(path: Path, frames: list[Frame]) -> Path:
+    """An MCAP of ``frames`` on one ``hands/<side>_hand`` channel per side."""
+    bfbs = Path(__file__).resolve().parents[1] / "build" / "bfbs" / "hand.bfbs"
+    with path.open("wb") as handle:
+        writer = Writer(handle, compression=CompressionType.NONE)
+        writer.start(profile="teleop", library="hand-cts-tests")
+        schema_id = writer.register_schema(
+            name=SCHEMA_NAME, encoding="flatbuffer", data=bfbs.read_bytes()
+        )
+        channels = {
+            side: writer.register_channel(
+                topic=f"hands/{side}_hand",
+                message_encoding="flatbuffer",
+                schema_id=schema_id,
+            )
+            for side in ("left", "right")
+        }
+        for sequence, item in enumerate(frames):
+            writer.add_message(
+                channel_id=channels[item.side],
+                log_time=item.log_time_ns,
+                publish_time=item.publish_time_ns,
+                sequence=sequence,
+                data=encode(item),
+            )
+        writer.finish()
+    return path

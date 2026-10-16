@@ -33,7 +33,9 @@ Images follow `.gitattributes` like everything else, Git LFS included. A checkou
 LFS holds pointer text and Sphinx copies it into the site verbatim, so a page that looks
 right locally can still ship broken artwork. Commit artwork together with the page or data
 that references it. Stage new artwork with a plain `git add` before running pre-commit:
-`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob.
+`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob. A clone
+whose hooks pre-commit installed has no LFS pre-push hook, so GitHub declines a push that
+adds artwork; run `git lfs push origin <branch>` first.
 
 ## Device pages stand alone
 
@@ -95,6 +97,14 @@ the table has no description column, so a capability claim enters `modes` only i
 device page documents it, links belong in the Details panel, and the sentence itself is
 dropped. The build keeps `company` that narrow by rejecting every field but `name`, `logo`,
 and `logo_dark`.
+
+## Conformance pages name no device maker
+
+`source/conformance/` and its media are vendor-neutral: no glove, suit or tracker company
+or product appears in prose, cards, commands, take names or plugin names, because a named
+example reads as an endorsement. Use a fictional device (Glove X with `glove_x_plugin`,
+Suit X with `body.suit-x`) and say it is a placeholder. Headsets (PICO, Quest) are the
+exception: every take runs on one.
 
 ## Removing cache overrides
 

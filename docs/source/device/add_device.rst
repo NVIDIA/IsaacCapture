@@ -284,3 +284,7 @@ example; ``full_body_printer`` is covered in :doc:`body_tracking/index`.
 
 For the shared library build and contribution workflow, see
 :doc:`/development/build_from_source/index` and :doc:`/development/contributing`.
+
+.. seealso::
+
+   Once your device publishes hand or full-body poses, prove it with :doc:`/conformance/overview`.
