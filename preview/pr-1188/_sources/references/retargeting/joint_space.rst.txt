@@ -5,7 +5,7 @@ Retargeter: Joint-Space Device
 ==============================
 
 ``JointStateRetargeter`` maps a name-keyed joint-state input (from
-:doc:`/device/joint_space`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
+:doc:`/device/joint_space/index`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
 It is the generic retargeter for leader arms, exoskeletons, and other joint-encoder devices; the
 SO-101 leader arm is the reference instance.
 
@@ -126,7 +126,7 @@ rebasing, and the flattened action width/order):
 
 .. seealso::
 
-   :doc:`/device/joint_space` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
+   :doc:`/device/joint_space/index` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
    SO-101 plugin, and MCAP record/replay.
 
    :doc:`index` -- the broader retargeting interface and pipeline-builder pattern.
