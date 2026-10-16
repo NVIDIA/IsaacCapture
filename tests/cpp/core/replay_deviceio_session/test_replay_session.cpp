@@ -14,6 +14,7 @@
 #include <deviceio_trackers/keyboard_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/se3_tracker.hpp>
+#include <deviceio_trackers/tactile_tracker.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/tracker_channels.hpp>
 #include <schema/hand_generated.h>
@@ -22,6 +23,8 @@
 #include <schema/keyboard_generated.h>
 #include <schema/message_channel_generated.h>
 #include <schema/se3_tracker_generated.h>
+#include <schema/tactile_generated.h>
+#include <schema/tactile_shape_generated.h>
 
 #include <array>
 #include <atomic>
@@ -823,4 +826,96 @@ TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider inpu
 
     session->update();
     CHECK_FALSE(keyboard_tracker.get_data(*session));
+}
+
+// =============================================================================
+// Tracker with metadata — TactileTracker (TactileShape on its own channel)
+// =============================================================================
+
+namespace
+{
+
+// Live writes the metadata once, before any data it lets through; mirror that order.
+void write_tactile_recording(const std::string& path, const std::string& base_name, bool with_metadata)
+{
+    auto writer = open_writer(path);
+    core::McapTrackerChannels<core::TactileDataRecord> data(
+        *writer, base_name, to_string_vec(core::TactileRecordingTraits::recording_channels));
+    core::McapTrackerChannels<core::TactileShape> metadata(
+        *writer, base_name, to_string_vec(core::TactileRecordingTraits::metadata_channels));
+
+    if (with_metadata)
+    {
+        core::TactileShapeT shape;
+        shape.joints = { core::TactileJoint(make_pose(0, 0, 0), 0x7FFFFFFF) };
+        shape.taxels = { core::TactileTaxel(), core::TactileTaxel() };
+        metadata.write(0, core::pack<core::TactileShape>(shape), 500);
+    }
+
+    for (int i = 0; i < 2; ++i)
+    {
+        core::TactileDataT frame;
+        frame.taxel_force = { core::Point(static_cast<float>(i), 0, 0), core::Point(0, 0, 1) };
+        const int64_t time_ns = (i + 1) * 1000;
+        const auto record =
+            core::pack_record<core::TactileDataRecord>(&frame, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
+        data.write(0, record);
+        data.write(1, record);
+    }
+    writer->close();
+}
+
+} // namespace
+
+TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[replay][session][metadata]")
+{
+    // Frozen wire strings, as for the record channels above.
+    CHECK(std::string_view(core::TactileShape::GetFullyQualifiedName()) == "core.TactileShape");
+    REQUIRE(core::TactileRecordingTraits::metadata_channels.size() == 1);
+    CHECK(std::string_view(core::TactileRecordingTraits::metadata_channels[0]) == "tactile_metadata");
+
+    auto path = get_temp_mcap_path();
+    TempFileCleanup cleanup(path);
+    write_tactile_recording(path, "tactile", true);
+
+    core::TactileTracker tracker("tactile/right");
+    core::McapReplayConfig config;
+    config.filename = path;
+    config.tracker_names = { { &tracker, "tactile" } };
+    auto session = core::ReplaySession::run(config);
+
+    // Read when the session opens, so it is there before the first frame.
+    const auto& shape = tracker.get_metadata(*session);
+    REQUIRE(shape);
+    CHECK(shape->taxels()->size() == 2);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        session->update();
+        const auto& frame = tracker.get_data(*session);
+        REQUIRE(frame);
+        CHECK(frame->taxel_force()->Get(0)->x() == static_cast<float>(i));
+        CHECK(tracker.get_metadata(*session).get() == shape.get());
+    }
+
+    session->update();
+    CHECK_FALSE(tracker.get_data(*session));
+    CHECK(tracker.get_metadata(*session));
+}
+
+TEST_CASE("ReplaySession: data recorded without its metadata is withheld", "[replay][session][metadata]")
+{
+    auto path = get_temp_mcap_path();
+    TempFileCleanup cleanup(path);
+    write_tactile_recording(path, "tactile", false);
+
+    core::TactileTracker tracker("tactile/right");
+    core::McapReplayConfig config;
+    config.filename = path;
+    config.tracker_names = { { &tracker, "tactile" } };
+    auto session = core::ReplaySession::run(config);
+
+    session->update();
+    CHECK_FALSE(tracker.get_metadata(*session));
+    CHECK_FALSE(tracker.get_data(*session));
 }
