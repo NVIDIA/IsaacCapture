@@ -33,6 +33,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_
 
 add_executable(tracker_metadata_tests
   test_tracker_metadata.cpp
+  fake_tensor_runtime.hpp
   ${_TRACKERS_DIR}/deviceio_trackers/metadata_test_tracker.cpp
   ${_TRACKERS_DIR}/live_trackers/live_metadata_test_tracker_impl.cpp
   ${_TRACKERS_DIR}/replay_trackers/replay_metadata_test_tracker_impl.cpp
