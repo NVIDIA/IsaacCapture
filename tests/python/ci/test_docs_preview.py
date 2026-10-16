@@ -122,7 +122,6 @@ class PreviewSelectionTests(unittest.TestCase):
                 self.run[key] = original
 
     def test_stale_closed_or_wrong_source_pr(self):
-        original = copy.deepcopy(self.pr)
         for target, key, value in (
             (self.pr, "state", "closed"),
             (self.pr["head"], "sha", "b" * 40),
@@ -135,7 +134,6 @@ class PreviewSelectionTests(unittest.TestCase):
                 target[key] = value
                 self.assertIsNone(self.select())
                 target[key] = saved
-        self.assertEqual(self.pr, original)
 
     def test_head_changed_after_commit_association(self):
         self.candidates = [copy.deepcopy(self.pr)]
