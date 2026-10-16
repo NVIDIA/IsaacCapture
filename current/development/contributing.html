@@ -468,39 +468,25 @@ treated as errors — fix them locally before pushing.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>https://nvidia.github.io/IsaacCapture/preview/pr-&lt;N&gt;/
 </pre></div>
 </div>
-<p>How the preview gets built depends on where the PR’s branch lives.</p>
-<section id="prs-from-a-branch-on-nvidia-isaaccapture">
-<h4>PRs from a branch on <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacCapture</span></code><a class="headerlink" href="#prs-from-a-branch-on-nvidia-isaaccapture" title="Link to this heading">#</a></h4>
-<p>The <code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> workflow runs automatically on every push to the
-PR branch and publishes the preview. The preview URL is added to the workflow
-run’s <em>Summary</em> tab and refreshed on every push. No extra action required.</p>
-</section>
-<section id="prs-from-a-fork">
-<h4>PRs from a fork<a class="headerlink" href="#prs-from-a-fork" title="Link to this heading">#</a></h4>
-<p>GitHub Actions on PRs from forks run with a read-only token, so the workflow
-cannot push to <code class="docutils literal notranslate"><span class="pre">gh-pages</span></code> automatically. Instead:</p>
-<ol class="arabic">
-<li><p><code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> still runs and uploads the built artifacts; only
-the deploy step is skipped.</p></li>
-<li><p>When a fork PR is opened, a bot comments with instructions.</p></li>
-<li><p>A maintainer (anyone with write access to <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacCapture</span></code>) deploys
-the preview by commenting on the PR:</p>
+<p>PRs changing <code class="docutils literal notranslate"><span class="pre">docs/</span></code> publish automatically after a successful build, including
+PRs from forks. GitHub may first require a maintainer to approve a fork’s workflow
+run. The PR does not need to be merged.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">docs</span> <span class="pre">and</span> <span class="pre">deploy</span> <span class="pre">production</span></code> builds the PR changes without publishing
+privileges. <code class="docutils literal notranslate"><span class="pre">Publish</span> <span class="pre">docs</span> <span class="pre">PR</span> <span class="pre">preview</span></code> then uses trusted code from <code class="docutils literal notranslate"><span class="pre">main</span></code> to
+validate and publish that run’s artifacts. A single bot comment links to the
+preview and is updated after subsequent successful builds.</p>
+<p>Same-repository web-client-only PRs retain automatic previews at
+<code class="docutils literal notranslate"><span class="pre">preview/pr-&lt;N&gt;/client/</span></code>. Fork PRs without docs changes require a maintainer retry
+for a web-client preview.</p>
+<p>A maintainer with write access can retry publication of the current successful
+build by commenting:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>/preview-docs
 </pre></div>
 </div>
-</li>
-<li><p>The maintainer-triggered workflow downloads the artifacts that
-<code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> already produced for that commit and pushes them
-to <code class="docutils literal notranslate"><span class="pre">preview/pr-&lt;N&gt;/</span></code>, reacting to the comment with 👀 while deploying
-and 👍 once published. A follow-up comment posts the preview URL.</p></li>
-</ol>
-<p>Because the deploy reuses the same artifacts that the build job validated,
-<code class="docutils literal notranslate"><span class="pre">/preview-docs</span></code> does not run any PR code itself. Re-comment
-<code class="docutils literal notranslate"><span class="pre">/preview-docs</span></code> after new commits land to redeploy from the latest build.</p>
-<p>Previews are not auto-cleaned; maintainers can run the
-<code class="docutils literal notranslate"><span class="pre">Cleanup</span> <span class="pre">docs</span> <span class="pre">PR</span> <span class="pre">previews</span></code> workflow from the <em>Actions</em> tab to clear the
-<code class="docutils literal notranslate"><span class="pre">preview/</span></code> tree.</p>
-</section>
+<p>This command can publish docs or web-client artifacts, including for PRs without
+<code class="docutils literal notranslate"><span class="pre">docs/</span></code> changes. It reuses built artifacts and never executes PR code in the
+publisher. The command receives 👀 while deploying and 👍 after publication.</p>
+<p>Previews are removed when PRs close; a scheduled sweep also removes stale previews.</p>
 </section>
 </section>
 </section>
@@ -556,11 +542,7 @@ and 👍 once published. A follow-up comment posts the preview URL.</p></li>
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#previewing-documentation-changes">Previewing documentation changes</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#local-build">Local build</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-preview-on-github-pages">PR preview on GitHub Pages</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#prs-from-a-branch-on-nvidia-isaaccapture">PRs from a branch on <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacCapture</span></code></a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#prs-from-a-fork">PRs from a fork</a></li>
-</ul>
-</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-preview-on-github-pages">PR preview on GitHub Pages</a></li>
 </ul>
 </li>
 </ul>
