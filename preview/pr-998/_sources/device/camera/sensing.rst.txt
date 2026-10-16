@@ -110,7 +110,7 @@ only decides what comes after:
    src/plugins/sensing/scripts/validate.sh
 
    # 3. Only if you want a container:
-   src/plugins/sensing/scripts/run_docker_example.py   # ready-made, drops you at a shell
+   src/plugins/sensing/scripts/run_docker_example.sh   # ready-made, drops you at a shell
    src/plugins/sensing/docker/setup_container.sh      # or adapt your own
 
 :code-dir:`scripts/ <src/plugins/sensing/scripts>` holds what you run —
@@ -245,7 +245,7 @@ Before adapting your own image, prove the rig works from a throwaway one:
 
 .. code-block:: bash
 
-   src/plugins/sensing/scripts/run_docker_example.py
+   src/plugins/sensing/scripts/run_docker_example.sh
    # ... builds, then drops you at a shell in the container:
    scripts/validate.sh
 
@@ -294,7 +294,7 @@ The gids are host-specific, so read them off the host rather than copying:
 
 .. code-block:: console
 
-   $ src/plugins/sensing/scripts/run_docker_example.py --print-gids
+   $ src/plugins/sensing/scripts/run_docker_example.sh --print-gids
    114:i2c 985:gpio 44:video
 
 The image half is one ``RUN``. Expose the directory as a named build context —
@@ -321,10 +321,10 @@ The runtime half comes from the same script:
 
 .. code-block:: bash
 
-   src/plugins/sensing/scripts/run_docker_example.py --print-args
+   src/plugins/sensing/scripts/run_docker_example.sh --print-args
 
 Paste the printed flags after ``docker run`` and before your image name.
-``--json`` emits the same flags as a JSON array for ``devcontainer.json``
+``--json`` emits the same flags as elements for ``devcontainer.json``
 ``runArgs``. Run ``image_setup.sh`` in your image to configure the groups.
 
 nvsipl_camera
