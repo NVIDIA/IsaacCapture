@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[record]
+# Omit duration for an unlimited recording stopped with Ctrl-C.
+duration = 30
+
+# Stereo ColorLeft and ColorRight are both required by this workflow.
+format = "h264"
+width = 1600
+height = 1300
+fps = 30
+
+# Optional sensor streams and local MCAP media layout.
+imu = true
+audio = false # Set true to capture optional audio; cross-stream synchronization is unverified.
+preview = false
+mcap_media = "metadata-only" # Or "embedded".
+record_device_diagnostics = true # Live monitoring remains enabled when false.
+keep_media_sidecars = false  # Valid only with embedded media.
+
+# Same-device recovery policy.
+reconnect_timeout = 30
+reconnect_interval_ms = 1000
+
+# Optional paths and device selection. Relative paths use the command's working directory.
+# output = "recordings/ego_configured"
+# device_uid = "1-2-23"
+# preset = "py3.11"
+# plugin = "/absolute/path/to/ego_camera_plugin"
+
+# Native plugin controls are passed through unchanged.
+plugin_options = [
+  "--bitrate=8",
+  "--dynamic-bitrate=on",
+]

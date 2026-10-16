@@ -29,6 +29,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ego = [
+    "mcap>=1.2,<2",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

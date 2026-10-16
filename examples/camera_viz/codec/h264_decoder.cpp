@@ -17,6 +17,18 @@ namespace camera_viz::codec
 namespace
 {
 
+cudaVideoCodec cuda_codec(DecoderCodec codec)
+{
+    switch (codec)
+    {
+    case DecoderCodec::kH264:
+        return cudaVideoCodec_H264;
+    case DecoderCodec::kHEVC:
+        return cudaVideoCodec_HEVC;
+    }
+    throw std::invalid_argument("unsupported decoder codec");
+}
+
 inline void check_cu(CUresult result, const char* what)
 {
     if (result != CUDA_SUCCESS)
@@ -57,6 +69,7 @@ struct H264Decoder::Impl
         {
             throw std::runtime_error("H264Decoder: width/height must be > 0");
         }
+        const auto codec = cuda_codec(cfg.codec);
         check_cu(cuInit(0), "cuInit");
         check_cu(cuDeviceGet(&cu_device, cfg.gpu_id), "cuDeviceGet");
         check_cu(cuDevicePrimaryCtxRetain(&cu_context, cu_device), "cuDevicePrimaryCtxRetain");
@@ -68,7 +81,7 @@ struct H264Decoder::Impl
             // Zero-latency, decode-order output. Output stays on GPU.
             decoder = std::make_unique<NvDecoder>(cu_context,
                                                   true, // bUseDeviceFrame
-                                                  cudaVideoCodec_H264,
+                                                  codec,
                                                   true, // bLowLatency
                                                   false, // bDeviceFramePitched
                                                   nullptr, // pCropRect
@@ -190,7 +203,7 @@ struct H264Decoder::Impl
         try
         {
             decoder = std::make_unique<NvDecoder>(
-                cu_context, true, cudaVideoCodec_H264, true, false, nullptr, nullptr, false, 0, 0, 1000, true);
+                cu_context, true, cuda_codec(cfg.codec), true, false, nullptr, nullptr, false, 0, 0, 1000, true);
         }
         catch (...)
         {

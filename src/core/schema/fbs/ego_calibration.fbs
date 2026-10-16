@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+table EgoCameraIntrinsics {
+  width: uint32 (id: 0);
+  height: uint32 (id: 1);
+  fx: float (id: 2);
+  fy: float (id: 3);
+  cx: float (id: 4);
+  cy: float (id: 5);
+  distortion_model: int32 (id: 6);
+  distortion: [float] (id: 7);
+}
+
+table EgoExtrinsics {
+  rotation: [float] (id: 0);
+  translation_mm: [float] (id: 1);
+}
+
+// Versioned EGO timing provenance/model transported by the existing calibration channel.
+table EgoTimeAlignment {
+  json: string (id: 0);
+}
+
+table EgoCalibration {
+  device_uid: string (id: 0);
+  color_left: EgoCameraIntrinsics (id: 1);
+  color_right: EgoCameraIntrinsics (id: 2);
+  left_to_right: EgoExtrinsics (id: 3);
+  accel_intrinsics: [float] (id: 4);
+  gyro_intrinsics: [float] (id: 5);
+  accel_to_left: EgoExtrinsics (id: 6);
+  gyro_to_left: EgoExtrinsics (id: 7);
+  raw_alignment_yaml: string (id: 8);
+  raw_imu_yaml: string (id: 9);
+  capture_epoch: uint32 (id: 10);
+  time_alignment: EgoTimeAlignment (id: 11);
+}
+
+table EgoCalibrationTracked { data: EgoCalibration (id: 0); }
+
+table EgoCalibrationRecord {
+  data: EgoCalibration (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type EgoCalibrationRecord;

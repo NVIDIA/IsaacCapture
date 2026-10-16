@@ -66,11 +66,13 @@ public:
      * @param plugin_name The name of the plugin to start.
      * @param plugin_root_id The root ID for the plugin.
      * @param plugin_args Optional arguments appended after plugin.yaml args.
+     * @param shutdown_timeout_seconds Grace period before forcing the process to stop.
      * @return A unique pointer to the Plugin instance (stops on destruction).
      */
     std::unique_ptr<Plugin> start(const std::string& plugin_name,
                                   const std::string& plugin_root_id,
-                                  const std::vector<std::string>& plugin_args = {});
+                                  const std::vector<std::string>& plugin_args = {},
+                                  double shutdown_timeout_seconds = 2.0);
 
 private:
     void discover_plugins();

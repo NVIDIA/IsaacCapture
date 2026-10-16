@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 ORBBEC INC.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "mcap-record-replay-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = ["pytest", "numpy", "mcap>=1.2.0"]

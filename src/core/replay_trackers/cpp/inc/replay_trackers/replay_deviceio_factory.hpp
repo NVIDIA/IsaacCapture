@@ -16,6 +16,10 @@ namespace core
 {
 
 class ITracker;
+class EgoFrameMetadataTracker;
+class IEgoFrameMetadataTrackerImpl;
+class EgoImuTracker;
+class IEgoImuTrackerImpl;
 class ITrackerImpl;
 class ControllerTracker;
 class IControllerTrackerImpl;
@@ -72,6 +76,9 @@ public:
         const HapticCommandReaderTracker* tracker);
     std::unique_ptr<IKeyboardTrackerImpl> create_keyboard_tracker_impl(const KeyboardTracker* tracker);
     // create_<name>_tracker_impl for every manifest tracker.
+    std::unique_ptr<IEgoFrameMetadataTrackerImpl> create_ego_frame_metadata_tracker_impl(
+        const EgoFrameMetadataTracker* tracker);
+    std::unique_ptr<IEgoImuTrackerImpl> create_ego_imu_tracker_impl(const EgoImuTracker* tracker);
 #include "generated_replay_factory_declarations.inc"
 
 private:

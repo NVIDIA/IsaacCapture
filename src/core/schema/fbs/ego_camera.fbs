@@ -1,0 +1,64 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// The two RGB sensors exposed by the EGO camera.
+enum EgoCameraStream : byte { ColorLeft = 0, ColorRight = 1 }
+
+// Values are append-only: existing recordings use Mjpg == 0.
+enum EgoPixelFormat : byte { Mjpg = 0, H264 = 1, H265 = 2 }
+
+// SDK metadata is deliberately represented as numeric key/value pairs. Orbbec may
+// add frame metadata keys without requiring a wire-schema revision.
+struct EgoFrameMetadataEntry {
+  key: int32;
+  value: int64;
+}
+
+// Per-frame metadata pushed independently for each recorded stream.
+table EgoFrameMetadata {
+  stream: EgoCameraStream (id: 0);
+  sequence_number: uint64 (id: 1);
+  width: uint32 (id: 2);
+  height: uint32 (id: 3);
+  fps: uint32 (id: 4);
+  pixel_format: EgoPixelFormat (id: 5);
+  encoded_bytes: uint64 (id: 6);
+  sdk_metadata: [EgoFrameMetadataEntry] (id: 7);
+  capture_epoch: uint32 (id: 8);
+}
+
+// In-memory tracker wrapper. data is null before a sample arrives.
+table EgoFrameMetadataTracked {
+  data: EgoFrameMetadata (id: 0);
+}
+
+// MCAP record wrapper. DeviceDataTimestamp carries host and device clock values.
+table EgoFrameMetadataRecord {
+  data: EgoFrameMetadata (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+// Encoded access unit retained verbatim in an embedded-media MCAP.  This is
+// deliberately separate from EgoFrameMetadata: metadata-only recordings
+// stay small, while an archive can opt in to the high-throughput payload.
+table EgoEncodedVideoFrame {
+  stream: EgoCameraStream (id: 0);
+  sequence_number: uint64 (id: 1);
+  width: uint32 (id: 2);
+  height: uint32 (id: 3);
+  fps: uint32 (id: 4);
+  pixel_format: EgoPixelFormat (id: 5);
+  encoded_data: [ubyte] (id: 6);
+  capture_epoch: uint32 (id: 7);
+}
+
+table EgoEncodedVideoFrameRecord {
+  data: EgoEncodedVideoFrame (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type EgoFrameMetadataRecord;

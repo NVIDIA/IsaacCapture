@@ -17,6 +17,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -165,8 +166,14 @@ std::string child_launch_error_message(const ChildLaunchError& error,
 Plugin::Plugin(const std::string& command,
                const std::string& working_dir,
                const std::string& plugin_root_id,
-               const std::vector<std::string>& plugin_args)
+               const std::vector<std::string>& plugin_args,
+               double shutdown_timeout_seconds)
+    : m_shutdown_timeout_seconds(shutdown_timeout_seconds)
 {
+    if (!std::isfinite(shutdown_timeout_seconds) || shutdown_timeout_seconds <= 0.0)
+    {
+        throw std::invalid_argument("shutdown_timeout_seconds must be finite and positive");
+    }
     start_process(command, working_dir, plugin_root_id, plugin_args);
 }
 
@@ -478,8 +485,10 @@ void Plugin::stop_process()
         throw PluginCrashException(m_process_snapshot.error);
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (m_pid != -1 && std::chrono::steady_clock::now() < deadline)
+    // Longer cleanup is opt-in per instance; the default grace period remains unchanged.
+    const auto stop_started = std::chrono::steady_clock::now();
+    while (m_pid != -1 && std::chrono::duration<double>(std::chrono::steady_clock::now() - stop_started).count() <
+                              m_shutdown_timeout_seconds)
     {
         refresh_process_snapshot_locked(false);
         if (m_pid != -1)

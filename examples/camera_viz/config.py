@@ -15,12 +15,13 @@ Unknown keys warn rather than falling back silently — a typo'd
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple
 
 from pipeline import FrameSource
 from placements import PlacementConfig, PlacementStrategy, build as build_placement
 from sources import PairedFrameSource, RtpH264Source, build_local_camera
+from sources.stereo_sbs import StereoSideBySideSource
 
 
 @dataclass
@@ -51,6 +52,29 @@ class SourceEntry:
     # the left). The sphere has no lock-mode strategy, so this is how a feed
     # whose camera does not face the way the headset started gets aimed.
     equirect_yaw_deg: float = 0.0
+
+
+def resolve_stereo_debug(cfg: dict, override: Optional[str], mode: str) -> str:
+    value = override or cfg.get("display", {}).get("window", {}).get(
+        "stereo_debug", "off"
+    )
+    if value not in ("off", "sbs"):
+        raise ValueError(f"camera_viz: stereo_debug must be off|sbs, got {value!r}")
+    if value == "sbs" and mode != "window":
+        raise ValueError("camera_viz: stereo_debug sbs requires --mode window")
+    return value
+
+
+def apply_stereo_debug(entries: List[SourceEntry], mode: str) -> List[SourceEntry]:
+    if mode == "off":
+        return entries
+    # Replacing only the source and stereo flag retains NV placement/shape fields.
+    return [
+        replace(e, source=StereoSideBySideSource(e.source), stereo=False)
+        if e.stereo
+        else e
+        for e in entries
+    ]
 
 
 VALID_SHAPES = ("quad", "cylinder", "equirect")
@@ -206,12 +230,16 @@ def _stereo_for(cam: dict, placements_cfg: dict) -> Tuple[bool, float]:
     return stereo, float(pspec.get("stereo_plane_distance_cm", 0.0))
 
 
-def build_local_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
+def build_local_entries(
+    cfg: dict, is_xr: bool, *, renderer_cuda_device_id: int | None = None
+) -> List[SourceEntry]:
     """source=local: open each enabled camera directly."""
     placements_cfg = cfg.get("display", {}).get("placements", {})
     entries: List[SourceEntry] = []
     for cam in _enabled_cameras(cfg):
-        cam_sources = build_local_camera(cam)
+        cam_sources = build_local_camera(
+            cam, renderer_cuda_device_id=renderer_cuda_device_id
+        )
         # Aspect comes from the built source's spec, not the YAML — video
         # sources may omit width/height and size themselves from the file.
         first = cam_sources[0].spec

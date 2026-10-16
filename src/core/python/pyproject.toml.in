@@ -27,6 +27,7 @@ dynamic = ["dependencies", "optional-dependencies"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+optional-dependencies.ego = {file = ["requirements-ego.txt"]}
 optional-dependencies.dev = {file = ["requirements-dev.txt"]}
 optional-dependencies.ui = {file = ["requirements-ui.txt"]}
 optional-dependencies.retargeters = {file = ["requirements-retargeters.txt"]}

@@ -4,6 +4,8 @@
 #include "generated_tracker_binding_includes.inc"
 
 #include <deviceio_trackers/controller_tracker.hpp>
+#include <deviceio_trackers/ego_frame_metadata_tracker.hpp>
+#include <deviceio_trackers/ego_imu_tracker.hpp>
 #include <deviceio_trackers/full_body_tracker.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
@@ -258,6 +260,29 @@ PYBIND11_MODULE(_deviceio_trackers, m)
                std::string_view endpoint) { return to_python(self.get_data(session, endpoint)); },
             py::arg("session"), py::arg("endpoint"),
             "Get the latest haptic command for one endpoint (None when no data available)");
+
+    py::class_<core::EgoFrameMetadataTracker, core::ITracker, std::shared_ptr<core::EgoFrameMetadataTracker>>(
+        m, "EgoFrameMetadataTracker")
+        .def(py::init<const std::string&, const std::vector<core::EgoCameraStream>&, size_t>(),
+             py::arg("collection_prefix"), py::arg("streams"),
+             py::arg("max_flatbuffer_size") = core::EgoFrameMetadataTracker::DEFAULT_MAX_FLATBUFFER_SIZE)
+        .def(
+            "get_stream_data",
+            [](const core::EgoFrameMetadataTracker& self, const core::ITrackerSession& session, size_t stream_index)
+            { return to_python(self.get_stream_data(session, stream_index)); },
+            py::arg("session"), py::arg("stream_index"))
+        .def_property_readonly("stream_count", &core::EgoFrameMetadataTracker::get_stream_count);
+
+    py::class_<core::EgoImuTracker, core::ITracker, std::shared_ptr<core::EgoImuTracker>>(m, "EgoImuTracker")
+        .def(py::init<std::string, std::vector<core::EgoImuSensor>, size_t>(), py::arg("collection_prefix"),
+             py::arg("sensors") = std::vector<core::EgoImuSensor>{ core::EgoImuSensor_Accel, core::EgoImuSensor_Gyro },
+             py::arg("max_flatbuffer_size") = core::EGO_MAX_FLATBUFFER_SIZE)
+        .def(
+            "get_stream_data",
+            [](const core::EgoImuTracker& self, const core::ITrackerSession& session, size_t stream_index)
+            { return to_python(self.get_stream_data(session, stream_index)); },
+            py::arg("session"), py::arg("stream_index"))
+        .def_property_readonly("stream_count", &core::EgoImuTracker::get_stream_count);
 
     // py::class_ blocks for every manifest tracker; the accessor name comes from the
     // manifest's python_accessor key.

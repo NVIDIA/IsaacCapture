@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+enum EgoImuSensor : byte { Accel = 0, Gyro = 1 }
+
+struct EgoImuSample {
+  x_si: double;
+  y_si: double;
+  z_si: double;
+  temperature_c: double;
+  sample_time_local_common_clock_ns: int64;
+  sample_time_raw_device_clock_ns: int64;
+}
+
+table EgoImuBatch {
+  sensor: EgoImuSensor (id: 0);
+  sequence_number: uint64 (id: 1);
+  sample_rate_hz: uint32 (id: 2);
+  full_scale: float (id: 3);
+  samples: [EgoImuSample] (id: 4);
+  capture_epoch: uint32 (id: 5);
+}
+
+table EgoImuBatchTracked { data: EgoImuBatch (id: 0); }
+
+table EgoImuBatchRecord {
+  data: EgoImuBatch (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type EgoImuBatchRecord;

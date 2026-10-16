@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 ORBBEC INC. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Keep the root pyproject.toml and compatibility-package extra in sync.
+mcap>=1.2,<2

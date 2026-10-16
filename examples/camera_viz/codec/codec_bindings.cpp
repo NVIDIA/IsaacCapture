@@ -14,6 +14,7 @@
 #include <string>
 
 namespace py = pybind11;
+using camera_viz::codec::DecoderCodec;
 using camera_viz::codec::DecoderConfig;
 using camera_viz::codec::EncoderConfig;
 using camera_viz::codec::H264Decoder;
@@ -96,7 +97,7 @@ CudaBuf extract_cuda_buffer(const py::object& obj, std::uint32_t expected_width,
 
 PYBIND11_MODULE(_camera_viz_codec, m)
 {
-    m.doc() = "Native H.264 NVENC encoder + NVDEC decoder for camera_viz.";
+    m.doc() = "Native H.264 NVENC encoder + H.264/HEVC NVDEC decoder for camera_viz.";
 
     py::enum_<PixelFormat>(m, "PixelFormat").value("RGBA8", PixelFormat::kRGBA8).value("BGRA8", PixelFormat::kBGRA8);
 
@@ -145,7 +146,10 @@ PYBIND11_MODULE(_camera_viz_codec, m)
         .def_readwrite("width", &DecoderConfig::width)
         .def_readwrite("height", &DecoderConfig::height)
         .def_readwrite("full_range", &DecoderConfig::full_range)
-        .def_readwrite("gpu_id", &DecoderConfig::gpu_id);
+        .def_readwrite("gpu_id", &DecoderConfig::gpu_id)
+        .def_readwrite("codec", &DecoderConfig::codec);
+
+    py::enum_<DecoderCodec>(m, "DecoderCodec").value("H264", DecoderCodec::kH264).value("HEVC", DecoderCodec::kHEVC);
 
     py::class_<H264Decoder>(m, "H264Decoder")
         .def(py::init<const DecoderConfig&>(), py::arg("config"))
@@ -175,4 +179,5 @@ PYBIND11_MODULE(_camera_viz_codec, m)
             py::arg("packet"), py::arg("rgba_out"), py::arg("width"), py::arg("height"),
             "Feed one Annex-B AU. Returns True iff a frame was written to rgba_out.")
         .def("reset", &H264Decoder::reset, "Tear down NVDEC state. Use after long stream silence.");
+    m.attr("VideoDecoder") = m.attr("H264Decoder");
 }

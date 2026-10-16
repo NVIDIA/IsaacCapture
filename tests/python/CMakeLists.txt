@@ -18,6 +18,10 @@ if(BUILD_EXAMPLE_TELEOP_ROS2)
     add_subdirectory(examples/teleop_ros2)
 endif()
 
+if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
+    add_subdirectory(examples/mcap_record_replay)
+endif()
+
 if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(viz)
 endif()

@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 | `v4l2`      | USB / UVC — anything `v4l2-ctl --list-formats-ext` shows |
 | `oakd`      | OAK-D RGB / LEFT / RIGHT; mono or `stereo: true` (GRAY8 over USB, GPU-broadcast to RGBA; `stereo_rgb` for color). Needs the Luxonis udev rule — see below |
 | `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy GPU) |
+| `ego` | Local EGO ColorLeft/ColorRight pair; `stereo: true` required. See the [EGO preview guide](../../src/plugins/ego/README.md#preview-and-gpu-stereo) |
 | `video`     | Video-file replay (anything OpenCV/FFmpeg reads) — preview / testing without a camera. Loops by default; `stereo: true` splits side-by-side files into eyes (viewer only) |
 
 In XR mode the viewer **attaches to the CloudXR runtime + WSS proxy**, starting a background service if none is serving — nothing to start separately (`--accept-eula` for the first run; CloudXR.js is hosted at `https://<host>:48322/client/` by default when this run starts the service — `--no-host-client` only applies then; stop and restart the service to change hosting; `camera_viz.py --help` for the rest). Output: XR headset (default) or desktop window (`run CONFIG --mode window`); one surface per camera — a flat plane (default), a cylinder arc, or an equirect sphere (`placements.<name>.shape`, XR only for the curved shapes). Stereo cameras render true SBS in XR; window mode shows the left eye. XR placements: `world` / `head` / `lazy` / `gimbal`.
@@ -37,7 +38,7 @@ source examples/camera_viz/.venv/bin/activate
 
 camera_viz needs an `isaaccapture` new enough to carry the features it uses, so `setup` works down a ladder to get one: newest **final release** meeting that minimum; else newest **release candidate** (an rc is published from every release-branch commit, and PEP 440 keeps pre-releases out of a plain minimum-version specifier); else a **source build** of this checkout, after asking. Final releases win automatically whenever one qualifies. The minimum itself lives in `scripts/_install_deps.sh`.
 
-Flags: `--no-{v4l2,oakd}`, `--with-rtp` (split mode / `loopback`; implied by `--sender-only`), `--with-zed`, `--sender-only`, `--jetson`. Pass `--venv PATH` to install into an existing venv (symlinks `.venv` → PATH so `run` / `loopback` pick it up too).
+Flags: `--no-{v4l2,oakd}`, `--with-rtp` (split mode / `loopback`; implied by `--sender-only`), `--with-zed`, `--with-ego --sdk-root PATH`, `--sender-only`, `--jetson`. Pass `--venv PATH` to install into an existing venv (symlinks `.venv` → PATH so `run` / `loopback` pick it up too).
 
 > **OAK-D?** The camera needs a udev rule, or `depthai` reports `Insufficient permissions to communicate with X_LINK_UNBOOTED device` and never finds it. `setup` prompts to install one when an OAK-D is attached and no rule covers it; declining is not fatal. By hand:
 > ```bash
@@ -56,7 +57,18 @@ Flags: `--no-{v4l2,oakd}`, `--with-rtp` (split mode / `loopback`; implied by `--
 ./camera_viz.sh run configs/v4l2.yaml --mode window    # desktop window instead
 ```
 
-Set `source: local`. Swap config for `oakd.yaml`, `zed.yaml`, `realsense.yaml`, `synthetic.yaml`, `synthetic_stereo.yaml`, `synthetic_xr_3up.yaml`, `multi_camera.yaml`, `replay.yaml` (file replay — point `path:` at any recording).
+Set `source: local`. Swap config for `oakd.yaml`, `zed.yaml`, `ego.yaml`, `realsense.yaml`, `synthetic.yaml`, `synthetic_stereo.yaml`, `synthetic_xr_3up.yaml`, `multi_camera.yaml`, `replay.yaml` (file replay — point `path:` at any recording).
+
+For stereo sources, window mode shows the left eye by default. Use
+`--stereo-debug sbs` to show both eyes side by side. Set
+`display.window.stereo_debug: "sbs"` in YAML for the default; the CLI overrides
+it. Quote `"off"` in YAML. This option is available only in window mode;
+XR submits separate eye textures.
+
+EGO automatically uses the renderer's CUDA GPU for upload and decoding.
+Fatal EGO producer errors propagate through the official runner to the main
+thread instead of leaving the viewer waiting for frames. GPU configuration
+and retry boundaries are described in the [EGO preview binding guide](ego_preview/README.md).
 
 In XR mode, when the CloudXR service hosts the client (default if this `run`
 starts the service), open CloudXR.js on the headset at
@@ -119,11 +131,11 @@ encoder: auto | native | gstreamer
 cameras:
   - name: cam
     enabled: true
-    type: v4l2                # v4l2 | oakd | zed | synthetic | video
+    type: v4l2                # v4l2 | oakd | zed | ego | synthetic | video
     width: 2560               # video: optional — defaults to the file's size
     height: 720
     fps: 30
-    stereo: false             # zed / oakd / synthetic / video — per-eye capture + SBS XR
+    stereo: false             # zed / oakd / ego / synthetic / video — per-eye capture + SBS XR
     # … type-specific fields (e.g. synthetic: disparity_px; video: path, loop)
     rtp:
       port: 5000              # left eye when stereo
@@ -332,7 +344,8 @@ camera_viz/
 ├── controls/            — XR controller bindings, shapes, stereo geometry, HUD
 ├── pipeline/            — source ABC + threaded runner
 ├── placements/          — XR lock-mode strategies
-├── sources/             — V4L2 / OAK-D / ZED / synthetic / video replay / rtp_h264
+├── sources/             — camera FrameSources + stereo_sbs.py desktop SBS adapter
+├── ego_preview/         — EGO SDK capture binding (see ego_preview/README.md)
 ├── transports/          — RTP sender + receiver, native + GStreamer
 ├── codec/               — native NVENC/NVDEC pybind module
 ├── configs/             — one YAML per camera kind

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -89,3 +90,54 @@ TEST_CASE("plugin manager returns complete descriptors", "[plugin_manager][metad
     REQUIRE((manager.query_devices("sample_plugin") == std::vector<std::string>{ "/hands/left", "/camera" }));
     REQUIRE_THROWS_AS(manager.get_plugin_info("missing"), std::runtime_error);
 }
+
+#ifndef _WIN32
+TEST_CASE("plugin shutdown grace periods apply to each instance", "[plugin_manager][process]")
+{
+    TemporaryDirectory search_directory;
+    const auto plugin_directory = search_directory.path() / "sample";
+    std::filesystem::create_directory(plugin_directory);
+    std::ofstream metadata(plugin_directory / "plugin.yaml");
+    metadata << "name: sample_plugin\ncommand: " << PLUGIN_MANAGER_TEST_PROCESS << '\n';
+    metadata.close();
+    core::PluginManager manager({ search_directory.path().string() });
+    const auto marker = plugin_directory / "finalized";
+
+    SECTION("the default still forces cleanup exceeding two seconds to stop")
+    {
+        auto plugin = manager.start("sample_plugin", "root", { "finalize", "2500", marker.string() });
+        plugin->stop();
+        REQUIRE_FALSE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+        REQUIRE_FALSE(plugin->get_process_snapshot().term_signal.has_value());
+    }
+
+    SECTION("an explicit longer grace period allows cleanup to finish")
+    {
+        auto plugin = manager.start("sample_plugin", "root", { "finalize", "2500", marker.string() }, 4.0);
+        plugin->stop();
+        REQUIRE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+    }
+
+    SECTION("a shorter grace period does not change the next instance's default")
+    {
+        auto fast = manager.start("sample_plugin", "root", { "finalize", "350", marker.string() }, 0.1);
+        fast->stop();
+        REQUIRE_FALSE(std::filesystem::exists(marker));
+        auto normal = manager.start("sample_plugin", "root", { "finalize", "350", marker.string() });
+        normal->stop();
+        REQUIRE(std::filesystem::exists(marker));
+    }
+}
+
+TEST_CASE("invalid plugin shutdown grace periods fail before launching", "[plugin_manager][process]")
+{
+    for (const double timeout :
+         { 0.0, -1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity() })
+    {
+        CAPTURE(timeout);
+        REQUIRE_THROWS_AS(core::Plugin("missing-plugin", "", "root", {}, timeout), std::invalid_argument);
+    }
+}
+#endif
