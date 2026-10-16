@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -447,7 +447,7 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="cts-page" id="hand-suite">
+  <section id="hand-suite">
 <span id="cts-hand"></span><h1>Hand Suite<a class="headerlink" href="#hand-suite" title="Link to this heading">#</a></h1>
 <div class="caution admonition">
 <p class="admonition-title">Preview</p>
@@ -479,7 +479,7 @@ are optional, so a 21-joint glove can pass.</p></td>
 <td><p>40, in four groups: signal, hand shape, placement, and the scripted steps</p></td>
 </tr>
 <tr class="row-odd"><td><p>Your plugin</p></td>
-<td><p>Injects both hands with <code class="docutils literal notranslate"><span class="pre">plugin_utils::HandInjector</span></code>: the suite records what Isaac Teleop’s OpenXR hand tracker reads, not a channel of
+<td><p>Injects both hands with <code class="docutils literal notranslate"><span class="pre">plugin_utils::HandInjector</span></code>: the suite records what Isaac Capture’s OpenXR hand tracker reads, not a channel of
 your own. Joints in metres, placed in the room, at 30 Hz or more. A glove with no
 wrist pose takes one from headset hand tracking or a controller
 (<code class="docutils literal notranslate"><span class="pre">plugin_utils::WristPoseSource</span></code>).</p></td>
@@ -510,7 +510,7 @@ aloud; the beep is the moment the panel switches to <strong>hold</strong>.</p></
 the beep, not the count-in: start turning then, at least 90° out, then back.</p></li>
 </ul>
 <p>Every step is also checked for the gross motion its name asks for
-(<code class="docutils literal notranslate"><span class="pre">segmentation.labelled_step_actually_performed</span></code>); a missed step gives <code class="docutils literal notranslate"><span class="pre">retake</span></code>.</p>
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>); a missed step gives <code class="docutils literal notranslate"><span class="pre">retake</span></code>.</p>
 </section>
 <section id="the-eleven-steps">
 <span id="cts-hand-steps"></span><h2>The eleven steps<a class="headerlink" href="#the-eleven-steps" title="Link to this heading">#</a></h2>
@@ -528,7 +528,7 @@ fingers together.”</em></p>
 <p class="sd-card-text">Fingers straight and together, pressed onto the table. Do not hover.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: fingers straight (<code class="docutils literal notranslate"><span class="pre">posture.flat_hand_extension</span></code>), joints in one plane
+<p class="sd-card-text">Checked: fingers straight (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">flat_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">extension</span></code>), joints in one plane
 (<code class="docutils literal notranslate"><span class="pre">table.fingers_coplanar</span></code>), level (<code class="docutils literal notranslate"><span class="pre">table.level</span></code>), both hands at one height
 (<code class="docutils literal notranslate"><span class="pre">table.hands_same_height</span></code>).</p>
 </div>
@@ -545,7 +545,7 @@ fingers together.”</em></p>
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: fingers curled (<code class="docutils literal notranslate"><span class="pre">posture.fist_closure</span></code>), more than in the flat steps
-(<code class="docutils literal notranslate"><span class="pre">segmentation.step_order_matches_labels</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).</p>
 </div>
 </div>
 </div>
@@ -619,7 +619,7 @@ Measured: thumb-to-tip distance (<code class="docutils literal notranslate"><spa
 <p class="sd-card-text">Palms flat against each other, fingers up, thumbs closed alongside the index.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: same-named fingertips of the two hands coincide
+<p class="sd-card-text">Checked: each fingertip sits opposite its namesake on the other hand, within 5 cm
 (<code class="docutils literal notranslate"><span class="pre">palms.fingertip_gap</span></code>).</p>
 </div>
 </div>
@@ -653,7 +653,7 @@ tips touching.</p>
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: the turning tip stays on the still one (<code class="docutils literal notranslate"><span class="pre">tips.roll_contact</span></code>); the
-wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.position_orientation_same_frame</span></code>).</p>
+wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.</span><wbr><span class="pre">position_</span><wbr><span class="pre">orientation_</span><wbr><span class="pre">same_</span><wbr><span class="pre">frame</span></code>).</p>
 </div>
 </div>
 </div>
@@ -670,7 +670,7 @@ tips touching.</p>
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: the turning tip stays on the still one (<code class="docutils literal notranslate"><span class="pre">tips.roll_contact</span></code>); the
-wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.position_orientation_same_frame</span></code>).</p>
+wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.</span><wbr><span class="pre">position_</span><wbr><span class="pre">orientation_</span><wbr><span class="pre">same_</span><wbr><span class="pre">frame</span></code>).</p>
 </div>
 </div>
 </div>
@@ -685,14 +685,14 @@ wrist turns with the joints (<code class="docutils literal notranslate"><span cl
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: the four step 1 checks. Measured: shape and height drift since step 1
-(<code class="docutils literal notranslate"><span class="pre">drift.flat_hand_between_windows</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">drift.</span><wbr><span class="pre">flat_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">between_</span><wbr><span class="pre">windows</span></code>).</p>
 </div>
 </div>
 </div>
 </div>
 </div>
 <p>A roll under 90°, or middle tips more than 8 cm apart in step 8, gives <code class="docutils literal notranslate"><span class="pre">retake</span></code>.
-How often each of the 26 joints is valid is measured (<code class="docutils literal notranslate"><span class="pre">coverage.all_26_valid_rate</span></code>),
+How often each of the 26 joints is valid is measured (<code class="docutils literal notranslate"><span class="pre">coverage.</span><wbr><span class="pre">all_</span><wbr><span class="pre">26_</span><wbr><span class="pre">valid_</span><wbr><span class="pre">rate</span></code>),
 not required.</p>
 </section>
 <section id="rehearse">
@@ -729,16 +729,16 @@ the wrist pose from, go on the same command line.</p>
 glove’s wrist pose comes from, such as <code class="docutils literal notranslate"><span class="pre">hand_tracking</span></code> or <code class="docutils literal notranslate"><span class="pre">controller</span></code>) are stored with the
 take. Then:</p>
 <ol class="arabic simple">
-<li><p>Open the capture panel at <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a>, or <code class="docutils literal notranslate"><span class="pre">http://&lt;host&gt;:8081</span></code> from the
-headset’s browser. If the port was taken, use the URL the run prints.</p></li>
+<li><p>Open the capture panel at the address the run prints: <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a> unless that port
+was taken, or the <code class="docutils literal notranslate"><span class="pre">[capture]</span> <span class="pre">headset:</span></code> address in the headset’s browser.</p></li>
 <li><p>Press <strong>Start recording</strong>. The script starts once both hands have had a valid
 joint. A red <strong>No hand data after 10 s</strong> box lists causes; the take keeps running.</p></li>
 <li><p>Perform the eleven steps. After <em>“Done. You can stop now.”</em> the capture panel writes the
 labels and audits them, row by row, <code class="docutils literal notranslate"><span class="pre">ok</span></code> or <code class="docutils literal notranslate"><span class="pre">BAD</span></code>:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">hand</span> <span class="pre">channels</span></code> or <code class="docutils literal notranslate"><span class="pre">segmentation.label_alignment</span></code>: one hand sent
+<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">hand</span> <span class="pre">channels</span></code> or <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">label_</span><wbr><span class="pre">alignment</span></code>: one hand sent
 no records, or the step windows have no frames. Look at the data stream.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">segmentation.labelled_step_actually_performed</span></code>: a step was missed
+<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>: a step was missed
 (the detail names it). Record another take.</p></li>
 </ul>
 </li>
@@ -780,7 +780,7 @@ verdict  PASS
   …
   [pass] posture.fist_closure                   left: straightness 0.39; right: straightness 0.39
   …
-  [pass] palms.fingertip_gap                    index 6 mm, middle 9 mm, ring 6 mm, little 1 mm
+  [pass] palms.fingertip_gap                    index 18 mm, middle 22 mm, ring 18 mm, little 10 mm
   …
 </pre></div>
 </div>
@@ -991,7 +991,7 @@ record with the on-screen cues only.</p></td>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>

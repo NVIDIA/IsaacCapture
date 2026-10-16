@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -447,7 +447,7 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="cts-page" id="set-up-the-tools">
+  <section id="set-up-the-tools">
 <span id="cts-setup"></span><h1>Set Up the Tools<a class="headerlink" href="#set-up-the-tools" title="Link to this heading">#</a></h1>
 <p>This page gets a workstation ready to record: the repository built, the CTS tool environments
 created and a headset streaming through CloudXR. Do it once per clone; both suites share every step.
@@ -525,27 +525,22 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 </div>
 <p>A plugin behind a <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGIN_&lt;NAME&gt;</span></code> option builds only when you add
 <code class="docutils literal notranslate"><span class="pre">-DBUILD_PLUGIN_&lt;NAME&gt;=ON</span></code> to the first line.</p>
-<p><a class="reference internal" href="../getting_started/build_from_source/index.html"><span class="doc">Build from Source</span></a> lists the build prerequisites, and
+<p><a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> lists the build prerequisites, and
 <a class="reference internal" href="../references/build.html"><span class="doc">Build System</span></a> explains per-Python-version build trees.</p>
 </section>
 <section id="create-the-tool-environments">
 <h2>3. Create the tool environments<a class="headerlink" href="#create-the-tool-environments" title="Link to this heading">#</a></h2>
-<p>Each suite has two environments: the checker’s and the capture panel’s. Create the checker’s first;
-it generates the bindings the capture panel reads the recording back with. Run only the suites you
-need:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Hand suite</span>
-src/python/isaaccapture/cts/hand/checker/setup_env.sh<span class="w"> </span>--panel
-src/python/isaaccapture/cts/hand/capture/setup_env.sh
-
-<span class="c1"># Full-body suite</span>
-src/python/isaaccapture/cts/full_body/checker/setup_env.sh<span class="w"> </span>--panel
-src/python/isaaccapture/cts/full_body/capture/setup_env.sh
+<p>Each suite has a checker environment and a capture environment. Run the line for each suite you
+need; it sets up the checker first, because the capture environment reads recordings through the
+bindings the checker generates:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CTS</span><span class="o">=</span>src/python/isaaccapture/cts
+<span class="nv">$CTS</span>/hand/checker/setup_env.sh<span class="w"> </span>--panel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">$CTS</span>/hand/capture/setup_env.sh
+<span class="nv">$CTS</span>/full_body/checker/setup_env.sh<span class="w"> </span>--panel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">$CTS</span>/full_body/capture/setup_env.sh
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">--panel</span></code> adds the viewer that replays a take and packages it for submission.
-To only check takes on another machine, such as a Mac, run just the checker script there. The
-scripts are idempotent and write only inside their own directory; re-run them after pulling or
-rebuilding.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--panel</span></code> adds the viewer, which replays a take and packages it for submission. To only check
+takes on another machine, such as a Mac, run the checker script alone there. The scripts are
+idempotent and write only inside their own directory; re-run them after pulling or rebuilding.</p>
 </section>
 <section id="connect-the-headset">
 <span id="cts-setup-headset"></span><h2>4. Connect the headset<a class="headerlink" href="#connect-the-headset" title="Link to this heading">#</a></h2>
@@ -558,7 +553,7 @@ and set <code class="docutils literal notranslate"><span class="pre">PY</span></
 </div>
 <ol class="arabic">
 <li><p>Start the CloudXR service in a terminal of its own and leave it open. The first time, it shows a
-link to the CloudXR licence and asks you to accept it; your answer is remembered.</p>
+link to the CloudXR licence and asks you to accept it; your acceptance is remembered.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">$PY</span><span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run
 </pre></div>
 </div>
@@ -590,7 +585,7 @@ why there. Run one service per workstation.</p>
 </details><p>The workstation firewall must allow the CloudXR ports (<a class="reference internal" href="../teleop/quick_start.html#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>). For
 device profiles, a detached service or opening the client over USB, see
 <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a>. For PICO body tracking, set up the trackers first:
-<a class="reference internal" href="../device/body_tracking.html"><span class="doc">Body Tracking</span></a>.</p>
+<a class="reference internal" href="../device/body_tracking/index.html"><span class="doc">Body Tracking</span></a>.</p>
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
@@ -626,12 +621,7 @@ the capture setup script.</p></td>
 <td><p>Accept the certificate at <code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:48322/</span></code> first. Check that the headset is on the
 same network and the firewall allows the CloudXR ports.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">module</span> <span class="pre">named</span> <span class="pre">'cryptography'</span></code> when the CloudXR service starts</p></td>
-<td><p>The capture environment lacks the CloudXR extras that create the certificate. Run
-<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">--python</span> <span class="pre">$PY</span> <span class="pre">'cryptography&gt;=3.0'</span> <span class="pre">'websockets&gt;=14'</span></code>, then start the
-service again.</p></td>
-</tr>
-<tr class="row-odd"><td><p>A second CloudXR service will not start</p></td>
+<tr class="row-even"><td><p>A second CloudXR service will not start</p></td>
 <td><p>One is already running. <code class="docutils literal notranslate"><span class="pre">$PY</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">status</span></code> reports it;
 <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">stop</span></code> ends a detached one, Ctrl+C a foreground one.</p></td>
 </tr>
@@ -778,7 +768,7 @@ service again.</p></td>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>

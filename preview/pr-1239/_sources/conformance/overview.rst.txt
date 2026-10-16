@@ -3,12 +3,10 @@
 
 .. _cts-overview:
 
-.. rst-class:: cts-page
-
 Device Conformance Testing
 ==========================
 
-You have integrated a device that publishes hand or full-body poses into Isaac Teleop. The
+You have integrated a device that publishes hand or full-body poses into Isaac Capture. The
 Conformance Test Suite (CTS) produces the evidence that the integration works: you record one
 scripted take, a checker reads only that recording and returns a verdict, and you send the take
 through the submission form for your pull request. This page explains the process, the two suites
@@ -24,7 +22,7 @@ How it works
       :link: /device/add_device
       :link-type: doc
 
-      Your device feeds Isaac Teleop's hand or body tracker, through your plugin or the
+      Your device feeds Isaac Capture's hand or body tracker, through your plugin or the
       headset's own tracking.
       +++
       Add a New Device

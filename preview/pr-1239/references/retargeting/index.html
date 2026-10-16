@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -634,7 +634,7 @@ names):</p>
 <span class="p">)</span>
 </pre></div>
 </div>
-<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_to_baselink_frame_transform</span></code> parameter is a 3x3
+<p class="sd-card-text"><strong>Coordinate frame:</strong> The <code class="docutils literal notranslate"><span class="pre">handtracking_</span><wbr><span class="pre">to_</span><wbr><span class="pre">baselink_</span><wbr><span class="pre">frame_</span><wbr><span class="pre">transform</span></code> parameter is a 3x3
 rotation matrix flattened to 9 elements. Applied as
 <code class="docutils literal notranslate"><span class="pre">target_pos</span> <span class="pre">=</span> <span class="pre">joint_pos</span> <span class="pre">&#64;</span> <span class="pre">wrist_rotation</span> <span class="pre">&#64;</span> <span class="pre">transform_matrix</span></code>. Config default is <strong>Identity</strong>
 <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1)</span></code>. Common value for <strong>G1/Inspire</strong>: <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1,</span> <span class="pre">0)</span></code>
@@ -719,7 +719,7 @@ both hands with left and right VR controllers.</p>
 <p class="admonition-title">Tip</p>
 <p class="sd-card-text">For a complete hand retargeting example (e.g. <code class="docutils literal notranslate"><span class="pre">HandsSource</span></code> + <code class="docutils literal notranslate"><span class="pre">DexHandRetargeter</span></code> or
 <code class="docutils literal notranslate"><span class="pre">TriHandMotionControllerRetargeter</span></code>, connect and compute), see
-<code class="docutils literal notranslate"><span class="pre">g1_trihand_retargeting_example.py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">g1_</span><wbr><span class="pre">trihand_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> and <code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> in the
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/teleop/python" rel="noopener noreferrer" target="_blank">examples/teleop/python</a> directory.</p>
 </div>
 </div>
@@ -743,7 +743,7 @@ still or when controllers are not available but the pipeline expects locomotion 
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">FootPedalRootCmdRetargeter</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">Maps 3-axis foot pedal input to the same 4D root command <code class="docutils literal notranslate"><span class="pre">[vel_x,</span> <span class="pre">vel_y,</span> <span class="pre">rot_vel_z,</span> <span class="pre">hip_height]</span></code>.
-Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.mode</span></code>):
+Uses <code class="docutils literal notranslate"><span class="pre">Generic3AxisPedalSource</span></code>. Two modes (<code class="docutils literal notranslate"><span class="pre">FootPedalRootCmdRetargeterConfig.</span><wbr><span class="pre">mode</span></code>):
 <code class="docutils literal notranslate"><span class="pre">&quot;horizontal&quot;</span></code> (right/left pedals = forward/back, rudder = yaw or strafe when pedal pressed)
 and <code class="docutils literal notranslate"><span class="pre">&quot;vertical&quot;</span></code> (left pedal drives hip height, rudder = yaw). Config includes velocity
 limits, squat range, deadzone and rudder thresholds.</p>
@@ -988,7 +988,7 @@ retargeter tuning UI.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>

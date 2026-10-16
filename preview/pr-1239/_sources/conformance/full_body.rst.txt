@@ -3,18 +3,16 @@
 
 .. _cts-full-body:
 
-.. rst-class:: cts-page
-
 Full-Body Suite
 ===============
 
 The full-body suite records one take of ten standing poses and motions, then checks the
 ``core.FullBodyPoseRecord`` stream in it: the 24-joint skeleton of the OpenXR
 ``XR_BD_body_tracking`` extension, pelvis to hands, in the joint order listed in
-:doc:`/device/body_tracking`.
+:doc:`/device/body_tracking/index`.
 
 - **PICO body tracking** is the default source (``body.pico-xr``). Set up, calibrate and
-  activate the headset and Motion Trackers as described in :doc:`/device/body_tracking`.
+  activate the headset and Motion Trackers as described in :doc:`/device/body_tracking/index`.
 - **Your own suit or mocap system** records through a vendor backend and its plugin
   (:ref:`vendor-selection`). The backend must publish those 24 indices right-handed, +Y up, in metres, with the subject facing
   −Z (:code-file:`oracle/README.md <src/python/isaaccapture/cts/full_body/oracle/README.md>`).
@@ -208,15 +206,16 @@ Set up the tools and connect the headset first (:doc:`setup`). Then, from the re
 
    src/python/isaaccapture/cts/full_body/capture/record.sh pico4u
 
-The first argument names the device and the take. Open the capture panel at http://localhost:8081 (or
-``http://<host>:8081`` from the headset; if the port was taken, use the address the run
-prints) and press **Start recording** when the performer is standing ready. The script begins
-at the first frame with a valid joint. After 10 s without one, a red box lists what to check;
-the take keeps running.
+The first argument names the device and the take. Open the capture panel at the address the run
+prints: http://localhost:8081 unless that port was taken, or the ``[capture] headset:`` address
+in the headset's browser. Press **Start recording** when the performer is standing ready. The
+script begins at the first frame with a valid joint. After 10 s without one, a red box lists what
+to check; the take keeps running.
 
 To record your own device, name the plugin, the vendor backend and its collection. The device
-name must come first. ``suitx``, ``suit_x_plugin``, ``body.suit-x`` and ``suit_x`` are
-placeholders for a fictional Suit X; replace each with your own:
+name must come first; ``record.sh`` rejects a leading option with its usage line. ``suitx``,
+``suit_x_plugin``, ``body.suit-x`` and ``suit_x`` are placeholders for a fictional Suit X;
+replace each with your own:
 
 .. code-block:: bash
 
@@ -302,9 +301,8 @@ The viewer needs the checker environment built with
    src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.panel \
        ~/isaaccapture-cts/<take>/<take>-body.mcap
 
-It prints the same report, then serves http://127.0.0.1:8080; ``--host 0.0.0.0`` opens it to
-other machines. If 8080 is taken it moves to the next free port but still prints 8080, so pass a
-free ``--port`` instead. The viewer replays the
+It prints the same report, then serves port 8080, or the next free port; open the address it
+prints. ``--host 0.0.0.0`` opens it to other machines. The viewer replays the
 skeleton (a joint that lost tracking turns red where it was last seen), plots frame rate and
 valid joints over the take, and lists every check by group, with nine key signal and geometry
 checks in a *Decides the take* folder on top. Its
@@ -331,7 +329,7 @@ Troubleshooting
        goes on. Ctrl+C does not work here; close the terminal to get out.
    * - *no joint has been valid yet*, then the red *No body data after 10 s* box
      - PICO: check body tracking, the trackers and their calibration
-       (:doc:`/device/body_tracking`). Own device: check the plugin is running and
+       (:doc:`/device/body_tracking/index`). Own device: check the plugin is running and
        ``collection_id`` matches.
    * - A press does nothing
      - It came outside *ready when you are*, or the key went to another window. Click the

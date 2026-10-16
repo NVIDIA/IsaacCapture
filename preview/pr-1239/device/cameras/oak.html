@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -585,8 +585,8 @@ each with collection id <code class="docutils literal notranslate"><span class="
 <strong>same</strong> prefix the plugin was given (see <a class="reference internal" href="../trackers.html"><span class="doc">Spatial Trackers and Device Data</span></a>). TeleopSession’s
 DeviceIO layer uses the live tracker implementation to read the pushed
 tensors and write MCAP channels.</p></li>
-<li><p><strong>MCAP config</strong> — add every tracker to both <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.trackers</span></code>
-and <code class="docutils literal notranslate"><span class="pre">McapRecordingConfig.tracker_names</span></code>, each under its own base name. See
+<li><p><strong>MCAP config</strong> — add every tracker to both <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">trackers</span></code>
+and <code class="docutils literal notranslate"><span class="pre">McapRecordingConfig.</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">names</span></code>, each under its own base name. See
 also <a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a>.</p></li>
 </ol>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
@@ -909,7 +909,7 @@ ffprobe<span class="w"> </span>-show_entries<span class="w"> </span><span class=
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>

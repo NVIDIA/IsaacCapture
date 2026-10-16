@@ -3,8 +3,6 @@
 
 .. _cts-submit:
 
-.. rst-class:: cts-page
-
 Submit Your Results
 ===================
 
@@ -20,16 +18,16 @@ integration pull request. You can submit any verdict, as long as its report goes
 -------------------------------------
 
 Open the pull request that adds your device (:doc:`/device/add_device`,
-:doc:`/getting_started/contributing`). Each form submission refers to that pull request.
+:doc:`/development/contributing`). Each form submission refers to that pull request.
 
 2. Record and check one take per suite
 --------------------------------------
 
 Record and check one take for each suite your device supports: :doc:`hand`, :doc:`full_body`, or
 both. Takes are never overwritten, so submit the one you want reviewed. Record from a commit you
-have pushed to the pull request, with nothing under ``src/python/isaaccapture/cts/`` changed: the
-take and its report record the commit and whether the tree was modified, and we re-run the checker
-at that commit.
+have pushed to the pull request, with nothing under ``src/python/isaaccapture/cts/`` changed. The
+take records the commit it was recorded at, and the report whether the checker's code was
+modified; we re-run the checker at that commit.
 
 3. Package the take
 -------------------
@@ -46,13 +44,12 @@ its suite:
    src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.panel \
        ~/isaaccapture-cts/<take>/<take>-body.mcap
 
-If something else uses port 8080, add ``--port`` with a free port. Open the viewer
-(http://127.0.0.1:8080 by default) and press **package for submission** in the **Submission**
-folder. When the archive is ready, a notification in the viewer offers
-``<take>-hand.<verdict>.zip`` or ``<take>-body.<verdict>.zip`` with its size. Click it to save the
-archive on the computer running the browser, or right-click it and choose **Save link as** to pick
-where. Under the button, the viewer shows the archive's name, size and the first 12 characters of
-its SHA-256; you quote them in step 5.
+The viewer serves port 8080, or the next free port; open the address it prints and press
+**package for submission** in the **Submission** folder. When the archive is ready, a
+notification in the viewer offers ``<take>-hand.<verdict>.zip`` or ``<take>-body.<verdict>.zip``
+with its size. Click it to save the archive on the computer running the browser, or right-click it
+and choose **Save link as** to pick where. Under the button, the viewer shows the archive's name,
+size and the first 12 characters of its SHA-256; you quote them in step 5.
 
 .. code-block:: text
 

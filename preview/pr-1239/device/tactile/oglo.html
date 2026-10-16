@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -528,9 +528,9 @@ legacy schema-4 fallback), so payload sizes are never hardcoded.</p>
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Recorded data</a><a class="headerlink" href="#recorded-data" title="Link to this heading">#</a></h2>
 <p>The host <code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code> records per hand into channels
 <code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo</span></code> and <code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo_tracked</span></code>, carrying
-<code class="docutils literal notranslate"><span class="pre">core.OgloGloveSampleRecord</span></code>: <code class="docutils literal notranslate"><span class="pre">seq</span></code>, <code class="docutils literal notranslate"><span class="pre">device_time_us</span></code>, <code class="docutils literal notranslate"><span class="pre">taxels[80]</span></code> (raw
+<code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">OgloGloveSampleRecord</span></code>: <code class="docutils literal notranslate"><span class="pre">seq</span></code>, <code class="docutils literal notranslate"><span class="pre">device_time_us</span></code>, <code class="docutils literal notranslate"><span class="pre">taxels[80]</span></code> (raw
 12-bit, <code class="docutils literal notranslate"><span class="pre">finger,row,col</span></code>), and a 6-axis IMU, each with a <code class="docutils literal notranslate"><span class="pre">DeviceDataTimestamp</span></code>
-whose <code class="docutils literal notranslate"><span class="pre">sample_time_local_common_clock</span></code> is on the shared host monotonic clock —
+whose <code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code> is on the shared host monotonic clock —
 so OGLO aligns in time with hand/head streams.</p>
 <p><strong>Naming.</strong> The glove’s identity threads through several layers, but all of them
 derive from the single <code class="docutils literal notranslate"><span class="pre">--collection-prefix</span></code> you pick (<code class="docutils literal notranslate"><span class="pre">oglo</span></code> below), with the
@@ -738,7 +738,7 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>

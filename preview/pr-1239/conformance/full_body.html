@@ -35,7 +35,7 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=faa2e240" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
     <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
@@ -447,15 +447,15 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="cts-page" id="full-body-suite">
+  <section id="full-body-suite">
 <span id="cts-full-body"></span><h1>Full-Body Suite<a class="headerlink" href="#full-body-suite" title="Link to this heading">#</a></h1>
 <p>The full-body suite records one take of ten standing poses and motions, then checks the
 <code class="docutils literal notranslate"><span class="pre">core.FullBodyPoseRecord</span></code> stream in it: the 24-joint skeleton of the OpenXR
 <code class="docutils literal notranslate"><span class="pre">XR_BD_body_tracking</span></code> extension, pelvis to hands, in the joint order listed in
-<a class="reference internal" href="../device/body_tracking.html"><span class="doc">Body Tracking</span></a>.</p>
+<a class="reference internal" href="../device/body_tracking/index.html"><span class="doc">Body Tracking</span></a>.</p>
 <ul class="simple">
 <li><p><strong>PICO body tracking</strong> is the default source (<code class="docutils literal notranslate"><span class="pre">body.pico-xr</span></code>). Set up, calibrate and
-activate the headset and Motion Trackers as described in <a class="reference internal" href="../device/body_tracking.html"><span class="doc">Body Tracking</span></a>.</p></li>
+activate the headset and Motion Trackers as described in <a class="reference internal" href="../device/body_tracking/index.html"><span class="doc">Body Tracking</span></a>.</p></li>
 <li><p><strong>Your own suit or mocap system</strong> records through a vendor backend and its plugin
 (<a class="reference internal" href="../device/trackers.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a>). The backend must publish those 24 indices right-handed, +Y up, in metres, with the subject facing
 −Z (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/cts/full_body/oracle/README.md" rel="noopener noreferrer" target="_blank">oracle/README.md</a>).
@@ -497,7 +497,7 @@ the capture panel’s browser tab (not the terminal).</p></li>
 <section id="the-ten-steps">
 <span id="cts-full-body-steps"></span><h2>The ten steps<a class="headerlink" href="#the-ten-steps" title="Link to this heading">#</a></h2>
 <p>In each motion step, the step’s main joint must swing at least 15°
-(<code class="docutils literal notranslate"><span class="pre">segmentation.labelled_step_actually_performed</span></code>). Checks marked <em>measured</em> only report a
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>). Checks marked <em>measured</em> only report a
 number; they do not decide the verdict.</p>
 <div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
 <div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-2 sd-row-cols-md-2 sd-row-cols-lg-2 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
@@ -528,7 +528,7 @@ included.</p>
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Measured: how far the arms sit below horizontal and how the two arms differ
-(<code class="docutils literal notranslate"><span class="pre">posture.tpose_arm_droop</span></code>, <code class="docutils literal notranslate"><span class="pre">posture.tpose_left_right_asymmetry</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">posture.tpose_arm_droop</span></code>, <code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">tpose_</span><wbr><span class="pre">left_</span><wbr><span class="pre">right_</span><wbr><span class="pre">asymmetry</span></code>).</p>
 </div>
 </div>
 </div>
@@ -543,7 +543,7 @@ included.</p>
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Measured: the resting hip angles that the knee raises are compared with
-(<code class="docutils literal notranslate"><span class="pre">posture.contralateral_crosstalk_single_leg_raise</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">contralateral_</span><wbr><span class="pre">crosstalk_</span><wbr><span class="pre">single_</span><wbr><span class="pre">leg_</span><wbr><span class="pre">raise</span></code>).</p>
 </div>
 </div>
 </div>
@@ -557,9 +557,9 @@ included.</p>
 <p class="sd-card-text">After the press, raise your straight left arm sideways to overhead and lower it. Stay upright.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: hand at least 60° above the shoulder (<code class="docutils literal notranslate"><span class="pre">posture.arm_raise_range_of_motion</span></code>),
-torso lean 6° or less (<code class="docutils literal notranslate"><span class="pre">performance.arm_raise_torso_stability</span></code>), and no other arm or leg
-swings 10° more (<code class="docutils literal notranslate"><span class="pre">segmentation.step_order_matches_labels</span></code>).</p>
+<p class="sd-card-text">Checked: hand at least 60° above the shoulder (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">arm_</span><wbr><span class="pre">raise_</span><wbr><span class="pre">range_</span><wbr><span class="pre">of_</span><wbr><span class="pre">motion</span></code>),
+torso lean 6° or less (<code class="docutils literal notranslate"><span class="pre">performance.</span><wbr><span class="pre">arm_</span><wbr><span class="pre">raise_</span><wbr><span class="pre">torso_</span><wbr><span class="pre">stability</span></code>), and no other arm or leg
+swings 10° more (<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).</p>
 </div>
 </div>
 </div>
@@ -573,9 +573,9 @@ swings 10° more (<code class="docutils literal notranslate"><span class="pre">s
 <p class="sd-card-text">After the press, raise your straight right arm sideways to overhead and lower it. Stay upright.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: hand at least 60° above the shoulder (<code class="docutils literal notranslate"><span class="pre">posture.arm_raise_range_of_motion</span></code>),
-torso lean 6° or less (<code class="docutils literal notranslate"><span class="pre">performance.arm_raise_torso_stability</span></code>), and no other arm or leg
-swings 10° more (<code class="docutils literal notranslate"><span class="pre">segmentation.step_order_matches_labels</span></code>).</p>
+<p class="sd-card-text">Checked: hand at least 60° above the shoulder (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">arm_</span><wbr><span class="pre">raise_</span><wbr><span class="pre">range_</span><wbr><span class="pre">of_</span><wbr><span class="pre">motion</span></code>),
+torso lean 6° or less (<code class="docutils literal notranslate"><span class="pre">performance.</span><wbr><span class="pre">arm_</span><wbr><span class="pre">raise_</span><wbr><span class="pre">torso_</span><wbr><span class="pre">stability</span></code>), and no other arm or leg
+swings 10° more (<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).</p>
 </div>
 </div>
 </div>
@@ -590,8 +590,8 @@ swings 10° more (<code class="docutils literal notranslate"><span class="pre">s
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: the left hip swings at least 15° and no other arm or leg swings 10° more
-(<code class="docutils literal notranslate"><span class="pre">segmentation.labelled_step_actually_performed</span></code>, <code class="docutils literal notranslate"><span class="pre">segmentation.step_order_matches_labels</span></code>).
-Measured: how much the still hip moves (<code class="docutils literal notranslate"><span class="pre">posture.contralateral_crosstalk_single_leg_raise</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>, <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).
+Measured: how much the still hip moves (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">contralateral_</span><wbr><span class="pre">crosstalk_</span><wbr><span class="pre">single_</span><wbr><span class="pre">leg_</span><wbr><span class="pre">raise</span></code>).</p>
 </div>
 </div>
 </div>
@@ -606,8 +606,8 @@ Measured: how much the still hip moves (<code class="docutils literal notranslat
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Checked: the right hip swings at least 15° and no other arm or leg swings 10° more
-(<code class="docutils literal notranslate"><span class="pre">segmentation.labelled_step_actually_performed</span></code>, <code class="docutils literal notranslate"><span class="pre">segmentation.step_order_matches_labels</span></code>).
-Measured: how much the still hip moves (<code class="docutils literal notranslate"><span class="pre">posture.contralateral_crosstalk_single_leg_raise</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>, <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).
+Measured: how much the still hip moves (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">contralateral_</span><wbr><span class="pre">crosstalk_</span><wbr><span class="pre">single_</span><wbr><span class="pre">leg_</span><wbr><span class="pre">raise</span></code>).</p>
 </div>
 </div>
 </div>
@@ -621,9 +621,9 @@ Measured: how much the still hip moves (<code class="docutils literal notranslat
 <p class="sd-card-text">After the press, squat slowly and stand fully up, twice, same depth, weight on both legs.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: hip flexion reaches at least 20° (<code class="docutils literal notranslate"><span class="pre">performance.squat_depth_sufficient</span></code>), the
-two reps agree within 20% (<code class="docutils literal notranslate"><span class="pre">posture.squat_rep_repeatability</span></code>), and the knees agree
-within 10° at the bottom (<code class="docutils literal notranslate"><span class="pre">posture.squat_knee_symmetry</span></code>).</p>
+<p class="sd-card-text">Checked: hip flexion reaches at least 20° (<code class="docutils literal notranslate"><span class="pre">performance.</span><wbr><span class="pre">squat_</span><wbr><span class="pre">depth_</span><wbr><span class="pre">sufficient</span></code>), the
+two reps agree within 20% (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">squat_</span><wbr><span class="pre">rep_</span><wbr><span class="pre">repeatability</span></code>), and the knees agree
+within 10° at the bottom (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">squat_</span><wbr><span class="pre">knee_</span><wbr><span class="pre">symmetry</span></code>).</p>
 </div>
 </div>
 </div>
@@ -637,9 +637,9 @@ within 10° at the bottom (<code class="docutils literal notranslate"><span clas
 <p class="sd-card-text">After the press, lift your knees in turn at a steady pace, without walking forward.</p>
 </div>
 <div class="sd-card-footer docutils">
-<p class="sd-card-text">Checked: the legs alternate (<code class="docutils literal notranslate"><span class="pre">posture.march_ankle_antiphase</span></code>), and the left knee lifts
+<p class="sd-card-text">Checked: the legs alternate (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">march_</span><wbr><span class="pre">ankle_</span><wbr><span class="pre">antiphase</span></code>), and the left knee lifts
 at least three times with intervals varying 25% or less
-(<code class="docutils literal notranslate"><span class="pre">performance.march_cadence_steady</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">performance.</span><wbr><span class="pre">march_</span><wbr><span class="pre">cadence_</span><wbr><span class="pre">steady</span></code>).</p>
 </div>
 </div>
 </div>
@@ -654,7 +654,7 @@ at least three times with intervals varying 25% or less
 </div>
 <div class="sd-card-footer docutils">
 <p class="sd-card-text">Measured: how far the same pose has drifted since step 2
-(<code class="docutils literal notranslate"><span class="pre">posture.cumulative_drift_between_tpose_windows</span></code>).</p>
+(<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">cumulative_</span><wbr><span class="pre">drift_</span><wbr><span class="pre">between_</span><wbr><span class="pre">tpose_</span><wbr><span class="pre">windows</span></code>).</p>
 </div>
 </div>
 </div>
@@ -678,14 +678,15 @@ is on your right.</p></li>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/full_body/capture/record.sh<span class="w"> </span>pico4u
 </pre></div>
 </div>
-<p>The first argument names the device and the take. Open the capture panel at <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a> (or
-<code class="docutils literal notranslate"><span class="pre">http://&lt;host&gt;:8081</span></code> from the headset; if the port was taken, use the address the run
-prints) and press <strong>Start recording</strong> when the performer is standing ready. The script begins
-at the first frame with a valid joint. After 10 s without one, a red box lists what to check;
-the take keeps running.</p>
+<p>The first argument names the device and the take. Open the capture panel at the address the run
+prints: <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a> unless that port was taken, or the <code class="docutils literal notranslate"><span class="pre">[capture]</span> <span class="pre">headset:</span></code> address
+in the headset’s browser. Press <strong>Start recording</strong> when the performer is standing ready. The
+script begins at the first frame with a valid joint. After 10 s without one, a red box lists what
+to check; the take keeps running.</p>
 <p>To record your own device, name the plugin, the vendor backend and its collection. The device
-name must come first. <code class="docutils literal notranslate"><span class="pre">suitx</span></code>, <code class="docutils literal notranslate"><span class="pre">suit_x_plugin</span></code>, <code class="docutils literal notranslate"><span class="pre">body.suit-x</span></code> and <code class="docutils literal notranslate"><span class="pre">suit_x</span></code> are
-placeholders for a fictional Suit X; replace each with your own:</p>
+name must come first; <code class="docutils literal notranslate"><span class="pre">record.sh</span></code> rejects a leading option with its usage line. <code class="docutils literal notranslate"><span class="pre">suitx</span></code>,
+<code class="docutils literal notranslate"><span class="pre">suit_x_plugin</span></code>, <code class="docutils literal notranslate"><span class="pre">body.suit-x</span></code> and <code class="docutils literal notranslate"><span class="pre">suit_x</span></code> are placeholders for a fictional Suit X;
+replace each with your own:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/full_body/capture/record.sh<span class="w"> </span>suitx<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--plugin<span class="w"> </span>suit_x_plugin<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--vendor<span class="w"> </span>body.suit-x<span class="w"> </span><span class="se">\</span>
@@ -756,9 +757,8 @@ verdict  PASS
 <span class="w">    </span>~/isaaccapture-cts/&lt;take&gt;/&lt;take&gt;-body.mcap
 </pre></div>
 </div>
-<p>It prints the same report, then serves <a class="reference external" href="http://127.0.0.1:8080" rel="noopener noreferrer" target="_blank">http://127.0.0.1:8080</a>; <code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">0.0.0.0</span></code> opens it to
-other machines. If 8080 is taken it moves to the next free port but still prints 8080, so pass a
-free <code class="docutils literal notranslate"><span class="pre">--port</span></code> instead. The viewer replays the
+<p>It prints the same report, then serves port 8080, or the next free port; open the address it
+prints. <code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">0.0.0.0</span></code> opens it to other machines. The viewer replays the
 skeleton (a joint that lost tracking turns red where it was last seen), plots frame rate and
 valid joints over the take, and lists every check by group, with nine key signal and geometry
 checks in a <em>Decides the take</em> folder on top. Its
@@ -790,7 +790,7 @@ goes on. Ctrl+C does not work here; close the terminal to get out.</p></td>
 </tr>
 <tr class="row-odd"><td><p><em>no joint has been valid yet</em>, then the red <em>No body data after 10 s</em> box</p></td>
 <td><p>PICO: check body tracking, the trackers and their calibration
-(<a class="reference internal" href="../device/body_tracking.html"><span class="doc">Body Tracking</span></a>). Own device: check the plugin is running and
+(<a class="reference internal" href="../device/body_tracking/index.html"><span class="doc">Body Tracking</span></a>). Own device: check the plugin is running and
 <code class="docutils literal notranslate"><span class="pre">collection_id</span></code> matches.</p></td>
 </tr>
 <tr class="row-even"><td><p>A press does nothing</p></td>
@@ -960,7 +960,7 @@ recording</em></p></td>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 15, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>
