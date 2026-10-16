@@ -23,6 +23,10 @@ Thanks for your interest in contributing! This document outlines how to build, t
 - Follow PEP 8 for style.
 - Use type annotations (PEP 484) and prefer formatted string literals (PEP 701, f-strings).
 
+## License
+
+- Contributions use the license of the component/file being changed: Apache-2.0 by default, OpenMDW-1.1 for EgoPost, with explicit third-party exceptions preserved. The DCO below applies to each contribution.
+
 ## Pre-commit
 
 We use [pre-commit](https://pre-commit.com/) to run Python linters and formatters (including
@@ -50,31 +54,10 @@ ruff format .
 
 ### License headers
 
-We use [REUSE](https://reuse.software/) to enforce SPDX license headers on source files. Pre-commit runs `reuse lint-file` on changed files (e.g. `.py`, `.cpp`, `.md`, `.yaml`):
-
-1. **Required fields**: Each file must have `SPDX-FileCopyrightText` and `SPDX-License-Identifier`.
-2. **License**: `SPDX-License-Identifier` must be `Apache-2.0` (full text in `LICENSES/Apache-2.0.txt`).
-
-Example header:
-
-```
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-```
-
-To add or fix headers, install the [reuse tool](https://github.com/fsfe/reuse-tool)
-
-```bash
-uv tool install reuse
-```
-
-and run for example:
-
-```bash
-reuse annotate -t compact -l Apache-2.0 --skip-unrecognised -r path/to/file
-```
-
-REUSE does not auto-update the copyright year when you touch a file; include the current year when adding or editing headers.
+Pre-commit automatically checks and updates license headers with [REUSE](https://reuse.software/).
+It adds NVIDIA headers to unannotated first-party files and selects the license by
+file location, preserving existing attribution and explicit third-party exceptions.
+Review and stage any automatic edits, then commit again.
 
 ## CI
 GitHub Actions builds the default targets and runs tests.
@@ -85,10 +68,7 @@ GitHub Actions builds the default targets and runs tests.
 3. Describe motivation, changes, and testing in the PR
 4. Link related issues
 
-## License
-- Your contributions are under the repository’s license unless stated otherwise
-
-### Signing Your Work
+## Signing Your Work
 
 * We require that all contributors "sign-off" on their commits. This certifies that the contribution is your original work, or you have rights to submit it under the same license, or a compatible license.
 

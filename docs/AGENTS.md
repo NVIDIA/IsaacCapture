@@ -9,11 +9,18 @@ Rules that the docs tree cannot state for itself. Anything that describes how a 
 currently put together belongs next to it instead — in the `.rst`, in the YAML header, in
 the CSS — where it moves when the code moves.
 
+Keep small API-option updates to purpose, prerequisites, and usage; avoid
+example wrappers and lifecycle walkthroughs unless needed to use the option.
+
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which
 is what CI runs, so a new warning fails the build. Check a docs change with that target
 rather than a bare `sphinx-build`.
+
+During a merge, `check-merge-conflict` can mistake seven-character RST heading
+underlines for conflict markers. Verify that no unmerged paths remain, finish
+the merge commit, then rerun all hooks; preserve valid headings.
 
 `make multi-docs` is the other half, and it constrains how extensions are written:
 sphinx-multiversion builds every whitelisted ref with `-c` pointing at the checkout that
@@ -62,7 +69,7 @@ for non-HTML builders.
 
 ## The external marker follows the target, not the record
 
-The docs site and the IsaacTeleop repository are both this project, so a link into either
+The docs site and the IsaacCapture repository are both this project, so a link into either
 renders with no arrow and no screen-reader "(external)" — tracking links included. Only
 third-party domains get the marker, and other GitHub organizations (`isaac-sim`) count as
 third-party. `ecosystem_grid.PROJECT_REPO` is the one place that boundary is written down.
@@ -97,3 +104,18 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## RST restructuring
+
+When moving a guide, keep its setup content until any deferred replacement pages
+exist. Preserve old URLs with compatibility pages and retain explicit labels in
+the destination. Recompute RST heading underlines when renaming their text.
+Device metadata containing docnames must come from `app.srcdir` so a multiversion
+build uses paths that exist in that ref, even when `conf.py` comes from the deploy
+checkout.
+
+Reuse the README architecture image in the RST overview so both entry points
+share one maintained diagram.
+
+Group vendor device guides under category toctrees in the Devices navigation;
+folder placement alone does not create sidebar nesting.

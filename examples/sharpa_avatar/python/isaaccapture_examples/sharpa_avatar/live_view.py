@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Live visualization of Sharpa Avatar gloves through TeleopSession.
+"""Live visualization of Sharpa AvatarExo Gloves through TeleopSession.
 
 Starts CloudXR and ``avatar_hand_plugin`` unless you opt out. Pinch a fingertip
 toward the thumb to vibrate that finger. Does not import plugin C++ classes or
@@ -542,7 +542,7 @@ def main() -> int:
     search_paths = args.plugin_search_path or plugin_search_paths()
     if args.launch_plugin and not _plugin_installed(search_paths):
         _die(
-            "Sharpa Avatar plugin binary was not found under "
+            "Sharpa AE Glove plugin binary was not found under "
             f"{PLUGIN_ROOT_ID}/{PLUGIN_NAME}.\n"
             "  Build it with the top-level CMake workflow and "
             "-DBUILD_PLUGIN_SHARPA_AVATAR=ON.\n"
@@ -624,7 +624,7 @@ def main() -> int:
     upright = not args.world_frame
 
     print("=" * 72)
-    print("Sharpa Avatar sample (TeleopSession + viser)")
+    print("Sharpa AE Glove sample (TeleopSession + viser)")
     print("  hands:   /hand/left, /hand/right")
     print(
         f"  raw:     {AVATAR_RAW_LEFT_COLLECTION_ID}, {AVATAR_RAW_RIGHT_COLLECTION_ID}"

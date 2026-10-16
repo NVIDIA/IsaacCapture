@@ -11,8 +11,29 @@ from .head_source import HeadSource
 from .hands_source import HandsSource
 from .controllers_source import ControllersSource
 from .pedals_source import Generic3AxisPedalSource
+from .spacemouse_source import (
+    SpaceMouseButtonsType,
+    SpaceMouseRotationType,
+    SpaceMouseSource,
+    SpaceMouseTranslationType,
+)
+from .gamepad_source import GamepadSource
+
+from .keyboard_source import (
+    KeyboardHeldType,
+    KeyboardPressedType,
+    KeyboardAttachment,
+    KeyboardSource,
+    KeyEventHandle,
+    KeyEventSource,
+    KeyListeners,
+)
+from .source_lookup import find_sources
+from .key_event_testing import FakeKeyEventSource
 from .joint_state_source import JointStateSource
 from .full_body_source import FullBodySource
+from .soma_body_source import SomaBodyRepresentation, SomaBodySource
+from .soma_hand_source import SomaHandRepresentation, SomaHandSource
 from .message_channel_source import MessageChannelSource
 from .message_channel_sink import MessageChannelSink
 from .message_channel_config import (
@@ -26,14 +47,28 @@ from .deviceio_tensor_types import (
     HandPoseTrackedType,
     ControllerSnapshotTrackedType,
     Generic3AxisPedalOutputTrackedType,
+    KeyboardOutputTrackedType,
+    SpaceMouseOutputTrackedType,
+    GamepadSnapshotTrackedType,
     JointStateOutputTrackedType,
     FullBodyPoseTrackedType,
+    SomaBodyJointRotationsTrackedType,
+    SomaBodyJointPosesTrackedType,
+    SomaHandJointRotationsTrackedType,
+    SomaHandJointPosesTrackedType,
     DeviceIOHeadPoseTracked,
     DeviceIOHandPoseTracked,
     DeviceIOControllerSnapshotTracked,
     DeviceIOGeneric3AxisPedalOutputTracked,
+    DeviceIOKeyboardOutputTracked,
+    DeviceIOSpaceMouseOutputTracked,
+    DeviceIOGamepadSnapshotTracked,
     DeviceIOJointStateOutputTracked,
     DeviceIOFullBodyPoseTracked,
+    DeviceIOSomaBodyJointRotationsTracked,
+    DeviceIOSomaBodyJointPosesTracked,
+    DeviceIOSomaHandJointRotationsTracked,
+    DeviceIOSomaHandJointPosesTracked,
     MessageChannelMessagesTrackedType,
     MessageChannelConnectionStatus,
     MessageChannelStatusType,
@@ -49,8 +84,26 @@ __all__ = [
     "HandsSource",
     "ControllersSource",
     "Generic3AxisPedalSource",
+    "SpaceMouseButtonsType",
+    "SpaceMouseRotationType",
+    "SpaceMouseSource",
+    "SpaceMouseTranslationType",
+    "GamepadSource",
+    "KeyboardHeldType",
+    "KeyboardPressedType",
+    "KeyboardAttachment",
+    "KeyboardSource",
+    "KeyEventHandle",
+    "KeyEventSource",
+    "KeyListeners",
+    "find_sources",
+    "FakeKeyEventSource",
     "JointStateSource",
     "FullBodySource",
+    "SomaBodySource",
+    "SomaBodyRepresentation",
+    "SomaHandSource",
+    "SomaHandRepresentation",
     "MessageChannelSource",
     "MessageChannelSink",
     "MessageChannelConfig",
@@ -61,8 +114,15 @@ __all__ = [
     "HandPoseTrackedType",
     "ControllerSnapshotTrackedType",
     "Generic3AxisPedalOutputTrackedType",
+    "KeyboardOutputTrackedType",
+    "SpaceMouseOutputTrackedType",
+    "GamepadSnapshotTrackedType",
     "JointStateOutputTrackedType",
     "FullBodyPoseTrackedType",
+    "SomaBodyJointRotationsTrackedType",
+    "SomaBodyJointPosesTrackedType",
+    "SomaHandJointRotationsTrackedType",
+    "SomaHandJointPosesTrackedType",
     "MessageChannelMessagesTrackedType",
     "MessageChannelConnectionStatus",
     "MessageChannelStatusType",
@@ -70,8 +130,15 @@ __all__ = [
     "DeviceIOHandPoseTracked",
     "DeviceIOControllerSnapshotTracked",
     "DeviceIOGeneric3AxisPedalOutputTracked",
+    "DeviceIOKeyboardOutputTracked",
+    "DeviceIOSpaceMouseOutputTracked",
+    "DeviceIOGamepadSnapshotTracked",
     "DeviceIOJointStateOutputTracked",
     "DeviceIOFullBodyPoseTracked",
+    "DeviceIOSomaBodyJointRotationsTracked",
+    "DeviceIOSomaBodyJointPosesTracked",
+    "DeviceIOSomaHandJointRotationsTracked",
+    "DeviceIOSomaHandJointPosesTracked",
     "DeviceIOMessageChannelMessagesTracked",
     "MessageChannelMessagesTrackedGroup",
     "MessageChannelStatusGroup",

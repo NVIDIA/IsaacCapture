@@ -24,8 +24,8 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-toml
       - id: end-of-file-fixer
-        # This LFS SVG is an asset; rewriting its final byte creates a new LFS object.
-        exclude: ^docs/source/_static/camera-viz-controls\.svg$
+        # These LFS SVGs are assets; rewriting their final byte creates new LFS objects.
+        exclude: ^(docs/source/_static/camera-viz-controls|examples/vehicle_teleop/assets/vehicle_teleop_flow)\.svg$
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
       - id: debug-statements
@@ -34,9 +34,12 @@ repos:
     rev: v6.2.0
     hooks:
       - id: reuse-lint-file
-        name: REUSE lint (SPDX headers on changed files)
-        # Include CMakeLists.txt and Dockerfile.xxx by matching those explicitly in the regex
-        files: \.(py|js|ts|cpp|c|h|hpp|cxx|hxx|cmake|md|yaml|yml|sh|fbs|toml|html)$|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$
+        name: REUSE licenses (source files and complete EgoPost subtree)
+        entry: python scripts/check_licenses.py --fix
+        args: []  # Clear the upstream hook's lint-file argument.
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
   # Copyright year: ensure SPDX-FileCopyrightText includes current year (--fix updates in place)
   - repo: local
     hooks:

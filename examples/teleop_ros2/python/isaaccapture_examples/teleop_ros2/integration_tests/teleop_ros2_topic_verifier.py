@@ -245,6 +245,8 @@ def _assert_twist(msg: TwistStamped) -> None:
     )
     if not _is_finite_sequence(values):
         raise ValueError("TwistStamped contains non-finite values")
+    if not any(abs(float(value)) > 1e-6 for value in values):
+        raise ValueError("TwistStamped is all zero")
 
 
 def _assert_controller_payload(msg: ByteMultiArray) -> None:

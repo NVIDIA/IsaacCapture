@@ -45,6 +45,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         fetch-depth: 0 # Full history for accurate git describe
+        lfs: true
 
     # Artifacts are stamped with this, so it has to be a property of the commit
     # and not of when a job happened to run. Without it a `py3-none-any` wheel,
@@ -321,6 +322,7 @@ jobs:
         # tag. A shallow clone counts 0, so every release tag mismatches.
         fetch-depth: 0
         persist-credentials: false
+        lfs: true
 
     - name: Install uv
       uses: ./.github/actions/setup-uv
@@ -873,7 +875,9 @@ jobs:
         # proxy up. This is the primary bring-up marker.
         BRINGUP_MARKER="CloudXR runtime and WSS proxy started"
         SESSION_MARKER="TeleopSession started successfully"
-        PLUGIN_MARKER_RE="wuji_glove\.WujiGlovePlugin\].*initialized and running"
+        # The console names a logger by its last segment only (logging_config's
+        # default), so the plugin's line reads "[WujiGlovePlugin] ...".
+        PLUGIN_MARKER_RE="\[WujiGlovePlugin\].*initialized and running"
         # Hard failures from the launcher, runtime, or plugin lifecycle.
         FAIL_RE="CloudXR runtime failed to start|SDK missing libcloudxr.so|CloudXR EULA was not accepted|CloudXR launcher is not running|runtime process exited unexpectedly|WSS proxy thread stopped unexpectedly|Plugin process exited immediately|Required plugin .* was not discovered"
 
@@ -1175,7 +1179,7 @@ jobs:
     environment: release
     permissions:
       contents: read
-    if: ${{ github.event_name != 'pull_request' && needs.publish-wheel.result == 'success' }}
+    if: ${{ github.event_name == 'push' && needs.publish-wheel.result == 'success' }}
 
     steps:
     - name: Submit wheel release to Kitmaker
@@ -1189,9 +1193,9 @@ jobs:
         ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
         ARTIFACTORY_REPO: ${{ secrets.ARTIFACTORY_REPO }}
         WHEEL_PATHS: ${{ needs.publish-wheel.outputs.wheel_paths }}
-        KITMAKER_UPLOAD: ${{ startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v') }}
-        # Only a vX.Y.Z tag is a final version and mirrors to PyPI.
-        # release/*.*.x builds are rc versions and stay on DevZone.
+        KITMAKER_UPLOAD: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v') }}
+        # Only a vX.Y.Z tag is a final version and mirrors to PyPI.org.
+        # Pre-releases: a1 (main branch) and rc1 (release/*.*.x branch) versions stay on DevZone.
         KITMAKER_MIRRORING: ${{ startsWith(github.ref, 'refs/tags/v') && 'upload-both' || 'claim-project' }}
       run: |
         set -euo pipefail
@@ -1285,7 +1289,7 @@ jobs:
       - kitmaker
     permissions:
       contents: read
-    if: ${{ github.event_name != 'pull_request' && needs.kitmaker.result == 'success' }}
+    if: ${{ needs.kitmaker.result == 'success' }}
 
     steps:
     - name: Monitor Kitmaker release status

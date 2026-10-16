@@ -49,6 +49,7 @@ from isaaccapture.teleop_session_manager.config import (
     RetargetingExecutionMode,
     SessionMode,
     TeleopSessionConfig,
+    _bundled_plugins_dir,
 )
 from isaaccapture.teleop_session_manager.async_retarget_runner import (
     AsyncRetargetRunner,
@@ -1560,7 +1561,71 @@ class TestPluginInitialization:
 
 
 class TestStatusMonitoringIntegration:
-    """Test Manus-only inventory, refresh, and provider failure integration."""
+    """Test monitored-plugin inventory, refresh, and provider failure integration."""
+
+    def test_controller_sources_add_live_per_side_status(self):
+        class ControllerSample(float):
+            def __new__(cls, value, *, aim_valid=True, grip_valid=True):
+                sample = super().__new__(cls, value)
+                sample.aim_pose = SimpleNamespace(is_valid=aim_valid)
+                sample.grip_pose = SimpleNamespace(is_valid=grip_valid)
+                return sample
+
+        controllers = MockControllersSource()
+        controllers._tracker._left_controller = ControllerSample(3.0)
+        controllers._tracker._right_controller = ControllerSample(4.0)
+        config = make_config(MockPipeline(leaf_nodes=[controllers]))
+
+        with mock_session_dependencies():
+            with TeleopSession(config) as session:
+                assert {device.id for device in session.get_status().devices} == {
+                    "openxr/headset",
+                    "openxr/controller/left",
+                    "openxr/controller/right",
+                }
+
+                session.step()
+
+                assert (
+                    session.get_device_status("openxr/controller/left").status
+                    == teleop_session_manager.DeviceState.CONNECTED
+                )
+                assert (
+                    session.get_device_status("openxr/controller/right").status
+                    == teleop_session_manager.DeviceState.CONNECTED
+                )
+
+    @pytest.mark.parametrize("plugin", ["spacemouse", "gamepad"])
+    def test_device_plugin_is_monitored(self, tmp_path, plugin):
+        manager = MockPluginManager(plugin_names=[plugin])
+        manager.get_plugin_info = MagicMock(
+            return_value=SimpleNamespace(
+                name=plugin,
+                devices=(
+                    SimpleNamespace(path=f"/{plugin}", type=plugin, description=plugin),
+                ),
+            )
+        )
+        config = make_config(
+            MockPipeline(leaf_nodes=[]),
+            plugins=[
+                PluginConfig(
+                    plugin_name=plugin,
+                    plugin_root_id=plugin,
+                    search_paths=[tmp_path],
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "isaaccapture.deviceio_trackers.PluginDeviceStatusTracker"
+            ) as tracker_cls,
+            mock_session_dependencies(mock_pm=manager, collected_trackers=[]),
+        ):
+            with TeleopSession(config) as session:
+                tracker_cls.assert_called_once_with(f"{plugin}/device_status")
+                assert session.get_device_status(f"{plugin}/{plugin}") is not None
 
     def test_only_manus_is_monitored_and_plugin_launch_order_is_preserved(
         self, tmp_path
@@ -3602,3 +3667,14 @@ class TestOutputSinks:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_bundled_plugins_dir_finds_the_root_that_holds_the_plugins(tmp_path):
+    # An editable install puts the authored source root, which has no plugins/, beside the install root.
+    source_root, install_root = tmp_path / "src", tmp_path / "site"
+    source_root.mkdir()
+    (install_root / "plugins").mkdir(parents=True)
+
+    roots = [str(source_root), str(install_root)]
+    assert _bundled_plugins_dir(roots) == install_root / "plugins"
+    assert _bundled_plugins_dir(roots[:1]) == source_root / "plugins"

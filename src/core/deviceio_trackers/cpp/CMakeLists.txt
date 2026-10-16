@@ -12,6 +12,7 @@ add_library(deviceio_trackers STATIC
     tensor_push_tracker.cpp
     full_body_tracker.cpp
     haptic_command_reader_tracker.cpp
+    keyboard_tracker.cpp
     ${GENERATED_TRACKER_FACADE_SOURCES}
     inc/deviceio_trackers/head_tracker.hpp
     inc/deviceio_trackers/hand_tracker.hpp
@@ -20,6 +21,7 @@ add_library(deviceio_trackers STATIC
     inc/deviceio_trackers/full_body_tracker.hpp
     inc/deviceio_trackers/tensor_push_tracker.hpp
     inc/deviceio_trackers/haptic_command_reader_tracker.hpp
+    inc/deviceio_trackers/keyboard_tracker.hpp
 )
 
 target_include_directories(deviceio_trackers
@@ -32,6 +34,8 @@ target_include_directories(deviceio_trackers
 target_link_libraries(deviceio_trackers
     PUBLIC
         deviceio::deviceio_base
+    PRIVATE
+        third_party::chromium_dom_codes
 )
 
 add_library(deviceio::deviceio_trackers ALIAS deviceio_trackers)

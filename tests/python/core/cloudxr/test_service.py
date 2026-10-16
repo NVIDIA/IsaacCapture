@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -467,6 +468,60 @@ class TestWssProxyStartup:
         # The thread outlives the timeout; stop() is what reaps it.
         service._stop_wss_proxy()
 
+    @pytest.mark.parametrize("defer_oob_connect", [False, True])
+    def test_headset_connection_is_explicit_only_when_deferred(
+        self, tmp_path, defer_oob_connect
+    ):
+        from cloudxr_py_test_ns.wss import _wait_for_connect
+
+        connected = threading.Event()
+
+        async def proxy(*, stop_future, on_listening, connect_requested, **kwargs):
+            on_listening()
+            if await _wait_for_connect(connect_requested, stop_future):
+                connected.set()
+            await stop_future
+
+        with (
+            mock_service_deps(tmp_path, wss=False),
+            _stub_wss(proxy),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        ):
+            service = CloudXRService(
+                setup_oob=True, defer_oob_connect=defer_oob_connect
+            )
+            try:
+                if defer_oob_connect:
+                    assert not connected.wait(0.05)
+                    service.connect_headset()
+                    service.connect_headset()  # Releasing the same gate is harmless.
+                assert connected.wait(1)
+            finally:
+                service._stop_wss_proxy()
+
+    def test_stopping_before_connect_does_not_launch_headset(self, tmp_path):
+        from cloudxr_py_test_ns.wss import _wait_for_connect
+
+        connected = []
+
+        async def proxy(*, stop_future, on_listening, connect_requested, **kwargs):
+            on_listening()
+            if await _wait_for_connect(connect_requested, stop_future):
+                connected.append(True)
+
+        with (
+            mock_service_deps(tmp_path, wss=False),
+            _stub_wss(proxy),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        ):
+            service = CloudXRService(setup_oob=True, defer_oob_connect=True)
+            thread = service._wss_thread
+            service._stop_wss_proxy()
+            assert not thread.is_alive()
+            assert connected == []
+            with pytest.raises(RuntimeError, match="not running"):
+                service.connect_headset()
+
 
 # ============================================================================
 # TestSignalHandlers
@@ -578,3 +633,159 @@ class TestSignalHandlers:
             signal.signal(signal.SIGINT, orig_sigint)
 
         assert not stop_called, "signal handler must not call stop() directly"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["connect", "shutdown", "disconnect", "disconnect_and_connect", "cancel"]
+)
+async def test_early_websocket_waits_for_app_or_disconnect(monkeypatch, outcome):
+    from unittest.mock import AsyncMock
+    from cloudxr_py_test_ns import wss
+
+    requested = asyncio.Event()
+    listening = asyncio.Event()
+    closed = asyncio.Event()
+    watching_close = asyncio.Event()
+    close_wait_finished = asyncio.Event()
+    stop = asyncio.get_running_loop().create_future()
+    handlers = []
+
+    async def wait_closed():
+        watching_close.set()
+        try:
+            await closed.wait()
+        finally:
+            close_wait_finished.set()
+
+    @contextlib.asynccontextmanager
+    async def serve(handler, **kwargs):
+        handlers.append(handler)
+        yield
+
+    proxy = AsyncMock()
+    # Keep this signaling test independent of an installed CloudXR environment.
+    monkeypatch.setattr(wss, "default_cert_paths", lambda: None)
+    monkeypatch.setattr(wss, "ensure_certificate", lambda *args: None)
+    monkeypatch.setattr(wss, "build_ssl_context", lambda *args: None)
+    monkeypatch.setattr(wss, "ws_serve", serve)
+    monkeypatch.setattr(wss, "proxy_handler", proxy)
+    task = asyncio.create_task(
+        wss.run(
+            None,
+            stop,
+            on_listening=listening.set,
+            connect_requested=requested,
+        )
+    )
+    client = None
+    try:
+        await asyncio.wait_for(listening.wait(), timeout=1)
+        client = asyncio.create_task(
+            handlers[0](types.SimpleNamespace(wait_closed=wait_closed))
+        )
+        await asyncio.wait_for(watching_close.wait(), timeout=1)
+        proxy.assert_not_called()
+        if outcome in ("disconnect", "disconnect_and_connect"):
+            closed.set()
+        if outcome in ("connect", "disconnect_and_connect"):
+            requested.set()
+        if outcome == "shutdown":
+            stop.set_result(None)
+        if outcome == "cancel":
+            client.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(client, timeout=1)
+        else:
+            await asyncio.wait_for(client, timeout=1)
+        assert proxy.call_count == int(outcome == "connect")
+        assert close_wait_finished.is_set()
+        assert stop.done() == (outcome == "shutdown")
+    finally:
+        if client is not None:
+            client.cancel()
+            await asyncio.gather(client, return_exceptions=True)
+        if not stop.done():
+            stop.set_result(None)
+        await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_disconnected_websockets_do_not_forward_stale_offers(monkeypatch):
+    from websockets.asyncio.client import connect
+    from websockets.asyncio.server import serve
+    from cloudxr_py_test_ns import wss
+
+    requested = asyncio.Event()
+    listening = asyncio.Event()
+    stop = asyncio.get_running_loop().create_future()
+    finished = asyncio.Queue()
+    connections = []
+    offers = []
+    proxy_port = None
+
+    async def backend_handler(ws):
+        connections.append(ws.request.path)
+        async for offer in ws:
+            offers.append(offer)
+            await ws.send(offer)
+
+    @contextlib.asynccontextmanager
+    async def serve_proxy(handler, **kwargs):
+        nonlocal proxy_port
+
+        async def tracked_handler(ws):
+            try:
+                await handler(ws)
+            finally:
+                finished.put_nowait(ws.request.path)
+
+        kwargs.update(host="127.0.0.1", port=0)
+        async with serve(tracked_handler, **kwargs) as server:
+            proxy_port = server.sockets[0].getsockname()[1]
+            yield
+
+    monkeypatch.setattr(wss, "default_cert_paths", lambda: None)
+    monkeypatch.setattr(wss, "ensure_certificate", lambda *args: None)
+    monkeypatch.setattr(wss, "build_ssl_context", lambda *args: None)
+    monkeypatch.setattr(wss, "ws_serve", serve_proxy)
+
+    async with serve(backend_handler, "127.0.0.1", 0) as backend:
+        task = asyncio.create_task(
+            wss.run(
+                None,
+                stop,
+                backend_host="127.0.0.1",
+                backend_port=backend.sockets[0].getsockname()[1],
+                proxy_port=0,
+                on_listening=listening.set,
+                connect_requested=requested,
+            )
+        )
+        try:
+            await asyncio.wait_for(listening.wait(), timeout=2)
+            uri = f"ws://127.0.0.1:{proxy_port}"
+            for index in range(3):
+                async with connect(f"{uri}/stale-{index}") as client:
+                    await client.send(f"stale-offer-{index}")
+
+            # Disconnected handlers must exit while the startup gate is still held.
+            exited = {
+                await asyncio.wait_for(finished.get(), timeout=2) for _ in range(3)
+            }
+            assert exited == {f"/stale-{index}" for index in range(3)}
+            assert not connections
+            assert not offers
+
+            async with connect(f"{uri}/live") as client:
+                await client.send("fresh-offer")
+                requested.set()
+                assert await asyncio.wait_for(client.recv(), timeout=2) == "fresh-offer"
+            assert await asyncio.wait_for(finished.get(), timeout=2) == "/live"
+        finally:
+            if not stop.done():
+                stop.set_result(None)
+            await asyncio.wait_for(task, timeout=2)
+
+    assert connections == ["/live"]
+    assert offers == ["fresh-offer"]

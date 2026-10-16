@@ -86,6 +86,10 @@ ENV_CONFIG_PAUSE_SEC = 5.0
 #: Redraw interval of the countdown, and so how fast the dots move.
 _PAUSE_TICK_SEC = 0.25
 
+# A live runtime cannot prove a headset stream from an old lifecycle snapshot.
+_OOB_STATUS_MAX_AGE_SEC = 30.0
+_OOB_METRICS_MAX_AGE_SEC = 5.0
+
 _ENV_CONFIG_PAUSE = (
     "  \033[33mContinuing with the running configuration in {seconds}s{dots} — "
     "press any key to abort.\033[0m"
@@ -160,6 +164,7 @@ class CloudXRLauncher:
         host_client: bool = True,
         run_embedded: bool = False,
         start_wss_proxy: bool | None = None,
+        defer_oob_connect: bool = False,
     ) -> None:
         """Attach to the running runtime, or own one when *run_embedded*.
 
@@ -171,23 +176,35 @@ class CloudXRLauncher:
                 to one this process cannot configure.
             start_wss_proxy: Deprecated no-op; the proxy always starts with
                 the runtime.
+            defer_oob_connect: Hold OOB automation and backend WebSocket signaling
+                until :meth:`connect_headset`. Defaults to ``False`` (connect
+                immediately). Requires ``run_embedded=True`` and ``setup_oob=True``.
 
         Every other argument is forwarded to :class:`CloudXRService` and only
         applies when this process owns it.  When attaching they describe a
-        runtime that already exists, so a mismatch is reported rather than
-        applied.  ``host_client`` is recovered from the detached service's
-        command line when that is available.
+        runtime that already exists.  Requested OOB/USB mode must match the
+        detached service; other mismatches are reported rather than applied.
+        ``host_client`` is recovered from the detached service's command line
+        when that is available.
 
         Raises:
-            RuntimeError: If the runtime fails to start or come up, or if
-                *run_embedded* is set while a runtime is already serving.
+            ValueError: If *defer_oob_connect* is set without *run_embedded*
+                and *setup_oob*.
+            RuntimeError: If the runtime fails to start or come up, if
+                *run_embedded* is set while a runtime is already serving, or
+                if the requested OOB/USB mode cannot be verified or matched.
         """
+        if defer_oob_connect and not (run_embedded and setup_oob):
+            raise ValueError(
+                "defer_oob_connect requires run_embedded=True and setup_oob=True"
+            )
         if start_wss_proxy is not None:
             self._warn_start_wss_proxy_deprecated()
 
         self._run_dir = os.path.join(os.path.expanduser(install_dir), "run")
         self._logs_dir = Path(os.path.expanduser(install_dir)) / "logs"
         self._service: CloudXRService | None = None
+        self._observed_oob_session: tuple[str, int, int] | None = None
 
         if run_embedded:
             self._refuse_beside_live_runtime()
@@ -199,11 +216,14 @@ class CloudXRLauncher:
                 setup_oob=setup_oob,
                 usb_local=usb_local,
                 host_client=host_client,
+                defer_oob_connect=defer_oob_connect,
             )
             return
 
         if is_runtime_live(self._run_dir):
+            self._validate_requested_mode(setup_oob, usb_local)
             self._attach(device_profile, env_config, host_client)
+            self.oob_status()
             return
 
         started = self._start_service(
@@ -218,11 +238,14 @@ class CloudXRLauncher:
         # Skip mismatch reports for settings this call just applied.  A
         # runtime that beat us to it did not get them, so that one is reported
         # like any other attach.
+        if not started:
+            self._validate_requested_mode(setup_oob, usb_local)
         self._attach(
             device_profile,
             None if started else env_config,
             None if started else host_client,
         )
+        self.oob_status()
         # After attach so wss_proxy_port() sees PROXY_PORT from cloudxr.env,
         # not a stale caller environment.
         if started and (host_client or usb_local):
@@ -303,6 +326,12 @@ class CloudXRLauncher:
             # what this path wanted.  Its configuration is not ours, though.
             return False
         print(_STARTED_SERVICE.format(pid=pid, log=log), file=sys.stderr)
+        if setup_oob:
+            print(
+                "  Headset setup is retrying until stream confirmation; "
+                "service startup does not confirm streaming.",
+                file=sys.stderr,
+            )
         return True
 
     def _announce_hosted_client(self, *, usb_local: bool = False) -> None:
@@ -330,6 +359,35 @@ class CloudXRLauncher:
         print_hosted_client_line(
             url, prefix=_STARTED_HOST_CLIENT_PREFIX, file=sys.stderr
         )
+
+    def _validate_requested_mode(self, setup_oob: bool, usb_local: bool) -> None:
+        """Require a verifiable matching mode when attaching for OOB teleop."""
+        if not setup_oob and not usb_local:
+            return
+        stop = self._service_stop_invocation()
+        if background.read_pid(self._run_dir) is None:
+            raise RuntimeError(
+                "Cannot verify the existing CloudXR runtime's OOB/USB mode: "
+                "its detached service flags are unavailable. "
+                f"Stop it with `{stop}`, then start it with the requested mode."
+            )
+        flags = background.read_run_flags(self._run_dir)
+        running_oob = "--setup-oob" in flags
+        running_usb = "--usb-local" in flags
+        if (setup_oob and not running_oob) or (running_usb != usb_local):
+            requested = "USB-local OOB" if usb_local else "OOB without USB-local"
+            running = (
+                "USB-local OOB"
+                if running_usb
+                else "OOB without USB-local"
+                if running_oob
+                else "without OOB"
+            )
+            raise RuntimeError(
+                f"Requested {requested} mode, but the existing CloudXR runtime "
+                f"is running {running}. Stop it with `{stop}`, then start it "
+                "with the requested mode."
+            )
 
     def _attach(
         self,
@@ -799,6 +857,16 @@ class CloudXRLauncher:
         if self._service is not None:
             self._service.stop()
 
+    def connect_headset(self) -> None:
+        """Release deferred OOB automation once the application's XR session is ready.
+
+        Requires ``defer_oob_connect=True``. Non-blocking and idempotent;
+        connection progress uses the WSS log as usual.
+        """
+        if self._service is None:
+            raise RuntimeError("connect_headset requires an embedded CloudXR service")
+        self._service.connect_headset()
+
     def health_check(self) -> None:
         """Raise :class:`RuntimeError` if the runtime is no longer available.
 
@@ -814,6 +882,68 @@ class CloudXRLauncher:
                 f"The CloudXR runtime serving {self._run_dir} has stopped"
             )
 
+    def wait_for_oob_stage(
+        self, stage: str = "streamConfirmed", *, timeout_sec: float = 90.0
+    ) -> dict:
+        """Wait for live OOB evidence, or raise with the last recovery reason."""
+        stages = {
+            "socketBound",
+            "transportReady",
+            "clientLoaded",
+            "connectDispatched",
+            "streamConfirmed",
+        }
+        if stage not in stages:
+            raise ValueError(f"Unknown OOB readiness stage: {stage}")
+        if not math.isfinite(timeout_sec) or timeout_sec <= 0:
+            raise ValueError("timeout_sec must be positive and finite")
+        deadline = time.monotonic() + timeout_sec
+        last_status: dict | None = None
+        while True:
+            last_status = self.oob_status()
+            if last_status and last_status.get("health") == "fatal":
+                raise RuntimeError(
+                    f"OOB startup failed: {last_status.get('reason', 'unknown reason')}"
+                )
+            self.health_check()
+            updated_at = (last_status or {}).get("updatedAt")
+            age = (
+                time.time() - updated_at
+                if isinstance(updated_at, (int, float))
+                and not isinstance(updated_at, bool)
+                and math.isfinite(updated_at)
+                else float("inf")
+            )
+            metrics_at = (last_status or {}).get("lastMetricsAt")
+            metrics_age = (
+                time.time() - metrics_at / 1000
+                if isinstance(metrics_at, (int, float))
+                and not isinstance(metrics_at, bool)
+                and math.isfinite(metrics_at)
+                else float("inf")
+            )
+            if (
+                last_status
+                and last_status.get(stage) is True
+                and 0 <= age <= _OOB_STATUS_MAX_AGE_SEC
+                and (
+                    stage != "streamConfirmed"
+                    or (
+                        age < _OOB_METRICS_MAX_AGE_SEC
+                        and 0 <= metrics_age < _OOB_METRICS_MAX_AGE_SEC
+                    )
+                )
+            ):
+                return last_status
+            if time.monotonic() >= deadline:
+                current = (last_status or {}).get("readinessStage", "unavailable")
+                reason = (last_status or {}).get("reason", "no OOB status published")
+                raise TimeoutError(
+                    f"OOB startup did not reach {stage} within {timeout_sec:g}s "
+                    f"(stage={current}, reason={reason})"
+                )
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
     def oob_status(self) -> dict | None:
         """Return the OOB lifecycle status for owned or attached services."""
         if self._service is not None:
@@ -828,17 +958,26 @@ class CloudXRLauncher:
             return None
         if not isinstance(status, dict) or status.get("schemaVersion") != 1:
             return None
-        if not is_runtime_live(self._run_dir):
-            return None
+        runtime_live = is_runtime_live(self._run_dir)
         writer_pid = status.get("writerPid")
         runtime_pid = status.get("runtimePid")
         if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
+            return None
+        session_id = status.get("sessionId")
+        identity = (session_id, writer_pid, runtime_pid)
+        if not runtime_live:
+            if status.get("health") == "fatal" and identity == getattr(
+                self, "_observed_oob_session", None
+            ):
+                return status
             return None
         try:
             os.kill(writer_pid, 0)
             os.kill(runtime_pid, 0)
         except (OSError, ValueError):
             return None
+        if isinstance(session_id, str) and session_id:
+            self._observed_oob_session = identity
         return status
 
     @property

@@ -4,7 +4,7 @@
 MCAP Recording & Replay
 ========================
 
-Isaac Teleop supports recording live tracking data to `MCAP <https://mcap.dev/>`_
+Isaac Capture supports recording live tracking data to `MCAP <https://mcap.dev/>`_
 files and replaying them offline through the same retargeting pipeline — no
 headset or OpenXR runtime required during replay.
 
@@ -207,7 +207,7 @@ compiles the extension modules and takes a few minutes; later ones reuse the
 cached build, and the install is editable, so edits under ``src/python/`` need
 no rebuild.  From ``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
-:doc:`/getting_started/build_from_source/index`.
+:doc:`/development/build_from_source/index`.
 
 An active OpenXR runtime / headset must be connected, just like any other
 live ``TeleopSession``.  Recording also needs the CloudXR runtime natives, which

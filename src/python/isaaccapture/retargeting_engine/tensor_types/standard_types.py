@@ -17,7 +17,9 @@ from .ndarray_types import NDArrayType, DLDataType
 
 # Constants
 NUM_HAND_JOINTS = 26  # XR_HAND_JOINT_COUNT_EXT from OpenXR
+NUM_SOMA_HAND_JOINTS = 25  # SOMAHandLayer wrist plus 24 finger joints
 NUM_BODY_JOINTS = 24  # XR_BODY_JOINT_COUNT_BD from XR_BD_body_tracking
+NUM_SOMA_BODY_JOINTS = 77  # Public SOMA joints, excluding virtual Root
 
 # ============================================================================
 # Hand Tracking Types
@@ -80,6 +82,33 @@ def HandInput() -> TensorGroupType:
                 shape=(NUM_HAND_JOINTS,),
                 dtype=DLDataType.UINT,
                 dtype_bits=8,  # bool represented as uint8
+            ),
+        ],
+    )
+
+
+def SomaHandInput() -> TensorGroupType:
+    """Evaluated global poses for the 25 SOMA hand joints."""
+    return TensorGroupType(
+        "soma_hand",
+        [
+            NDArrayType(
+                "soma_hand_joint_positions",
+                shape=(NUM_SOMA_HAND_JOINTS, 3),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_hand_joint_orientations",
+                shape=(NUM_SOMA_HAND_JOINTS, 4),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_hand_joint_valid",
+                shape=(NUM_SOMA_HAND_JOINTS,),
+                dtype=DLDataType.UINT,
+                dtype_bits=8,
             ),
         ],
     )
@@ -206,6 +235,42 @@ def ControllerInput() -> TensorGroupType:
     )
 
 
+def GamepadInput() -> TensorGroupType:
+    """
+    Standard TensorGroupType for gamepad data: a generic controller split in two.
+
+    Mirrors GamepadInputState in gamepad.fbs. Buttons are 1.0 while held and 0.0 otherwise; face
+    buttons are named by position (south is A on Xbox, Cross on PlayStation). Thumbsticks are in
+    [-1, 1] with right and up positive, as in OpenXR; triggers are in [0, 1]. Index fields with
+    GamepadInputIndex, e.g. ``gamepad[GamepadInputIndex.WEST_CLICK]``.
+    """
+    return TensorGroupType(
+        "gamepad",
+        [
+            FloatType("gamepad_south_click"),
+            FloatType("gamepad_east_click"),
+            FloatType("gamepad_west_click"),
+            FloatType("gamepad_north_click"),
+            FloatType("gamepad_view_click"),
+            FloatType("gamepad_menu_click"),
+            FloatType("gamepad_shoulder_left_click"),
+            FloatType("gamepad_shoulder_right_click"),
+            FloatType("gamepad_thumbstick_left_click"),
+            FloatType("gamepad_thumbstick_right_click"),
+            FloatType("gamepad_dpad_up_click"),
+            FloatType("gamepad_dpad_down_click"),
+            FloatType("gamepad_dpad_left_click"),
+            FloatType("gamepad_dpad_right_click"),
+            FloatType("gamepad_thumbstick_left_x"),
+            FloatType("gamepad_thumbstick_left_y"),
+            FloatType("gamepad_thumbstick_right_x"),
+            FloatType("gamepad_thumbstick_right_y"),
+            FloatType("gamepad_trigger_left_value"),
+            FloatType("gamepad_trigger_right_value"),
+        ],
+    )
+
+
 # ============================================================================
 # Full Body Tracking Types
 # ============================================================================
@@ -246,6 +311,33 @@ def FullBodyInput() -> TensorGroupType:
             NDArrayType(
                 "body_joint_valid",
                 shape=(NUM_BODY_JOINTS,),
+                dtype=DLDataType.UINT,
+                dtype_bits=8,
+            ),
+        ],
+    )
+
+
+def SomaBodyInput() -> TensorGroupType:
+    """Evaluated global poses for the 77 transported SOMA body joints."""
+    return TensorGroupType(
+        "soma_body",
+        [
+            NDArrayType(
+                "soma_body_joint_positions",
+                shape=(NUM_SOMA_BODY_JOINTS, 3),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_body_joint_orientations",
+                shape=(NUM_SOMA_BODY_JOINTS, 4),
+                dtype=DLDataType.FLOAT,
+                dtype_bits=32,
+            ),
+            NDArrayType(
+                "soma_body_joint_valid",
+                shape=(NUM_SOMA_BODY_JOINTS,),
                 dtype=DLDataType.UINT,
                 dtype_bits=8,
             ),

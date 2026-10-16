@@ -13,7 +13,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from typing import ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -22,6 +22,7 @@ from websockets.asyncio.server import serve as ws_serve
 from cloudxr_py_test_ns import oob_teleop_adb as adb_module
 from cloudxr_py_test_ns.oob_teleop_adb import (
     OobAdbError,
+    _CDP_LOCAL_PORT,
     _cdp_session_click_connect,
     _close_stale_teleop_tabs,
     _discover_devtools_socket,
@@ -35,12 +36,12 @@ from cloudxr_py_test_ns.oob_teleop_adb import (
     require_adb_on_path,
     require_coturn_available,
     run_adb_headset_bookmark,
+    run_oob_connect,
 )
 
 
 def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None:
     for name in (
-        "TELEOP_CLIENT_RECONNECT_ENABLED",
         "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
         "TELEOP_CLIENT_RECONNECT_DELAY_MS",
     ):
@@ -51,7 +52,7 @@ def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None
         web_client_base="https://localhost:8080",
     )
     query = parse_qs(urlparse(url).query)
-    assert query["reconnectEnabled"] == ["true"]
+    assert "reconnectEnabled" not in query
     assert query["reconnectMaxAttempts"] == ["10"]
     assert query["reconnectDelayMs"] == ["3000"]
 
@@ -60,6 +61,65 @@ def test_build_teleop_url_includes_default_reconnect_policy(monkeypatch) -> None
 def _clear_adb_device_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make device-selection tests independent of the developer's shell env."""
     monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _awake_for_cdp_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adb_module, "assert_headset_awake", lambda **_kwargs: None)
+
+
+@pytest.mark.parametrize(
+    ("manufacturer", "brand", "model"),
+    [("Meta", "oculus", "Quest 3"), ("PICO", "PICO", "PICO 4")],
+)
+def test_assert_supported_headset_accepts_hmd(
+    manufacturer: str, brand: str, model: str
+) -> None:
+    properties = {
+        "ro.product.manufacturer": manufacturer,
+        "ro.product.brand": brand,
+        "ro.product.model": model,
+    }
+    with patch.object(adb_module, "_adb_getprop", side_effect=properties.get):
+        adb_module.assert_supported_headset()
+
+
+@pytest.mark.parametrize(
+    ("manufacturer", "brand", "model"),
+    [("Samsung", "samsung", "Galaxy S24"), ("unknown", "unknown", "device")],
+)
+def test_assert_supported_headset_rejects_other_android_devices(
+    manufacturer: str, brand: str, model: str
+) -> None:
+    properties = {
+        "ro.product.manufacturer": manufacturer,
+        "ro.product.brand": brand,
+        "ro.product.model": model,
+    }
+    with (
+        patch.object(adb_module, "_adb_getprop", side_effect=properties.get),
+        pytest.raises(OobAdbError, match="not a supported Meta Quest or PICO headset"),
+    ):
+        adb_module.assert_supported_headset()
+
+
+def test_open_url_on_headset_requires_confirmed_wakefulness() -> None:
+    with (
+        patch.object(adb_module, "assert_adb_device_online"),
+        patch.object(
+            adb_module,
+            "assert_headset_awake",
+            side_effect=OobAdbError("Headset wakefulness was not confirmed as Awake"),
+        ) as awake,
+        patch.object(adb_module, "headset_browser_package") as browser,
+        patch.object(adb_module, "_adb_run") as run_adb,
+    ):
+        rc, diagnostic = adb_module.open_url_on_headset("https://host.test/client")
+    assert rc == 99
+    assert "not confirmed as Awake" in diagnostic
+    awake.assert_called_once_with(timeout=10.0, require_awake=True)
+    browser.assert_not_called()
+    run_adb.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -130,12 +190,28 @@ async def test_local_client_reloads_without_http_cache_before_connect() -> None:
 
     cdp = FakeCDP()
     dispatched = []
+    milestones = []
+
+    async def loaded():
+        milestones.append("clientLoaded")
+
+    def on_dispatched():
+        dispatched.append(list(cdp.methods))
+
+        async def publish():
+            assert "startButton" in cdp.last["params"]["expression"]
+            milestones.append("connectDispatched")
+
+        return publish()
+
     with patch("websockets.asyncio.client.connect", return_value=cdp):
         await adb_module._cdp_session_click_connect(
             "ws://test",
             refresh_static_assets=True,
-            on_dispatched=lambda: dispatched.append(list(cdp.methods)),
+            on_client_loaded=loaded,
+            on_dispatched=on_dispatched,
         )
+    assert milestones == ["clientLoaded", "connectDispatched"]
     assert len(dispatched) == 1
     assert dispatched[0][-1] == "Input.dispatchMouseEvent"
     assert cdp.methods.index("Network.setCacheDisabled") < cdp.methods.index(
@@ -173,18 +249,25 @@ async def test_attach_existing_tab_clicks_without_navigation_or_tab_cleanup() ->
             ],
         ),
         patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "_cdp_send_reset_panel_key") as reset_key,
         patch.object(adb_module, "_monitor_teleop_error_banner", side_effect=monitor),
         patch.object(adb_module, "_close_stale_teleop_tabs") as close_tabs,
         patch.object(adb_module, "run_adb_headset_bookmark") as launch,
     ):
-        task = await adb_module.attach_existing_oob_tab(click_connect=True)
+        task = await adb_module.attach_existing_oob_tab(
+            resolved_port=48322, click_connect=True
+        )
         click.assert_awaited_once_with(
             "ws://teleop",
             refresh_static_assets=False,
             allow_navigation=False,
             clear_stale_error=True,
             on_dispatched=None,
+            on_client_loaded=None,
         )
+        # Unconditional: this reattach path is the one case the client's own
+        # automatic first-XR-frame reset never covers (no new session starts).
+        reset_key.assert_awaited_once_with("ws://teleop")
         close_tabs.assert_not_called()
         launch.assert_not_called()
         task.cancel()
@@ -212,9 +295,56 @@ async def test_attach_existing_tab_without_exact_oob_page_cleans_forward() -> No
         patch.object(adb_module, "_cdp_session_click_connect") as click,
     ):
         with pytest.raises(OobAdbError, match="no surviving teleop tab"):
-            await adb_module.attach_existing_oob_tab(click_connect=True)
+            await adb_module.attach_existing_oob_tab(
+                resolved_port=48322, click_connect=True
+            )
     click.assert_not_awaited()
     cleanup.assert_called_once_with(9223)
+
+
+@pytest.mark.asyncio
+async def test_attach_existing_tab_monitor_runs_with_real_signature() -> None:
+    """Regression test: attach_existing_oob_tab() must call the real (not mocked)
+    _monitor_teleop_error_banner() with a signature it actually accepts, or the monitor
+    task fails immediately with TypeError the instant it starts running - which a mocked
+    monitor can't catch, since the mock accepts any arguments."""
+    script = _MonitorScript(banners=[""])
+    async with _fake_cdp_ws(script) as ws_url:
+
+        async def immediate(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+            patch.object(
+                adb_module, "_discover_devtools_socket", return_value="socket"
+            ),
+            patch.object(adb_module, "_adb_forward_cdp"),
+            # The monitor's finally block tears down its forward on exit (cancellation here) -
+            # unmocked, that's a real subprocess call to the system adb binary, which CI runners
+            # without one installed don't have.
+            patch.object(adb_module, "_adb_forward_remove"),
+            patch.object(
+                adb_module,
+                "_cdp_list_tabs",
+                return_value=[
+                    {
+                        "url": "https://localhost:8080/?oobEnable=1",
+                        "webSocketDebuggerUrl": ws_url,
+                    }
+                ],
+            ),
+        ):
+            task = await adb_module.attach_existing_oob_tab(
+                resolved_port=48322, click_connect=False
+            )
+            # Give the task at least one real iteration on the real monitor loop
+            # before cancelling, so a TypeError at startup would actually surface.
+            await asyncio.sleep(1.5)
+            assert not task.done(), f"monitor task ended early: {task.exception()}"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb.shutil.which", return_value="/usr/bin/adb")
@@ -325,7 +455,8 @@ def test_run_adb_headset_bookmark_success(
     mock_lan: MagicMock, mock_run: MagicMock, _mock_state: MagicMock
 ) -> None:
     mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    rc, diag = run_adb_headset_bookmark(resolved_port=48322)
+    with patch.object(adb_module, "headset_wakefulness", return_value="Awake"):
+        rc, diag = run_adb_headset_bookmark(resolved_port=48322)
     assert rc == 0
     assert diag == ""
     args = mock_run.call_args[0][0]
@@ -346,7 +477,8 @@ def test_run_adb_headset_bookmark_failure(
     mock_run.return_value = MagicMock(
         returncode=1, stdout="", stderr="no devices/emulators found"
     )
-    rc, diag = run_adb_headset_bookmark(resolved_port=48322)
+    with patch.object(adb_module, "headset_wakefulness", return_value="Awake"):
+        rc, diag = run_adb_headset_bookmark(resolved_port=48322)
     assert rc == 1
     assert "no devices" in diag
 
@@ -522,6 +654,32 @@ def test_build_teleop_url_host_client_uses_resolved_proxy_host_and_port(
     assert "serverIP=proxy.example.test" in url
     assert "10.0.0.2" not in url
     assert "port=49322" in url
+
+
+def test_build_teleop_url_forwards_reliability_config_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TELEOP_CLIENT_* reconnect/warm-up env vars reach the bookmark URL end to end.
+
+    client_ui_fields_from_env() is a generic dict merge (build_teleop_url ->
+    build_headset_bookmark_url), so this exercises the whole launch-path chain rather than
+    just the two boundary functions in test_oob_teleop_env.py.
+    """
+    from cloudxr_py_test_ns.oob_teleop_adb import build_teleop_url
+
+    monkeypatch.delenv("TELEOP_WEB_CLIENT_BASE", raising=False)
+    monkeypatch.setenv("PROXY_PORT", "48322")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("TELEOP_CLIENT_RECONNECT_DELAY_MS", "2500")
+    monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "90000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "8000")
+    monkeypatch.setenv("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "20000")
+    url = build_teleop_url(resolved_port=49322, usb_local=True)
+    assert "reconnectMaxAttempts=5" in url
+    assert "reconnectDelayMs=2500" in url
+    assert "streamAttachTimeoutMs=90000" in url
+    assert "warmupBeginTimeoutMs=8000" in url
+    assert "warmupEndTimeoutMs=20000" in url
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb.adb_device_state", return_value="device")
@@ -848,9 +1006,11 @@ async def test_error_banner_monitor_removes_forward_off_event_loop() -> None:
 # ============================================================================
 # CDP: _discover_devtools_socket / _close_stale_teleop_tabs
 #
-# _close_stale_teleop_tabs is driven against a genuine local HTTP server standing in for
-# Chromium's CDP `/json` endpoint, exercising the real tab-matching/close-request logic rather
-# than asserting mocked call arguments.
+# _discover_devtools_socket mocks only `_run_adb` (no real device). _close_stale_teleop_tabs
+# drives the real function against a genuine local HTTP server standing in for Chromium's CDP
+# `/json` endpoint - only the two `adb forward` calls either side of it are mocked, since there's
+# no real device - so the tab-matching/close-request logic itself is exercised for real rather
+# than asserted via mocked call arguments.
 # ============================================================================
 
 
@@ -952,14 +1112,24 @@ def test_close_stale_teleop_tabs_closes_only_oob_tabs(
     mock_discover: MagicMock,
     mock_forward: MagicMock,
     mock_remove: MagicMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     mock_discover.return_value = "chrome_devtools_remote"
     tabs = [
-        {"id": "stale-1", "url": "https://headset.local/?oobEnable=1"},
+        {
+            "id": "stale-1",
+            "url": "https://headset.local/?oobEnable=1&controlToken=stale-control-canary",
+        },
         {"id": "unrelated", "url": "https://headset.local/some-other-page"},
-        {"id": "stale-2", "url": "https://headset.local/?oobEnable=1&codec=av1"},
+        {
+            "id": "stale-2",
+            "url": "https://headset.local/?oobEnable=1&turnCredential=stale-turn-canary",
+        },
     ]
-    with _fake_cdp_server(tabs) as handler:
+    with (
+        _fake_cdp_server(tabs) as handler,
+        caplog.at_level("INFO", logger=adb_module.log.name),
+    ):
         closed = _close_stale_teleop_tabs()
         # Read the port while the fixture's patch is still active - it's restored to the
         # real _CDP_LOCAL_PORT once this block exits.
@@ -969,6 +1139,10 @@ def test_close_stale_teleop_tabs_closes_only_oob_tabs(
     assert sorted(handler.closed_ids) == ["stale-1", "stale-2"]
     mock_forward.assert_called_once_with("chrome_devtools_remote", patched_port)
     mock_remove.assert_called_once_with(patched_port)
+    assert "stale-control-canary" not in caplog.text
+    assert "stale-turn-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
 
 
 @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove")
@@ -1017,10 +1191,12 @@ def test_close_stale_teleop_tabs_forward_failure_returns_zero_without_remove(
 # ============================================================================
 # CDP: _cdp_session_click_connect
 #
-# Drives the real function against a genuine local CDP WebSocket server; _CdpScript below is a
-# scripted responder standing in for a real Chromium DevTools target, so the cert-interstitial
-# bypass and readiness-poll state machine run for real rather than being asserted via mocked
-# call arguments.
+# Drives the real function against a genuine local CDP WebSocket server (unlike
+# _close_stale_teleop_tabs's HTTP /json above, this function speaks CDP entirely over one
+# WebSocket) - _CdpScript below is a scripted responder standing in for a real Chromium
+# DevTools target, so the cert-interstitial bypass and readiness-poll state machine run for
+# real rather than being asserted via mocked call arguments. Unlike _CDP_LOCAL_PORT above, the
+# WebSocket URL is a plain function argument, so each test gets its own OS-assigned port.
 # ============================================================================
 
 
@@ -1144,6 +1320,25 @@ async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_click
     assert click_index > dispatch_index
 
 
+async def test_cdp_connect_waits_for_awake_before_mouse_dispatch() -> None:
+    asleep = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(asleep) as ws_url:
+        with patch.object(
+            adb_module,
+            "assert_headset_awake",
+            side_effect=adb_module.HeadsetNotAwakeError("not Awake"),
+        ) as wake:
+            with pytest.raises(adb_module.HeadsetNotAwakeError, match="not Awake"):
+                await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in asleep.calls]
+    wake.assert_called_once_with(timeout=10.0, require_awake=True)
+
+    awake = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(awake) as ws_url:
+        await _cdp_session_click_connect(ws_url)
+    assert "Input.dispatchMouseEvent" in [m for m, _ in awake.calls]
+
+
 async def test_cdp_session_click_connect_failed_capability_check_raises() -> None:
     script = _CdpScript(
         interstitial=False,
@@ -1161,10 +1356,26 @@ async def test_cdp_session_click_connect_failed_capability_check_raises() -> Non
     assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
 
 
-async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> None:
-    script = _CdpScript(interstitial=True, interstitial_url="https://headset.local/")
+async def test_cdp_session_click_connect_cert_interstitial_primary_bypass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = (
+        "https://headset.local/?controlToken=cert-control-canary"
+        "&turnCredential=cert-turn-canary"
+    )
+    script = _CdpScript(interstitial=True, interstitial_url=url)
     async with _fake_cdp_ws(script) as ws_url:
-        await _cdp_session_click_connect(ws_url)
+        with caplog.at_level("INFO", logger=adb_module.log.name):
+            await _cdp_session_click_connect(ws_url)
+    assert any(
+        params.get("url") == url
+        for method, params in script.calls
+        if method == "Page.navigate"
+    )
+    assert "cert-control-canary" not in caplog.text
+    assert "cert-turn-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
     methods = [m for m, _ in script.calls]
     fallback_clicks = [
         p.get("expression")
@@ -1175,12 +1386,18 @@ async def test_cdp_session_click_connect_cert_interstitial_primary_bypass() -> N
     assert fallback_clicks == []
 
 
-async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> None:
+async def test_cdp_session_click_connect_cert_interstitial_dom_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     script = _CdpScript(
-        interstitial=True, interstitial_url="chrome-error://chromewebdata/"
+        interstitial=True,
+        interstitial_url="chrome-error://chromewebdata/?controlToken=fallback-control-canary",
     )
     async with _fake_cdp_ws(script) as ws_url:
-        await _cdp_session_click_connect(ws_url)
+        with caplog.at_level("WARNING", logger=adb_module.log.name):
+            await _cdp_session_click_connect(ws_url)
+    assert "fallback-control-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
     methods = [m for m, _ in script.calls]
     fallback_clicks = [
         p.get("expression")
@@ -1189,3 +1406,308 @@ async def test_cdp_session_click_connect_cert_interstitial_dom_fallback() -> Non
     ]
     assert "Page.navigate" not in methods
     assert fallback_clicks == ["document.getElementById('proceed-link')?.click()"]
+
+
+# ============================================================================
+# _find_and_click_teleop_tab: the tab-find + click-CONNECT helper run_oob_connect() uses
+# for both a genuinely fresh launch and OobLifecycle's own full-bootstrap recovery
+# (_automate(), which just calls run_oob_connect() again). Combines the two fake servers
+# above: _fake_cdp_server (HTTP /json tab list, bound to the real _CDP_LOCAL_PORT) and
+# _fake_cdp_ws (WebSocket CDP, OS-assigned port, referenced by the fake tab's
+# webSocketDebuggerUrl).
+# ============================================================================
+
+import time  # noqa: E402
+
+from cloudxr_py_test_ns.oob_teleop_adb import _find_and_click_teleop_tab  # noqa: E402
+
+
+@pytest.mark.parametrize("case", ["new", "navigated", "existing"])
+async def test_cdp_tab_url_logs_hide_credentials(
+    case: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    current = (
+        "https://headset.local/?oobEnable=1&controlToken=cdp-control-canary"
+        "&turnCredential=cdp-turn-canary"
+    )
+    old = "https://headset.local/?oobEnable=1&controlToken=old-control-canary"
+    before = (
+        []
+        if case == "new"
+        else [{"id": "teleop-1", "url": old if case == "navigated" else current}]
+    )
+    after = [
+        {
+            "id": "teleop-1",
+            "url": current,
+            "webSocketDebuggerUrl": "ws://cdp.test",
+            "title": "https://headset.local/?controlToken=title-control-canary&turnCredential=title-turn-canary",
+        }
+    ]
+    with (
+        patch.object(adb_module, "_cdp_list_tabs", side_effect=[before, after]),
+        patch.object(adb_module, "_cdp_session_click_connect", new_callable=AsyncMock),
+        patch.object(adb_module, "oob_progress"),
+        caplog.at_level("INFO", logger=adb_module.log.name),
+    ):
+        found = await _find_and_click_teleop_tab(
+            resolved_port=48322, deadline=time.monotonic() + 5, timeout=5
+        )
+    assert found == "ws://cdp.test"
+    assert "cdp-control-canary" not in caplog.text
+    assert "cdp-turn-canary" not in caplog.text
+    assert "old-control-canary" not in caplog.text
+    assert "title-control-canary" not in caplog.text
+    assert "title-turn-canary" not in caplog.text
+    assert "controlToken=<REDACTED>" in caplog.text
+    assert "turnCredential=<REDACTED>" in caplog.text
+
+
+async def test_find_and_click_teleop_tab_finds_already_navigated_tab() -> None:
+    """A tab whose URL already matches at snapshot time (Case C - no visible diff between
+    polls) is still found and clicked, without ever needing to re-fire am start."""
+    script = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(script) as ws_url:
+        tabs = [
+            {
+                "id": "teleop-1",
+                "url": "https://headset.local/?oobEnable=1",
+                "webSocketDebuggerUrl": ws_url,
+            }
+        ]
+        with (
+            _fake_cdp_server(tabs),
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark"
+            ) as mock_bookmark,
+        ):
+            found_url = await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 5,
+                timeout=5,
+            )
+    assert found_url == ws_url
+    assert "Input.dispatchMouseEvent" in [m for m, _ in script.calls]
+    mock_bookmark.assert_not_called()  # tab was already there - no re-fire needed
+
+
+async def test_find_and_click_teleop_tab_no_tab_found_raises() -> None:
+    """No matching tab within the deadline raises OobAdbError rather than hanging."""
+    with (
+        _fake_cdp_server([]),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark",
+            return_value=(0, ""),
+        ),
+    ):
+        with pytest.raises(OobAdbError, match="tab for the teleop page not found"):
+            await _find_and_click_teleop_tab(
+                resolved_port=48322,
+                deadline=time.monotonic() + 1.5,
+                timeout=1.5,
+            )
+
+
+async def test_run_oob_connect_calls_find_tab_with_real_signature() -> None:
+    """Regression test: run_oob_connect() must call the real (not mocked)
+    _find_and_click_teleop_tab() with a signature it actually accepts. A prior revision
+    passed on_client_loaded to a _find_and_click_teleop_tab() that didn't declare it,
+    which a mocked helper can't catch since the mock accepts any arguments."""
+    script = _CdpScript(interstitial=False)
+    async with _fake_cdp_ws(script) as ws_url:
+        tabs = [
+            {
+                "id": "teleop-1",
+                "url": "https://headset.local/?oobEnable=1",
+                "webSocketDebuggerUrl": ws_url,
+            }
+        ]
+        with (
+            _fake_cdp_server(tabs),
+            patch.object(adb_module, "_close_stale_teleop_tabs", return_value=0),
+            patch.object(adb_module, "run_adb_headset_bookmark", return_value=(0, "")),
+            patch.object(
+                adb_module, "_discover_devtools_socket", return_value="socket"
+            ),
+            patch.object(adb_module, "_adb_forward_cdp"),
+            patch.object(adb_module, "_adb_forward_remove"),
+            patch.object(adb_module, "_monitor_teleop_error_banner"),
+        ):
+            monitor_task = await run_oob_connect(
+                resolved_port=48322,
+                timeout=5,
+                on_client_loaded=lambda: None,
+            )
+    assert monitor_task is not None
+    monitor_task.cancel()
+
+
+async def test_run_oob_connect_preserves_browser_wake_failure() -> None:
+    with (
+        patch.object(adb_module, "_close_stale_teleop_tabs", return_value=0),
+        patch.object(
+            adb_module,
+            "run_adb_headset_bookmark",
+            return_value=(99, adb_module.HEADSET_NOT_AWAKE_DIAGNOSTIC),
+        ),
+    ):
+        with pytest.raises(adb_module.HeadsetNotAwakeError, match="wakefulness"):
+            await run_oob_connect(resolved_port=48322)
+
+
+# ============================================================================
+# _monitor_teleop_error_banner: error-banner tracking, reported via on_terminal_error.
+# The monitor is diagnostic-only (see its own doc comment) - it never closes, navigates,
+# or relaunches the tab itself, so these tests exercise reporting and continued watching,
+# not any repair decision. Recovery itself is lifecycle-owned; see test_oob_teleop_lifecycle.py.
+# ============================================================================
+
+from cloudxr_py_test_ns.oob_teleop_adb import _monitor_teleop_error_banner  # noqa: E402
+
+
+class _MonitorScript:
+    """Scripted responder for _monitor_teleop_error_banner's own CDP calls: certificate-error
+    suppression (ignored) and the errorMessageBox poll, which returns one entry of *banners*
+    per call (repeating the last entry once exhausted)."""
+
+    def __init__(self, banners: list[str]) -> None:
+        self.banners = banners
+        self._index = 0
+
+    def respond(self, method: str, params: dict) -> dict:
+        if method == "Security.setIgnoreCertificateErrors":
+            return {}
+        expr = params.get("expression", "")
+        if "errorMessageBox" in expr and "classList.contains('show')" in expr:
+            i = min(self._index, len(self.banners) - 1)
+            self._index += 1
+            return {"result": {"value": self.banners[i]}}
+        raise AssertionError(f"unscripted CDP call: {method} {params}")
+
+
+async def test_monitor_reports_terminal_error_without_touching_the_tab(capsys) -> None:
+    """A terminal banner is reported via on_terminal_error and logged - the monitor itself
+    never calls any of the relaunch-capable helpers (closing/navigating/re-clicking is
+    exclusively the caller's decision now)."""
+    script = _MonitorScript(
+        banners=[
+            "",
+            "Stream did not attach within 500ms at "
+            "https://host.test/?controlToken=error-control-canary"
+            "&turnCredential=error-turn-canary",
+        ]
+    )
+    reported: list[str] = []
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._close_stale_teleop_tabs"
+            ) as close_tabs,
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb.run_adb_headset_bookmark"
+            ) as bookmark,
+            patch(
+                "cloudxr_py_test_ns.oob_teleop_adb._find_and_click_teleop_tab"
+            ) as find_tab,
+            patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove"),
+        ):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url,
+                    _CDP_LOCAL_PORT,
+                    on_terminal_error=reported.append,
+                )
+            )
+            await asyncio.sleep(2.5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert len(reported) == 1
+    assert "error-control-canary" not in reported[0]
+    assert "error-turn-canary" not in reported[0]
+    assert "controlToken=<REDACTED>" in reported[0]
+    assert "turnCredential=<REDACTED>" in reported[0]
+    close_tabs.assert_not_called()
+    bookmark.assert_not_called()
+    find_tab.assert_not_called()
+    out = capsys.readouterr().err
+    assert "Stream did not attach within 500ms" in out
+    assert "error-control-canary" not in out
+    assert "error-turn-canary" not in out
+    assert "controlToken=<REDACTED>" in out
+    assert "turnCredential=<REDACTED>" in out
+
+
+async def test_monitor_dedupes_identical_banner_then_reports_a_change() -> None:
+    """The same banner text repeated reports once; a genuinely different message reports
+    again - matching the existing last_banner dedup, now observed via the callback instead
+    of a relaunch attempt count."""
+    script = _MonitorScript(
+        banners=[
+            "Stream did not attach within 500ms",
+            "Stream did not attach within 500ms",
+            "Stream did not attach within 500ms",
+            "A different terminal error",
+        ]
+    )
+    reported: list[str] = []
+    async with _fake_cdp_ws(script) as ws_url:
+        with patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove"):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url,
+                    _CDP_LOCAL_PORT,
+                    on_terminal_error=reported.append,
+                )
+            )
+            await asyncio.sleep(4.5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert reported == [
+        "Stream did not attach within 500ms",
+        "A different terminal error",
+    ]
+
+
+async def test_monitor_keeps_watching_the_same_tab_after_reporting() -> None:
+    """Reporting a terminal error doesn't end the monitor - it keeps polling the same
+    ws_url for as long as it stays reachable; only a dropped connection (e.g. the caller
+    closing the tab as part of its own recovery) ends it."""
+    script = _MonitorScript(banners=["Stream did not attach within 500ms", "", ""])
+    reported: list[str] = []
+    async with _fake_cdp_ws(script) as ws_url:
+        with patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove"):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(
+                    ws_url,
+                    _CDP_LOCAL_PORT,
+                    on_terminal_error=reported.append,
+                )
+            )
+            await asyncio.sleep(3.5)
+            assert not task.done(), f"monitor ended early: {task.exception()}"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert reported == ["Stream did not attach within 500ms"]
+    assert script._index >= 3  # kept polling past the one report
+
+
+async def test_monitor_without_callback_still_logs_and_keeps_watching() -> None:
+    """on_terminal_error is optional - a caller that doesn't pass one still gets logging
+    and continued watching, just no callback invocation."""
+    script = _MonitorScript(banners=["Stream did not attach within 500ms", ""])
+    async with _fake_cdp_ws(script) as ws_url:
+        with patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_remove"):
+            task = asyncio.create_task(
+                _monitor_teleop_error_banner(ws_url, _CDP_LOCAL_PORT)
+            )
+            await asyncio.sleep(2.5)
+            assert not task.done(), f"monitor ended early: {task.exception()}"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

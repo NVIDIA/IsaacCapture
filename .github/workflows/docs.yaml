@@ -67,6 +67,7 @@ jobs:
     outputs:
       docs: ${{ steps.filter.outputs.docs }}
       webapp: ${{ steps.filter.outputs.webapp }}
+      client-targets: ${{ steps.filter.outputs.client_targets }}
     steps:
       - name: Checkout (with history)
         uses: actions/checkout@v6
@@ -79,6 +80,31 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          # client/<slug>/ directories this push publishes. Main also fills client/release-<VERSION>/
+          # until release/<VERSION> has commits main lacks; a release push (e.g. a sync
+          # fast-forward) that has none publishes nothing.
+          diverged() { ! git merge-base --is-ancestor "$1" refs/remotes/origin/main; }
+          client_targets=""
+          if [[ "$GITHUB_REF_TYPE" == 'tag' ]]; then
+            client_targets="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF" == 'refs/heads/main' ]]; then
+            version="$(tr -d '[:space:]' < VERSION)"
+            release="refs/remotes/origin/release/$version"
+            if git rev-parse -q --verify "$release" >/dev/null && diverged "$release"; then
+              echo "::error file=VERSION::release/$version has commits main lacks; bump VERSION on main."
+              exit 1
+            fi
+            client_targets="main release-$version"
+          elif [[ "$EVENT" == 'push' ]]; then
+            slug="${GITHUB_REF_NAME//\//-}"
+            if [[ "$(git show refs/remotes/origin/main:VERSION | tr -d '[:space:]')" == "${GITHUB_REF_NAME#release/}" ]] \
+                && ! diverged HEAD; then
+              echo "::notice::main publishes client/$slug/; skipping the web client."
+            else
+              client_targets="$slug"
+            fi
+          fi
+
           if [ "$EVENT" = 'pull_request' ]; then
             git fetch --no-tags --depth=1 origin "$BASE_REF"
             base="$(git merge-base FETCH_HEAD HEAD || true)"
@@ -94,10 +120,12 @@ jobs:
               docs/*|.github/workflows/docs.yaml) docs=true ;;
             esac
             case "$f" in
-              deps/cloudxr/webxr_client/*|deps/cloudxr/.env.default|.github/actions/build-cloudxr-web-client/*|.github/workflows/docs.yaml)
+              deps/cloudxr/webxr_client/*|deps/cloudxr/.env.default|.github/actions/build-cloudxr-web-client/*|.github/workflows/docs.yaml|VERSION)
                 webapp=true ;;
             esac
           done <<< "$files"
+          if [[ "$EVENT" == 'push' && -z "$client_targets" ]]; then webapp=false; fi
+          echo "client_targets=$client_targets" >> "$GITHUB_OUTPUT"
           echo "docs=$docs"     >> "$GITHUB_OUTPUT"
           echo "webapp=$webapp" >> "$GITHUB_OUTPUT"
           echo "::notice::changes: docs=$docs webapp=$webapp (base=${base:-<none>})"
@@ -212,11 +240,15 @@ jobs:
           name: webapp
           path: ./webapp
 
-      # Web client lands at client/<slug>/: tag → v1.2.3, main → main, release branch → release-1.3.x.
+      # Web client lands at each of `changes`' client-targets: tag → v1.2.3, main → main plus
+      # release-<VERSION>, release branch → release-1.3.x. Identical copies share git objects,
+      # so main's duplicate costs no gh-pages repo storage.
       # Tag pushes also (re)point client/stable/ at the highest v* tag.
       # The root client/ redirect is owned by the main branch deploy and points at ./stable/.
       - name: Place web app under versioned subpath
         if: needs.build-app.result == 'success'
+        env:
+          CLIENT_TARGETS: ${{ needs.changes.outputs.client-targets }}
         run: |
           set -euo pipefail
           CLIENT_BASE=./docs/build/client
@@ -227,14 +259,11 @@ jobs:
             exit 0
           fi
 
-          if [ "$GITHUB_REF_TYPE" = 'tag' ]; then
-            target="$GITHUB_REF_NAME"
-          else
-            target="${GITHUB_REF_NAME//\//-}"
-          fi
-          mkdir -p "$CLIENT_BASE/$target"
-          cp -r ./webapp/. "$CLIENT_BASE/$target/"
-          echo "Deployed web client to /client/$target/"
+          for target in $CLIENT_TARGETS; do
+            mkdir -p "$CLIENT_BASE/$target"
+            cp -r ./webapp/. "$CLIENT_BASE/$target/"
+            echo "Deployed web client to /client/$target/"
+          done
 
           if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
             cat > "$CLIENT_BASE/index.html" <<'HTML'

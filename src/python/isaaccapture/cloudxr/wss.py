@@ -566,6 +566,22 @@ def default_cert_paths() -> CertPaths:
     return cert_paths_from_dir(Path(get_env_config().openxr_run_dir()).parent / "certs")
 
 
+async def _wait_for_connect(
+    requested: asyncio.Event | None, stop_future: asyncio.Future
+) -> bool:
+    """Gate headset automation without holding shutdown behind application startup."""
+    if requested is not None and not stop_future.done():
+        waiter = asyncio.create_task(requested.wait())
+        try:
+            await asyncio.wait(
+                (waiter, stop_future), return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+    return not stop_future.done()
+
+
 async def run(
     log_file_path: str | Path | None,
     stop_future: asyncio.Future,
@@ -579,6 +595,7 @@ async def run(
     recovery_config=None,
     on_oob_status: Callable[[dict], object] | None = None,
     on_oob_fatal: Callable[[Exception], object] | None = None,
+    connect_requested: asyncio.Event | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
 
@@ -662,13 +679,27 @@ async def run(
                 initial,
             )
 
-        def handler(ws):
-            """Route an incoming WebSocket to the OOB hub or the backend proxy."""
+        async def handler(ws) -> None:
+            """Route to the hub or proxy; WebSocket handlers do not return a value."""
             if hub is not None:
                 path = _normalize_request_path(ws.request.path or "/")
                 if path == OOB_WS_PATH:
-                    return hub.handle_connection(ws)
-            return proxy_handler(ws, backend_host, backend_port)
+                    await hub.handle_connection(ws)
+                    return
+            # An already-open headset page may reconnect before ADB automation.
+            ready = asyncio.create_task(
+                _wait_for_connect(connect_requested, stop_future)
+            )
+            closed = asyncio.create_task(ws.wait_closed())
+            try:
+                await asyncio.wait((ready, closed), return_when=asyncio.FIRST_COMPLETED)
+                # Disconnected clients must not forward queued offers when the gate opens.
+                if not closed.done() and ready.result():
+                    await proxy_handler(ws, backend_host, backend_port)
+            finally:
+                ready.cancel()
+                closed.cancel()
+                await asyncio.gather(ready, closed, return_exceptions=True)
 
         # /client/ on this WSS port for --host-client and --usb-local (same
         # files; USB-local reaches them via adb reverse of PROXY_PORT).
@@ -709,7 +740,11 @@ async def run(
                 if on_listening is not None:
                     on_listening()
                 was_listening = True
-                if setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"):
+                if (
+                    setup_oob
+                    and not os.getenv("TELEOP_OOB_HUB_ONLY")
+                    and await _wait_for_connect(connect_requested, stop_future)
+                ):
                     from .oob_teleop_env import resolve_oob_recovery_config
 
                     lifecycle = OobLifecycle(
@@ -720,6 +755,12 @@ async def run(
                         turn_port=usb_turn_port() if usb_local else None,
                         config=recovery_config or resolve_oob_recovery_config(),
                         on_status=on_oob_status,
+                        usb_health_logs_dir=(
+                            Path(log_file_path).parent
+                            if log_file_path is not None
+                            else None
+                        ),
+                        web_client_static_dir=_host_client_static_dir,
                     )
                     lifecycle_task = asyncio.create_task(
                         lifecycle.run(), name="cloudxr-oob-lifecycle"

@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace core;
+
+// Anatomical hand side, independent of the right-handed reference frame.
+enum SomaHandSide : uint8 {
+    UNSPECIFIED = 0,
+    LEFT = 1,
+    RIGHT = 2,
+}

@@ -10,12 +10,14 @@ the whole tree -- from the wheel with no error at all.
 from __future__ import annotations
 
 import os
+import sys
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
+from repo_paths import repo_root
 
 DIST = "isaaccapture"
 ALIAS = "isaacteleop"  # the shim from src/compat; TODO(1.9): drop it
@@ -60,6 +62,14 @@ def test_package_tree_is_not_empty() -> None:
     )
 
 
+def test_chromium_notice_ships_beside_the_key_table() -> None:
+    """_deviceio_trackers compiles in Chromium's BSD-3-Clause key table; its notice must ship."""
+    vendored = (repo_root() / "deps/third_party/chromium/LICENSE").read_bytes()
+    with zipfile.ZipFile(_wheel()) as archive:
+        shipped = archive.read(f"{DIST}/deviceio_trackers/CHROMIUM_LICENSE")
+    assert shipped == vendored
+
+
 def test_the_shim_ships_beside_the_real_package() -> None:
     wheel = _wheel()
     with zipfile.ZipFile(wheel) as archive:
@@ -91,4 +101,51 @@ def test_transition_replaces_the_legacy_distribution_without_owning_code() -> No
 
     assert set(metadata[ALIAS].get_all("Provides-Extra", [])) == set(
         metadata[DIST].get_all("Provides-Extra", [])
+    )
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="the plugin is Linux only"
+)
+def test_spacemouse_plugin_ships_runnable_for_teleop_session() -> None:
+    """Apps start the bundled plugin from BUNDLED_PLUGINS_DIR; wheel users install its udev rule from there."""
+    bundle = f"{DIST}/plugins/spacemouse"
+    with zipfile.ZipFile(_wheel()) as archive:
+        names = set(archive.namelist())
+        executables = [
+            archive.getinfo(f"{bundle}/{name}")
+            for name in ("spacemouse_plugin", "install_udev_rules.sh")
+        ]
+    assert {f"{bundle}/plugin.yaml", f"{bundle}/70-spacemouse.rules"} <= names
+    for info in executables:
+        assert (info.external_attr >> 16) & 0o111, (
+            f"{info.filename} lost its executable bit"
+        )
+
+
+def test_capture_license_ships_in_distribution_metadata() -> None:
+    with zipfile.ZipFile(_wheel()) as archive:
+        metadata_path = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+        assert metadata["License-Expression"] == "Apache-2.0"
+        assert "LICENSE.md" in metadata.get_all("License-File", [])
+        license_path = metadata_path.removesuffix("METADATA") + "licenses/LICENSE.md"
+        assert archive.read(license_path) == (repo_root() / "LICENSE.md").read_bytes()
+        assert not any("isaaccapture_egopost/" in name for name in archive.namelist())
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="the plugin is Linux only"
+)
+def test_gamepad_plugin_ships_runnable_for_teleop_session() -> None:
+    """Apps start the bundled plugin from BUNDLED_PLUGINS_DIR, so it needs its manifest and exec bit."""
+    bundle = f"{DIST}/plugins/gamepad"
+    with zipfile.ZipFile(_wheel()) as archive:
+        names = set(archive.namelist())
+        binary = archive.getinfo(f"{bundle}/gamepad_plugin")
+    assert f"{bundle}/plugin.yaml" in names
+    assert (binary.external_attr >> 16) & 0o111, (
+        "gamepad_plugin lost its executable bit"
     )

@@ -11,10 +11,17 @@ add_executable(schema_tests
   test_full_body.cpp
   test_controller.cpp
   test_pedals.cpp
+  test_steering_wheel.cpp
+  test_spacemouse.cpp
+  test_gamepad.cpp
   test_plugin_device_status.cpp
   test_joint_se3_pose.cpp
   test_se3_tracker.cpp
   test_serialized.cpp
+  test_soma_body_joint_rotations.cpp
+  test_soma_body_joint_poses.cpp
+  test_soma_hand_joint_rotations.cpp
+  test_soma_hand_joint_poses.cpp
   test_schema_conform.cpp
 )
 target_link_libraries(schema_tests PRIVATE

@@ -5,7 +5,7 @@ Camera Streaming
 ================
 
 ``camera_viz`` is the reference camera-streaming sample built on :doc:`Televiz
-</getting_started/televiz>` (``isaaccapture.viz``). It captures frames from one or more cameras
+</development/televiz>` (``isaaccapture.viz``). It captures frames from one or more cameras
 and streams them to an XR headset — one plane per camera, aspect-fit — either directly or from a
 robot to a workstation over the network (split mode). It can also stream :ref:`recorded camera
 data <recorded-camera-streaming>` — a video file replayed in place of a live camera — and render
@@ -38,7 +38,7 @@ Requirements
     `7.2.1 <https://docs.nvidia.com/jetson/agx-orin-devkit/user-guide/latest/setup_jetpack.html>`__
   - **Thor:** `JetPack 7.x <https://developer.nvidia.com/embedded/jetpack>`__
 - For the default XR mode, a headset to connect as the CloudXR client — follow the
-  :doc:`quick start </getting_started/quick_start>` step :ref:`connect-xr-headset`. The viewer
+  :doc:`quick start </teleop/quick_start>` step :ref:`connect-xr-headset`. The viewer
   launches the CloudXR runtime itself; nothing to start separately. No headset handy?
   ``--mode window`` renders to a desktop window instead.
 
@@ -74,6 +74,10 @@ of the surrounding checkout (see :code-file:`scripts/_install_deps.sh
 the choice). When required system packages are missing, it prints the exact ``apt-get`` line
 to approve — declining, or a non-interactive run, aborts.
 
+Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
+``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
+kernel before reporting success.
+
 By default ``setup`` provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
 needs. Flags trim or extend that:
@@ -104,11 +108,11 @@ needs. Flags trim or extend that:
      - Use ``PATH`` for the environment and link the sample's ``.venv`` to it; see below.
    * - ``--wheel PATH``
      - Install a locally built ``isaaccapture`` wheel instead of resolving one from the index — for
-       developing Isaac Teleop itself.
+       developing Isaac Capture itself.
    * - ``--build-from-source``
      - Skip the package index and build ``isaaccapture`` from the surrounding checkout without
        prompting — a full C++ / CUDA / Vulkan build (see
-       :doc:`/getting_started/build_from_source/index`).
+       :doc:`/development/build_from_source/index`).
 
 .. _camera-streaming-external-venv:
 
@@ -503,7 +507,15 @@ Loopback
 Loopback is a testing / debugging aid, not a deployment mode: ``./camera_viz.sh loopback
 configs/v4l2.yaml`` runs the sender and viewer together on ``127.0.0.1`` — the quickest way to
 smoke-test the RTP path on one machine. It also works camera-free with a mono ``type: video``
-entry (set ``width`` / ``height`` / ``fps``).
+entry: ``./camera_viz.sh loopback configs/replay.yaml`` runs as shipped.
+
+Two things to know when running it:
+
+- Use the config that matches the attached camera. ``configs/v4l2.yaml`` is a ZED Mini template
+  (``/dev/video0``, 2560x720); on any other camera it fails to open and the viewer reports
+  ``submit/s 0.0``. For a RealSense, run ``configs/realsense.yaml``.
+- ``loopback`` does not forward ``--mode``, so it opens in the YAML's ``display.mode`` (``xr`` by
+  default). Set ``display.mode: window`` in the YAML for a desktop window.
 
 Configuration
 -------------
@@ -603,6 +615,25 @@ Troubleshooting
 - **Split mode renders nothing** — check the sender is up (``./camera_viz.sh service-status``),
   ``$STREAMING_HOST`` was the workstation's IP at deploy time, and UDP ports (default 5000+)
   aren't firewalled.
+- **CUDA kernel errors** — rerun the setup check from ``examples/camera_viz``. It prints
+  CUDA diagnostics on failure; a driver version from ``nvidia-smi`` does not identify
+  the installed toolkit:
+
+  .. code-block:: bash
+
+     .venv/bin/python scripts/check_cuda.py
+
+- **Thor: ``CUDA_ERROR_NO_BINARY_FOR_GPU``** — an older NVRTC compiler can produce kernels
+  incompatible with Thor. Select your JetPack's CUDA 13.x toolkit and rerun setup. As a
+  temporary workaround for CuPy kernels, try:
+
+  .. code-block:: bash
+
+     CUPY_COMPILE_WITH_PTX=1 ./camera_viz.sh run configs/synthetic.yaml
+
+  This lets the driver compile the kernel for the GPU (`CuPy PTX option
+  <https://docs.cupy.dev/en/stable/reference/environment.html#cupy-compile-with-ptx>`__).
+
 - **Not sure which side is stuck?** — set ``verbose: true`` at the top of the YAML for periodic
   per-source breadcrumbs on both ends.
 
@@ -661,9 +692,9 @@ extensions and forwards the handles through ``TeleopSessionConfig.oxr_handles``:
        oxr_handles=OpenXRSessionHandles(*viz_session.get_oxr_handles()),
    )
 
-See the *Sharing the XR session* section of :doc:`/getting_started/televiz` for the full pattern
+See the *Sharing the XR session* section of :doc:`/development/televiz` for the full pattern
 (imports, frame loop, and how the two sessions' lifecycles relate), and
-:doc:`/getting_started/teleop_session` for the ``TeleopSession`` side.
+:doc:`/teleop/teleop_session` for the ``TeleopSession`` side.
 
 Next steps
 ----------
