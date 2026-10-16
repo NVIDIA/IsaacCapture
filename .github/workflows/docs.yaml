@@ -4,9 +4,8 @@
 # Build docs and Teleop web app, then deploy to GitHub Pages.
 # - Push to main/release/v* tag (canonical repo): deploy docs at site root, web app at /client/<slug>/.
 #   Tag pushes also promote /client/stable/ to the highest v* tag.
-# - Same-repo PR: auto-deploy preview to preview/pr-<N>/.
-# - Fork PR: build only; a maintainer can deploy via `/preview-docs` (see
-#   docs-preview-on-demand.yaml).
+# - PRs: upload artifacts; docs-preview-on-demand.yaml publishes docs-changing PRs.
+#   Fork builds retain GitHub's contributor-approval requirements.
 #
 # - PR close: docs-cleanup-preview.yaml removes preview/pr-<N>/.
 # - Nightly/manual: docs-preview-sweep.yaml drops previews whose PRs are closed.
@@ -34,6 +33,9 @@ on:
       - ".github/actions/build-cloudxr-web-client/**"
       - "deps/cloudxr/webxr_client/**"
       - "deps/cloudxr/.env.default"
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -113,7 +115,7 @@ jobs:
           else
             base=""  # new branch / force push: treat everything as changed
           fi
-          files="$([ -n "$base" ] && git diff --name-only "$base" HEAD || git ls-tree -r --name-only HEAD)"
+          files="$([ -n "$base" ] && git diff --no-renames --name-only "$base" HEAD || git ls-tree -r --name-only HEAD)"
           docs=false; webapp=false
           while IFS= read -r f; do
             case "$f" in
@@ -209,7 +211,8 @@ jobs:
     if: >-
       !cancelled()
       && needs.check-repo.outputs.is-canonical-repo == 'true'
-      && (needs.check-repo.outputs.is-deploy-branch == 'true' || github.event_name == 'pull_request')
+      && github.event_name == 'push'
+      && needs.check-repo.outputs.is-deploy-branch == 'true'
       && needs.build-docs.result != 'failure'
       && needs.build-app.result != 'failure'
       && (needs.build-docs.result == 'success' || needs.build-app.result == 'success')
@@ -252,12 +255,6 @@ jobs:
         run: |
           set -euo pipefail
           CLIENT_BASE=./docs/build/client
-
-          if [ "${{ github.event_name }}" = 'pull_request' ]; then
-            mkdir -p ./docs/build/current/client
-            cp -r ./webapp/. ./docs/build/current/client/
-            exit 0
-          fi
 
           for target in $CLIENT_TARGETS; do
             mkdir -p "$CLIENT_BASE/$target"
@@ -321,51 +318,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs/build
           keep_files: true
-
-      # Fork PRs have a read-only GITHUB_TOKEN and can't push to gh-pages, so
-      # the auto-deploy is gated to same-repo PRs. Fork PR previews are
-      # handled by docs-preview-on-demand.yaml (slash-command triggered).
-      - name: Deploy PR preview to gh-pages
-        if: >-
-          github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/build/current
-          destination_dir: preview/pr-${{ github.event.pull_request.number }}
-          keep_files: true
-
-      - name: Add preview URL to workflow summary
-        if: >-
-          github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          base="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/preview/pr-${{ github.event.pull_request.number }}/"
-          client_url="${base}client/"
-          {
-            echo "## Docs preview"
-            echo
-            echo "Built docs for this PR are available at:"
-            echo
-            echo "**${base}**"
-            echo
-            echo "Teleop web app (subpath \`/client/\`): **${client_url}**"
-            echo
-            echo "(It may take a minute to appear after the workflow completes.)"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Note manual-trigger requirement for fork PRs
-        if: >-
-          github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          {
-            echo "## Docs preview"
-            echo
-            echo "This PR is from a fork, so the preview is **not auto-deployed**."
-            echo "A maintainer with write access can comment \`/preview-docs\` on"
-            echo "the PR to deploy a preview to:"
-            echo
-            echo "**https://nvidia.github.io/IsaacCapture/preview/pr-${{ github.event.pull_request.number }}/**"
-          } >> "$GITHUB_STEP_SUMMARY"
