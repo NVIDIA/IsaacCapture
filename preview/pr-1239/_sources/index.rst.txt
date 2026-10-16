@@ -84,16 +84,7 @@ Table of Contents
    device/gamepads/index
    Spatial trackers <device/trackers>
    device/add_device
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Device Conformance
-
-   Overview <conformance/overview>
-   conformance/setup
-   conformance/hand
-   conformance/full_body
-   conformance/submit
+   Device Conformance <conformance/overview>
 
 .. toctree::
    :maxdepth: 2
