@@ -58,6 +58,7 @@ jobs:
           COMMENT_ID: ${{ github.event.comment.id }}
         run: gh api --method POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content='eyes' > /dev/null
 
+      # Fork PR runs belong to the base repo; artifacts bridge separate runner filesystems.
       - name: Download docs artifact
         if: steps.preview.outputs.publish == 'true'
         uses: actions/download-artifact@v7
