@@ -89,6 +89,18 @@ Generated today
    * - ``se3_tracker``
      - ``Se3Tracker``
      - Overrides ``class``; the default would give ``Se3TrackerTracker``
+   * - ``soma_body_joint_rotations``
+     - ``SomaBodyJointRotationsTracker``
+     - Keyed SOMA body rotations for up to 77 controls of the 78-joint skeleton; defined against SOMA-X v0.3.1
+   * - ``soma_body_joint_poses``
+     - ``SomaBodyJointPosesTracker``
+     - Keyed evaluated SOMA positions and orientations for up to 77 public joints
+   * - ``soma_hand_joint_rotations``
+     - ``SomaHandJointRotationsTracker``
+     - Keyed SOMA hand rotations for up to 25 controls; defined against SOMA-X v0.3.1
+   * - ``soma_hand_joint_poses``
+     - ``SomaHandJointPosesTracker``
+     - Keyed evaluated SOMA positions and orientations for up to 25 joints
    * - ``oglo_tactile``
      - ``OgloTactileTracker``
      - MCAP channels are ``oglo``/``oglo_tracked``, so ``channel`` is overridden
@@ -101,6 +113,12 @@ Generated today
    * - ``frame_metadata_oak``
      - ``FrameMetadataTrackerOak``
      - Overrides ``class`` and ``header`` (file stem ``frame_metadata_tracker_oak``)
+   * - ``spacemouse``
+     - ``SpaceMouseTracker``
+     - Overrides ``class`` and ``traits``; the defaults would spell ``Spacemouse``
+   * - ``gamepad``
+     - ``GamepadTracker``
+     - Gamepad state pushed by the gamepad plugin (SDL3); only ``python_accessor`` is overridden
 
 Still hand-written
 ------------------
@@ -124,6 +142,8 @@ Still hand-written
        ``HapticCommand.endpoint`` (left/right). Paired with generated ``HapticCommandPushTracker``.
    * - ``TensorPushTracker``
      - Deliberately kept as the untyped ``bytes`` escape hatch
+   * - ``KeyboardTracker``
+     - In-process keyboard fed by host ``KeyboardProvider``\ s, no OpenXR extension
 
 A quick way to tell the two groups apart: only schema-based impls mention ``SchemaTracker`` or
 ``SchemaPusher``. Of the hand-written live impls that use those helpers, each is listed above.

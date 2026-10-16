@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Out-of-Band Teleop Control &#8212; Isaac Teleop Documentation</title>
+    <title>Out-of-Band Teleop Control &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Egocentric Hand Reconstruction" href="egocentric_hand_reconstruction.html" />
+    <link rel="next" title="Haptic Feedback" href="haptic_feedback.html" />
     <link rel="prev" title="CloudXR Service" href="cloudxr.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -142,11 +142,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -243,11 +243,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -304,7 +304,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -338,33 +338,42 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../getting_started/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa Avatar Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -377,9 +386,8 @@
 <li class="toctree-l1"><a class="reference internal" href="mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
 <li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="license.html">License</a></li>
 </ul>
 </div>
 </nav></div>
@@ -706,6 +714,24 @@ status file. The <code class="docutils literal notranslate"><span class="pre">se
 session’s headset selection, and <code class="docutils literal notranslate"><span class="pre">ignoredSerials</span></code> lists other observed ADB
 devices (up to eight display-safe serials). Selection is scoped to the current
 service session; a previous status file never pins a new session.</p>
+<p>The snapshot exposes separate readiness facts: <code class="docutils literal notranslate"><span class="pre">socketBound</span></code> means the WSS
+listener is serving; <code class="docutils literal notranslate"><span class="pre">transportReady</span></code> means the selected headset’s network
+and, in USB-local mode, TURN and reverse rules have been verified;
+<code class="docutils literal notranslate"><span class="pre">clientLoaded</span></code> means the browser’s CONNECT control is actionable or a
+matching browser health report was received; <code class="docutils literal notranslate"><span class="pre">connectDispatched</span></code> records a
+host CONNECT click; and <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code> requires a streaming report with
+fresh metrics. <code class="docutils literal notranslate"><span class="pre">readinessStage</span></code> and <code class="docutils literal notranslate"><span class="pre">readinessSince</span></code> show the latest
+milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the host-received
+metrics time in epoch milliseconds; the launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
+only while those metrics and the lifecycle status are less than five seconds
+old. Recovery can move the stage backward, and a surviving browser can resume
+a stream without another host CONNECT click.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.wait_for_oob_stage(&quot;streamConfirmed&quot;,</span> <span class="pre">timeout_sec=90)</span></code>
+waits for live status and raises on a fatal worker failure or timeout. Call it
+after creating the OpenXR session when the application needs a confirmed
+headset stream before announcing startup. Starting the standalone CloudXR
+service confirms its listener only; headset setup continues with bounded
+retries and is visible through the OOB status.</p>
 <p>If the OOB lifecycle worker or listening WSS proxy exits unexpectedly, the
 service publishes a terminal snapshot with <code class="docutils literal notranslate"><span class="pre">health=fatal</span></code> and <code class="docutils literal notranslate"><span class="pre">state=FATAL</span></code>,
 clears readiness and streaming flags, and stops the runtime. Unlike a normal
@@ -978,13 +1004,20 @@ mode supports WiFi setup only; the launcher rejects the
 combination at startup.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code></p></td>
-<td><p>Pin a specific adb device when more than one is connected. The
-lifecycle waits if multiple devices are ready before its first
-selection. Once selected, every device command uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
-If the selected serial disappears, becomes offline, or is unauthorized,
-the service waits for it and ignores other devices. When it returns,
-recovery resumes even if the other devices remain connected. Without
-<code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code>, exactly one ready device is required for selection.</p></td>
+<td><p>Pin the intended headset before starting OOB when more than one ADB
+transport is visible. Without it, the first observation must contain
+exactly one serial; that serial is pinned even while <code class="docutils literal notranslate"><span class="pre">unauthorized</span></code>
+or <code class="docutils literal notranslate"><span class="pre">offline</span></code>. An ambiguous first observation fails with a restart
+instruction, rather than selecting by list order or by which device
+becomes ready first. Every device command then uses <code class="docutils literal notranslate"><span class="pre">-s</span> <span class="pre">&lt;serial&gt;</span></code>.
+If the selected serial disappears or loses authorization, the service
+waits for it and ignores later devices. Once accessible, the selected
+device must identify as a Meta Quest or PICO headset through Android
+manufacturer/brand and a nonempty model property. Connect a supported
+HMD and set <code class="docutils literal notranslate"><span class="pre">ANDROID_SERIAL</span></code> if the wrong device was selected.
+Before each new browser launch, ADB must confirm
+<code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; wear or unlock the headset (or cover its
+proximity sensor) when the service reports that it is asleep.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
@@ -995,24 +1028,25 @@ early enough to leave one retry interval for a bounded fallback.</p></td>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code></p></td>
 <td><p>Positive finite retry and observation interval in seconds (default <code class="docutils literal notranslate"><span class="pre">5</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_ENABLED</span></code></p></td>
-<td><p>Enable the WebXR client’s stream reconnect loop (default <code class="docutils literal notranslate"><span class="pre">true</span></code>).
-The OOB lifecycle waits for this client-owned loop before taking over.</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
 <td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">10</span></code>).
-The value is also included in the generated headset URL.</p></td>
+The WebXR client’s stream reconnect loop is opt-in — off unless an
+explicit <code class="docutils literal notranslate"><span class="pre">reconnectEnabled=true</span></code> URL param or the 2D debug UI’s
+checkbox turns it on — and OOB has no way to know which, so the host
+always waits out this budget before taking over, whether or not the
+client is actually retrying. The value is also included in the
+generated headset URL.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
 <td><p>Non-negative delay between browser-local attempts in milliseconds
 (default <code class="docutils literal notranslate"><span class="pre">3000</span></code>). The host derives its bounded recovery grace from
 this value and the maximum-attempt count.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_BACKEND_PORT</span></code></p></td>
 <td><p>CloudXR backend port the headset reaches via <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> in
 <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode (default <code class="docutils literal notranslate"><span class="pre">49100</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">USB_TURN_PORT</span></code></p></td>
 <td><p>coturn TURN-server port for WebRTC ICE relay in <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code>
 mode (default <code class="docutils literal notranslate"><span class="pre">3478</span></code>). <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code>-mapped to the headset.</p></td>
 </tr>
@@ -1037,7 +1071,7 @@ headset attached.</p></li>
 <li><p>Resolves the WebXR static directory from
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
-the published client (see <a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
+the published client (see <a class="reference internal" href="../development/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
 <li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">https://localhost:48322/client/</span></code> on the WSS
 proxy’s existing TLS listener.</p></li>
 <li><p>After the selected headset is ready, checks its non-loopback network,
@@ -1098,7 +1132,7 @@ and <code class="docutils literal notranslate"><span class="pre">bundle.emulator
 <p><strong>Fix:</strong> Ensure <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> are present
 under the static dir — run the launcher once with network, copy a full <code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code>
 output, or use the GitHub Pages URL directly. See
-<a class="reference internal" href="../getting_started/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>.</p>
+<a class="reference internal" href="../development/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>.</p>
 </section>
 <section id="cdp-startbutton-marked-failed-not-actionable">
 <h3>CDP: startButton marked failed / not actionable<a class="headerlink" href="#cdp-startbutton-marked-failed-not-actionable" title="Link to this heading">#</a></h3>
@@ -1170,11 +1204,11 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
       </div>
     </a>
     <a class="right-next"
-       href="egocentric_hand_reconstruction.html"
+       href="haptic_feedback.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Egocentric Hand Reconstruction</p>
+        <p class="prev-next-title">Haptic Feedback</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1311,7 +1345,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 06, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
       <br/>
     
   </p>
