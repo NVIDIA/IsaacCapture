@@ -53,7 +53,7 @@ def select_preview(event_name, event, request=api):
         if pr["state"] != "open":
             return None
         runs = request(
-            f"{prefix}/actions/workflows/docs.yaml/runs?event=pull_request"
+            f"{prefix}/actions/workflows/docs-build-and-deploy.yaml/runs?event=pull_request"
             f"&status=success&head_sha={pr['head']['sha']}&per_page=100"
         )["workflow_runs"]
         run = next((run for run in runs if matches(pr, run)), None)
@@ -71,7 +71,7 @@ def select_preview(event_name, event, request=api):
         or run["repository"]["id"] != CANONICAL_REPO_ID
     ):
         return None
-    workflow = request(f"{prefix}/actions/workflows/docs.yaml")
+    workflow = request(f"{prefix}/actions/workflows/docs-build-and-deploy.yaml")
     if run["workflow_id"] != workflow["id"]:
         return None
 

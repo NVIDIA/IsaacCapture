@@ -43,7 +43,7 @@ How the preview gets built depends on where the PR's branch lives.
 PRs from a branch on ``NVIDIA/IsaacCapture``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The ``Build & deploy docs`` workflow runs automatically on every push to the
+The ``Build docs and deploy production`` workflow runs automatically on every push to the
 PR branch and publishes the preview. The preview URL is added to the workflow
 run's *Summary* tab and refreshed on every push. No extra action required.
 
@@ -53,7 +53,7 @@ PRs from a fork
 GitHub Actions on PRs from forks run with a read-only token, so the workflow
 cannot push to ``gh-pages`` automatically. Instead:
 
-1. ``Build & deploy docs`` still runs and uploads the built artifacts; only
+1. ``Build docs and deploy production`` still runs and uploads the built artifacts; only
    the deploy step is skipped.
 2. When a fork PR is opened, a bot comments with instructions.
 3. A maintainer (anyone with write access to ``NVIDIA/IsaacCapture``) deploys
@@ -64,7 +64,7 @@ cannot push to ``gh-pages`` automatically. Instead:
       /preview-docs
 
 4. The maintainer-triggered workflow downloads the artifacts that
-   ``Build & deploy docs`` already produced for that commit and pushes them
+   ``Build docs and deploy production`` already produced for that commit and pushes them
    to ``preview/pr-<N>/``, reacting to the comment with 👀 while deploying
    and 👍 once published. A follow-up comment posts the preview URL.
 

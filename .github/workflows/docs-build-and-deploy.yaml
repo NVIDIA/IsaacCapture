@@ -4,7 +4,7 @@
 # Build docs and Teleop web app, then deploy to GitHub Pages.
 # - Push to main/release/v* tag (canonical repo): deploy docs at site root, web app at /client/<slug>/.
 #   Tag pushes also promote /client/stable/ to the highest v* tag.
-# - PRs: upload artifacts; docs-preview.yaml publishes docs-changing PRs.
+# - PRs: upload artifacts; docs-publish-preview.yaml publishes docs-changing PRs.
 #   Fork builds retain GitHub's contributor-approval requirements.
 #
 # - PR close: docs-cleanup-preview.yaml removes preview/pr-<N>/.
@@ -16,7 +16,7 @@
 #
 # The web client downloads its CloudXR SDK anonymously from public NGC resources.
 
-name: Build & deploy docs
+name: Build docs and deploy production
 
 on:
   push:
@@ -29,7 +29,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - "docs/**"
-      - ".github/workflows/docs.yaml"
+      - ".github/workflows/docs-build-and-deploy.yaml"
       - ".github/actions/build-cloudxr-web-client/**"
       - "deps/cloudxr/webxr_client/**"
       - "deps/cloudxr/.env.default"
@@ -119,10 +119,10 @@ jobs:
           docs=false; webapp=false
           while IFS= read -r f; do
             case "$f" in
-              docs/*|.github/workflows/docs.yaml) docs=true ;;
+              docs/*|.github/workflows/docs-build-and-deploy.yaml) docs=true ;;
             esac
             case "$f" in
-              deps/cloudxr/webxr_client/*|deps/cloudxr/.env.default|.github/actions/build-cloudxr-web-client/*|.github/workflows/docs.yaml|VERSION)
+              deps/cloudxr/webxr_client/*|deps/cloudxr/.env.default|.github/actions/build-cloudxr-web-client/*|.github/workflows/docs-build-and-deploy.yaml|VERSION)
                 webapp=true ;;
             esac
           done <<< "$files"

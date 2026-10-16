@@ -53,9 +53,9 @@ class PreviewSelectionTests(unittest.TestCase):
         self.calls.append(endpoint)
         if endpoint.endswith("/permission"):
             return {"permission": self.permission}
-        if "/actions/workflows/docs.yaml/runs?" in endpoint:
+        if "/actions/workflows/docs-build-and-deploy.yaml/runs?" in endpoint:
             return {"workflow_runs": [self.run]}
-        if endpoint.endswith("/actions/workflows/docs.yaml"):
+        if endpoint.endswith("/actions/workflows/docs-build-and-deploy.yaml"):
             return {"id": 10}
         if endpoint.endswith("/actions/runs/100"):
             return self.run
@@ -94,7 +94,7 @@ class PreviewSelectionTests(unittest.TestCase):
     def test_non_docs_changes_do_not_publish(self):
         for filename in (
             "README.md",
-            ".github/workflows/docs.yaml",
+            ".github/workflows/docs-build-and-deploy.yaml",
             "deps/cloudxr/webxr_client/a.js",
         ):
             with self.subTest(filename=filename):

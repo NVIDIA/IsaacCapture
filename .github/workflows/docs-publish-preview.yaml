@@ -3,11 +3,11 @@
 #
 # Publish static artifacts for docs-changing PRs, including forks. Never run PR code here.
 # /preview-docs remains a maintainer-only retry, including for non-docs changes.
-name: Docs PR preview
+name: Publish docs PR preview
 
 on:
   workflow_run:
-    workflows: ["Build & deploy docs"]
+    workflows: ["Build docs and deploy production"]
     types: [completed]
   issue_comment:
     types: [created]
