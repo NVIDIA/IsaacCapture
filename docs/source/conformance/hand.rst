@@ -3,8 +3,6 @@
 
 .. _cts-hand:
 
-.. rst-class:: cts-page
-
 Hand Suite
 ==========
 
@@ -32,7 +30,7 @@ reads the recording and its labels and returns a verdict.
    * - Checks
      - 40, in four groups: signal, hand shape, placement, and the scripted steps
    * - Your plugin
-     - Injects both hands with ``plugin_utils::HandInjector``: the suite records what Isaac Teleop's OpenXR hand tracker reads, not a channel of
+     - Injects both hands with ``plugin_utils::HandInjector``: the suite records what Isaac Capture's OpenXR hand tracker reads, not a channel of
        your own. Joints in metres, placed in the room, at 30 Hz or more. A glove with no
        wrist pose takes one from headset hand tracking or a controller
        (``plugin_utils::WristPoseSource``).
@@ -151,7 +149,7 @@ Both hands perform every step together, except the two rolls.
 
       Palms flat against each other, fingers up, thumbs closed alongside the index.
       +++
-      Checked: same-named fingertips of the two hands coincide
+      Checked: each fingertip sits opposite its namesake on the other hand, within 5 cm
       (``palms.fingertip_gap``).
 
    .. grid-item-card:: 8 · Fingertips together
@@ -251,8 +249,8 @@ the wrist pose from, go on the same command line.
 glove's wrist pose comes from, such as ``hand_tracking`` or ``controller``) are stored with the
 take. Then:
 
-#. Open the capture panel at http://localhost:8081, or ``http://<host>:8081`` from the
-   headset's browser. If the port was taken, use the URL the run prints.
+#. Open the capture panel at the address the run prints: http://localhost:8081 unless that port
+   was taken, or the ``[capture] headset:`` address in the headset's browser.
 #. Press **Start recording**. The script starts once both hands have had a valid
    joint. A red **No hand data after 10 s** box lists causes; the take keeps running.
 #. Perform the eleven steps. After *"Done. You can stop now."* the capture panel writes the
@@ -311,7 +309,7 @@ explains every check. The output for a synthetic reference take, shortened:
      …
      [pass] posture.fist_closure                   left: straightness 0.39; right: straightness 0.39
      …
-     [pass] palms.fingertip_gap                    index 6 mm, middle 9 mm, ring 6 mm, little 1 mm
+     [pass] palms.fingertip_gap                    index 18 mm, middle 22 mm, ring 18 mm, little 10 mm
      …
 
 If the report says ``no motion-step labels beside the recording``, fix the path before

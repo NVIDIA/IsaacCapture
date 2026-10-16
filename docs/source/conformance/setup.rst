@@ -3,8 +3,6 @@
 
 .. _cts-setup:
 
-.. rst-class:: cts-page
-
 Set Up the Tools
 ================
 
@@ -69,30 +67,25 @@ with, so delete an existing ``build/`` before switching.
 A plugin behind a ``BUILD_PLUGIN_<NAME>`` option builds only when you add
 ``-DBUILD_PLUGIN_<NAME>=ON`` to the first line.
 
-:doc:`/getting_started/build_from_source/index` lists the build prerequisites, and
+:doc:`/development/build_from_source/index` lists the build prerequisites, and
 :doc:`/references/build` explains per-Python-version build trees.
 
 3. Create the tool environments
 -------------------------------
 
-Each suite has two environments: the checker's and the capture panel's. Create the checker's first;
-it generates the bindings the capture panel reads the recording back with. Run only the suites you
-need:
+Each suite has a checker environment and a capture environment. Run the line for each suite you
+need; it sets up the checker first, because the capture environment reads recordings through the
+bindings the checker generates:
 
 .. code-block:: bash
 
-   # Hand suite
-   src/python/isaaccapture/cts/hand/checker/setup_env.sh --panel
-   src/python/isaaccapture/cts/hand/capture/setup_env.sh
+   CTS=src/python/isaaccapture/cts
+   $CTS/hand/checker/setup_env.sh --panel && $CTS/hand/capture/setup_env.sh
+   $CTS/full_body/checker/setup_env.sh --panel && $CTS/full_body/capture/setup_env.sh
 
-   # Full-body suite
-   src/python/isaaccapture/cts/full_body/checker/setup_env.sh --panel
-   src/python/isaaccapture/cts/full_body/capture/setup_env.sh
-
-``--panel`` adds the viewer that replays a take and packages it for submission.
-To only check takes on another machine, such as a Mac, run just the checker script there. The
-scripts are idempotent and write only inside their own directory; re-run them after pulling or
-rebuilding.
+``--panel`` adds the viewer, which replays a take and packages it for submission. To only check
+takes on another machine, such as a Mac, run the checker script alone there. The scripts are
+idempotent and write only inside their own directory; re-run them after pulling or rebuilding.
 
 .. _cts-setup-headset:
 
@@ -109,7 +102,7 @@ and set ``PY`` in each terminal you open:
    # or …/cts/full_body/capture/.venv/bin/python
 
 #. Start the CloudXR service in a terminal of its own and leave it open. The first time, it shows a
-   link to the CloudXR licence and asks you to accept it; your answer is remembered.
+   link to the CloudXR licence and asks you to accept it; your acceptance is remembered.
 
    .. code-block:: bash
 
@@ -143,7 +136,7 @@ and set ``PY`` in each terminal you open:
 The workstation firewall must allow the CloudXR ports (:ref:`whitelist-firewall-ports`). For
 device profiles, a detached service or opening the client over USB, see
 :doc:`/references/cloudxr`. For PICO body tracking, set up the trackers first:
-:doc:`/device/body_tracking`.
+:doc:`/device/body_tracking/index`.
 
 Troubleshooting
 ---------------
@@ -169,10 +162,6 @@ Troubleshooting
    * - The client loads but CONNECT does nothing
      - Accept the certificate at ``https://<host>:48322/`` first. Check that the headset is on the
        same network and the firewall allows the CloudXR ports.
-   * - ``No module named 'cryptography'`` when the CloudXR service starts
-     - The capture environment lacks the CloudXR extras that create the certificate. Run
-       ``uv pip install --python $PY 'cryptography>=3.0' 'websockets>=14'``, then start the
-       service again.
    * - A second CloudXR service will not start
      - One is already running. ``$PY -m isaaccapture.cloudxr.service status`` reports it;
        ``service stop`` ends a detached one, Ctrl+C a foreground one.

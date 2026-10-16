@@ -66,7 +66,7 @@ Stage the results with a plain `git add`: GIFs and MP3s go through Git LFS.
   still frame; the pinches close from an open hand and the fingertips come together
   from ~13 cm apart, each over 1 s, then hold; fist and palms hold while the camera
   circles the fists once and swings ±70° from your view of the palms. The rolls are the
-  oracle's take: a 1.2 s move into the pose, then the turn from beep to tick.
+  oracle's take: 1.2 s still in the pose, then the turn from beep to tick.
 - Full body: the oracle's windows are shorter than the real ones, so each window is
   resampled to play for the session's duration. Still steps open with a short
   "getting into the pose" lead-in, which a performer does before pressing.
