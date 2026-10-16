@@ -14,7 +14,7 @@
 # Usage:
 #   image_setup.sh USER GID:NAME [GID:NAME ...]
 #
-# Get the gids for a specific host with: ./run_docker_example.sh --print-gids
+# Get the gids for a specific host with: ./setup_container.sh --print-gids
 
 set -euo pipefail
 

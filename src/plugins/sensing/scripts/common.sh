@@ -29,63 +29,8 @@ die() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# ---------------------------------------------------------------------------
-# Download cache
-#
-# The SDK artifacts total ~73 MB and are re-fetched on every container rebuild,
-# because /usr/src does not survive one. The cache does: it lives in the
-# worktree, which is bind-mounted from the host. Gitignored.
-# ---------------------------------------------------------------------------
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENSING_CACHE_DIR="${SENSING_CACHE_DIR:-$COMMON_DIR/../.cache}"
-
-# fetch_cached URL VALIDATOR -> sets FETCHED_PATH
-#
-# Filenames are version-stamped, so the basename is the cache key and a new BSP
-# fetches a new file rather than invalidating this one. VALIDATOR is a command
-# run on the path; a cached file that fails it is re-fetched, so a truncated or
-# half-written download cannot poison a later build.
-FETCHED_PATH=""
-fetch_cached() {
-    local url="$1" validate="$2"
-    local name path tmp
-    name="$(basename "$url")"
-    path="$SENSING_CACHE_DIR/$name"
-    FETCHED_PATH=""
-
-    if [[ -f "$path" ]]; then
-        if "$validate" "$path" >/dev/null 2>&1; then
-            ok "cached: $name ($(du -h "$path" | cut -f1))"
-            FETCHED_PATH="$path"
-            return 0
-        fi
-        warn "cached $name failed validation — re-fetching"
-        rm -f "$path"
-    fi
-
-    mkdir -p "$SENSING_CACHE_DIR" || return 1
-    # Download to .part and rename, so an interrupted fetch never leaves a
-    # plausible-looking cache entry behind.
-    tmp="$path.part"
-    info "downloading $name"
-    # A bar on a terminal, silence when piped -- curl's default meter is three
-    # lines of carriage-return noise in a log.
-    local progress=(--progress-bar); [[ -t 1 ]] || progress=(-sS)
-    curl -fL "${progress[@]}" --retry 3 "$url" -o "$tmp" || { rm -f "$tmp"; return 1; }
-    if ! "$validate" "$tmp" >/dev/null 2>&1; then
-        rm -f "$tmp"
-        return 1
-    fi
-    mv -f "$tmp" "$path"
-    ok "cached: $name ($(du -h "$path" | cut -f1))"
-    FETCHED_PATH="$path"
-}
-
-# Validators for fetch_cached. Cheap structural checks -- NVIDIA publishes no
-# checksums for these artifacts, so "is it the right kind of archive" is as far
-# as verification goes.
-valid_deb()  { dpkg-deb --info "$1"; }
-valid_tbz2() { tar tjf "$1"; }
 
 in_container() {
     [[ -f /.dockerenv ]] || grep -qE '(docker|containerd|kubepods)' /proc/1/cgroup 2>/dev/null
@@ -159,7 +104,6 @@ confirm() {
 # re-derive it.
 # ---------------------------------------------------------------------------
 SENSING_PKG_GLOB='SG8A_AGON_G2Y_A1_AGX_ORIN_S56C_SHW5G_SHF3L_SIPL_JP7.2.1_L4TR39.2.1'
-SENSING_CONFIG_JSON_REL='query/sg8a_agth_g2a/shw5g.json'
 SENSING_PLATFORM_CONFIG='SHW5G_2'
 # One mask per deserializer, in transport order: nothing on CSI-GH, links 2 and
 # 3 on CSI-CD.
@@ -178,9 +122,7 @@ SENSING_PKG_REPO_DIR='Jetson AGX Orin Devkit/SG8A-AGON-G2Y-A1/JetPack7.2.1'
 SENSING_PKG_REPO_NAME='.drivers-repo'
 SENSING_PKG_NAME='SG8A-AGON-G2Y-A1-JetPack7.2.1'
 
-# The published package has no SHW5G_2 config -- SENSING ships shw5g.json to
-# customers with a 2x SHW5G rig, and it is not in the repo. setup.sh drops
-# this copy into the fetched package so nvsipl_camera has one to load.
+# SENSING supplies this two-camera config separately from the public package.
 SENSING_CONFIGS_DIR="$COMMON_DIR/../configs"
 
 # The two MAX96712 deserializer buses, from `i2cDevice` in the platform config.
@@ -192,14 +134,8 @@ SIPL_CAMERAHAL=/usr/lib/aarch64-linux-gnu/nvidia/libnvcamerahal.so
 SIPL_SBIN_DIR=/usr/sbin
 SIPL_BOOT_DIR=/boot
 SENSING_DTBO=tegra234-camera-sipl-camera-overlay.dtbo
-SIPL_API_DIR="${SIPL_API_DIR:-/usr/src/jetson_sipl_api}"
-MMAPI_DIR="${MMAPI_DIR:-/usr/src/jetson_multimedia_api}"
 
-# BSP version as it appears in the apt pool, e.g. 39.2.1-20260806224157.
-# Parsed rather than hardcoded so the SDK fetch is version-matched by
-# construction: "# R39 (release), REVISION: 2.1, ... DATE: ..." plus the
-# matching pool timestamp is not derivable, so only MAJOR.MINOR is returned and
-# the caller resolves the full version from the pool index.
+# BSP version from /etc/nv_tegra_release.
 l4t_release() {
     local rel
     [[ -r /etc/nv_tegra_release ]] || return 1
@@ -263,24 +199,6 @@ fetch_sensing_pkg() {
     # with spaces in it; nobody should have to type that.
     ln -sfn "${pkg#"$SENSING_CACHE_DIR/"}" "$SENSING_CACHE_DIR/$SENSING_PKG_NAME"
     printf '%s\n' "$SENSING_CACHE_DIR/$SENSING_PKG_NAME"
-}
-
-# SIPL API headers (jetson_sipl_api.tbz2). Prints the include root.
-find_sipl_api() {
-    local d
-    for d in "$SIPL_API_DIR" /usr/src/jetson_sipl_api /opt/nvidia/jetson_sipl_api; do
-        [[ -f "$d/sipl/include/NvSIPLCamera.hpp" ]] && { printf '%s\n' "$d"; return 0; }
-    done
-    return 1
-}
-
-# Jetson Multimedia API tree -- NvVideoEncoder sources and nvbufsurface.h.
-find_mmapi() {
-    local d
-    for d in "$MMAPI_DIR" /usr/src/jetson_multimedia_api; do
-        [[ -f "$d/include/NvVideoEncoder.h" ]] && { printf '%s\n' "$d"; return 0; }
-    done
-    return 1
 }
 
 # Camera modules this rig actually populates. Everything else in the package --

@@ -14,9 +14,9 @@ for supported hardware, installation, container usage, and troubleshooting.
 That guide owns the operating instructions; this README maps the source tree.
 
 - [`scripts/`](scripts/): host setup, validation, diagnostics, and the Bash
-  Docker launcher. Each entry point exposes `--help`.
+  compatibility Docker launcher. Each entry point exposes `--help`.
 - [`docker/`](docker/): example image, image-side group configuration, and
-  container SDK provisioning.
+  host-side container setup.
 - [`configs/`](configs/): the platform configuration and its provenance.
 
 ## Platform configuration provenance

@@ -104,25 +104,12 @@ else
     fi
 fi
 
-# --- Build SDKs -------------------------------------------------------------
-step "Build SDKs"
-if mmapi="$(find_mmapi)"; then ok "multimedia api: $mmapi"
-else bad "jetson_multimedia_api not found — docker/setup_container.sh fetches it"; note_fail; fi
-if sipl="$(find_sipl_api)"; then ok "sipl api: $sipl"
-else bad "jetson_sipl_api not found — docker/setup_container.sh fetches it"; note_fail; fi
-
-# --- Vendor package ---------------------------------------------------------
-step "Vendor package"
-pkg="$(find_sensing_pkg)"
-if [[ -n "$pkg" ]]; then
-    ok "$pkg"
-    [[ -f "$pkg/$SENSING_CONFIG_JSON_REL" ]] \
-        && ok "$SENSING_CONFIG_JSON_REL" \
-        || { bad "platform config missing from the package"; note_fail; }
-else
-    info "not found (only needed for the vendor smoke test)"
-fi
-have nvsipl_camera && ok "nvsipl_camera on PATH" || info "nvsipl_camera not on PATH"
+# --- Camera tool and config -------------------------------------------------
+[[ -r "$SENSING_CONFIGS_DIR/shw5g.json" ]] \
+    && ok "SHW5G platform config" \
+    || { bad "configs/shw5g.json missing"; note_fail; }
+have nvsipl_camera && ok "nvsipl_camera on PATH" \
+    || { bad "nvsipl_camera not on PATH — run scripts/setup.sh on the host"; note_fail; }
 
 printf '\n'
 if [[ "$FAIL" -eq 0 ]]; then

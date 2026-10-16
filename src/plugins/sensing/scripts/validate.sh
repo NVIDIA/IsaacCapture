@@ -41,34 +41,23 @@ while (( $# )); do
 done
 
 have nvsipl_camera || die "nvsipl_camera is not on PATH." \
-    "On the host, run $SCRIPT_DIR/setup.sh.
-         In a container, the host's /usr/sbin is not visible -- use
-         $SCRIPT_DIR/run_docker_example.sh, which mounts the package."
-
-PKG_DIR="$(find_sensing_pkg)"
-[[ -n "$PKG_DIR" ]] || die "vendor package not found." "Run $SCRIPT_DIR/setup.sh first."
-
-# nvsipl_camera resolves -t against the working directory, and the config lives
-# in the package.
-cd "$PKG_DIR"
-[[ -f "$SENSING_CONFIG_JSON_REL" ]] || die \
-    "$SENSING_CONFIG_JSON_REL missing from $PKG_DIR." \
-    "The published package has no $SENSING_PLATFORM_CONFIG config;
-         $SCRIPT_DIR/setup.sh drops the vendored copy in."
+    "Run scripts/setup.sh on the host, then docker/setup_container.sh for a container."
+CONFIG="$SENSING_CONFIGS_DIR/shw5g.json"
+[[ -r "$CONFIG" ]] || die "$CONFIG missing."
 
 if [[ "$QUERY_ONLY" -eq 1 ]]; then
     step "Querying $SENSING_PLATFORM_CONFIG (no hardware needed)"
-    exec nvsipl_query -t "$SENSING_CONFIG_JSON_REL" -c "$SENSING_PLATFORM_CONFIG"
+    exec nvsipl_query -t "$CONFIG" -c "$SENSING_PLATFORM_CONFIG"
 fi
 
 # -Z: these modules carry no auth keys. --enable-camera-hal: the legacy DevBlk
 # path does not support this carrier.
-ARGS=(-t "$SENSING_CONFIG_JSON_REL" -c "$SENSING_PLATFORM_CONFIG"
+ARGS=(-t "$CONFIG" -c "$SENSING_PLATFORM_CONFIG"
       -m "$SENSING_LINK_MASKS" --enable-camera-hal -s -Z)
 [[ "$SECONDS_ARG" -eq 0 ]] || ARGS+=(-r "$SECONDS_ARG")
 
 step "Streaming $SENSING_PLATFORM_CONFIG"
-info "$PKG_DIR"
+info "$CONFIG"
 warn "SIPL is exclusive: stop any other client first."
 nvsipl_camera "${ARGS[@]}" "${EXTRA[@]}"
 ok "streamed without error"

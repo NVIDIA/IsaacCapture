@@ -19,7 +19,7 @@
 # Options:
 #   --pkg DIR          vendor driver package dir (default: fetch from SENSING's repo)
 #   --no-fetch         do not download the vendor package; fail if it is not on disk
-#   --install-drivers  run the vendor install.sh unattended (otherwise it is offered)
+#   --install-drivers  reinstall the vendor artifacts even if unchanged
 #   --groups           add $USER to the i2c and gpio groups
 #   --smoke-test       stream both sensors for a few seconds via nvsipl_camera
 #   -y, --yes          assume yes for every prompt
@@ -36,13 +36,15 @@ NO_FETCH=0
 INSTALL_DRIVERS=0
 DO_GROUPS=ask
 SMOKE_TEST=0
+REBOOT_REQUIRED=0
+LOGIN_REQUIRED=0
 ASSUME_YES=0
 
 usage() { sed -n '4,27p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; }
 
 while (( $# )); do
     case "$1" in
-        --pkg)             PKG_DIR="$2"; shift 2 ;;
+        --pkg)             [[ $# -ge 2 && -n "$2" ]] || die "--pkg requires a directory"; PKG_DIR="$2"; shift 2 ;;
         --no-fetch)        NO_FETCH=1; shift ;;
         --install-drivers) INSTALL_DRIVERS=1; shift ;;
         --groups)          DO_GROUPS=yes; shift ;;
@@ -57,8 +59,7 @@ export ASSUME_YES
 # --- Preconditions ----------------------------------------------------------
 if in_container; then
     die "this script must run on the HOST, not inside a container." \
-        "Open a host terminal and run: $SCRIPT_DIR/setup.sh
-         Inside a container, run $SCRIPT_DIR/../docker/setup_container.sh instead."
+        "Open a host terminal and run: $SCRIPT_DIR/setup.sh"
 fi
 [[ "$(uname -m)" == "aarch64" ]] || die "this rig is Jetson-only (found $(uname -m) )."
 
@@ -85,30 +86,10 @@ PKG_DIR="$(cd "$PKG_DIR" && pwd)"
 
 printf '%sSENSING host setup (SIPL)%s\n' "$C_BOLD" "$C_RESET"
 info "package: $PKG_DIR"
-info "config:  $SENSING_PLATFORM_CONFIG  ($SENSING_CONFIG_JSON_REL)"
+info "config:  $SENSING_PLATFORM_CONFIG  ($SENSING_CONFIGS_DIR/shw5g.json)"
 info "L4T:     R$(l4t_release || echo unknown)"
 
-# --- Platform config --------------------------------------------------------
-# The published package has no SHW5G_2 config: SENSING ships shw5g.json only to
-# customers with a 2x SHW5G rig. Without it nvsipl_camera has nothing to load
-# for this population, so drop the vendored copy in.
-step "Platform config"
-CFG_DST="$PKG_DIR/$SENSING_CONFIG_JSON_REL"
-CFG_SRC="$SENSING_CONFIGS_DIR/$(basename "$SENSING_CONFIG_JSON_REL")"
-if [[ -f "$CFG_DST" ]]; then
-    ok "$SENSING_CONFIG_JSON_REL (shipped in this package)"
-elif [[ -r "$CFG_SRC" ]]; then
-    mkdir -p "$(dirname "$CFG_DST")" 2>/dev/null || true
-    if cp "$CFG_SRC" "$CFG_DST" 2>/dev/null; then
-        ok "installed $SENSING_CONFIG_JSON_REL from configs/"
-    else
-        warn "could not write $CFG_DST"
-        hint "nvsipl_camera needs -t pointing at a config that defines $SENSING_PLATFORM_CONFIG"
-    fi
-else
-    bad "no $SENSING_PLATFORM_CONFIG config available"
-    hint "Expected $CFG_SRC"
-fi
+[[ -r "$SENSING_CONFIGS_DIR/shw5g.json" ]] || die "configs/shw5g.json missing."
 
 # --- Installed vs package ---------------------------------------------------
 step "Installed vs package  (modules: ${SENSING_MODULES[*]})"
@@ -122,7 +103,7 @@ else
     warn "installed @ $INSTALLED_COMMIT, package is @ $PKG_COMMIT"
 fi
 sensing_check_installer "$PKG_DIR" || \
-    warn "the package copies files this script does not know about; run install.sh by hand"
+    die "the vendor installer contains unsupported artifacts" "Review the new package before installing it."
 
 STALE=()
 while IFS=$'\t' read -r src dst module; do
@@ -163,24 +144,13 @@ if [[ "$NEED_INSTALL" -eq 1 ]]; then
         sensing_install "$PKG_DIR" || die "install failed" "Re-run with sudo available."
         sensing_write_stamp "$PKG_DIR" "$SENSING_PKG_NAME" "$(sensing_pkg_commit "$PKG_DIR")" \
             && ok "recorded in $SENSING_STAMP"
-        # install.sh only copies files. The overlay is the sole artifact the
-        # kernel reads at boot, so a drop that leaves it alone -- a driver
-        # rebuild or an ISP retune -- takes effect on the next process start.
+        # Only the overlay is read at boot; userspace updates need no reboot.
         if [[ " ${STALE[*]} " == *" $SENSING_DTBO "* ]]; then
-            printf '\n%s%sReboot required.%s Select the overlay first:\n' "$C_YELLOW" "$C_BOLD" "$C_RESET"
-            hint "sudo /opt/nvidia/jetson-io/jetson-io.py"
-            hint "  Configure Jetson AGX CSI Connector"
-            hint "  -> Configure for compatible hardware"
-            hint "  -> $SENSING_OVERLAY_NAME"
-            hint "  -> Save pin changes -> Save and reboot to reconfigure pins"
-            printf '\nAfter the reboot, set maximum performance and re-run this script:\n'
-            hint "sudo nvpmodel -m 0 && sudo jetson_clocks"
-            exit 0
+            REBOOT_REQUIRED=1
         fi
-        ok "overlay unchanged — no reboot needed"
-        STALE=()
+    else
+        die "driver installation declined; host setup is incomplete."
     fi
-    warn "skipped vendor install.sh"
 fi
 
 # --- 2. Vendor artifacts in place -------------------------------------------
@@ -201,7 +171,14 @@ fi
 # SIPL needs no root, but it does need the groups owning the deserializer I2C
 # buses and the GPIO chips that gate deserializer power.
 step "Group membership"
-mapfile -t MISSING_GIDS < <(sensing_missing_gids)
+mapfile -t MISSING_GIDS < <(
+    sensing_missing_gids
+    # I2C nodes may not exist until the first boot with the overlay.
+    for group in i2c gpio video; do
+        gid="$(getent group "$group" | cut -d: -f3)" || continue
+        [[ " $(id -G) " == *" $gid "* ]] || printf '%s\n' "$gid"
+    done
+)
 if [[ "${#MISSING_GIDS[@]}" -eq 0 ]]; then
     ok "$USER can already reach every node SIPL opens"
 else
@@ -218,10 +195,10 @@ else
     esac
     if [[ "$add_groups" -eq 1 ]]; then
         sudo usermod -aG "$(IFS=,; echo "${names[*]}")" "$USER"
-        ok "added — log out and back in for it to take effect"
-        warn "Group changes do not apply to this shell. Re-login before the smoke test."
+        LOGIN_REQUIRED=1
+        ok "added — the next login or reboot activates these groups"
     else
-        warn "without these, SIPL fails with: Master SetPlatformConfig (Camera HAL) failed. status: 10"
+        die "required group membership declined; host setup is incomplete."
     fi
 fi
 
@@ -235,31 +212,36 @@ else
     info "nvpmodel not found"
 fi
 
-# --- 5. Optional smoke test -------------------------------------------------
-# The honest overlay check. If the DTBO is not selected, or the modules are on
-# the wrong ports, this is what says so.
-if [[ "$SMOKE_TEST" -eq 1 ]]; then
-    step "Vendor smoke test"
-    if ! have nvsipl_camera; then
-        bad "nvsipl_camera not on PATH — installed by the vendor install.sh"
-    else
-        info "streaming $SENSING_PLATFORM_CONFIG for 5s"
-        ( cd "$PKG_DIR" && nvsipl_camera \
-            -t "$SENSING_CONFIG_JSON_REL" -c "$SENSING_PLATFORM_CONFIG" \
-            -m "$SENSING_LINK_MASKS" --enable-camera-hal -s -Z -r 5 ) \
-            && ok "both sensors streamed" \
-            || bad "smoke test failed — check cabling on CN1 CAM2/CAM3 and the selected overlay"
+# Complete first-install setup before offering a capture command.
+if [[ "$REBOOT_REQUIRED" -eq 1 ]]; then
+    step "Activate the device-tree overlay"
+    hint "Configure Jetson AGX CSI Connector -> Configure for compatible hardware"
+    hint "$SENSING_OVERLAY_NAME"
+    hint "Save pin changes -> Save and reboot to reconfigure pins"
+    warn "After reboot, return to the repository root and run the camera command below."
+    hint 'nvsipl_camera -t src/plugins/sensing/configs/shw5g.json -c SHW5G_2 -m "0x0000 0x1100" --enable-camera-hal -s -Z --egl-display'
+    if confirm "Open Jetson-IO now?"; then
+        sudo /opt/nvidia/jetson-io/jetson-io.py
     fi
+    warn "Host setup requires the selected overlay and a reboot before capture."
+    exit 2
+fi
+if [[ "$LOGIN_REQUIRED" -eq 1 ]]; then
+    warn "Host setup requires a new login to activate group membership before capture."
+    exit 2
 fi
 
 step "Verifying"
-"$SCRIPT_DIR/verify.sh" || true
+"$SCRIPT_DIR/verify.sh" || die "host setup is incomplete — see the failures above."
+
+if [[ "$SMOKE_TEST" -eq 1 ]]; then
+    nvsipl_camera -t "$SENSING_CONFIGS_DIR/shw5g.json" -c "$SENSING_PLATFORM_CONFIG" \
+        -m "$SENSING_LINK_MASKS" --enable-camera-hal -s -Z -r 5 \
+        || die "smoke test failed — check cabling and the selected overlay."
+fi
 
 printf '\n%s%sHost setup complete.%s\n' "$C_GREEN" "$C_BOLD" "$C_RESET"
-# Validation is the point of the whole exercise, so hand over the exact command
-# rather than a pointer to the docs.
-printf '\nValidate the rig:\n'
-hint "$SCRIPT_DIR/validate.sh"
-printf '\nTo build against this rig, run %sdocker/setup_container.sh%s in your container,\n' \
-    "$C_BOLD" "$C_RESET"
-printf 'or %srun_docker_example.sh%s for a ready-made one.\n' "$C_BOLD" "$C_RESET"
+printf '\nFrom the repository root, check both cameras:\n'
+hint 'nvsipl_camera -t src/plugins/sensing/configs/shw5g.json -c SHW5G_2 -m "0x0000 0x1100" --enable-camera-hal -s -Z --egl-display'
+printf '\nFor a container, run on the host:\n'
+hint 'src/plugins/sensing/docker/setup_container.sh'
