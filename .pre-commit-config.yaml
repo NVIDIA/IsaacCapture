@@ -43,6 +43,13 @@ repos:
   # Copyright year: ensure SPDX-FileCopyrightText includes current year (--fix updates in place)
   - repo: local
     hooks:
+      - id: check-docs-preview
+        name: Check docs preview selection
+        entry: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        files: ^(\.github/(scripts/docs_preview\.py|workflows/docs.*\.yaml)|tests/python/ci/)
       - id: check-dco-signoff
         name: Require DCO Signed-off-by in commit message
         entry: python3 scripts/check_dco_signoff.py
