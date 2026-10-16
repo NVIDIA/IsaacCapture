@@ -266,7 +266,7 @@ def serve(
 ) -> None:
     server = viser.ViserServer(host=host, port=port)
     panel = Panel(server, report, track, recording, timeline)
-    print(f"[panel] http://{host}:{port} — Ctrl+C to stop")
+    print(f"[panel] http://{host}:{server.get_port()} — Ctrl+C to stop")
     try:
         panel.run()
     except KeyboardInterrupt:

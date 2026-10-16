@@ -43,8 +43,9 @@ Nothing under [`capture/`](capture) is meant to be edited — see
   from CloudXR.
 - **For a glove, its plugin built and installed** into `install/plugins/`, for example
   `cmake --install build --component manus` or `--component wuji_glove`. The
-  device pages cover building each: [`manus.rst`](../../../../../docs/source/device/manus.rst)
-  and [`wuji_glove.rst`](../../../../../docs/source/device/wuji_glove.rst).
+  device pages cover building each:
+  [`manus.rst`](../../../../../docs/source/device/hand_tracking/manus.rst) and
+  [`wuji_glove.rst`](../../../../../docs/source/device/hand_tracking/wuji_glove.rst).
 - **A table and a chair.** The performer sits at the table; several steps rest the
   hands flat on it. Two people is easier than one — one performs while the other watches
   the panel.
@@ -74,8 +75,8 @@ after pulling.
 **Every take needs this, including one whose joints come from a glove.** CloudXR is the
 OpenXR runtime the capture runs on, and it has no system to hand out until a headset
 has loaded the web client and pressed CONNECT. Skipping it does not raise:
-**Start recording** blocks inside session creation, logging `OpenXR HMD form factor is
-unavailable; waiting for a system...` once a second, and Python does not take Ctrl+C
+inside session creation, **Start recording** logs `OpenXR HMD form factor is
+unavailable; waiting for a system...` once and blocks, and Python does not take Ctrl+C
 there.
 
 The full walkthrough, with the reasons, is in the full-body guide's
@@ -97,10 +98,10 @@ PY=src/python/isaaccapture/cts/hand/capture/.venv/bin/python
    takes.
 3. **Connect the headset over Wi-Fi**, on the same subnet as this host:
    `$PY -m isaaccapture.cloudxr.webclient --print-only`. It prints the streaming target
-   `https://<this-host>:48322/` and the client URL. **Open the streaming target in the
-   headset's browser first and accept the self-signed certificate**, then open the
-   client URL and press CONNECT. Without `--print-only` the command types the URL into
-   the headset over USB `adb` instead.
+   as `<this-host>:48322` on its `stream` row, then the client URL. **Open
+   `https://<this-host>:48322/` in the headset's browser first and accept the
+   self-signed certificate**, then open the client URL and press CONNECT. Without
+   `--print-only` the command types the URL into the headset over USB `adb` instead.
 
 `record.sh` passes anything it does not understand through to the capture panel, so the
 runtime flags work from there too: `--cloudxr-install-dir` (default `~/.cloudxr`),
@@ -109,8 +110,9 @@ runtime flags work from there too: `--cloudxr-install-dir` (default `~/.cloudxr`
 
 ## Record
 
-The first argument names the device. It only decides where the files land, so use
-something that identifies the hardware: `quest3`, `pico4u`, `manus`, `wuji`.
+The first argument names the device. It names the take's directory and files and is
+stored as `device` in the provenance file, so use something that identifies the
+hardware: `quest3`, `pico4u`, `manus`, `wuji`.
 
 **The headset's own optical hands** — no plugin:
 
@@ -143,15 +145,14 @@ fails to load stops the take rather than recording a file with no hands in it. O
 options kept with the take: `--plugin-version NAME=VERSION` (otherwise read from
 `plugin.yaml`) and `--note TEXT`.
 
-Open the panel at <http://localhost:8081>. It listens on every interface, so the
-headset's own browser can reach it at `http://<your-host>:8081` too. If the port is
-taken the panel moves to the next free one; use the `http://localhost:…` line the run
-prints.
+Open the panel at <http://localhost:8081>. It listens on every interface; for the
+headset's own browser, use the `[capture] headset:` address the run prints. If the port
+is taken the panel moves to the next free one, and both printed addresses follow it.
 
 The panel idles with the CloudXR runtime state, the hand source and where the take will
-be written. Nothing is open against the device and no file exists yet. Press
-**Start recording**. That creates the recording; the script itself begins once both
-hands have had a valid joint.
+be written. Nothing is open against the device yet; the provenance `.json` and the
+`.log` already exist, but the recording does not. Press **Start recording**. That
+creates the recording; the script itself begins once both hands have had a valid joint.
 
 If ten seconds go by without that, a red box titled **No hand data after 10 s** lists
 what to check. It stops nothing: the take is running, and the script starts on its own
@@ -199,7 +200,7 @@ Three things to know before the first take:
 - **The performer cannot pause or skip.** If a step goes wrong, let the script finish
   and record again.
 
-After the eleventh step *"Done. You can stop now."* plays and the recording closes. The
+After the eleventh step the recording closes and *"Done. You can stop now."* plays. The
 panel then writes the label sidecar and audits it against the finished file, listing
 rows marked `ok` or `BAD`:
 
@@ -221,7 +222,7 @@ first flat step has found it.
 ## What you get
 
 One directory per take, under `~/isaaccapture-cts/`, named for the device and the
-moment you started the script:
+moment you ran `record.sh`:
 
 ```text
 manus_2026-03-04_101530/manus_2026-03-04_101530-hand.mcap          the recording
@@ -259,7 +260,7 @@ check could not run:
 | `pass` | 0 | Nothing in the recording argues against the integration. |
 | `fail` | 1 | A failure attributable to the device or its plugin. |
 | `retake` | 2 | The capture is unusable because of how it was performed — a step was not held. The device is not implicated. Record again. |
-| `insufficient_data` | 3 | The recording cannot answer the question: too short, no hand channel, or a prerequisite check could not run. |
+| `insufficient_data` | 3 | The recording cannot answer the question: too short, no hand channel, or a required check could not answer. |
 | — | 4 | The check could not run: a usage error, an unknown `--check` name, or the recording or its labels cannot be read. One line on stderr says which. Nothing is concluded about the device. |
 
 Each line in the report starts with a mark:
@@ -353,14 +354,14 @@ companion that was never there is not an error; `inputs.missing` names it.
 | `run …/checker/setup_env.sh first; the panel decodes the take it writes` | The two setup scripts were run in the wrong order. |
 | `--plugin given but no plugins/ or install/plugins/ in the repo` | Build and install the glove plugin first. |
 | **the session did not open**, on the panel | CloudXR could not start, or a `--plugin` failed to load. The message names the reason. Nothing was recorded; fix it and run `record.sh` again. |
-| **Start recording** does nothing and the terminal repeats `waiting for a system` | No headset is connected to the runtime. Connect it as above and the take goes on by itself. Ctrl+C is not delivered during the wait; close the terminal if you need out. |
+| **Start recording** does nothing, and the terminal logs `waiting for a system...` once and blocks | No headset is connected to the runtime. Connect it as above and the take goes on by itself. Ctrl+C is not delivered during the wait; close the terminal if you need out. |
 | The client page loads but CONNECT does nothing | The headset has not accepted the runtime's self-signed certificate. Open `https://<this-host>:48322/` in the headset browser, click through the warning, then go back to the client. Also check: same subnet, and the host firewall allows 48322. |
 | A second CloudXR service will not start | The runtime is a host singleton on 48322. One is already up; `service status` names it, `service stop` ends a detached one, Ctrl+C a foreground one. |
 | **No hand data after 10 s**, in red | With a plugin: it is not running or exited; the glove is off, unpaired, uncalibrated, or its vendor service is down; or the plugin needs a wrist from the headset or a controller and neither is tracked. Without one: the headset is not streaming, hand tracking is off in the headset, or the hands are out of view. The take is still running and starts on its own once both hands are valid. |
 | One hand shows `inactive`, or `n / 26 valid` in red, in the sidebar | That hand's channel is missing or has invalid joints right now. The sidebar shows it live; the script waits for both hands to have had a valid joint, not for all 26. |
 | **Spoken cues are off**, on the panel | `aplay` is missing. The take still records, paced the same, with on-screen cues only. To hear the cues, install `alsa-utils` and restart the panel. |
 | `… is a Git LFS pointer, not audio; run git lfs pull` | The clone was made without git-lfs, so the cue WAVs are placeholders. Install git-lfs and run `git lfs pull` in the repository. |
-| The headset's browser cannot load the panel | The port is not reachable from the headset. Check the host firewall; the panel listens on every interface. |
+| The headset's browser cannot load the panel | Use the `[capture] headset:` address the run prints. If that does not load, the port is not reachable from the headset: check the host firewall; the panel listens on every interface. |
 | One `BAD` row in the label audit, the rest `ok` | That pose was not held. Record another take. |
 | `no sidecar beside the recording` from `make_labels.py` | There is no `.labels.json` next to that recording, or it was renamed. |
 | The report says `no motion-step labels beside the recording` | The checker could not find `<recording>.labels.json` at the path you gave. Check the spelling and that you did not go through a symlink. |

@@ -108,7 +108,7 @@ def pose_for(label: str, options: Options) -> hm.Pose:
         return options.fist
     if label.startswith("pinch_"):
         return hm.pinch(label.removeprefix("pinch_"))
-    if label in FLAT:
+    if label in FLAT or label == "palms_together":
         return hm.FLAT
     return hm.OPEN
 

@@ -27,7 +27,8 @@ The files repeat the directory's name:
 .venv/bin/python make_labels.py TAKE.mcap   # re-run the label audit on an existing take
 ```
 
-`DEVICE` is required, comes first, and only names the output directory.
+`DEVICE` is required and comes first. It names the output directory and files and is
+stored as `device` in the provenance file.
 
 | Option | Effect |
 |---|---|

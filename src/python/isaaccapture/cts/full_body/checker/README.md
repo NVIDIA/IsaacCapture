@@ -14,7 +14,7 @@ recording and returns one verdict:
 | `pass` | 0 | Nothing in the recording argues against the integration. |
 | `fail` | 1 | A CTS failure attributable to the device or its plugin. |
 | `retake` | 2 | The capture is unusable because of how it was performed. The device is not implicated. |
-| `insufficient_data` | 3 | The recording cannot answer the question — too short, no skeleton in it, or a prerequisite check failed. |
+| `insufficient_data` | 3 | The recording cannot answer the question — too short, no skeleton in it, or a required check could not answer. |
 | — | 4 | The check could not run: a usage error, an unknown `--check` name, or the recording or its labels cannot be read. One line on stderr says which. Nothing is concluded about the device. |
 
 `fail` and `retake` are deliberately separate. Telling a vendor their device is broken
@@ -43,7 +43,7 @@ directory.
 
 [`../README.md`](../README.md) is the step-by-step: the setup, the headset, the ten
 steps, the four files a take leaves behind, and what to do when it goes wrong. Recording
-is **Linux only** — it drives the device through Isaac Teleop — while everything above
+is **Linux only** — it drives the device through Isaac Capture — while everything above
 and below this section runs on macOS too.
 
 The label sidecar (`<recording>.labels.json`) carries the motion windows the posture
@@ -56,9 +56,9 @@ the MCAP.
 The trigger and the keyboard are equivalent: with two people the one at the screen does
 the pressing, and a mocap suit has no controllers at all.
 
-If the client reports `body_tracking: false`, every joint arrives invalid and only the
-container and envelope checks can run. On PICO that is a browser limitation, not a
-hardware or licensing one; see [`../README.md`](../README.md).
+If the headset sends no body tracking, every joint arrives invalid and only the container
+and envelope checks can run; see
+[`body_tracking/index.rst`](../../../../../../docs/source/device/body_tracking/index.rst).
 
 ## Run the checks
 

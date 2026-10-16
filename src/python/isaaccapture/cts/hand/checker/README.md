@@ -56,8 +56,9 @@ unanswered.
 | `--labels SIDECAR` | Use these labels instead of `RECORDING.labels.json` beside the file. |
 | `--list-checks` | Print the check names with their group, severity and a one-line summary. Needs no recording. |
 
-Labels are optional. Without them the report carries a note, the window checks report
-that they could not be answered, and the other three groups are judged as usual.
+Labels are optional. Without them the report carries a note, the window checks and
+`consistency.position_orientation_same_frame` (which reads the roll windows) report that
+they could not be answered, and the rest are judged as usual.
 
 ## Read the report
 
@@ -88,9 +89,9 @@ How the verdict follows from the marks:
 - `insufficient_data` — neither, but a required check was unanswered.
 - `pass` — otherwise.
 
-The window checks are not required: a take without labels is judged on the other three
-groups. Its report carries `no motion-step labels beside the recording`, which is the
-sign to check the path before trusting a `pass`.
+The window checks and `consistency.position_orientation_same_frame` are not required: a
+take without labels is judged on the rest. Its report carries `no motion-step labels
+beside the recording`, which is the sign to check the path before trusting a `pass`.
 
 Tolerances are provisional and deliberately loose. A `pass` says nothing in the take
 argued against the integration, not that the integration is good.
@@ -129,7 +130,7 @@ shows as its sections.
 | Group | Checks |
 |---|---|
 | signal | schema, finite values, no valid joint at the origin, unit quaternions, timestamps, payload presence, rate regularity, minimum rate (30 Hz), gaps, joint speed |
-| shape | required joints valid, stable valid set, radius, metres, bone-length constancy, proportions, joint index assignment, handedness, flex direction, optional joints |
+| shape | required joints valid, how often all 26 joints are valid (measured), stable valid set, radius, metres, bone-length constancy, proportions, joint index assignment, handedness, flex direction, optional joints |
 | placement | not at the origin, wrist not frozen, quaternion component order, position and orientation in one frame |
 | windows | label structure and alignment, each step performed and in order, flat hand, fist, pinch finger identity and contact, fingers coplanar and level on the table, both hands at one table height, drift between the flat windows, fingertip gap with palms pressed together, fingertip contact while each hand rolls |
 
@@ -155,8 +156,9 @@ The table, the pressed palms and the touching middle fingertips are contact the
 performer can feel, so the data is held to them: fingers flat on the table lie in one
 level plane, both hands sit at one height, same-named fingertips meet, and a fingertip on
 the axis a hand rolls about stays on the other hand's. Each of these first checks that
-the pose was struck (palm down, palms facing and close, a roll of at least 90 deg) and
-asks for a retake otherwise.
+the pose was struck. A missed contact pose (palms not facing and close, tips not
+touching, a roll under 90 deg) asks for a retake; a hand never held flat on the table
+leaves the table checks unanswered.
 
 Left and right records are paired when their sample times lie within 8 ms; a take with no such pair leaves these checks unanswered.
 

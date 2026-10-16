@@ -9,3 +9,5 @@ mcap
 # Paired with the flatc the checker's setup_env.sh downloads; the generated bindings
 # this reads the recording through were emitted by that version.
 flatbuffers==24.3.25
+# Generates the CloudXR WSS proxy's self-signed TLS certificate.
+cryptography>=3.0

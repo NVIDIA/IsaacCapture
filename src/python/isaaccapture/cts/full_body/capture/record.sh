@@ -5,7 +5,7 @@
 # Records one take of the motion script. Run it again for another take; nothing is
 # ever overwritten.
 #
-#   ./record.sh [device]
+#   ./record.sh [DEVICE] [capture_panel.py options]
 #
 #   ~/isaaccapture-cts/<device>_<date>_<time>/<device>_<date>_<time>-body.mcap
 #                                                                       -body.labels.json
@@ -20,6 +20,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CAPTURES="$HOME/isaaccapture-cts"
 
+if [[ "${1:-}" == -* ]]; then
+    echo "usage: $0 [DEVICE] [capture_panel.py options]" >&2
+    exit 2
+fi
 DEVICE="${1:-pico4u}"
 shift || true
 

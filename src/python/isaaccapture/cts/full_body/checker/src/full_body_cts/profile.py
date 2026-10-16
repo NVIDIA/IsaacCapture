@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 # Joint order is the BodyJoint enum in src/core/schema/fbs/full_body.fbs
 # (the XR_BD_body_tracking layout); parents come from the 24-joint table in
-# docs/source/device/body_tracking.rst.
+# docs/source/device/body_tracking/index.rst.
 FULL_BODY_JOINT_NAMES = (
     "PELVIS",
     "LEFT_HIP",

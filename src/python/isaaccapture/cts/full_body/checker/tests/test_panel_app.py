@@ -106,3 +106,29 @@ def test_a_panel_with_no_recording_has_no_package_button(server):
     panel = panel_over(synth.frames(60), server)
     assert not hasattr(panel, "_package_button")
     panel.package(FakeClient())  # and asking anyway is a no-op
+
+
+def test_the_printed_address_is_the_port_viser_bound(monkeypatch, capsys):
+    bound = []
+
+    def stop_at_once(panel: Panel) -> None:
+        bound.append(panel._server.get_port())
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Panel, "run", stop_at_once)
+    source = TeeSource(synth.StubSource(synth.frames(10)))
+    report = run(source)
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        asked = int(taken.getsockname()[1])
+        panel_app.serve(report, source.track(), host="127.0.0.1", port=asked)
+
+    [port] = bound
+    [line] = [
+        text
+        for text in capsys.readouterr().out.splitlines()
+        if text.startswith("[panel]")
+    ]
+    assert port != asked
+    assert f":{port} " in line

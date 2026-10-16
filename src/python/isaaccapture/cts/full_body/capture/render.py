@@ -209,8 +209,9 @@ def no_data(seconds: float, vendor: str | None) -> str:
     if vendor is None:
         causes = (
             "The headset is not streaming, or the session dropped.",
-            "The browser has no WebXR body tracking. Use the headset's own browser; "
-            "on a consumer PICO 4 Ultra it needs no enterprise activation.",
+            "The headset browser has not granted WebXR body tracking. Open the client "
+            "in the headset's own browser and check the headset against the Body "
+            "Tracking guide.",
             "The performer is out of the tracked area.",
         )
     else:

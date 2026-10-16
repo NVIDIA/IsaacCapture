@@ -7,7 +7,7 @@ Right-handed, Y-up, metres. The subject faces -Z, so RIGHT_* joints sit at +X.
 Quaternions are (x, y, z, w), matching ``core.Quaternion``.
 
 Joint indices and parents come from ``src/core/schema/fbs/full_body.fbs`` (BodyJoint
-enum) and ``docs/source/device/body_tracking.rst``.
+enum) and ``docs/source/device/body_tracking/index.rst``.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ JOINT_NAMES = [
 NUM_JOINTS = 24
 J = {name: i for i, name in enumerate(JOINT_NAMES)}
 
-# Parent of each joint, from docs/source/device/body_tracking.rst. -1 = root.
+# Parent of each joint, from docs/source/device/body_tracking/index.rst. -1 = root.
 PARENT = [
     -1,  # PELVIS
     J["PELVIS"],  # LEFT_HIP

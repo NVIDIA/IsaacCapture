@@ -9,7 +9,7 @@ One recording of a prescribed ten-step motion script, plus the label sidecar tha
 [the checker](checker/README.md) reads. A panel in your browser tells the performer
 what to do; they press a button once they are in each pose.
 
-**Linux only**: recording goes through Isaac Teleop, whose wheel is `linux_x86_64`. The
+**Linux only**: recording goes through Isaac Capture, whose wheel is `linux_x86_64`. The
 checker has no such constraint, so a take recorded here can be verified on macOS too.
 
 Nothing under [`capture/`](capture) is meant to be read or edited — see
@@ -50,8 +50,8 @@ pulling.
 **Every take needs this, including one whose joints come from your own device.** CloudXR
 is the OpenXR runtime the capture itself runs on, and it has no system to hand out until
 a headset has loaded the web client and pressed CONNECT. Skipping it does not raise:
-**Start recording** blocks inside session creation, logging `OpenXR HMD form factor is
-unavailable; waiting for a system...` once a second, and Python does not take Ctrl+C
+inside session creation, **Start recording** logs `OpenXR HMD form factor is
+unavailable; waiting for a system...` once and blocks, and Python does not take Ctrl+C
 there. To record without a headset, see
 [Recording from your own device](#recording-from-your-own-device).
 
@@ -84,19 +84,20 @@ run one form or the other, never both. `record.sh` starts its own when nothing i
 but a runtime takes tens of seconds to come up and one of these outlives any number of
 takes.
 
-**Connect the headset over Wi-Fi.** Nothing reaches the panel until this is done, and it
-sits at *waiting for a frame with valid joints* meanwhile. Put the headset on the same
-subnet as this host, then
+**Connect the headset over Wi-Fi.** Until it is connected, **Start recording** blocks in
+session creation and the cue column stays empty; *waiting for a frame with valid joints*
+appears only once the session has opened. Put the headset on the same subnet as this
+host, then
 
 ```bash
 $PY -m isaaccapture.cloudxr.webclient --print-only
 ```
 
-That prints the streaming target `https://<this-host>:48322/` and the client URL with
-that address already filled in. **Open the streaming target in the headset's browser
-first and accept the self-signed certificate** — until you have, the client page loads
-normally and CONNECT fails with nothing in either log. Then open the client URL and
-press CONNECT.
+That prints the streaming target as `<this-host>:48322` on its `stream` row, then the
+client URL with that address already filled in. **Open `https://<this-host>:48322/` in
+the headset's browser first and accept the self-signed certificate** — until you have,
+the client page loads normally and CONNECT fails with nothing in either log. Then open
+the client URL and press CONNECT.
 
 Without `--print-only` the same command types that URL into the headset over USB `adb`,
 which saves the typing and needs USB debugging authorised. The cable carries `adb`,
@@ -112,7 +113,7 @@ Two references worth having open the first time:
 
 - [`docs/source/references/cloudxr.rst`](../../../../../docs/source/references/cloudxr.rst) —
   device profiles, foreground vs detached service, out-of-band and USB-only setups.
-- [`docs/source/device/body_tracking.rst`](../../../../../docs/source/device/body_tracking.rst)
+- [`docs/source/device/body_tracking/index.rst`](../../../../../docs/source/device/body_tracking/index.rst)
   — PICO only, and skippable if your joints come from elsewhere: which Motion Tracker
   configurations are supported (5, 3 or 2 trackers), how to calibrate them, and what
   body tracking needs from the headset. **Read it before your first PICO take**, since
@@ -133,8 +134,9 @@ src/python/isaaccapture/cts/full_body/capture/record.sh mysuit \
     --vendor-param collection_id=my_body
 ```
 
-- `--plugin NAME` names a directory under `plugins/` or `install/plugins/`, so the
-  plugin must be installed (`cmake --install build`) first. It is launched as required:
+- `--plugin NAME` is the `name:` in the plugin's `plugin.yaml`, looked up under
+  `plugins/` and `install/plugins/`, so the plugin must be installed
+  (`cmake --install build`) first. It is launched as required:
   one that fails to load stops the take rather than recording a file with no body in it.
 - `--vendor ID` is rejected at session construction if the registry does not know it,
   not at the first frame.
@@ -154,10 +156,8 @@ as Monado serves the session instead. It is documented under *Use a system OpenX
 runtime* in [`cloudxr.rst`](../../../../../docs/source/references/cloudxr.rst); this
 capture flow has not been validated with one.
 
-**No full-body plugin ships in this tree.** `install/plugins/` holds controller, pedal and
-leader-arm plugins, and the registry has the one vendor. Write the backend and its
-plugin first —
-[`docs/source/device/trackers.rst`](../../../../../docs/source/device/trackers.rst) under *Vendor
+**A device the registry does not know needs a backend and a plugin.** Write both first —
+see [`trackers.rst`](../../../../../docs/source/device/trackers.rst) under *Vendor
 Selection*.
 
 ## Record
@@ -166,21 +166,22 @@ Selection*.
 src/python/isaaccapture/cts/full_body/capture/record.sh pico4u
 ```
 
-The argument names the device and only decides where the files land; `pico4u` is the
-default.
+The argument names the device: it names the take's directory and files and is stored as
+`device` in the provenance file. `pico4u` is the default.
 
-Open the panel at <http://localhost:8081>. It binds every interface, so the headset's
-own browser can reach it at `http://<your-host>:8081` as well.
+Open the panel at <http://localhost:8081>. It binds every interface; for the headset's
+own browser, use the `[capture] headset:` address the run prints.
 
 The cues sit in a column down the right edge and the skeleton gets the room to the left
 of it. Drag the column's inner edge to change the split. If the text is too small to
 read from where the performer stands, zoom the browser in with `Ctrl+=` — it scales the
 text and the column together, and the browser remembers the setting for that address.
 
-The panel idles. Nothing is open against the device and no file exists yet. Press
-**Start recording** when the performer is standing ready — that is when the recording is
-created. The script itself begins at the first frame with valid joints, which is normally
-the next moment but is not the same one.
+The panel idles. Nothing is open against the device yet; the provenance `.json` and the
+`.log` already exist, but the recording does not. Press **Start recording** when the
+performer is standing ready — that is when the recording is created. The script itself
+begins at the first frame with valid joints, which is normally the next moment but is
+not the same one.
 
 If ten seconds go by with no valid joint, a red box appears at the bottom left of the
 skeleton area listing what to check. It stops nothing: the take is still running, the
@@ -221,7 +222,7 @@ The process keeps serving the report; Ctrl+C when you have read it.
 ## What you get
 
 One directory per take, under `~/isaaccapture-cts/`, named for the device and the
-moment you pressed the button:
+moment `record.sh` started:
 
 ```text
 pico4u_2026-03-04_101530/pico4u_2026-03-04_101530-body.mcap          the recording
@@ -248,20 +249,21 @@ verdict and packaging a take to send.
 
 | What you see | What to do |
 |---|---|
+| `usage: …/record.sh [DEVICE] [capture_panel.py options]` | An option came first. The device name goes before any option; give `pico4u` to keep the default. |
 | `Command 'python' not found` | Use the interpreter the setup built, `src/python/isaaccapture/cts/full_body/capture/.venv/bin/python`. Ubuntu has `python3` and no `python`, and neither has `isaaccapture`. |
 | `missing …/.venv; run …/setup_env.sh` | Run the two setup scripts above. |
 | `no isaaccapture wheel in …/wheels; build the repo first` | Build the project, then re-run `capture/setup_env.sh`. |
 | `run …/checker/setup_env.sh first` | You ran the two setup scripts in the wrong order. |
 | **the session did not open**, on the panel | CloudXR could not start, or a `--plugin` failed to load. The message names the reason. Nothing was recorded; fix it and run `record.sh` again. |
-| **Start recording** does nothing and the terminal repeats `waiting for a system` | No headset is connected to the runtime, so there is no OpenXR system yet. Connect it as above and the take goes on by itself. Ctrl+C is not delivered during that wait — close the terminal if you need out. |
+| **Start recording** does nothing, and the terminal logs `waiting for a system...` once and blocks | No headset is connected to the runtime, so there is no OpenXR system yet. Connect it as above and the take goes on by itself. Ctrl+C is not delivered during that wait — close the terminal if you need out. |
 | The client page loads but CONNECT does nothing | The headset has not accepted the runtime's self-signed certificate. Open `https://<this-host>:48322/` in the headset browser, click through the warning, then go back to the client. Failing that: same subnet, and the host firewall allows 48322. |
 | The service prints `running` but a second one will not start | The runtime is a host singleton on 48322. One is already up — `service status` names it, `service stop` ends a detached one, Ctrl+C a foreground one. |
-| **no joint has been valid yet**, in the cue column | On PICO this is usually the browser, not the hardware or a licence: use the headset's own browser, which grants WebXR body tracking on a consumer 4 Ultra. |
+| **no joint has been valid yet**, in the cue column | The headset is not sending body tracking. Use the headset's own browser, then check the headset, trackers and calibration against [`body_tracking/index.rst`](../../../../../docs/source/device/body_tracking/index.rst). |
 | **No body data after 10 s**, in red under the skeleton | The same thing as the row above, once it has lasted ten seconds, with the causes spelled out. Two red things, one problem. Nothing has been lost: no joint has been valid since you pressed **Start recording**, so the script has not begun. Fix what the box names and the script starts on its own — same take, same file, nothing to redo. |
 | **Spoken cues are off**, on the panel | `aplay` is missing. The take still records, paced the same, with on-screen cues only. To hear the cues, install `alsa-utils` and restart the panel. |
 | `… is a Git LFS pointer, not audio; run git lfs pull` | The clone was made without git-lfs, so the cue WAVs are placeholders. Install git-lfs and run `git lfs pull` in the repository. |
 | The panel is not at 8081 | Something else held that port, so it moved to the next free one. Use the `http://localhost:…` line the run prints, which is always the real one. |
-| The headset's browser cannot load the panel | The port is not reachable from the headset. Check the host firewall; the panel itself listens on every interface. |
+| The headset's browser cannot load the panel | Use the `[capture] headset:` address the run prints. If that does not load, the port is not reachable from the headset: check the host firewall; the panel itself listens on every interface. |
 | One `BAD` row in the label report, the rest `ok` | That pose was pressed at the wrong moment or performed wrongly. Record another take. |
 | Most rows `BAD`, with degenerate numbers (`pelvis drops 0 cm`, both hands at one height) | The joint stream is frozen: every window holds the same still pose, and one row can still read `ok` by accident. Re-performing the script changes nothing; the device or plugin is not delivering changing joints. The checker confirms it with `continuity.max_joint_velocity` at `peak 0.0 m/s`. |
 
@@ -271,7 +273,7 @@ The ten steps, their spoken cues and their hold durations are part of the CTS
 specification, and the checker looks its measurements up by step name. Changing any of
 them under `capture/` silently changes what the verdict means.
 
-If a take stops with
+If the panel exits at start-up with
 
 ```text
 the wording of cue 'squat_x2' changed, so squat_x2.wav no longer says it

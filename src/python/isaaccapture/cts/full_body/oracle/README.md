@@ -117,7 +117,7 @@ apart from a real recording by envelope:
 Conventions in the data: right-handed, **Y-up**, metres, quaternions **(x, y, z, w)**,
 subject facing **−Z** so `RIGHT_*` joints sit at +X. Joint indices come from the
 `BodyJoint` enum in `full_body.fbs`; each joint's parent comes from the 24-joint table in
-`docs/source/device/body_tracking.rst`.
+`docs/source/device/body_tracking/index.rst`.
 
 ## Files
 

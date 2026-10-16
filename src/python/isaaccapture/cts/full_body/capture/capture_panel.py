@@ -20,6 +20,7 @@ from pathlib import Path
 import viser
 
 from isaaccapture.cloudxr import CloudXRLauncher, NoopContext
+from isaaccapture.cloudxr.oob_teleop_env import guess_lan_ipv4
 from isaaccapture.deviceio import McapRecordingConfig, TrackerVendor
 from isaaccapture.teleop_session_manager import (
     PluginConfig,
@@ -397,6 +398,9 @@ def main(argv: list[str] | None = None) -> int:
         server = viser.ViserServer(host=args.host, port=args.port)
         # viser moves to the next free port, so args.port is not necessarily where it landed.
         print(f"[capture] http://localhost:{server.get_port()}")
+        lan = guess_lan_ipv4() if args.host == "0.0.0.0" else None
+        if lan:
+            print(f"[capture] headset: http://{lan}:{server.get_port()}")
         try:
             CapturePanel(server, launcher, args.output, vendor, plugins).run()
         except KeyboardInterrupt:
