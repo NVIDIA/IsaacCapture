@@ -54,6 +54,7 @@ import {
 import { damp } from 'three/src/math/MathUtils.js';
 
 import { PerformanceCanvasImage } from '@helpers/react/PerformanceCanvasImage';
+import { useControlPanelVisibility } from '@helpers/react/useControlPanelVisibility';
 import { useXRButton } from '@helpers/react/useXRButton';
 import {
   ControlPanelLayoutOptions,
@@ -123,6 +124,10 @@ interface CloudXRUIProps {
   streamTestColor?: ReadonlySignal<string>;
   /** From settings: hide control panel when immersive XR begins. */
   panelHiddenAtStart?: boolean;
+  /** Video streaming: show connection progress, then hide details until manually reopened. */
+  autoHideOnConnect?: boolean;
+  /** True only after the video stream has started, not merely on XR session entry. */
+  isStreaming?: boolean;
   /** Immersive XR active; used to apply panelHiddenAtStart on session enter. */
   isXRMode?: boolean;
   /** Show input recording controls in the XR panel. */
@@ -288,6 +293,8 @@ export default function CloudXR3DUI({
   streamTestText,
   streamTestColor,
   panelHiddenAtStart = false,
+  autoHideOnConnect = false,
+  isStreaming = false,
   isXRMode = false,
   showRecordingControls = false,
   systemNoticeTitleText,
@@ -313,7 +320,12 @@ export default function CloudXR3DUI({
   });
 
   /** Control panel hidden: small Show control (see settings to hide control panel on XR enter). */
-  const [panelHidden, setPanelHidden] = useState(false);
+  const [panelHidden, setPanelHidden] = useControlPanelVisibility({
+    isXRMode,
+    panelHiddenAtStart,
+    autoHideOnConnect,
+    isStreaming,
+  });
   const prevXRMode = useRef(false);
   // Set on the same isXRMode false->true transition below, consumed (and cleared) by the
   // useFrame block further down - see resetPanelRelativeToHead's doc comment for why the
@@ -322,11 +334,10 @@ export default function CloudXR3DUI({
 
   useEffect(() => {
     if (isXRMode && !prevXRMode.current) {
-      setPanelHidden(panelHiddenAtStart);
       needsInitialPlacement.current = true;
     }
     prevXRMode.current = isXRMode;
-  }, [isXRMode, panelHiddenAtStart]);
+  }, [isXRMode]);
 
   // Only host-observable signal for the in-headset panel's visibility (a world-anchored WebXR
   // scene object, not a DOM element) - lets a host-side watchdog/test tell "panel hidden" apart
@@ -444,7 +455,7 @@ export default function CloudXR3DUI({
    * unreachable - so the operator or host can always bring it back regardless of where it ended
    * up. The one caller that passes false is the initial-placement path in the useFrame block
    * below: it must still compute the config-derived position (so a later un-hide lands
-   * correctly), but it must not override panelHiddenAtStart on the very frame that just set it.
+   * correctly), but it must preserve the current panel visibility.
    */
   const resetPanelRelativeToHead = useCallback(
     (cam: Camera, unhide: boolean = true) => {
@@ -461,7 +472,7 @@ export default function CloudXR3DUI({
         setPanelHidden(false);
       }
     },
-    [controlPanelPosition, controlPanelLayout, applyPanelPosition]
+    [controlPanelPosition, controlPanelLayout, applyPanelPosition, setPanelHidden]
   );
 
   /**
@@ -550,8 +561,7 @@ export default function CloudXR3DUI({
     }
     // First real XR frame since session start (see resetPanelRelativeToHead's doc comment for
     // why it must happen here, not in the isXRMode effect that set the flag). unhide=false:
-    // the isXRMode effect above just set panelHidden from panelHiddenAtStart - preserve that
-    // choice instead of forcing the panel visible on its very first frame.
+    // preserve the visibility chosen by the connection state or startup preference.
     if (needsInitialPlacement.current) {
       // WebXR explicitly permits getViewerPose() to return null on the first frame(s) while
       // tracking initializes (https://www.w3.org/TR/webxr/#dom-xrframe-getviewerpose) - three.js
