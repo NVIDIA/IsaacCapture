@@ -32,7 +32,7 @@ class PreviewSelectionTests(unittest.TestCase):
             "repository": self.repo,
             "head_sha": "a" * 40,
             "head_branch": "docs-change",
-            "head_repository": {"id": 200},
+            "head_repository": {"id": 200, "owner": {"login": "fork-owner"}},
             "pull_requests": [],
         }
         self.pr = {
@@ -59,7 +59,7 @@ class PreviewSelectionTests(unittest.TestCase):
             return {"id": 10}
         if endpoint.endswith("/actions/runs/100"):
             return self.run
-        if "/commits/" in endpoint:
+        if "/pulls?state=open&head=fork-owner%3Adocs-change&per_page=100" in endpoint:
             self.assertTrue(paginate)
             return [self.candidates]
         if endpoint.endswith("/pulls/42"):
@@ -135,7 +135,7 @@ class PreviewSelectionTests(unittest.TestCase):
                 self.assertIsNone(self.select())
                 target[key] = saved
 
-    def test_head_changed_after_commit_association(self):
+    def test_head_changed_after_pr_lookup(self):
         self.candidates = [copy.deepcopy(self.pr)]
         self.pr["head"]["sha"] = "b" * 40
         self.assertIsNone(self.select())
@@ -177,9 +177,23 @@ class PreviewSelectionTests(unittest.TestCase):
         self.assertIsNotNone(
             preview.select_preview("issue_comment", event, self.request)
         )
+        self.artifacts = [{"id": 301, "name": "webapp", "expired": False}]
+        selected = preview.select_preview("issue_comment", event, self.request)
+        self.assertEqual(selected["docs_id"], "")
+        self.assertEqual(selected["webapp_id"], 301)
         self.permission = "read"
         with self.assertRaises(PermissionError):
             preview.select_preview("issue_comment", event, self.request)
+
+    def test_webapp_only_auto_preview_requires_same_repository(self):
+        self.files = [[{"filename": "deps/cloudxr/webxr_client/a.js"}]]
+        self.artifacts = [{"id": 301, "name": "webapp", "expired": False}]
+        self.assertIsNone(self.select())
+        self.run["head_repository"]["id"] = self.repo["id"]
+        self.pr["head"]["repo"]["id"] = self.repo["id"]
+        selected = self.select()
+        self.assertEqual(selected["webapp_id"], 301)
+        self.assertEqual(selected["docs_id"], "")
 
 
 if __name__ == "__main__":

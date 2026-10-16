@@ -60,7 +60,7 @@ jobs:
 
       # Fork PR runs belong to the base repo; artifacts bridge separate runner filesystems.
       - name: Download docs artifact
-        if: steps.preview.outputs.publish == 'true'
+        if: steps.preview.outputs.publish == 'true' && steps.preview.outputs.docs_id != ''
         uses: actions/download-artifact@v7
         with:
           artifact-ids: ${{ steps.preview.outputs.docs_id }}
@@ -80,6 +80,7 @@ jobs:
       - name: Prepare static preview
         if: steps.preview.outputs.publish == 'true'
         env:
+          HAS_DOCS: ${{ steps.preview.outputs.docs_id != '' }}
           HAS_WEBAPP: ${{ steps.preview.outputs.webapp_id != '' }}
         run: |
           set -euo pipefail
@@ -89,8 +90,11 @@ jobs:
             echo '::error::Preview artifacts contain links or Git metadata.'
             exit 1
           fi
-          test -f "$preview/docs/current/index.html"
+          if [[ "$HAS_DOCS" == 'true' ]]; then
+            test -f "$preview/docs/current/index.html"
+          fi
           if [[ "$HAS_WEBAPP" == 'true' ]]; then
+            test -f "$preview/webapp/index.html"
             mkdir -p "$preview/docs/current/client"
             cp -r "$preview/webapp/." "$preview/docs/current/client/"
           fi
@@ -124,10 +128,12 @@ jobs:
         env:
           PR: ${{ steps.preview.outputs.number }}
           HEAD_SHA: ${{ steps.preview.outputs.head_sha }}
+          DOCS_ID: ${{ steps.preview.outputs.docs_id }}
           COMMENT_ID: ${{ github.event.comment.id }}
         run: |
           set -euo pipefail
           base="https://${REPO%%/*}.github.io/${REPO#*/}/preview/pr-$PR/"
+          if [[ -z "$DOCS_ID" ]]; then base="${base}client/"; fi
           body="$(cat <<EOF
           <!-- docs-preview -->
           ✅ Preview deployed: $base
@@ -135,8 +141,9 @@ jobs:
           Built from commit $HEAD_SHA. It may take a minute for the updated preview to appear.
           EOF
           )"
+          # gh forbids combining --slurp with --jq; filter the pages separately.
           comment_id=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" \
-            --jq '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- docs-preview -->")))][0].id // empty')
+            | jq -r '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- docs-preview -->")))][0].id // empty')
           if [[ -n "$comment_id" ]]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
           else

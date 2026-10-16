@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from urllib.parse import urlencode
 
 CANONICAL_REPO_ID = 1092046207
 
@@ -75,13 +76,19 @@ def select_preview(event_name, event, request=api):
     if run["workflow_id"] != workflow["id"]:
         return None
 
+    publish_docs = True
     if automatic:
-        # Fork runs can have an empty pull_requests array; use GitHub's commit association.
+        # Commit-to-PR lookup misses open forks; query by owner/branch and verify identity.
+        source = run["head_repository"] or {}
+        owner = source.get("owner", {}).get("login")
+        if not owner:
+            return None
+        query = urlencode(
+            {"state": "open", "head": f"{owner}:{run['head_branch']}", "per_page": 100}
+        )
         candidates = [
             pr
-            for page in request(
-                f"{prefix}/commits/{run['head_sha']}/pulls?per_page=100", paginate=True
-            )
+            for page in request(f"{prefix}/pulls?{query}", paginate=True)
             for pr in page
             if matches(pr, run)
         ]
@@ -98,11 +105,14 @@ def select_preview(event_name, event, request=api):
             for file in page
         ]
         # The files API is capped at 3,000 entries; don't infer eligibility from a partial diff.
-        if len(files) != pr["changed_files"] or not any(
+        if len(files) != pr["changed_files"]:
+            return None
+        publish_docs = any(
             file["filename"].startswith("docs/")
             or file.get("previous_filename", "").startswith("docs/")
             for file in files
-        ):
+        )
+        if not publish_docs and source["id"] != CANONICAL_REPO_ID:
             return None
 
     artifacts = [
@@ -115,14 +125,18 @@ def select_preview(event_name, event, request=api):
     ]
     docs = [artifact for artifact in artifacts if artifact["name"] == "docs-html"]
     webapp = [artifact for artifact in artifacts if artifact["name"] == "webapp"]
-    if len(docs) != 1 or len(webapp) > 1:
+    if len(docs) > 1 or len(webapp) > 1:
+        return None
+    if not publish_docs:
+        docs = []
+    if not docs and (not webapp or (automatic and publish_docs)):
         return None
     return {
         "number": pr["number"],
         "head_sha": run["head_sha"],
         "head_repo_id": run["head_repository"]["id"],
         "run_id": run["id"],
-        "docs_id": docs[0]["id"],
+        "docs_id": docs[0]["id"] if docs else "",
         "webapp_id": webapp[0]["id"] if webapp else "",
     }
 
