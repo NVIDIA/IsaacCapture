@@ -4,7 +4,7 @@
 # Build docs and Teleop web app, then deploy to GitHub Pages.
 # - Push to main/release/v* tag (canonical repo): deploy docs at site root, web app at /client/<slug>/.
 #   Tag pushes also promote /client/stable/ to the highest v* tag.
-# - PRs: upload artifacts; docs-preview-on-demand.yaml publishes docs-changing PRs.
+# - PRs: upload artifacts; docs-preview.yaml publishes docs-changing PRs.
 #   Fork builds retain GitHub's contributor-approval requirements.
 #
 # - PR close: docs-cleanup-preview.yaml removes preview/pr-<N>/.
