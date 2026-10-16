@@ -22,24 +22,29 @@ SPDX-License-Identifier: Apache-2.0
   Repository owners: keep this block at the top of this file; do not delete it.
 -->
 
-# IsaacTeleop — agent notes
+# Isaac Capture — agent notes
+
+## Product naming
+
+Isaac Capture names the overall library and repository. Isaac Teleop remains its
+teleoperation component; preserve that brand and existing technical identifiers.
 
 ## CRITICAL — mandatory preflight (do not skip)
 
-**Hard requirement:** Do **not** edit or add code under `IsaacTeleop/` until you have **read** (e.g. with the Read tool) **every** relevant `AGENTS.md` file as defined below. This is **not** optional, **not** "only for large tasks," and **not** satisfiable by inferring from prior conversation. If you have not read those files in **this** session for **this** task, stop and read them first.
+**Hard requirement:** Do **not** edit or add code under `IsaacCapture/` until you have **read** (e.g. with the Read tool) **every** relevant `AGENTS.md` file as defined below. This is **not** optional, **not** "only for large tasks," and **not** satisfiable by inferring from prior conversation. If you have not read those files in **this** session for **this** task, stop and read them first.
 
 **You must:**
 
 1. List the **directories** you expect to edit or create files under (e.g. `src/core/live_trackers/cpp/`, `src/core/deviceio_base/cpp/inc/…`).
 2. For **each** such directory, **read** **`AGENTS.md` in that directory** if it exists.
-3. Walk **up** toward the **IsaacTeleop repo root** and **read** **`AGENTS.md` in every ancestor directory** that has one (e.g. `live_trackers/` → `src/core/` → **`IsaacTeleop/AGENTS.md` (this file)**).
+3. Walk **up** toward the **IsaacCapture repo root** and **read** **`AGENTS.md` in every ancestor directory** that has one (e.g. `live_trackers/` → `src/core/` → **`IsaacCapture/AGENTS.md` (this file)**).
 
 **You must not** assume that reading the single "closest" `AGENTS.md` is enough. **Multiple** `AGENTS.md` files can apply to one change (e.g. both `live_trackers` and `deviceio_base`).
 
 **Listing every `AGENTS.md` in this repo** (no curated table here—add new files under the tree without editing this document):
 
 ```bash
-# Run from the IsaacTeleop repository root (the directory that contains this file):
+# Run from the IsaacCapture repository root (the directory that contains this file):
 find . -name AGENTS.md ! -path '*/.git/*' | sort
 ```
 
@@ -234,7 +239,7 @@ pre-commit install --hook-type commit-msg
 
 ## Pre-commit — match CI before you stop
 
-- From the **IsaacTeleop repo root** (this directory), run pre-commit and **fix all failures** before you treat a change as finished (do not only rely on “should pass” reasoning).
+- From the **IsaacCapture repo root** (this directory), run pre-commit and **fix all failures** before you treat a change as finished (do not only rely on “should pass” reasoning).
 - **Use the same hook set as GitHub Actions:** `.github/workflows/pre-commit.yaml` runs pre-commit with **`SKIP=check-copyright-year`**. Mirror that locally:
 
   ```bash

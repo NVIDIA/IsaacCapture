@@ -3,13 +3,11 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-![Isaac Teleop](docs/source/_static/isaac-teleop-hero.jpg)
-
-# Isaac Teleop
+# NVIDIA Isaac Capture
 
 <div align="center">
 
-**The unified framework for high-fidelity ego-centric and robotics data collection.**
+**Shared capture infrastructure for teleoperation and egocentric data.**
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-3.0.0-orange.svg)](https://isaac-sim.github.io/IsaacLab/develop)
@@ -21,11 +19,20 @@ SPDX-License-Identifier: Apache-2.0
 
 ---
 
+<!-- Keep one overview image, below the title and badges and immediately before Overview. -->
+![Isaac Capture architecture: Isaac Teleop and Ego Pipeline share device plugins, retargeters, and data utilities, with integrations into simulation and real-robot environments](docs/source/_static/isaac-capture-architecture.png)
+
 ## Overview
 
-**Isaac Teleop**: The unified standard for high-fidelity egocentric and robot data collection.
-It is designed to address the data bottleneck in robot learning by streamlining device integration;
-standardizing high-fidelity human demo data collection; and foster device & data interoperability.
+**Isaac Capture** provides shared infrastructure for collecting human and robot demonstration data.
+It brings together two components:
+
+- **Isaac Teleop** supports robot-in-the-loop capture through teleoperation, including Teleop Session and Remote Assist.
+- **Ego Pipeline** supports human and egocentric data capture through Ego Capture and Ego Post Processing.
+
+Both components use a shared core of device plugins, retargeters, and data utilities for recording,
+replaying, and converting data. Isaac Teleop remains a component of Isaac Capture, with its existing
+functionality preserved.
 
 ## Key Features
 
@@ -33,19 +40,24 @@ standardizing high-fidelity human demo data collection; and foster device & data
 - Standardized device interface
 - Flexible retargeting framework
 
-### Teleoperation Use Cases
+### Isaac Teleop
 
 - Currently supported use cases
   - Use XR headsets for gripper / tri-finger hand manipulation
   - Use XR headsets with gloves for dex-hand manipulation
   - Seated full body loco-manipulation (Homie)
   - Tracking based full body loco-manipulation with GR00T-WholeBodyControl (SONIC)
-  - Egocentric data collection (aka “no-robot”)
 - Upcoming use cases
   - Teleoperate using only non-XR devices (e.g. gamepad, Gello, haply, etc.)
   - Teleoperate cloud based robotics simulations
   - Remote teleoperation with camera streaming to the desktop
   - Remote teleoperation with immersive camera streaming to XR headsets
+
+### Ego Pipeline
+
+- Capture egocentric data without a robot in the loop.
+- Reconstruct hand and camera poses from egocentric video with the
+  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/references/egocentric_hand_reconstruction.html).
 
 ## Quick Start
 
@@ -60,7 +72,7 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 
 ### Install & Run Isaac Lab
 
-Isaac Teleop is design to work side by side with [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) starting with Isaac Lab [3.0 Beta release](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-beta).
+The latest [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) release, [3.0.0 EA](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-EA), includes Isaac Capture, previously released as Isaac Teleop.
 
 To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html) guide for more details. Then follow the [CloudXR teleoperation in Isaac Lab](https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html) to get started with Teleoperation in Sim.
 

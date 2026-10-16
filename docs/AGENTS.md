@@ -65,7 +65,7 @@ for non-HTML builders.
 
 ## The external marker follows the target, not the record
 
-The docs site and the IsaacTeleop repository are both this project, so a link into either
+The docs site and the IsaacCapture repository are both this project, so a link into either
 renders with no arrow and no screen-reader "(external)" — tracking links included. Only
 third-party domains get the marker, and other GitHub organizations (`isaac-sim`) count as
 third-party. `ecosystem_grid.PROJECT_REPO` is the one place that boundary is written down.
@@ -100,3 +100,18 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## RST restructuring
+
+When moving a guide, keep its setup content until any deferred replacement pages
+exist. Preserve old URLs with compatibility pages and retain explicit labels in
+the destination. Recompute RST heading underlines when renaming their text.
+Device metadata containing docnames must come from `app.srcdir` so a multiversion
+build uses paths that exist in that ref, even when `conf.py` comes from the deploy
+checkout.
+
+Reuse the README architecture image in the RST overview so both entry points
+share one maintained diagram.
+
+Group vendor device guides under category toctrees in the Devices navigation;
+folder placement alone does not create sidebar nesting.

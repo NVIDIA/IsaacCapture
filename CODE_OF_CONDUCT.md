@@ -2,7 +2,7 @@
 
 ## Overview
 
-Define the code of conduct followed and enforced for Isaac Teleop
+Define the code of conduct followed and enforced for Isaac Capture
 
 ### Intended audience
 
