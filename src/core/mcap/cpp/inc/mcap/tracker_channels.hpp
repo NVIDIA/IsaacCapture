@@ -200,7 +200,8 @@ Serialized<typename record_payload_t<RecordT>::TableType> publish_and_record(Mca
 /**
  * @brief Type-safe MCAP channel reader returning owning handles over the recorded records.
  *
- * @tparam RecordT The FlatBuffer record wrapper stored in MCAP (e.g. HeadPoseRecord).
+ * @tparam RecordT The FlatBuffer root stored in MCAP: a record wrapper (e.g. HeadPoseRecord), or a
+ *                 tracker's metadata table.
  *
  * Read-side counterpart to McapTrackerChannels. Owns an McapReader and iterates
  * all registered sub-channels through a single LinearMessageView. Each message is

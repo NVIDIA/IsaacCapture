@@ -86,6 +86,10 @@ std::unique_ptr<core::ReplayMetadataTestTrackerImpl> open_replay(const std::stri
         open_reader(path), BASE_NAME, recorded, std::move(metadata));
 }
 
+#if defined(XR_USE_TIMESPEC)
+
+using tracker_metadata_test::FakeTensorRuntime;
+
 //! The left pedal of what `get_data()` publishes, or nullopt when it publishes nothing.
 std::optional<float> published(const core::Serialized<core::Generic3AxisPedalOutput>& data)
 {
@@ -115,10 +119,6 @@ std::vector<float> recorded_left_pedals(const std::string& path, std::string_vie
     }
     return values;
 }
-
-#if defined(XR_USE_TIMESPEC)
-
-using tracker_metadata_test::FakeTensorRuntime;
 
 const std::string DATA_COLLECTION = "pedals";
 const std::string METADATA_COLLECTION = core::tracker_metadata_collection_id(DATA_COLLECTION);
@@ -227,7 +227,7 @@ TEST_CASE("A metadata table is recorded at the log time it is given", "[unit][tr
     int metadata_messages = 0;
     for (const auto& view : reader->readMessages(on_problem))
     {
-        if (view.channel->topic != "pedals/metadata_test_metadata")
+        if (view.channel->topic != core::mcap_topic(BASE_NAME, core::MetadataTestRecordingTraits::metadata_channels[0]))
         {
             continue;
         }

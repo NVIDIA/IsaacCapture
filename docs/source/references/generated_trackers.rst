@@ -96,8 +96,8 @@ Python. Only ``direction = "pull"`` supports ``metadata``.
 - **Producer.** Pushes the encoded table on ``tracker_metadata_collection_id(collection_id)``
   (``<collection_id>/metadata``), tensor ``TRACKER_METADATA_TENSOR_IDENTIFIER``, in samples of at most
   ``TRACKER_METADATA_MAX_SIZE`` bytes; see :code-file:`src/core/schema/cpp/inc/schema/tracker_metadata.hpp`.
-  It pushes when it starts and periodically after that, always the same table, so a consumer that
-  starts later still receives it. A C++ producer does this with a ``SchemaPusher``, a Python one
+  It pushes when it starts and periodically after that, always the same encoded table, so a consumer
+  that starts later still receives it. A C++ producer does this with a ``SchemaPusher``, a Python one
   with a ``TensorPushTracker``, either sized to the encoded table.
 - **Live.** The first metadata received is adopted, recorded once on ``<channel>_metadata``, and
   returned by ``get_metadata()`` for the rest of the session. ``get_data()`` publishes and records

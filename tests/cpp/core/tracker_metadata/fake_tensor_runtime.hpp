@@ -96,7 +96,7 @@ private:
     {
         std::string id;
         uint32_t sample_size;
-        std::vector<Sample> samples;
+        std::vector<Sample> samples{};
         int64_t next_index = 0;
         bool destroyed = false;
     };
@@ -195,16 +195,16 @@ private:
         return XR_SUCCESS;
     }
 
-    static XrResult XRAPI_CALL timespec_to_time(XrInstance, const struct timespec* timespec, XrTime* time)
+    static XrResult XRAPI_CALL timespec_to_time(XrInstance, const struct timespec* ts, XrTime* time)
     {
-        *time = static_cast<XrTime>(timespec->tv_sec) * 1000000000 + timespec->tv_nsec;
+        *time = static_cast<XrTime>(ts->tv_sec) * 1000000000 + ts->tv_nsec;
         return XR_SUCCESS;
     }
 
-    static XrResult XRAPI_CALL time_to_timespec(XrInstance, XrTime time, struct timespec* timespec)
+    static XrResult XRAPI_CALL time_to_timespec(XrInstance, XrTime time, struct timespec* ts)
     {
-        timespec->tv_sec = static_cast<time_t>(time / 1000000000);
-        timespec->tv_nsec = static_cast<long>(time % 1000000000);
+        ts->tv_sec = static_cast<time_t>(time / 1000000000);
+        ts->tv_nsec = static_cast<long>(time % 1000000000);
         return XR_SUCCESS;
     }
 

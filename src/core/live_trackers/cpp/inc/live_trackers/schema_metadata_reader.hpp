@@ -46,7 +46,10 @@ class SchemaMetadataReader
 public:
     using Channels = McapTrackerChannels<MetadataT>;
 
-    //! @param mcap_channels Non-owning; channel 0 receives the adopted metadata. Null when not recording.
+    /*!
+     * @param collection_id The data collection; see tracker_metadata_reader_config().
+     * @param mcap_channels Non-owning; channel 0 receives the adopted metadata. Null when not recording.
+     */
     SchemaMetadataReader(const OpenXRSessionHandles& handles, const std::string& collection_id, Channels* mcap_channels)
         : m_reader(handles, tracker_metadata_reader_config(collection_id)), m_mcap_channels(mcap_channels)
     {
@@ -123,7 +126,6 @@ private:
         }
 
         m_mismatched = true;
-        m_confirmed = false;
         m_logger->error("{}: received a {} that differs from the one adopted; the data stays withheld this session",
                         collection_id, MetadataT::GetFullyQualifiedName());
         return false;

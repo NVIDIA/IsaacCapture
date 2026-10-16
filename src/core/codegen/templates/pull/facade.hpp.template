@@ -29,7 +29,7 @@ public:
     }
     const Serialized<@FB_TABLE@>& get_data(const ITrackerSession& session) const;
 #if @HAS_METADATA@
-    //! The first metadata the producer sent: empty until it arrives, then fixed for the session.
+    //! The first metadata received from the producer: empty until it arrives, then fixed for the session.
     //! get_data() is empty until the producer's metadata is confirmed, and stays empty for the
     //! rest of the session once the producer sends a different one.
     const Serialized<@METADATA@>& get_metadata(const ITrackerSession& session) const;
