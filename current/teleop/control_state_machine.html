@@ -473,10 +473,10 @@ own control state machine as long as it preserves the same output contract.</p>
 </ul>
 <p>Transitions:</p>
 <ol class="arabic simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">kill_button</span></code> level-held:</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">kill_button</span></code> held:</p>
 <ul class="simple">
-<li><p>while asserted, state is forced to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code></p></li>
-<li><p>emits <code class="docutils literal notranslate"><span class="pre">reset_event</span> <span class="pre">=</span> <span class="pre">True</span></code></p></li>
+<li><p>while held, state is forced to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code></p></li>
+<li><p>its rising edge emits <code class="docutils literal notranslate"><span class="pre">reset_event</span> <span class="pre">=</span> <span class="pre">True</span></code> once per press</p></li>
 </ul>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">run_toggle_button</span></code> rising edge:</p>
@@ -498,7 +498,8 @@ own control state machine as long as it preserves the same output contract.</p>
 <li><p>If a required control input (kill/run-toggle) is absent for the frame, manager
 fail-safes to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code>.</p></li>
 <li><p>Loss-driven <code class="docutils literal notranslate"><span class="pre">reset_event</span></code> is edge-triggered on availability loss (emitted once
-on the first frame required inputs drop out, not unconditionally every frame).</p></li>
+on the first frame required inputs drop out, not unconditionally every frame),
+whether or not <code class="docutils literal notranslate"><span class="pre">reset_button</span></code> is still available.</p></li>
 <li><p>This fail-safe is immediate (same frame). If teleop control inputs are lost
 (for example controller disconnect, tracking loss, or selector output becomes
 unavailable), execution state is forced to <code class="docutils literal notranslate"><span class="pre">STOPPED</span></code> right away.</p></li>
