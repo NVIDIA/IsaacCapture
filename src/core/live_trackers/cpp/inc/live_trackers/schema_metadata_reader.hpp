@@ -10,12 +10,11 @@
 #include <mcap/tracker_channels.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
 #include <schema/serialized.hpp>
-#include <schema/tracker_metadata.hpp>
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -23,102 +22,68 @@ namespace core
 {
 
 /*!
- * @brief Untyped half of SchemaMetadataReader: reads the metadata collection.
+ * @brief Reader config for the metadata of the data collection `collection_id`.
+ * @throws std::invalid_argument when the metadata collection's name does not fit
+ *         XR_MAX_TENSOR_IDENTIFIER_SIZE.
  */
-class SchemaMetadataReaderBase
-{
-public:
-    /*!
-     * @param collection_id The data collection; the metadata is read from
-     *        tracker_metadata_collection_id(collection_id).
-     * @throws std::invalid_argument when that name does not fit XR_MAX_TENSOR_IDENTIFIER_SIZE.
-     */
-    SchemaMetadataReaderBase(const OpenXRSessionHandles& handles, const std::string& collection_id);
+SchemaTrackerConfig tracker_metadata_reader_config(const std::string& collection_id);
 
-protected:
-    //! Drains the pending samples. Returns the latest metadata buffer, or an empty one.
-    std::vector<uint8_t> drain();
-
-    std::shared_ptr<spdlog::logger> m_logger = isaaccapture::Logger::get("isaaccapture.core.SchemaMetadataReader");
-
-private:
-    SchemaTrackerBase m_reader;
-    std::vector<SchemaTrackerBase::SampleResult> m_samples;
-};
+//! Whether two metadata samples hold the same table. Each producer zero-pads its samples to a
+//! size of its choosing, so the padding is not compared.
+bool same_tracker_metadata(std::span<const uint8_t> a, std::span<const uint8_t> b);
 
 /*!
- * @brief Live metadata of a tracker whose manifest entry sets `metadata`.
+ * @brief The metadata of a generated tracker whose manifest entry sets `metadata`.
  *
- * The first metadata received is adopted, recorded once, and kept for the life of this reader.
- * After that, each metadata sample is checked against it: the data may be published and
- * recorded only while verified(). Losing the data collection clears verified() until the
- * producer that comes back publishes the same metadata again.
+ * The first metadata received is adopted, recorded, and kept for the life of this reader. The
+ * tracker's data may be published and recorded while the producer's metadata is confirmed: from a
+ * sample equal to the adopted one until the metadata collection goes away. A sample that differs
+ * stops the data for the rest of the session.
  */
 template <typename MetadataT>
-class SchemaMetadataReader : public SchemaMetadataReaderBase
+class SchemaMetadataReader
 {
 public:
     using Channels = McapTrackerChannels<MetadataT>;
 
     //! @param mcap_channels Non-owning; channel 0 receives the adopted metadata. Null when not recording.
     SchemaMetadataReader(const OpenXRSessionHandles& handles, const std::string& collection_id, Channels* mcap_channels)
-        : SchemaMetadataReaderBase(handles, collection_id), m_mcap_channels(mcap_channels)
+        : m_reader(handles, tracker_metadata_reader_config(collection_id)), m_mcap_channels(mcap_channels)
     {
     }
 
-    //! Call once per tick, before reading the data collection.
-    void update(int64_t monotonic_time_ns)
+    /*!
+     * @brief Reads the pending metadata. Call once per tick, before reading the data.
+     * @return Whether the data may be published and recorded this tick.
+     * @throws std::runtime_error when a sample is not a valid MetadataT.
+     */
+    bool update()
     {
-        std::vector<uint8_t> latest = drain();
-        if (latest.empty())
+        if (m_mismatched)
         {
-            return;
+            return false;
         }
 
-        // A complete candidate supersedes the previous verification result. Restore it only
-        // after the candidate is both a valid table and the metadata already adopted here.
-        m_verified = false;
-        flatbuffers::Verifier verifier(latest.data(), latest.size());
-        if (!verifier.VerifyBuffer<MetadataT>(nullptr))
+        std::vector<SchemaTrackerBase::SampleResult> samples;
+        const bool present = m_reader.read_all_samples(samples);
+        for (auto& sample : samples)
         {
-            m_logger->warn("received metadata is not a valid {}", MetadataT::GetFullyQualifiedName());
-            return;
-        }
-
-        if (!m_metadata)
-        {
-            m_metadata = Serialized<MetadataT>::adopt(std::move(latest));
-            m_verified = true;
-            if (m_mcap_channels != nullptr)
+            if (!accept(sample))
             {
-                m_mcap_channels->write(0, m_metadata, monotonic_time_ns);
+                return false;
             }
-            m_logger->info("adopted {} B of {}", m_metadata.buffer().size(), MetadataT::GetFullyQualifiedName());
-            return;
         }
 
-        const std::span<const uint8_t> adopted = m_metadata.buffer();
-        m_verified = std::equal(adopted.begin(), adopted.end(), latest.begin(), latest.end());
-        if (!m_verified && !m_warned_mismatch)
-        {
-            m_logger->error("producer now publishes a different {} than the one adopted; its data is withheld",
-                            MetadataT::GetFullyQualifiedName());
-            m_warned_mismatch = true;
-        }
-    }
-
-    //! Reports whether the data collection was present this tick.
-    void set_data_present(bool present)
-    {
         if (!present)
         {
-            m_verified = false;
+            // The producer is gone; whichever comes next confirms its own metadata.
+            m_confirmed = false;
         }
-    }
-
-    bool verified() const
-    {
-        return m_verified;
+        else if (!samples.empty())
+        {
+            m_confirmed = true;
+        }
+        return m_confirmed;
     }
 
     //! Empty until the first metadata arrives, then fixed.
@@ -128,10 +93,48 @@ public:
     }
 
 private:
+    //! Adopts the first sample. Returns false, for good, once a sample differs from it.
+    bool accept(SchemaTrackerBase::SampleResult& sample)
+    {
+        const std::string& collection_id = m_reader.config().collection_id;
+        flatbuffers::Verifier verifier(sample.buffer.data(), sample.buffer.size());
+        if (!verifier.VerifyBuffer<MetadataT>(nullptr))
+        {
+            throw std::runtime_error(collection_id + ": metadata sample is not a valid " +
+                                     MetadataT::GetFullyQualifiedName());
+        }
+
+        if (!m_metadata)
+        {
+            const int64_t log_time_ns = sample.timestamp.available_time_local_common_clock();
+            m_metadata = Serialized<MetadataT>::adopt(std::move(sample.buffer));
+            if (m_mcap_channels != nullptr)
+            {
+                m_mcap_channels->write(0, m_metadata, log_time_ns);
+            }
+            m_logger->info("{}: adopted {} B of {}", collection_id, m_metadata.buffer().size(),
+                           MetadataT::GetFullyQualifiedName());
+            return true;
+        }
+
+        if (same_tracker_metadata(m_metadata.buffer(), sample.buffer))
+        {
+            return true;
+        }
+
+        m_mismatched = true;
+        m_confirmed = false;
+        m_logger->error("{}: received a {} that differs from the one adopted; the data stays withheld this session",
+                        collection_id, MetadataT::GetFullyQualifiedName());
+        return false;
+    }
+
+    SchemaTrackerBase m_reader;
     Channels* m_mcap_channels;
     Serialized<MetadataT> m_metadata;
-    bool m_verified = false;
-    bool m_warned_mismatch = false;
+    bool m_confirmed = false;
+    bool m_mismatched = false;
+    std::shared_ptr<spdlog::logger> m_logger = isaaccapture::Logger::get("isaaccapture.core.SchemaMetadataReader");
 };
 
 } // namespace core

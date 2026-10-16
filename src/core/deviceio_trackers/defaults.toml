@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Default tracker manifest values. Placeholders use %key% or %key_CamelCase% / %key_snake_case% /
-# %key_UPPER%.
+# Default tracker manifest values. Placeholders use %key% or %key_CamelCase% / %key_UPPER%.
 # See src/core/codegen/manifest.py for resolution rules.
 
 [defaults]
@@ -18,10 +17,6 @@ python_accessor = "get_data"
 max_flatbuffer_size = 512
 record = true
 facade_tensor_constant = false
-# Table the tracker also publishes once per producer; empty for none (see trackers.toml).
-metadata = ""
-metadata_schema = "%metadata_snake_case%"
-metadata_channel = "%channel%_metadata"
 
 [defaults.pull]
 mcap_channels = ["%channel%", "%channel%_tracked"]

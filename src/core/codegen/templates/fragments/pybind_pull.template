@@ -13,6 +13,6 @@
             [](const core::@CLASS@& self, const core::ITrackerSession& session)
             { return to_python(self.get_metadata(session)); },
             py::arg("session"),
-            "Get the producer's metadata (None until it arrives; fixed for the session after that)")
+            "Get the first metadata the producer sent (None until it arrives, then fixed for the session)")
 #endif
         ;

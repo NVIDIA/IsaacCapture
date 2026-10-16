@@ -53,7 +53,7 @@ from ._schema import (
     OgloGloveSample,
     OgloGloveSampleRecord,
     # Tracker metadata, for producers of a tracker's metadata.
-    TRACKER_METADATA_SAMPLE_SIZE,
+    TRACKER_METADATA_MAX_SIZE,
     TRACKER_METADATA_TENSOR_IDENTIFIER,
     tracker_metadata_collection_id,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
@@ -185,7 +185,7 @@ __all__ = [
     "OgloGloveSample",
     "OgloGloveSampleRecord",
     # Tracker metadata.
-    "TRACKER_METADATA_SAMPLE_SIZE",
+    "TRACKER_METADATA_MAX_SIZE",
     "TRACKER_METADATA_TENSOR_IDENTIFIER",
     "tracker_metadata_collection_id",
     # Joint-state types (generic joint-space devices).

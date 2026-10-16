@@ -11,7 +11,6 @@
 
 #include <memory>
 #include <optional>
-#include <vector>
 
 namespace core
 {
@@ -66,15 +65,13 @@ public:
      * @param out Receives the final sample of this tick when any were read; left
      *            untouched when the collection is present but produced nothing (the
      *            last-known sample is retained); emptied when the collection is absent.
-     * @param record False skips MCAP for this tick's samples; a tracker with metadata
-     *               records only data it can publish.
-     * @return Whether the collection is present.
+     * @param record False reads the samples without writing them to MCAP.
      * @throws std::runtime_error On critical OpenXR/tensor API failures propagated
      *         from SchemaTrackerBase.
      * @note Missing collection, temporary collection loss, and "no new sample"
      *       are treated as common non-fatal conditions and do not throw.
      */
-    bool update(Serialized<DataTableT>& out, bool record = true)
+    void update(Serialized<DataTableT>& out, bool record = true)
     {
         samples_.clear();
         bool present = read_all_samples(samples_);
@@ -85,7 +82,7 @@ public:
             {
                 out.reset();
             }
-            return present;
+            return;
         }
 
         if (mcap_channels_ && record)
@@ -120,7 +117,6 @@ public:
         // published type. Each tick owns its own buffer, so a consumer still holding last
         // tick's handle keeps last tick's values.
         out = Serialized<DataTableT>::adopt(std::move(samples_.back().buffer));
-        return present;
     }
 
 private:

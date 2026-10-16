@@ -32,14 +32,11 @@ RESOLVED_REQUIRED = frozenset(
         "max_flatbuffer_size",
         "record",
         "facade_tensor_constant",
-        "metadata",
-        "metadata_schema",
-        "metadata_channel",
     }
 )
 
 _PLACEHOLDER = re.compile(
-    r"%(?P<key>[a-zA-Z0-9_]+?)(?P<transform>_(?:CamelCase|snake_case|UPPER))?%|(?P<literal>%%)"
+    r"%(?P<key>[a-zA-Z0-9_]+?)(?P<transform>_(?:CamelCase|UPPER))?%|(?P<literal>%%)"
 )
 
 
@@ -64,18 +61,9 @@ def snake_to_camel(value: str) -> str:
     return "".join(out)
 
 
-def camel_to_snake(value: str) -> str:
-    """Convert CamelCase to snake_case (TactileShape -> tactile_shape)."""
-    return re.sub(
-        r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", value
-    ).lower()
-
-
 def apply_transform(value: str, transform: str | None) -> str:
     if transform == "_CamelCase":
         return snake_to_camel(value)
-    if transform == "_snake_case":
-        return camel_to_snake(value)
     if transform == "_UPPER":
         return value.upper()
     return value
@@ -134,11 +122,6 @@ def resolve_tracker_entry(
         raise ValueError("tracker entry missing required key 'name'")
     if "table" not in raw:
         raise ValueError(f"tracker '{raw['name']}': missing required key 'table'")
-    if "record_type" in raw:
-        raise ValueError(
-            f"tracker '{raw['name']}': record_type is no longer supported; "
-            "generated trackers always record <Table>Record"
-        )
 
     direction = str(
         raw.get("direction", defaults_doc.get("defaults", {}).get("direction", "pull"))
@@ -189,10 +172,16 @@ def resolve_tracker_entry(
             f"tracker '{raw['name']}': record must be a boolean, got {type(record).__name__}"
         )
 
-    if resolved["metadata"] and resolved["direction"] != "pull":
-        raise ValueError(
-            f"tracker '{raw['name']}': metadata is supported only for direction=pull"
-        )
+    metadata = resolved.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, str) or not metadata:
+            raise ValueError(
+                f"tracker '{raw['name']}': metadata must name a table, got {metadata!r}"
+            )
+        if resolved["direction"] != "pull":
+            raise ValueError(
+                f"tracker '{raw['name']}': metadata requires direction=pull"
+            )
 
     if resolved["direction"] == "pull" and record:
         for key in ("mcap_channels", "replay_channels"):

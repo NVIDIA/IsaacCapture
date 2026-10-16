@@ -61,9 +61,7 @@ and the `.inc` fragments.
   mangle `@KEY@` on save. Conditionals stay in Python (pick which template to load)
   or as `#if @FLAG@` for optional fragments within one shape (e.g. `@HAS_TENSOR_IDENTIFIER@`). Do
   **not** merge `push/` with `pull/` via shared `#if`/`#else` — those control flows are different
-  enough that separate templates stay clearer. The same holds for `metadata`: the live and replay
-  impls of such a tracker are `pull/*_metadata.*.template`, while the interface, facade, pybind and
-  traits only gain `#if @HAS_METADATA@` blocks. `*.hpp.template` / `*.cpp.template` carry SPDX
+  enough that separate templates stay clearer. `*.hpp.template` / `*.cpp.template` carry SPDX
   headers for REUSE; `template_renderer` strips them before prepending the emit-time COPYRIGHT /
   AUTO-GENERATED banner.
 - **One-line aggregators** (includes, dispatch rows, factory decls, cmake source lists, Python

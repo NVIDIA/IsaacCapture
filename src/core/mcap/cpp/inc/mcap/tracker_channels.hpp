@@ -39,9 +39,8 @@ inline std::string mcap_topic(std::string_view base_name, const std::string& sub
  * @brief Type-safe MCAP channel writer for FlatBuffer record types.
  *
  * @tparam RecordT The FlatBuffer root written to the channels: a record wrapper (e.g.
- *                 HeadPoseRecord, encoded by pack_record()), or a table recorded as itself,
- *                 which has no timestamp and is written with an explicit log time.
- *                 Must expose BinarySchema.
+ *                 HeadPoseRecord, encoded by pack_record()), or a tracker's metadata table,
+ *                 which has no timestamp of its own. Must expose BinarySchema.
  *
  * The factory creates a unique_ptr<McapTrackerChannels<...>> only when recording
  * is active and passes it to the impl. Impls null-check before calling write().
@@ -80,7 +79,7 @@ public:
         write(channel_index, record, timestamp != nullptr ? timestamp->available_time_local_common_clock() : 0);
     }
 
-    //! Writes a root with no timestamp of its own, such as a table recorded as itself, at `log_time_ns`.
+    //! Writes `record` at `log_time_ns`, for a root with no timestamp of its own.
     void write(size_t channel_index, const Serialized<RecordT>& record, int64_t log_time_ns)
     {
         if (channel_index >= channel_ids_.size())

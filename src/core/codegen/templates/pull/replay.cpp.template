@@ -4,6 +4,9 @@
 #include "@REPLAY_IMPL_FILE@.hpp"
 
 #include <mcap/recording_traits.hpp>
+#if @HAS_METADATA@
+#include <schema/@METADATA_SCHEMA@_bfbs_generated.h>
+#endif
 #include <schema/@SCHEMA@_bfbs_generated.h>
 
 #include <utility>
@@ -11,9 +14,26 @@
 
 namespace core
 {
+#if @HAS_METADATA@
+Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapReader> reader,
+                                                    std::string_view base_name,
+                                                    const RecordedSchemas& recorded)
+{
+    // Live records only the metadata it adopts, so the first message is the only one.
+    McapTrackerViewers<@METADATA@> viewers(
+        std::move(reader), base_name,
+        std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()), recorded);
+    return viewers.read(0);
+}
+@REPLAY_IMPL@::@REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
+                             std::string_view base_name,
+                             const RecordedSchemas& recorded,
+                             Serialized<@METADATA@> metadata)
+#else
 @REPLAY_IMPL@::@REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
                              std::string_view base_name,
                              const RecordedSchemas& recorded)
+#endif
     : mcap_viewers_(std::make_unique<@MCAP_VIEWERS_TYPE@>(
           std::move(reader),
           base_name,
@@ -21,19 +41,41 @@ namespace core
           recorded)),
       logger_(isaaccapture::Logger::get("isaaccapture.core.@REPLAY_IMPL@")),
       no_data_message_("no data (EOF or gap), base_name=" + std::string(base_name))
+#if @HAS_METADATA@
+      , metadata_(std::move(metadata))
+#endif
 {
+#if @HAS_METADATA@
+    if (!metadata_)
+    {
+        logger_->warn("recording has no {} for base_name={}; its data is not published",
+                      @METADATA@::GetFullyQualifiedName(), base_name);
+    }
+#else
     // No-op: members set in the initializer list.
+#endif
 }
 const Serialized<@FB_TABLE@>& @REPLAY_IMPL@::get_data() const
 {
     return tracked_;
 }
+#if @HAS_METADATA@
+const Serialized<@METADATA@>& @REPLAY_IMPL@::get_metadata() const
+{
+    return metadata_;
+}
+#endif
 void @REPLAY_IMPL@::update(int64_t /*monotonic_time_ns*/)
 {
     auto record = mcap_viewers_->read(0);
     if (record)
     {
+#if @HAS_METADATA@
+        // Live publishes data only with its metadata.
+        tracked_ = metadata_ ? record.narrow(record->data()) : Serialized<@FB_TABLE@>();
+#else
         tracked_ = record.narrow(record->data());
+#endif
         warned_no_data_ = false;
     }
     else

@@ -8,13 +8,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from manifest import (
-    camel_to_snake,
-    load_defaults,
-    load_manifest,
-    resolve_tracker_entry,
-    snake_to_camel,
-)
+from manifest import load_defaults, load_manifest, resolve_tracker_entry, snake_to_camel
 
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
@@ -27,13 +21,6 @@ class SnakeToCamelTest(unittest.TestCase):
 
     def test_se3(self) -> None:
         self.assertEqual(snake_to_camel("se3_tracker"), "Se3Tracker")
-
-
-class CamelToSnakeTest(unittest.TestCase):
-    def test_metadata_tables(self) -> None:
-        self.assertEqual(camel_to_snake("TactileShape"), "tactile_shape")
-        self.assertEqual(camel_to_snake("Se3TrackerPose"), "se3_tracker_pose")
-        self.assertEqual(camel_to_snake("HTTPHeader"), "http_header")
 
 
 class ManifestResolverTest(unittest.TestCase):
@@ -189,14 +176,6 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertIn("record", message)
         self.assertIn("boolean", message)
 
-    def test_removed_record_type_is_rejected(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            resolve_tracker_entry(
-                {"name": "x", "table": "T", "record_type": "T"},
-                load_defaults(DEFAULTS_PATH),
-            )
-        self.assertIn("record_type", str(ctx.exception))
-
     def test_load_manifest_file(self) -> None:
         manifest = CORE_ROOT / "deviceio_trackers" / "trackers.toml"
         self.assertTrue(manifest.is_file(), f"missing required manifest: {manifest}")
@@ -229,81 +208,66 @@ class ManifestResolverTest(unittest.TestCase):
 
 
 class MetadataTest(unittest.TestCase):
-    def _resolve(self, **overrides) -> dict:
+    """The optional ``metadata`` key. The C++ it renders is compiled by tests/cpp/core/tracker_metadata."""
+
+    def _context(self, **overrides):
+        from templates import enrich_context
+
         raw = {"name": "tactile", "table": "TactileData", **overrides}
-        return resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH))
+        return enrich_context(resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH)))
 
     def test_unset_by_default(self) -> None:
-        self.assertEqual(self._resolve()["metadata"], "")
+        self.assertIsNone(self._context().metadata)
 
-    def test_schema_and_channel_derive_from_the_table(self) -> None:
-        entry = self._resolve(metadata="TactileShape")
-        self.assertEqual(entry["metadata_schema"], "tactile_shape")
-        self.assertEqual(entry["metadata_channel"], "tactile_metadata")
+    def test_names_derive_from_the_table_and_channel(self) -> None:
+        from templates import MetadataGenContext
 
-    def test_push_direction_is_rejected(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            self._resolve(direction="push", metadata="TactileShape")
-        self.assertIn("metadata", str(ctx.exception))
-
-    def test_renders_metadata_impls_with_no_placeholder_left(self) -> None:
-        from generate_trackers import _render_fragment, render_for_entry
-        from templates import enrich_context
-
-        ctx = enrich_context(self._resolve(metadata="TactileShape"))
-        files = render_for_entry(ctx)
-        files["factory"] = _render_fragment(
-            "replay_factory_pull_metadata.template", ctx
+        self.assertEqual(
+            self._context(metadata="TactileShape").metadata,
+            MetadataGenContext("TactileShape", "tactile_shape", "tactile_metadata"),
         )
-        for name, text in files.items():
-            self.assertNotRegex(text, r"@[A-Z_]+@", name)
-        self.assertIn(
-            "SchemaMetadataReader<TactileShape>",
-            files["live_trackers/live_tactile_tracker_impl.hpp"],
-        )
-        self.assertIn(
-            "if (!m_metadata_reader.verified())\n    {\n"
-            "        // Do not retain a sample received before this producer's metadata was verified.\n"
-            "        m_received.reset();",
-            files["live_trackers/live_tactile_tracker_impl.cpp"],
-        )
-        self.assertIn(
-            "get_metadata",
-            files["deviceio_trackers/inc/deviceio_trackers/tactile_tracker.hpp"],
+        self.assertEqual(
+            self._context(metadata="TactileShape", channel="glove").metadata.channel,
+            "glove_metadata",
         )
 
-        replay = files["replay_trackers/replay_tactile_tracker_impl.cpp"]
-        self.assertIn("McapTrackerViewers<TactileShape> viewers", replay)
-        self.assertIn(
-            "metadata_(read_tactile_metadata(std::move(metadata_reader), base_name, recorded))",
-            replay,
-        )
-        self.assertIn(
-            "const Serialized<TactileShape>& ReplayTactileTrackerImpl::get_metadata() const\n"
-            "{\n"
-            "    return metadata_;\n"
-            "}",
-            replay,
-        )
-        self.assertIn(
-            "tracked_ = metadata_ ? record.narrow(record->data()) : Serialized<TactileData>();",
-            replay,
+    def test_schema_stem_splits_acronyms_and_digits(self) -> None:
+        from templates import camel_to_snake
+
+        self.assertEqual(camel_to_snake("Se3TrackerPose"), "se3_tracker_pose")
+        self.assertEqual(camel_to_snake("HTTPHeader"), "http_header")
+
+    def test_invalid_values_are_rejected(self) -> None:
+        for overrides in (
+            {"metadata": ""},
+            {"metadata": 1},
+            {"metadata": "TactileShape", "direction": "push"},
+        ):
+            with self.subTest(**overrides), self.assertRaises(ValueError) as ctx:
+                self._context(**overrides)
+            self.assertIn("metadata", str(ctx.exception))
+
+    def test_every_placeholder_is_filled(self) -> None:
+        from generate_trackers import (
+            _live_factory_template,
+            _render_fragment,
+            _replay_factory_template,
+            render_for_entry,
         )
 
-        facade = files["deviceio_trackers/tactile_tracker.cpp"]
-        self.assertIn(
-            "return static_cast<const ITactileTrackerImpl&>(session.get_tracker_impl(*this)).get_metadata();",
-            facade,
-        )
-
-    def test_trackers_without_metadata_keep_their_impls(self) -> None:
-        from generate_trackers import render_for_entry
-        from templates import enrich_context
-
-        files = render_for_entry(enrich_context(self._resolve()))
-        self.assertNotIn(
-            "SchemaMetadataReader", files["live_trackers/live_tactile_tracker_impl.hpp"]
-        )
+        for metadata in (None, "TactileShape"):
+            ctx = self._context(**({"metadata": metadata} if metadata else {}))
+            files = render_for_entry(ctx)
+            for fragment in (
+                _live_factory_template(ctx),
+                _replay_factory_template(ctx),
+                "pybind_pull.template",
+                "recording_traits_pull.template",
+            ):
+                files[fragment] = _render_fragment(fragment, ctx)
+            for name, text in files.items():
+                with self.subTest(metadata=metadata, file=name):
+                    self.assertNotRegex(text, r"@[A-Z_]+@")
 
 
 if __name__ == "__main__":

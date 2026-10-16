@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Python helpers for producers of tracker metadata (see schema/tracker_metadata.hpp). A Python
-// producer pushes the encoded table with a TensorPushTracker on tracker_metadata_collection_id(),
-// periodically.
+// producer pushes the encoded table with a TensorPushTracker on tracker_metadata_collection_id().
 
 #pragma once
 
@@ -19,7 +18,7 @@ namespace core
 
 inline void bind_tracker_metadata(py::module& m)
 {
-    m.attr("TRACKER_METADATA_SAMPLE_SIZE") = TRACKER_METADATA_SAMPLE_SIZE;
+    m.attr("TRACKER_METADATA_MAX_SIZE") = TRACKER_METADATA_MAX_SIZE;
     m.attr("TRACKER_METADATA_TENSOR_IDENTIFIER") = std::string(TRACKER_METADATA_TENSOR_IDENTIFIER);
 
     m.def(
