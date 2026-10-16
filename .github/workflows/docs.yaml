@@ -91,7 +91,7 @@ jobs:
           docs=false; webapp=false
           while IFS= read -r f; do
             case "$f" in
-              docs/*|.github/workflows/docs.yaml) docs=true ;;
+              docs/*|deps/cloudxr/.env.default|.github/workflows/docs.yaml) docs=true ;;
             esac
             case "$f" in
               deps/cloudxr/webxr_client/*|deps/cloudxr/.env.default|.github/actions/build-cloudxr-web-client/*|.github/workflows/docs.yaml)
