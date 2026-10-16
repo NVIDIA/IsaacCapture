@@ -190,3 +190,13 @@ What you need
 - A Google account to sign in to the submission form.
 
 Start with :doc:`setup`.
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :titlesonly:
+
+   setup
+   hand
+   full_body
+   submit
