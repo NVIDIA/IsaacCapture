@@ -39,10 +39,10 @@ Inputs (all optional bool signals):
 
 Transitions:
 
-1. ``kill_button`` level-held:
+1. ``kill_button`` held:
 
-   - while asserted, state is forced to ``STOPPED``
-   - emits ``reset_event = True``
+   - while held, state is forced to ``STOPPED``
+   - its rising edge emits ``reset_event = True`` once per press
 
 2. ``run_toggle_button`` rising edge:
 
@@ -60,7 +60,8 @@ Safety behavior:
 - If a required control input (kill/run-toggle) is absent for the frame, manager
   fail-safes to ``STOPPED``.
 - Loss-driven ``reset_event`` is edge-triggered on availability loss (emitted once
-  on the first frame required inputs drop out, not unconditionally every frame).
+  on the first frame required inputs drop out, not unconditionally every frame),
+  whether or not ``reset_button`` is still available.
 - This fail-safe is immediate (same frame). If teleop control inputs are lost
   (for example controller disconnect, tracking loss, or selector output becomes
   unavailable), execution state is forced to ``STOPPED`` right away.

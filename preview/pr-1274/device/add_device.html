@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -561,12 +561,12 @@ MCAP channel names, and class names; override only genuine exceptions (<code cla
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/codegen/generate_trackers.py" rel="noopener noreferrer" target="_blank">src/core/codegen/generate_trackers.py</a> and wires generated sources into
 <code class="docutils literal notranslate"><span class="pre">deviceio_trackers</span></code>, <code class="docutils literal notranslate"><span class="pre">live_trackers</span></code>, and <code class="docutils literal notranslate"><span class="pre">replay_trackers</span></code>.</p></li>
 </ol>
-<p>A device with a table that is fixed per producer, such as a sensor layout, declares it with
-<code class="docutils literal notranslate"><span class="pre">metadata</span></code>; see <a class="reference internal" href="../references/generated_trackers.html#generated-trackers-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
 <p>Use <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;push&quot;</span></code> when Teleop <strong>pushes</strong> a typed table to a plugin (e.g.
 <code class="docutils literal notranslate"><span class="pre">HapticCommandPushTracker</span></code>). Cross-process <strong>consumers</strong> that bucket multiple
 <code class="docutils literal notranslate"><span class="pre">HapticCommand.endpoint</span></code> samples on one collection (e.g. <code class="docutils literal notranslate"><span class="pre">HapticCommandReaderTracker</span></code> for Manus
 haptics) stay hand-written — see <a class="reference internal" href="../references/generated_trackers.html"><span class="doc">Generated Tracker Code</span></a>.</p>
+<p>A device that describes itself once (a layout, a calibration) rather than in every frame declares
+that description as the tracker’s <code class="docutils literal notranslate"><span class="pre">metadata</span></code>; see <a class="reference internal" href="../references/generated_trackers.html#tracker-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
 <p>For what the generator emits, which trackers it covers today, and which shapes are not supported
 yet, see <a class="reference internal" href="../references/generated_trackers.html"><span class="doc">Generated Tracker Code</span></a>.</p>
 <p>Diagnose surprising defaults with:</p>
@@ -854,7 +854,7 @@ trackers during the update loop.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 17, 2026.
       <br/>
     
   </p>
