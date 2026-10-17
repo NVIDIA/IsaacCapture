@@ -71,10 +71,10 @@ import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
 import { TraceVisualization } from './TraceVisualization';
 import {
-  SystemNotice,
   formatSystemNotice,
   formatSystemNoticeBody,
   isSystemNoticeMessage,
+  SystemNotice,
 } from './types/serverMessages';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.
@@ -1058,7 +1058,8 @@ function AppContent() {
 
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    () =>
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
     [config?.controlPanelPosition, controlPanelLayout]
   );
 
@@ -1242,6 +1243,8 @@ function AppContent() {
                   onResetTeleop={handleResetTeleop}
                   isXRMode={isXRMode}
                   panelHiddenAtStart={config.panelHiddenAtStart ?? false}
+                  autoHideOnConnect={config.teleopPath === 'real/gear/video'}
+                  isStreaming={isConnected && sessionStatus === 'Connected'}
                   serverAddress={serverAddress || config.serverIP}
                   sessionStatus={sessionStatus}
                   playLabel={
