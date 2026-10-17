@@ -25,6 +25,7 @@ add_subdirectory(so101_leader)
 add_subdirectory(rebot_devarm_leader)
 add_subdirectory(manus)
 add_subdirectory(haptikos)
+add_subdirectory(jmex)
 
 if(BUILD_PLUGIN_NOITOM_MOCAP)
     add_subdirectory(noitom_mocap)
