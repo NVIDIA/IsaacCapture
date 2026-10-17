@@ -282,6 +282,26 @@ reads the PICO ``XR_BD_body_tracking`` extension directly.
    ``FullBodyTrackerPico`` remains available as a deprecated alias for
    ``FullBodyTracker`` so existing scripts run unchanged.
 
+To run the examples from the repo root (the C++ ones need the CloudXR runtime
+started first; the Python modules start it themselves):
+
+.. code-block:: bash
+
+   # C++ (after cmake --install)
+   python -m isaaccapture.cloudxr.service start   # runs in the background
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/schemaio/full_body_printer
+   ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+
+   # Python
+   uv pip install -e ./examples/mcap_record_replay
+   python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
+   python -m isaaccapture_examples.mcap_record_replay.record_full_body --accept-eula
+   python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+
+See :doc:`body_tracking/index` for headset setup and
+:doc:`../references/mcap_record_replay` for the record and replay options.
+
 SOMA body trackers
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -408,6 +428,29 @@ utility internally.
 - Examples:
 
   - :code-file:`examples/schemaio/frame_metadata_printer.cpp`
+
+The printer reads ``{prefix}/Color``, ``{prefix}/MonoLeft`` and
+``{prefix}/MonoRight`` (default prefix ``oak_camera``). Both processes wait for
+a headset to connect to the CloudXR runtime; after that the printer reports
+``Waiting for data from prefix: ...`` until ``camera_plugin_oak`` pushes with
+the same ``--collection-prefix``. Run each in its own shell:
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start   # runs in the background
+
+   # Shell 1: the plugin
+   source ~/.cloudxr/run/cloudxr.env
+   ./build/src/plugins/oak/camera_plugin_oak \
+     --add-stream=camera=Color,output=./color.h264 \
+     --collection-prefix=oak_camera
+
+   # Shell 2: the printer
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/schemaio/frame_metadata_printer --collection-prefix=oak_camera
+
+See :doc:`cameras/oak` to build the plugin and
+:ref:`dedicated-cloudxr-runtime` for the runtime setup.
 
 Generic3AxisPedalTracker
 ~~~~~~~~~~~~~~~~~~~~~~~~
