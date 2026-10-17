@@ -106,9 +106,11 @@ def test_shipped_config_parses():
     yaml = pytest.importorskip("yaml")
     cfg_path = _REPO_ROOT / "examples" / "camera_viz" / "configs" / "cuda_ipc.yaml"
     cfg = yaml.safe_load(cfg_path.read_text())
-    (cam,) = [c for c in cfg["cameras"] if c.get("enabled", True)]
-    assert cam["type"] == "cuda_ipc"
-    assert cam["socket"] and cam["width"] and cam["height"]
+    cameras = [c for c in cfg["cameras"] if c.get("enabled", True)]
+    assert len(cameras) == 2
+    for cam in cameras:
+        assert cam["type"] == "cuda_ipc"
+        assert cam["socket"] and cam["width"] and cam["height"]
 
 
 # ── end to end ────────────────────────────────────────────────────────
