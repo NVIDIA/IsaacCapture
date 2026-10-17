@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -373,6 +373,8 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
 </ul>
@@ -777,29 +779,24 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
 </section>
 <section id="install-the-isaaccapture-pip-package">
 <h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a><a class="headerlink" href="#install-the-isaaccapture-pip-package" title="Link to this heading">#</a></h2>
-<p>The wheels are built in the <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code> directory. Install the package from the wheels.
-Using <code class="docutils literal notranslate"><span class="pre">pip</span></code>, you need to pass the <code class="docutils literal notranslate"><span class="pre">--no-index</span></code> option to automatically find the right wheel
-based on the Python version.  Note that <code class="docutils literal notranslate"><span class="pre">pip</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code> has slightly different options.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pass --no-index to use only wheels in ./install/wheels/;</span>
-<span class="c1"># Pass --force-reinstall to replace an existing install.</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--no-index<span class="w"> </span>--force-reinstall
+<p>The build writes two wheels to <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>: <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code>
+transition wheel it depends on. The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel only installs on the Python version it
+was built for (<code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code>, 3.11 by default), so create and activate a venv
+with that version first.</p>
+<p>Install it by version. A local build is always <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code>, where <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> is the first two
+numbers of the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file; they also appear in the wheel’s file name. The pin
+selects your build for the venv’s Python, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> cannot replace it.
+<code class="docutils literal notranslate"><span class="pre">--find-links</span></code> supplies the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> transition wheel and the other dependencies come
+from the package index, so do not add <code class="docutils literal notranslate"><span class="pre">--no-index</span></code>. The two tools name the reinstall option
+differently:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace X.Y with your build's version. --force-reinstall replaces an existing install.</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--force-reinstall
 </pre></div>
 </div>
-<p>With <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span></code>, <code class="docutils literal notranslate"><span class="pre">--find-links</span></code> still consults the package index and installs the highest
-version it finds, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> there silently wins over your local build.
-<code class="docutils literal notranslate"><span class="pre">--no-index</span></code> is not a fix either: the wheel’s dependencies are not in <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>, so
-the install fails. Install the local wheel by path instead. That always selects your build, while
-the index stays available for its dependencies:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pick the wheel for your Python version (cp312 = Python 3.12; use cp311 or cp313 otherwise).</span>
-<span class="c1"># -t sorts by modification time so head -1 selects the most recent build if older wheels remain.</span>
-<span class="nv">WHEEL</span><span class="o">=</span><span class="k">$(</span>ls<span class="w"> </span>-t<span class="w"> </span>./install/wheels/isaaccapture-*-cp312-*.whl<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1<span class="k">)</span>
-
-<span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
-<span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">WHEEL</span><span class="si">}</span><span class="s2">[retargeters,cloudxr,ui]"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
-<p>Check that the installed version ends in <code class="docutils literal notranslate"><span class="pre">+local</span></code> with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">list</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">isaaccapture</span></code>.</p>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
 in 1.9, so
 <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
