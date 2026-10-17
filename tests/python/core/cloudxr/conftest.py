@@ -14,7 +14,9 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import os
+import shlex
 import socket
+import subprocess
 import sys
 import types
 from contextlib import contextmanager
@@ -221,3 +223,116 @@ def mock_service_deps(tmp_path, ready=True, wss=True):
         mocks["atexit"] = m_atexit
         mocks["env_cfg"] = fake_cfg
         yield mocks
+
+
+# ============================================================================
+# Fake adb (used by oob_teleop_adb tests: run_oob_connect() and friends)
+# ============================================================================
+
+
+def _is_intent_launch(shell_cmd: str) -> bool:
+    """True for ``am start [-p PKG] -a android.intent.action.VIEW -d URL`` (the shapes
+    ``open_url_on_headset`` builds), not merely a string containing ``am start``."""
+    try:
+        tokens = shlex.split(shell_cmd)
+    except ValueError:
+        return False
+    if tokens[:2] != ["am", "start"]:
+        return False
+    rest = tokens[2:]
+    if rest[:1] == ["-p"]:
+        rest = rest[2:]
+    return (
+        len(rest) == 4
+        and rest[:3] == ["-a", "android.intent.action.VIEW", "-d"]
+        and rest[3] != ""
+    )
+
+
+class FakeAdb:
+    """Fake ``adb`` CLI for the commands oob_teleop_adb's launch/repair chain issues.
+
+    Use via :func:`mock_adb`, which patches ``subprocess.run`` and yields the instance;
+    ``.calls`` holds every command as issued. A pinned ``-s <serial>`` is accepted and
+    ignored when matching. A command whose shape is not recognized raises instead of
+    succeeding, so a new or malformed invocation fails the test.
+    """
+
+    def __init__(
+        self,
+        *,
+        device_state: str = "device",
+        devtools_socket: str = "chrome_devtools_remote",
+        am_start_rc: int = 0,
+        forward_rc: int = 0,
+        wakefulness: str = "Awake",
+    ) -> None:
+        self.device_state = device_state
+        self.devtools_socket = devtools_socket
+        self.am_start_rc = am_start_rc
+        self.forward_rc = forward_rc
+        self.wakefulness = wakefulness
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str], **kwargs) -> subprocess.CompletedProcess:
+        self.calls.append(list(args))
+
+        def result(rc: int, stdout: str = "") -> subprocess.CompletedProcess:
+            completed = subprocess.CompletedProcess(args, rc, stdout, "")
+            if kwargs.get("check", False):
+                completed.check_returncode()
+            return completed
+
+        # `adb -s <serial> ...` matches like `adb ...`.
+        cmd = list(args)
+        if len(cmd) >= 4 and cmd[1] == "-s":
+            cmd = [cmd[0], *cmd[3:]]
+
+        if cmd == ["adb", "get-state"]:
+            return result(0 if self.device_state == "device" else 1, self.device_state)
+        if cmd == ["adb", "reconnect"]:
+            return result(0)
+        if cmd == ["adb", "shell", "dumpsys", "power"]:
+            return result(
+                0, f"Power Manager State:\n  mWakefulness={self.wakefulness}\n"
+            )
+        if cmd == ["adb", "shell", "cat", "/proc/net/unix"]:
+            # An abstract-socket line like a real Chromium DevTools listener's; an empty
+            # devtools_socket yields a line with no matching token ("never exposed one").
+            line = (
+                "0000000000000000: 00000002 00000000 00010000 01 0 0 "
+                f"@{self.devtools_socket}"
+                if self.devtools_socket
+                else "0000000000000000: 00000002 00000000 00010000 01 0 0 @not_a_match"
+            )
+            return result(0, line)
+        if len(cmd) == 4 and cmd[:3] == ["adb", "shell", "getprop"]:
+            return result(
+                0, ""
+            )  # unknown vendor: falls back to the generic VIEW intent
+        if (
+            len(cmd) == 4
+            and cmd[:3]
+            in (["adb", "forward", "--remove"], ["adb", "reverse", "--remove"])
+            and cmd[3].startswith("tcp:")
+        ):
+            return result(0)
+        if (
+            len(cmd) == 4
+            and cmd[:2] == ["adb", "forward"]
+            and cmd[2].startswith("tcp:")
+            and cmd[3].startswith("localabstract:")
+        ):
+            return result(self.forward_rc)
+        if len(cmd) == 3 and cmd[:2] == ["adb", "shell"] and _is_intent_launch(cmd[2]):
+            return result(self.am_start_rc)
+        raise AssertionError(f"unscripted adb call: {args}")
+
+
+@contextmanager
+def mock_adb(**kwargs):
+    """Patches ``subprocess.run`` with a :class:`FakeAdb` (constructed from *kwargs*) for
+    the duration of the block; yields the instance so a test can inspect ``.calls``."""
+    fake = FakeAdb(**kwargs)
+    with patch("subprocess.run", side_effect=fake):
+        yield fake
