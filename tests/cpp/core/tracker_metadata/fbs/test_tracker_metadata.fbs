@@ -1,0 +1,14 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Metadata table of the tracker in tests/cpp/core/tracker_metadata/trackers.toml.
+
+namespace core;
+
+table TestTrackerMetadata {
+  label: string (id: 0);
+
+  sizes: [uint16] (id: 1);
+}
+
+root_type TestTrackerMetadata;

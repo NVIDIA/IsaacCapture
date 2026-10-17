@@ -3,8 +3,14 @@
 
 #pragma once
 #include <deviceio_trackers/@HEADER@.hpp>
+#if @HAS_METADATA@
+#include <live_trackers/schema_metadata_reader.hpp>
+#endif
 #include <live_trackers/schema_tracker.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
+#if @HAS_METADATA@
+#include <schema/@METADATA_SCHEMA@_generated.h>
+#endif
 #include <schema/@SCHEMA@_generated.h>
 
 #include <cstdint>
@@ -13,7 +19,18 @@
 #include <vector>
 namespace core
 {
+#if @HAS_METADATA@
+// The data and metadata channels, created together so the factory hands over one object.
+struct @MCAP_CHANNELS_TYPE@
+{
+    @MCAP_CHANNELS_TYPE@(mcap::McapWriter& writer, std::string_view base_name, const std::vector<std::string>& sub_channels);
+
+    McapTrackerChannels<@RECORD_TYPE@> data;
+    McapTrackerChannels<@METADATA@> metadata;
+};
+#else
 using @MCAP_CHANNELS_TYPE@ = McapTrackerChannels<@RECORD_TYPE@>;
+#endif
 using @SCHEMA_TRACKER_TYPE@ = SchemaTracker<@RECORD_TYPE@, @FB_TABLE@>;
 class @LIVE_IMPL@ : public @IFACE@
 {
@@ -29,10 +46,16 @@ public:
                 std::unique_ptr<@MCAP_CHANNELS_TYPE@> mcap_channels);
     void update(int64_t monotonic_time_ns) override;
     const Serialized<@FB_TABLE@>& get_data() const override;
+#if @HAS_METADATA@
+    const Serialized<@METADATA@>& get_metadata() const override;
+#endif
 
 private:
     std::unique_ptr<@MCAP_CHANNELS_TYPE@> mcap_channels_;
     @SCHEMA_TRACKER_TYPE@ m_schema_reader;
+#if @HAS_METADATA@
+    SchemaMetadataReader<@METADATA@> m_metadata_reader;
+#endif
     Serialized<@FB_TABLE@> m_tracked;
 };
 } // namespace core
