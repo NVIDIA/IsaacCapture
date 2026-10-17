@@ -57,18 +57,17 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``:
+After building, install the wheels with ``uv`` or ``pip``, pinning the local build's version
+``X.Y+local`` (``X.Y`` from the repository's ``VERSION`` file):
 
 .. code-block:: bash
 
-   # Install the wheel by path so a newer release on the index cannot win over the local build.
-   # The tag matches the active Python; -t/head -1 picks the newest build if older wheels remain.
-   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])')-*.whl | head -1)
+   # The pin keeps a newer release on the index from winning over the local build.
    # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
-   uv pip install "${WHEEL}" --find-links=./install/wheels/ --reinstall-package isaaccapture
+   uv pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install "${WHEEL}" --find-links=./install/wheels/
+   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
