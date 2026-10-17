@@ -336,32 +336,22 @@ transition wheel it depends on. The ``isaaccapture`` wheel only installs on the 
 was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so create and activate a venv
 with that version first.
 
-Install the local wheel by path. Installed by name, ``isaaccapture`` resolves against the package
-index too, even with ``--find-links``, so a newer published release silently wins over your local
-build. ``--no-index`` is not a fix either: the wheel's dependencies are not in
-``./install/wheels/``, so the install fails. A path always selects your build, while the index
-stays available for its dependencies. Nothing cleans ``install/wheels/``, so pick the newest wheel
-built for the venv's Python:
+Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
+numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
+selects your build for the venv's Python, so a newer published ``isaaccapture`` cannot replace it.
+``--find-links`` supplies the ``isaacteleop`` transition wheel and the other dependencies come
+from the package index, so do not add ``--no-index``. The two tools name the reinstall option
+differently:
 
 .. code-block:: bash
 
-   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])')-*.whl | head -1)
-
-Then install it with ``pip`` or ``uv pip``. ``--find-links`` supplies the ``isaacteleop``
-transition wheel, and the two tools name the reinstall option differently:
-
-.. code-block:: bash
-
-   # --force-reinstall replaces an existing install.
-   pip install "${WHEEL}[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --force-reinstall
+   # Replace X.Y with your build's version. --force-reinstall replaces an existing install.
+   pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --force-reinstall
 
 .. code-block:: bash
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
-   uv pip install "${WHEEL}[retargeters,cloudxr,ui]" --find-links=./install/wheels/ --reinstall-package isaaccapture
-
-Check that the installed version ends in ``+local`` with ``pip list | grep isaaccapture``
-(``uv pip list`` for a ``uv`` venv).
+   uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
