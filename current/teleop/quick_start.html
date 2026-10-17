@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -370,8 +370,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
 </ul>
@@ -488,8 +486,8 @@ and an opt-in to pre-release versions — shown here with <a class="reference ex
 </pre></div>
 </div>
 <p>The two commands above track the newest 1.x release. To follow this version of the documentation
-(1.7.x) exactly, pin to the series it describes instead:</p>
-<pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.7.0' \
+(1.6.x) exactly, pin to the series it describes instead:</p>
+<pre class="literal-block">uv pip install 'isaaccapture[cloudxr,retargeters]~=1.6.0' \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
 <p>Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for more details.</p>
@@ -731,41 +729,23 @@ pipeline: reading XR controller input via CloudXR, retargeting it through the
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
 </pre></div>
 </div>
-<p>Once running, squeeze the <strong>right controller trigger</strong> to control the gripper.
-<code class="docutils literal notranslate"><span class="pre">GripperRetargeter</span></code> emits binary commands: <code class="docutils literal notranslate"><span class="pre">+1.00</span></code> means open and <code class="docutils literal notranslate"><span class="pre">-1.00</span></code>
-means closed. With the default configuration, trigger values above <code class="docutils literal notranslate"><span class="pre">0.5</span></code>
-close the gripper; values at or below <code class="docutils literal notranslate"><span class="pre">0.5</span></code> open it. The analog trigger value
-is thresholded by the retargeter, so intermediate output values are not expected.
-You should see periodic status output:</p>
+<p>Once running, squeeze the controller triggers on your XR headset to control
+the gripper. You should see periodic status output:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>============================================================
 Gripper Retargeting - Squeeze triggers to control grippers
 ============================================================
 
-Gripper command: +1.00 = open, -1.00 = closed (trigger &gt; 0.5).
-Running until Ctrl+C.
-[  0.5s] Right: 1.00
-[  1.0s] Right: -1.00
+[  0.5s] Right: 0.00
+[  1.0s] Right: 0.73
 [  1.5s] Right: 1.00
 ...
 </pre></div>
 </div>
-<p>The example runs until you press <strong>Ctrl+C</strong>. To stop automatically after a
-chosen duration, measured after session startup, pass <code class="docutils literal notranslate"><span class="pre">--duration</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py<span class="w"> </span>--duration<span class="w"> </span><span class="m">20</span>
-</pre></div>
-</div>
-<p><code class="docutils literal notranslate"><span class="pre">--duration</span> <span class="pre">0</span></code> also runs until Ctrl+C. Both a timed run and Ctrl+C announce
-that the session is closing, then print <code class="docutils literal notranslate"><span class="pre">Session</span> <span class="pre">closed.</span></code> after cleanup.
-Stream or cleanup errors still propagate; a browser stream error is not the
-expected completion message. For troubleshooting, retain the Python traceback,
-CloudXR runtime logs, and browser error and stop-reason codes.</p>
-<p>For proportional controller input, read <code class="docutils literal notranslate"><span class="pre">ControllerInputIndex.TRIGGER_VALUE</span></code>
-or use <code class="docutils literal notranslate"><span class="pre">SO101GripperRetargeter</span></code> for SO-101 jaw closedness in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>
-(<code class="docutils literal notranslate"><span class="pre">0</span></code> open, <code class="docutils literal notranslate"><span class="pre">1</span></code> closed); see <a class="reference internal" href="../references/retargeting/so101.html"><span class="doc">Retargeters: SO-101 (5-DOF arm)</span></a>.</p>
-<p>To try other examples, see <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> — for instance:</p>
+<p>The example runs for 20 seconds and then exits. To try other examples, see
+<code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> — for instance:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">se3_retargeting_example.py</span></code> — maps hand or controller poses to
-end-effector poses (absolute or relative), with the same <code class="docutils literal notranslate"><span class="pre">--duration</span></code> and Ctrl+C behavior</p></li>
+end-effector poses (absolute or relative)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> — bimanual dexterous hand retargeting</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gripper_retargeting_example.py</span></code> — full gripper example with more
 configuration options</p></li>
@@ -959,7 +939,7 @@ from source</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 17, 2026.
       <br/>
     
   </p>
