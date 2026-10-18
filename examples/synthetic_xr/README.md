@@ -24,7 +24,7 @@ cd "$CAPTURE_ROOT"
 python -m pip install -e './examples/synthetic_xr[franka]'
 ```
 
-Build this checkout's client using [the WebXR build instructions](../../docs/source/development/build_from_source/webxr.rst). The public prebuilt client does not contain this feature. Keep the generated `deps/cloudxr/webxr_client/build/` directory.
+Build this checkout's client using [the WebXR build instructions](../../docs/source/development/build_from_source/webxr.rst). Use `npm ci` with the committed client lockfile, then `npm run build`; do not refresh dependency versions while reproducing this candidate. The public prebuilt client does not contain this feature. Keep the generated `deps/cloudxr/webxr_client/build/` directory.
 
 ## 1. Start the service
 
