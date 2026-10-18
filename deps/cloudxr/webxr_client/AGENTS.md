@@ -12,3 +12,5 @@ do not bypass peer checks with `--force` or `--legacy-peer-deps`.
 Synthetic XR browser checks use the dev server's hot reload. Do not edit or format client files while those checks run: remounting the app invalidates the session and input ownership observations.
 
 Synthetic examples must start teleoperation through the existing client handler. Do not hard-code a controller ray to an assumed 3D panel position.
+
+Long-running synthetic-input tests against MockCloudXR must supply decoded mock frames. Preserve the production decoder startup watchdog and input release on disconnect.

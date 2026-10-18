@@ -9,22 +9,83 @@ Run Franka stacking through virtual XR controllers and the native WebXR → Clou
 
 ## Supported setup
 
-This integration targets **one local Linux simulation environment** with Lab `cb9628bee016c532feb5fc36c3b012fe707bed1b`, task `IsaacContrib-Stack-Cube-Franka-IK-Abs`, installed Isaac Teleop `1.5+local`, CloudXR `6.3.0`, and this checkout's built WebXR client. These identities describe a compatibility stack, not qualification of other Isaac Capture releases. See [VALIDATION.txt](VALIDATION.txt) for executed results and remaining limits.
+This integration targets **one local Linux x86-64 simulation environment** with Isaac Capture built from this branch, Lab `cb9628bee016c532feb5fc36c3b012fe707bed1b`, task `IsaacContrib-Stack-Cube-Franka-IK-Abs`, and CloudXR `6.3.0`. See [VALIDATION.txt](VALIDATION.txt) for exact executed identities and results.
 
-Use an existing configured Lab Python environment, an installed CloudXR runtime, a graphical desktop, and Chrome/Chromium with WebXR support. Follow the product's CloudXR GPU, network, certificate and license setup first. All commands below run on the same host. The Python driver and observer share a local filesystem. Keep CDP and observations on loopback; no headset or ADB is required.
+You need a supported NVIDIA GPU/driver, a graphical desktop, Chrome with its normal sandbox enabled, and the product's CloudXR network and license prerequisites. The Python driver and observer share a local filesystem. Keep CDP and observations on loopback; no headset or ADB is required.
 
-Set these paths in each terminal, activate your configured Lab environment, and work from the Isaac Capture checkout:
+### Install in a fresh environment
+
+Use this candidate's complete source checkout or source archive as `CAPTURE_ROOT`. The public prebuilt client does not contain this feature. Install Git, Git LFS, [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 20 or later, and the [Isaac Capture source-build prerequisites](../../docs/source/development/build_from_source/index.rst). Use a new directory for Lab:
 
 ```bash
 export CAPTURE_ROOT=/absolute/path/to/IsaacCapture
 export LAB_ROOT=/absolute/path/to/IsaacLab
 export CLOUDXR_INSTALL_DIR=/absolute/path/to/cloudxr
 export SYNTHETIC_RUN=/absolute/path/to/a/new/run
-cd "$CAPTURE_ROOT"
-python -m pip install -e './examples/synthetic_xr[franka]'
+
+git clone https://github.com/isaac-sim/IsaacLab.git "$LAB_ROOT"
+git -C "$LAB_ROOT" checkout cb9628bee016c532feb5fc36c3b012fe707bed1b
+cd "$LAB_ROOT"
+uv sync --locked --extra teleop --extra isaacsim --extra ov
+source .venv/bin/activate
 ```
 
-Build this checkout's client using [the WebXR build instructions](../../docs/source/development/build_from_source/webxr.rst). Use `npm ci` with the committed client lockfile, then `npm run build`; do not refresh dependency versions while reproducing this candidate. The public prebuilt client does not contain this feature. Keep the generated `deps/cloudxr/webxr_client/build/` directory.
+The pinned Lab checkout manages its own native dependencies and explicit dependency overrides. Use its locked environment rather than combining packages from an existing installation. Install this branch's SDK **after** Lab setup; another `uv sync` would restore Lab's older SDK selection.
+
+Build the SDK wheels, or use the matching prebuilt Linux/Python 3.12 wheels distributed with this candidate:
+
+```bash
+cd "$CAPTURE_ROOT"
+cmake -B build -DISAAC_TELEOP_PYTHON_VERSION=3.12 \
+  -DBUILD_VIZ=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+  -DENABLE_CLOUDXR_EXP_BUNDLE=OFF -DENABLE_CLOUDXR_BUNDLE_CHECK=ON \
+  -DCMAKE_INSTALL_PREFIX="$CAPTURE_ROOT/install"
+cmake --build build --parallel 6
+cmake --install build
+uv pip install 'isaaccapture[retargeters-lite,cloudxr,ui]==1.7+local' \
+  --find-links="$CAPTURE_ROOT/install/wheels"
+uv pip install './examples/synthetic_xr[franka]'
+```
+
+Both the `isaaccapture` wheel and its `isaacteleop` transition wheel must be available in `install/wheels`. The feature's `[franka]` extra supplies its browser transport and numerical dependencies. This recipe builds the SDK without Televiz; the Franka example uses Lab's Kit viewport.
+
+Build the client with its committed dependency lockfile:
+
+```bash
+cd "$CAPTURE_ROOT"
+printf 'CXR_HOST_VOLUME_PATH=%s\n' "$CLOUDXR_INSTALL_DIR" > deps/cloudxr/.env
+source scripts/setup_cloudxr_env.sh
+scripts/download_cloudxr_sdk.sh
+cd deps/cloudxr/webxr_client
+npm ci
+npm run build
+cd "$CAPTURE_ROOT"
+```
+
+Keep `deps/cloudxr/webxr_client/build/`. In each subsequent terminal, activate `$LAB_ROOT/.venv/bin/activate` and set the same four paths above.
+
+### Trust the local service certificate
+
+For localhost development on Linux, generate the service's certificate before opening Chrome:
+
+```bash
+python -c 'import os; from pathlib import Path; from isaaccapture.cloudxr.wss import cert_paths_from_dir, ensure_certificate; ensure_certificate(cert_paths_from_dir(Path(os.environ["CLOUDXR_INSTALL_DIR"]) / "certs"))'
+```
+
+Import `server.crt` as a trusted self-signed **server** certificate using Chrome's certificate manager. Alternatively, with `libnss3-tools` installed, follow [Chromium's Linux certificate instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md):
+
+```bash
+nss_dir="$HOME/.local/share/pki/nssdb"
+if [[ -d "$HOME/.pki/nssdb" ]]; then nss_dir="$HOME/.pki/nssdb"; fi
+mkdir -p "$nss_dir"
+if [[ ! -f "$nss_dir/cert9.db" ]]; then
+  certutil -N --empty-password -d "sql:$nss_dir"
+fi
+certutil -A -d "sql:$nss_dir" -n synthetic-xr-localhost -t 'P,,' \
+  -i "$CLOUDXR_INSTALL_DIR/certs/server.crt"
+```
+
+Trust only the certificate generated on your host and keep `server.key` private. Restart the dedicated browser after changing trust. The example uses `https://localhost`; a remote hostname needs a certificate valid for that hostname. To remove this trust later, run `certutil -D -d "sql:$nss_dir" -n synthetic-xr-localhost`.
 
 ## 1. Start the service
 
@@ -33,7 +94,7 @@ Check that another service does not own the configured CloudXR ports. Run in a d
 ```bash
 export TELEOP_WEB_CLIENT_STATIC_DIR="$CAPTURE_ROOT/deps/cloudxr/webxr_client/build"
 export TELEOP_OOB_HUB_ONLY=1
-python -m isaacteleop.cloudxr.service run \
+python -m isaaccapture.cloudxr.service run \
   --cloudxr-install-dir "$CLOUDXR_INSTALL_DIR" \
   --cloudxr-env-config "$LAB_ROOT/source/isaaclab_teleop/isaaclab_teleop/cloudxrjs-cloudxr.env" \
   --setup-oob --host-client
@@ -57,7 +118,7 @@ SYNTHETIC_XR_VISIBLE=1 python -m isaaccapture_examples.synthetic_xr.franka.obser
   --num_demos 1 --xr --viz kit --cloudxr_env none --no-auto_launch_cloudxr env.seed=42
 ```
 
-The observation directory must not exist. Accept Kit's license prompt if this environment has not done so. After accepting its terms, unattended runs can set `OMNI_KIT_ACCEPT_EULA=YES`. Wait for Lab's XR/scene initialization and the loopback endpoint `http://127.0.0.1:8765/state`. No robot motion starts until the task driver starts teleoperation.
+The observation directory must not exist. Accept Kit's license prompt if this environment has not done so. After accepting its terms, unattended runs can set `OMNI_KIT_ACCEPT_EULA=YES`. Resolve any first-launch desktop or Kit setup dialogs before starting the task; decline optional telemetry if you do not want it. Wait for Lab's XR/scene initialization and the loopback endpoint `http://127.0.0.1:8765/state`. No robot motion starts until the task driver starts teleoperation.
 
 ## 3. Connect the browser
 
