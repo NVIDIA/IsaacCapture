@@ -4,7 +4,7 @@
 """Observe native Franka recording without replacing its retargeting pipeline.
 
 Robot actions come exclusively through the native WebXR/CloudXR device.
-Only read-only feedback, visual presentation and orderly shutdown hooks are added.
+Observation, optional task success and lifecycle hooks preserve native motion and export.
 """
 
 import argparse
@@ -18,27 +18,88 @@ from pathlib import Path
 import sys
 import threading
 import time
+from types import SimpleNamespace
+
+from .task_hooks import check_driver_lease, evaluate_success, load_success_hook
+from .observer_process import supervise, write_snapshot
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 
-parser = argparse.ArgumentParser(add_help=False)
+# Help must work before required paths are checked or any native worker starts.
+parser = argparse.ArgumentParser(
+    description="Observe Franka and supervise native episode recording.",
+    epilog="Additional arguments are forwarded to Lab scripts/tools/record_demos.py; "
+    "run that script with --help for native task options.",
+)
 parser.add_argument("--lab-root", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--feedback-port", type=int, default=8765)
+parser.add_argument(
+    "--objects",
+    nargs="+",
+    default=["cube_1", "cube_2", "cube_3"],
+    help="Scene object names exposed in observations",
+)
+parser.add_argument(
+    "--success",
+    help="Trusted module:function accepting one observation and returning bool",
+)
+parser.add_argument(
+    "--driver-timeout",
+    type=float,
+    default=30,
+    help="Stop after this many seconds without an attached task driver heartbeat",
+)
+parser.add_argument("--worker-run-id", help=argparse.SUPPRESS)
+parser.add_argument(
+    "--session-timeout",
+    type=float,
+    default=900,
+    help="Maximum total observer runtime in seconds",
+)
 options, remaining = parser.parse_known_args()
+if not np.isfinite(options.session_timeout) or options.session_timeout <= 0:
+    parser.error("Session timeout must be positive and finite")
+if options.worker_run_id is None:
+    raise SystemExit(
+        supervise(options.output.resolve(), sys.argv[1:], options.session_timeout)
+    )
+if not np.isfinite(options.driver_timeout) or options.driver_timeout <= 0:
+    parser.error("Driver timeout must be positive and finite")
+if len(set(options.objects)) != len(options.objects):
+    parser.error("Object names must be unique")
+success_callback, success_identity = (
+    (None, "native task")
+    if options.success is None
+    else load_success_hook(options.success)
+)
 ROOT = options.output.resolve()
 REFERENCE = options.lab_root.resolve() / "scripts/tools/record_demos.py"
 if not REFERENCE.is_file():
     raise FileNotFoundError(REFERENCE)
+if (
+    json.loads((ROOT / "supervisor.json").read_text())["run_id"]
+    != options.worker_run_id
+):
+    raise RuntimeError("Worker does not belong to this supervisor")
 sys.argv = [str(REFERENCE), *remaining]
 spec = importlib.util.spec_from_file_location("synthetic_xr_record_demos", REFERENCE)
 native = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = native
 spec.loader.exec_module(native)
 
-state = {"phase": "initializing", "steps": 0, "success_steps": 0}
+state = {
+    "schema_version": 1,
+    "run_id": options.worker_run_id,
+    "coordinate_convention": "metres; world Z-up; quaternion xyzw",
+    "success_hook": success_identity,
+    "episode_id": 0,
+    "phase": "initializing",
+    "steps": 0,
+    "success_steps": 0,
+}
 snapshot = json.dumps(state).encode()
 last_publish = 0.0
 environment = None
@@ -46,7 +107,6 @@ teleop = None
 home = None
 clutch_node = None
 run_dir = ROOT
-run_dir.mkdir(parents=True, exist_ok=False)
 trace = (run_dir / "sim-feedback.jsonl").open("x", buffering=1)
 state["run_dir"] = str(run_dir)
 
@@ -91,7 +151,7 @@ def publish(force=False):
                         env.scene[name].data.root_lin_vel_w
                     ),
                 }
-                for name in ("cube_1", "cube_2", "cube_3")
+                for name in options.objects
             },
             "exported_successful_episodes": env.recorder_manager.exported_successful_episode_count,
             "configured_home_base_T_ee": home.tolist(),
@@ -141,6 +201,22 @@ original_config = native.create_environment_config
 
 def create_environment_config(*args, **kwargs):
     cfg, success, use_capture = original_config(*args, **kwargs)
+    if not use_capture:
+        raise RuntimeError(
+            "Synthetic XR requires the native Isaac Teleop task pipeline"
+        )
+    if success_callback is not None:
+
+        def custom_success(env):
+            import torch
+
+            return torch.tensor(
+                [evaluate_success(success_callback, state)],
+                dtype=torch.bool,
+                device=env.device,
+            )
+
+        success = SimpleNamespace(func=custom_success, params={})
     if os.environ.get("SYNTHETIC_XR_VISIBLE") == "1":
         from isaaclab_visualizers.kit import KitVisualizerCfg
 
@@ -192,6 +268,7 @@ def create_environment(cfg):
 
     def reset(*args, **kwargs):
         result = original_reset(*args, **kwargs)
+        state["episode_id"] += 1
         measure_home()
         return result
 
@@ -247,6 +324,17 @@ def create_environment(cfg):
         return result
 
     env.sim.render = render
+    original_close = env.close
+
+    def close():
+        result = original_close()
+        state.update(
+            native_environment_closed=True, phase="native_closed", timestamp=time.time()
+        )
+        write_snapshot(ROOT, state)
+        return result
+
+    env.close = close
     publish(force=True)
     return env
 
@@ -266,6 +354,9 @@ def setup_device(*args, **kwargs):
     original_advance = teleop.advance
 
     def advance(*args, **kwargs):
+        check_driver_lease(
+            run_dir / "driver-heartbeat.json", state["run_id"], options.driver_timeout
+        )
         if (run_dir / "stop").exists():
             raise KeyboardInterrupt("Synthetic XR example requested stop")
         return original_advance(*args, **kwargs)
@@ -279,10 +370,14 @@ original_success = native.process_success_condition
 
 
 def process_success(env, term, count):
+    before = state.get("exported_successful_episodes", 0)
     result = original_success(env, term, count)
     state["success_steps"] = result[0]
     state["success_reset_needed"] = result[1]
-    publish()
+    publish(force=True)
+    exported = state.get("exported_successful_episodes", 0)
+    if exported > before:
+        (ROOT / f"exported-episode-{exported}.json").write_bytes(snapshot)
     return result
 
 
@@ -292,9 +387,24 @@ native.setup_teleop_device = setup_device
 native.process_success_condition = process_success
 server = ThreadingHTTPServer(("127.0.0.1", options.feedback_port), Feedback)
 threading.Thread(target=server.serve_forever, daemon=True).start()
+completion_error = None
 try:
     native.main()
+except BaseException as error:
+    completion_error = repr(error)
+    raise
 finally:
+    # Preserve final counters after native cleanup without touching destroyed tensors.
+    state.update(
+        phase="worker_finished",
+        timestamp=time.time(),
+        completion_error=completion_error,
+    )
+    snapshot = json.dumps(state, allow_nan=False).encode()
+    temporary = ROOT / "sim-state.tmp"
+    temporary.write_bytes(snapshot)
+    temporary.replace(ROOT / "sim-state.json")
+    trace.write(snapshot.decode() + "\n")
     server.shutdown()
     server.server_close()
     trace.close()

@@ -10,7 +10,7 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from .browser_command import command, state
+from . import browser_command
 
 
 def transform(position, quaternion):
@@ -20,11 +20,11 @@ def transform(position, quaternion):
     return result
 
 
-def wait_steps(count=3, timeout=20):
-    first = state()["steps"]
+def wait_steps(count=3, timeout=20, client=browser_command):
+    first = client.state()["steps"]
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        current = state()
+        current = client.state()
         if current["steps"] >= first + count or current.get(
             "exported_successful_episodes", 0
         ):
@@ -33,15 +33,16 @@ def wait_steps(count=3, timeout=20):
     raise TimeoutError("Native simulation did not advance")
 
 
-def play():
+def play(client=browser_command):
     # Start through the existing client handler, not a layout-dependent controller ray.
-    command("start")
-    return wait_steps()
+    client.command("start")
+    return wait_steps(client=client)
 
 
 class XRControllerBridge:
-    def __init__(self):
-        initial = state()
+    def __init__(self, client=browser_command, acknowledgement_path=None):
+        self.client = client
+        initial = self.client.state()
         self.base_to_world = (
             np.eye(4)
             if initial["base_T_world"] is None
@@ -50,9 +51,9 @@ class XRControllerBridge:
         self.base_to_anchor = self.base_to_world @ np.asarray(initial["world_T_anchor"])
         # The native Franka task config applies +90 degrees intrinsic X to grip orientation.
         self.offset = Rotation.from_euler("X", 90, degrees=True).as_matrix()
-        command("pose", hand="right", buttons={"squeeze": 1, "trigger": 0})
+        self.client.command("pose", hand="right", buttons={"squeeze": 1, "trigger": 0})
         time.sleep(0.3)
-        frame = command("inspect")["browser"]["frame"]
+        frame = self.client.command("inspect")["browser"]["frame"]
         right = next(s for s in frame["sources"] if s["hand"] == "right")
         self.aim_to_grip = np.linalg.inv(transform(**right["aim"])) @ transform(
             **right["grip"]
@@ -63,9 +64,11 @@ class XRControllerBridge:
             initial["body_quaternions_world"][0][index],
         )
         self.trigger = 0.0
-        self.ack_trace = (Path(initial["run_dir"]) / "controller-acks.jsonl").open(
-            "a", buffering=1
-        )
+        self.ack_trace = (
+            Path(acknowledgement_path)
+            if acknowledgement_path is not None
+            else Path(initial["run_dir"]) / "controller-acks.jsonl"
+        ).open("a", buffering=1)
         # Place the virtual controller at the current robot target before starting native physics.
         self.target_base(self.target[:3, 3], self.target[:3, :3], wait_receipt=False)
 
@@ -78,6 +81,10 @@ class XRControllerBridge:
             or not np.isfinite(rot).all()
         ):
             raise ValueError("Invalid target pose")
+        if not np.allclose(rot.T @ rot, np.eye(3), atol=1e-6) or not np.isclose(
+            np.linalg.det(rot), 1.0, atol=1e-6
+        ):
+            raise ValueError("Target rotation must be orthonormal with determinant +1")
         if np.linalg.norm(p) > 1.5:
             raise ValueError("Target outside declared Franka test workspace")
         self.trigger = self.trigger if trigger is None else float(trigger)
@@ -91,7 +98,7 @@ class XRControllerBridge:
             @ base_grip
             @ np.linalg.inv(self.aim_to_grip)
         )
-        result = command(
+        result = self.client.command(
             "pose",
             position=aim[:3, 3].tolist(),
             quaternion=Rotation.from_matrix(aim[:3, :3]).as_quat().tolist(),
@@ -104,7 +111,7 @@ class XRControllerBridge:
         gripper = -1.0 if self.trigger > 0.5 else 1.0
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
-            observed = state()
+            observed = self.client.state()
             if observed.get("exported_successful_episodes", 0):
                 return result
             action = np.asarray(observed["last_action"])[0]
@@ -140,6 +147,8 @@ class XRControllerBridge:
         )
 
     def move_world(self, position, rotation=None, trigger=None, seconds=2):
+        if not np.isfinite(seconds) or not 0 < seconds <= 120:
+            raise ValueError("Movement duration must be in (0, 120] seconds")
         current_world = np.linalg.inv(self.base_to_world) @ self.target
         rotation = current_world[:3, :3] if rotation is None else rotation
         target = self.base_to_world @ transform(
@@ -151,18 +160,23 @@ class XRControllerBridge:
             [0, 1], Rotation.from_matrix([origin[:3, :3], target[:3, :3]])
         )
         for fraction in np.linspace(0, 1, steps + 1)[1:]:
-            if state().get("exported_successful_episodes", 0):
-                return state()
+            if self.client.state().get("exported_successful_episodes", 0):
+                return self.client.state()
             self.target_base(
                 origin[:3, 3] * (1 - fraction) + target[:3, 3] * fraction,
                 orientations(fraction).as_matrix(),
                 trigger,
             )
-            wait_steps(count=max(1, round(seconds / steps / state()["simulation_dt"])))
-        return wait_steps()
+            wait_steps(
+                count=max(
+                    1, round(seconds / steps / self.client.state()["simulation_dt"])
+                ),
+                client=self.client,
+            )
+        return wait_steps(client=self.client)
 
     def release(self):
         try:
-            command("pose", buttons={"squeeze": 0, "trigger": self.trigger})
+            self.client.command("pose", buttons={"squeeze": 0, "trigger": self.trigger})
         finally:
             self.ack_trace.close()

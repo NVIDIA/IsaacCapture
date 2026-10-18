@@ -24,7 +24,7 @@ Franka you see in the browser is the streamed result of the simulation.
 
 .. doc-video:: ../_static/franka-synthetic-xr-multi-episode-2x.mp4
 
-**Three episodes at 2× speed.** The browser and Synthetic XR input are on the
+**Earlier preview: three episodes at 2× speed.** The browser and Synthetic XR input are on the
 left; Isaac Lab is on the right. After each native export, Lab randomizes the
 cube layout and the same action logic starts the next episode. The original
 full-speed recording and native artifacts are retained with the run evidence.
@@ -71,12 +71,14 @@ Follow the :download:`Franka setup and run commands <../../../examples/synthetic
 The Synthetic XR panel lets you see the input being applied. **You do not need
 to select Left/Right or operate its movement buttons for this example.**
 
-The preview's packaged native result is one successful seed-42 episode on the
-prepared TeleOp 1.5 / CloudXR 6.3 / Lab compatibility stack. The accelerated
-recording above additionally demonstrates three successful randomized episodes
-in one continuous session; three successes are not a reliability claim. See the
-:download:`validation scope <../../../examples/synthetic_xr/VALIDATION.txt>` for component
-identities and evidence limits.
+The current candidate validates the session interface with one successful
+seed-42 stacking episode on the TeleOp 1.5 / CloudXR 6.3 / Lab compatibility
+stack. A separate customer-application acceptance check also verifies a custom
+success callback and native dataset export. The earlier preview recording above
+shows three randomized stacking episodes; it is not a reliability measurement
+of the new interface. See the
+:download:`validation scope <../../../examples/synthetic_xr/VALIDATION.txt>` for
+component identities and evidence limits.
 
 Bring your own task logic
 -------------------------
@@ -98,20 +100,43 @@ region instead of another cube as the placement target.
          v
    Shared WebXR -> CloudXR -> retargeting -> IK -> robot simulation
 
-Use these pieces as the starting point:
+Start with the shipped :download:`stacking implementation <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/stack_logic.py>`.
+It uses ``FrankaTaskSession`` to observe the scene, move the tool and operate the
+gripper. Replace its task decisions while keeping the session interface:
 
-* :download:`stack_logic.py <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/stack_logic.py>`
-  chooses targets and checks grasp, placement and task completion. Replace these
-  task decisions with your own; this is scripted logic, not a learned model.
-* :download:`xr_controller_bridge.py <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/xr_controller_bridge.py>`
-  interpolates movement, converts Franka targets into XR controller poses and
-  checks that the corresponding action reaches the native task. Reuse its
-  mapping for the same configured Franka task; another robot needs its own
-  retargeting and coordinate mapping.
-* ``window.syntheticXR.setController(...)`` supplies controller poses and
-  buttons through the virtual controller.
+.. code-block:: python
 
-The feedback source and task checks belong to your application. New tasks need
-their own validation; the stacking example is not a general motion planner.
-This preview covers controller input, not physical headset tracking, glove
-protocols or hand/body input.
+   from isaaccapture_examples.synthetic_xr.franka.session import FrankaTaskSession
+
+   with FrankaTaskSession(
+       observation_dir="run/observations", output="run/my-task"
+   ) as session:
+       observation = session.observe()
+       # Your logic chooses a world-space tool target and unit xyzw quaternion.
+       session.move_tool(target_position, target_quaternion, seconds=2)
+       session.set_gripper(closed=True)
+       # Continue your approach, transfer and release sequence.
+       session.wait_for_export()
+
+The snippet illustrates the interface; the linked stacking implementation is
+the complete runnable example. Positions use metres in the simulator's Z-up
+world frame. ``move_tool`` targets the gripper tool frame; the Franka adapter
+handles its offset and conversion into XR controller poses. The browser still
+sends controller input through the shared native pipeline.
+
+**Define success as well as motion.** An application success callback receives
+a detached observation after each simulation step and returns ``True`` only
+when the task's actual completion criteria hold. Start the observer with
+``--success my_task:is_success`` to select your callback. Lab applies its
+consecutive-success requirement and performs the native episode export.
+``wait_for_export`` confirms export and orderly observer completion; it never
+forces a successful result. Without a callback, the original stacking success
+criterion remains in effect.
+
+The :download:`setup and interface contract <../../../examples/synthetic_xr/README.md>`
+contains the exact launch sequence, observation fields, callback contract and
+shutdown instructions. The session retains command receipts, native-action
+acknowledgements and named observations so you can inspect an unexpected result.
+Another robot needs its own supported pose adapter and task configuration.
+This interface supplies controller input; task planning, collision avoidance
+and application-specific correctness remain the application's responsibility.

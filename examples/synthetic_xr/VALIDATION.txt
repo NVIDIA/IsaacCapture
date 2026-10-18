@@ -1,48 +1,61 @@
-Synthetic XR Teleoperation 0.1.0 preview — validation, 2026-10-15
+Synthetic XR Teleoperation 0.2.0 release candidate — validation, 2026-10-18
 
-Qualified configuration:
-- New WebXR client based on Isaac Capture e07a2cc8c3fcbc8d0aac9f9bdc7919a792983e44 plus this feature branch.
+Supported configuration exercised:
+- This feature branch's desktop WebXR client, IWER and OOB/CDP CONNECT.
 - Isaac Teleop 1.5+local native backend; CloudXR Runtime 6.3.0.
 - Isaac Lab cb9628bee016c532feb5fc36c3b012fe707bed1b.
-- IsaacContrib-Stack-Cube-Franka-IK-Abs, seed 42, exactly one episode.
-- Desktop Chromium/IWER; real OOB/CDP CONNECT; no ADB or physical headset.
-- SwiftShader and CPU compositing, requested 512x448 per eye.
+- IsaacContrib-Stack-Cube-Franka-IK-Abs, seed 42, one environment.
+- Local Linux host, SwiftShader/CPU compositing, 512x448 per eye.
+- No ADB or physical headset. Native retargeting and IK remain in Lab.
 
-Observed run unattended-1792077046755219888:
-PASS one native HDF5 episode, 1484 samples.
-PASS native last-ten-frame success and independent settled stack geometry.
-PASS 194 distinct browser command acknowledgements matched native actions;
-maximum position difference 1.6069864620120102e-7 metres.
-PASS clean native/browser shutdown; no forced SDK process cleanup.
-Host video 80.25 seconds shows browser input on the left and Lab on the right.
-The successful native export triggers a scene reset in the streamed browser;
-that is not a second recorded episode.
+Fresh stacking through the public FrankaTaskSession API:
+Run 7c28fb4a6b2d47d1901f332f127718d4: PASS.
+One native HDF5 episode, 1428 samples; 197 correlated browser/native commands.
+Maximum position difference 1.6269140171458334e-7 metres.
+Every recorded action matches the native feedback; final ten native states
+satisfy independent three-cube stack geometry. Native environment closed,
+worker exit 0, no forced shutdown. Full host/browser video 152.25 seconds.
 
-Native controller MCAP replay:
-PASS exactly one offline replay session, no OpenXR session created.
-72.63292288-second MCAP; 2158 records per controller, one absent record and
-2157 present records. Every present aim/grip position, validity, button and
-axis payload reproduced exactly and in order. Right controller: 196 distinct
-states including trigger 0 and 1. Altered-position negative control rejected.
-Quaternion equality is not covered by this viewer projection.
-Native replay polls at 60 Hz and consumes records faster than this recording's
-rate: present payloads end at approximately 38 seconds, followed by empty polls
-until the duration timer expires. This verifies values/order, not pacing.
-The 78.2-second viewer video preserves this behavior instead of trimming it.
+Customer task extension acceptance (separate from the stacking tutorial):
+Run 79501bd58db34857969922c459d605d9: PASS.
+A separate pick-and-place application uses only the documented session API and
+success callback. It exports one native HDF5 episode with 761 samples and 108
+correlated commands; maximum position difference 1.6074436996170352e-7 metres.
+Lift 0.15978 metres, final XY error below 0.000895 metres; last twenty native
+states confirm placement, settling, open fingers and tool retraction. Worker
+exit 0, no forced shutdown. Full host/browser video 223.35 seconds.
+Lab records policy observations before a step and rigid-body states after it;
+the verifier aligns these and uses raw finger joints (the processed second
+finger observation has a negative sign).
 
-Software checks:
-130 JavaScript unit tests, 4 browser tests, 7 Python example tests.
-TypeScript checks, production build, Sphinx warnings-as-errors docs build,
-and repository-wide pre-commit checks are required for the release archive.
-The browser-only tests mock CloudXR transport; the native Franka run does not.
+Native driver-crash control:
+Run e767207f7f6d4097aa2f4fdd685cefa8: expected failure detected.
+The driver exits abruptly with status 23 after attachment. With a three-second
+lease, the native observer detects expiration and exits with status 1, no
+successful export and no forced shutdown. The normal default lease is 30 seconds.
 
-Limits:
-This is a developer preview for the exact compatibility configuration above.
-It is not qualification of the current Isaac Capture native backend, physical
-Pico/Quest tracking, hand/glove protocols, SO101, body tracking or real robots.
-Four failed setup/integration attempts are retained before the successful fifth
-attempt; these runs are not a reliability sample. No official SDK release or
-main-branch merge is implied.
+Evidence and checks:
+Native datasets, command receipts, logs, source identities, independent numeric
+verification and full recordings accompany the candidate. Selected-frame visual
+inspection confirms approach, grasp, transfer and release in both views; this
+is not exhaustive frame-by-frame visual model evaluation.
+Unit controls cover invalid poses, stale/mismatched feedback, strict callback
+results, driver ownership, expired heartbeat, completion and cleanup failures.
+Final repository checks and package identities are in the release manifest.
+The browser implementation and earlier MCAP replay are unchanged; no fresh MCAP
+or browser-only transport-mock qualification is implied by these native runs.
 
-Detailed evidence, source hashes, logs, videos and the final check receipts are
-in the accompanying release evidence archive and SHA256 manifest.
+Limits and retained failures:
+This is validation on a prepared host, not a clean-machine installation study.
+Host-specific browser test flags bypassed certificate and sandbox enforcement;
+the documented customer setup requires a trusted certificate and normal sandbox.
+A missing optional dependency in the test harness, an incorrect frame-array
+assumption and native Kit process teardown exposed three failed attempts. Those
+failures are retained; the latter two led to regression tests and a supervised
+observer. The successful stacking wheel differs from the subsequent customer
+wheel only by removal of an unused Python import in observer_process.py.
+Repeated success/reliability, arbitrary robot/task adapters, real robots,
+physical Pico/Quest sensing and current Isaac Capture 1.6 native compatibility
+are not qualified. Earlier three-episode footage demonstrates the preceding
+preview, not repetition testing of the new session API.
+No official SDK release or upstream/main merge is implied.
