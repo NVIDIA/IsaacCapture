@@ -1,61 +1,64 @@
-Synthetic XR Teleoperation 0.2.0 release candidate — validation, 2026-10-18
+Synthetic XR Teleoperation 0.2.1 — end-user validation, 2026-10-18
 
-Supported configuration exercised:
-- This feature branch's desktop WebXR client, IWER and OOB/CDP CONNECT.
-- Isaac Teleop 1.5+local native backend; CloudXR Runtime 6.3.0.
-- Isaac Lab cb9628bee016c532feb5fc36c3b012fe707bed1b.
-- IsaacContrib-Stack-Cube-Franka-IK-Abs, seed 42, one environment.
-- Local Linux host, SwiftShader/CPU compositing, 512x448 per eye.
-- No ADB or physical headset. Native retargeting and IK remain in Lab.
+Executed configuration:
+- SDK built from our branch refreshed onto upstream main 22026461cceb238fc0f7b3d4aecd3d970d444791.
+- Isaac Capture 1.7+local, isaacteleop transition distribution 1!1.7+local,
+  CloudXR Runtime 6.3.0, Isaac Sim 6.1.0.0.
+- Fresh public Isaac Lab checkout cb9628bee016c532feb5fc36c3b012fe707bed1b;
+  fresh uv environment, no imports from the earlier prepared Lab environment.
+- Ubuntu x86-64, RTX PRO 6000 Blackwell, driver 595.58.03, Python 3.12.14.
+- Google Chrome 155.0.8059.84: normal namespace/seccomp sandbox verified,
+  exact localhost server certificate trusted; no sandbox/certificate bypass flags.
+- Desktop IWER, real OOB hub, CONNECT/CDP, native CloudXR and Lab retargeting/IK.
+- SwiftShader/CPU compositing, H.264, 512x448 per eye; functional scope only.
+- IsaacContrib-Stack-Cube-Franka-IK-Abs, seed 42, one environment per run.
 
-Fresh stacking through the public FrankaTaskSession API:
-Run 7c28fb4a6b2d47d1901f332f127718d4: PASS.
-One native HDF5 episode, 1428 samples; 197 correlated browser/native commands.
-Maximum position difference 1.6269140171458334e-7 metres.
-Every recorded action matches the native feedback; final ten native states
-satisfy independent three-cube stack geometry. Native environment closed,
-worker exit 0, no forced shutdown. Full host/browser video 152.25 seconds.
+Stacking via the documented public task API:
+Run 27c78abcefb9443d9e09316c36f7c335: PASS.
+One native episode, 1453 samples, 200 correlated browser/native commands.
+Maximum position difference 1.62603325e-07 metres.
+All recorded actions match native feedback. Final ten native states satisfy
+independent three-cube geometry. Native environment closed; worker exit 0;
+no forced shutdown. Full same-run Lab/browser recording: 157.200000 seconds.
 
-Customer task extension acceptance (separate from the stacking tutorial):
-Run 79501bd58db34857969922c459d605d9: PASS.
-A separate pick-and-place application uses only the documented session API and
-success callback. It exports one native HDF5 episode with 761 samples and 108
-correlated commands; maximum position difference 1.6074436996170352e-7 metres.
-Lift 0.15978 metres, final XY error below 0.000895 metres; last twenty native
-states confirm placement, settling, open fingers and tool retraction. Worker
-exit 0, no forced shutdown. Full host/browser video 223.35 seconds.
-Lab records policy observations before a step and rigid-body states after it;
-the verifier aligns these and uses raw finger joints (the processed second
-finger observation has a negative sign).
+Custom task acceptance (kept separate from the stacking tutorial):
+Run 9717f37107884bc3924e9f5839ff6344: PASS.
+The application uses only FrankaTaskSession and a custom success callback.
+One native episode, 752 samples, 109 correlated commands.
+Maximum position difference 1.57192716e-07 metres.
+Lift 0.159786 m; final XY error 0.000906 m.
+Last twenty native states verify placement, settling, open fingers and retraction.
+Native environment closed; worker exit 0; no forced shutdown.
+Full same-run Lab/browser recording: 125.350000 seconds.
 
-Native driver-crash control:
-Run e767207f7f6d4097aa2f4fdd685cefa8: expected failure detected.
-The driver exits abruptly with status 23 after attachment. With a three-second
-lease, the native observer detects expiration and exits with status 1, no
-successful export and no forced shutdown. The normal default lease is 30 seconds.
+Verification and packaging:
+Both native HDF5 datasets are checked against feedback and command receipts,
+with native pre-step observations aligned to post-step states. Both videos fully
+decode. Selected frames show grasp, lift, transfer and release in both views;
+this is sampled visual inspection, not exhaustive video-model evaluation.
+The final feature Python modules match those executed byte for byte. Version,
+setup documentation and browser-only mock fixtures changed after native runs;
+production browser source is unchanged. Exact wheel/build identities, final
+repository checks, independent review and archive checks accompany this package.
+25 Python controls, 130 JavaScript tests and four browser checks pass.
 
-Evidence and checks:
-Native datasets, command receipts, logs, source identities, independent numeric
-verification and full recordings accompany the candidate. Selected-frame visual
-inspection confirms approach, grasp, transfer and release in both views; this
-is not exhaustive frame-by-frame visual model evaluation.
-Unit controls cover invalid poses, stale/mismatched feedback, strict callback
-results, driver ownership, expired heartbeat, completion and cleanup failures.
-Final repository checks and package identities are in the release manifest.
-The browser implementation and earlier MCAP replay are unchanged; no fresh MCAP
-or browser-only transport-mock qualification is implied by these native runs.
-
-Limits and retained failures:
-This is validation on a prepared host, not a clean-machine installation study.
-Host-specific browser test flags bypassed certificate and sandbox enforcement;
-the documented customer setup requires a trusted certificate and normal sandbox.
-A missing optional dependency in the test harness, an incorrect frame-array
-assumption and native Kit process teardown exposed three failed attempts. Those
-failures are retained; the latter two led to regression tests and a supervised
-observer. The successful stacking wheel differs from the subsequent customer
-wheel only by removal of an unused Python import in observer_process.py.
-Repeated success/reliability, arbitrary robot/task adapters, real robots,
-physical Pico/Quest sensing and current Isaac Capture 1.6 native compatibility
-are not qualified. Earlier three-episode footage demonstrates the preceding
-preview, not repetition testing of the new session API.
-No official SDK release or upstream/main merge is implied.
+Retained failures and scope:
+The first native attempt timed out without advancing/exporting while first-launch
+Kit/desktop dialogs obscured the session. It was stopped and preserved before
+resolving the setup prompts and using a new run directory. The long browser-only
+sweep test exposed a missing decoded mock frame; the real startup watchdog
+correctly disconnected and released input. Its fixture now supplies that frame.
+No production timeout or input-release behavior was weakened.
+Lab's managed uv configuration intentionally overrides several upstream dependency
+pins; the raw dependency checker reports these conflicts and two excluded optional
+packages. This is an exercised pinned Lab environment, not a globally conflict-free
+Python stack. No Error/Traceback lines occur in the two successful native Lab logs.
+Fresh environment on an existing GPU/desktop host, with download caches reused;
+not a new operating-system installation or a blinded first-time-user study.
+The same assistant authored the custom application with prior project context.
+Earlier driver-crash and MCAP checks remain historical evidence; they were not
+rerun on 1.7. Repeated reliability, other SDK versions/robots, physical sensing,
+hand/body/glove devices and real-robot safety remain outside this qualification.
+Earlier three-episode footage in the tutorial is explicitly labelled historical.
+This is our branch delivery, not an official NVIDIA SDK release. NVIDIA main
+must not be modified or merged into as part of this work.

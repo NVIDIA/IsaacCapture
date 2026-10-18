@@ -45,6 +45,10 @@ test('generated sweep completes once and an exported trace can be imported', asy
   await page.goto('http://localhost:8082/?syntheticXR=1&immersiveMode=vr');
   await page.waitForFunction(() => Boolean(window.syntheticXR));
   await page.click('#startButton');
+  await page.waitForFunction(() => window.syntheticXR.lastFrame?.sources.length === 2);
+  // This long-running input test needs a decoded mock frame, or the real startup
+  // watchdog correctly disconnects the transport and releases synthetic input.
+  await page.evaluate(() => window.__mockCloudXRVideoFrame(1));
   const run = page.getByRole('button', { name: 'Run controller sweep' });
   await expect(run).toBeEnabled();
   await run.click();

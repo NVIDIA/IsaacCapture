@@ -57,7 +57,7 @@ Trigger values close or open the gripper, just as a physical trigger would.
 Try the example
 ---------------
 
-Use a configured CloudXR and Isaac Lab host, this preview's built WebXR client
+Use the fresh-install recipe linked below, this branch's built WebXR client
 and the example's optional Franka dependencies. A headset and ADB are not needed;
 CloudXR's GPU, network and certificate requirements still apply.
 
@@ -72,8 +72,9 @@ The Synthetic XR panel lets you see the input being applied. **You do not need
 to select Left/Right or operate its movement buttons for this example.**
 
 The current candidate validates the session interface with one successful
-seed-42 stacking episode on the TeleOp 1.5 / CloudXR 6.3 / Lab compatibility
-stack. A separate customer-application acceptance check also verifies a custom
+seed-42 stacking episode on a fresh Lab environment with this branch's
+Isaac Capture 1.7 SDK and CloudXR 6.3. The browser uses normal sandboxing
+and a trusted localhost certificate. A separate customer-application acceptance check also verifies a custom
 success callback and native dataset export. The earlier preview recording above
 shows three randomized stacking episodes; it is not a reliability measurement
 of the new interface. See the

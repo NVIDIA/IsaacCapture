@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isaaccapture-examples-synthetic-xr"
-version = "0.2.0"
+version = "0.2.1"
 description = "Synthetic XR Teleoperation desktop examples"
 readme = "README.md"
 license = "Apache-2.0"
