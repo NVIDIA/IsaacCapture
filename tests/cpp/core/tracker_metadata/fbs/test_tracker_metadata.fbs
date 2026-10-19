@@ -7,8 +7,6 @@ namespace core;
 
 table TestTrackerMetadata {
   label: string (id: 0);
-
-  sizes: [uint16] (id: 1);
 }
 
 root_type TestTrackerMetadata;

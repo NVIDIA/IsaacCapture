@@ -42,7 +42,6 @@ core::Serialized<core::TestTrackerMetadata> make_metadata(const std::string& lab
 {
     core::TestTrackerMetadataT native;
     native.label = label;
-    native.sizes = { 3, 4 };
     return core::pack<core::TestTrackerMetadata>(native);
 }
 
@@ -374,6 +373,13 @@ TEST_CASE("A metadata sample that is not a valid table is an error naming its co
     live.start_metadata();
     const std::vector<uint8_t> garbage{ 0xff, 0xff, 0xff, 0x7f };
     live.runtime.push(METADATA_COLLECTION, garbage, 1);
+    CHECK_THROWS_WITH(live.step(), Catch::Matchers::ContainsSubstring(METADATA_COLLECTION));
+}
+
+TEST_CASE("A metadata collection with samples over TRACKER_METADATA_MAX_SIZE is an error", "[unit][tracker_metadata]")
+{
+    LiveSession live;
+    live.start_metadata(static_cast<uint32_t>(core::TRACKER_METADATA_MAX_SIZE) + 1);
     CHECK_THROWS_WITH(live.step(), Catch::Matchers::ContainsSubstring(METADATA_COLLECTION));
 }
 
