@@ -276,11 +276,13 @@ build itself. There is **no checked-in dependency registry** and adding one woul
 be a second source of truth — declare a dependency the way you already would and
 it appears in the next wheel's inventory.
 
-Two things fail the Release build rather than shipping a gap, and neither is
+Three things fail the Release build rather than shipping a gap, and none is
 fixed by excluding a file or writing down an assumption:
 
 - **a wheel member the build cannot explain** — teach the collector that route;
-- **a redistributed component with no license text** — obtain the terms.
+- **a redistributed component with no license text** — obtain the terms;
+- **a checked-in third-party file that fails the per-file REUSE gate** — record
+  upstream's terms in its REUSE info (sbom.rst says how).
 
 The collector is a project of its own: `uv run --project scripts/sbom
 isaaccapture-sbom ...`. Its dependency pins live in `scripts/sbom/pyproject.toml`

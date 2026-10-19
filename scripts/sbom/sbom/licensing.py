@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from license_expression import (
     ExpressionError,
+    LicenseWithExceptionSymbol,
     combine_expressions,
     get_spdx_licensing,
 )
@@ -164,8 +165,8 @@ class Reference:
     """One SPDX licence, normalized for comparison and kept verbatim.
 
     The text is retained because it is the only authoritative copy of a licence
-    this build has: a component that states an identifier and ships no file of
-    its own has to be packaged with the text that identifier names.
+    this build has: a component whose terms are declared as an identifier has
+    to be packaged with the text that identifier names.
     """
 
     name: str
@@ -183,9 +184,21 @@ class CorpusError(Exception):
 
 _CORPUS: tuple[str, dict[str, Reference]] | None = None
 _CORPUS_META: dict[str, object] = {}
+# Every licence and exception id the same list names, deprecated ones included.
+_LISTED: "_Listed | None" = None
 # Parsing and n-gramming the whole SPDX list costs about half a second. Keyed by
 # directory and only ever read within one process, so a re-load is free.
-_PARSED: dict[str, tuple[str, dict[str, Reference]]] = {}
+_PARSED: dict[str, tuple[str, dict[str, Reference], "_Listed"]] = {}
+
+
+@dataclass(frozen=True)
+class _Listed:
+    """Every id the pinned list names, deprecated ones included."""
+
+    licences: frozenset[str]
+    exceptions: frozenset[str]
+    # Exception reference texts, from json/exceptions/<id>.json.
+    exception_texts: dict[str, str]
 
 
 def corpus_provenance() -> dict[str, object]:
@@ -196,11 +209,13 @@ def corpus_provenance() -> dict[str, object]:
 def load_corpus(json_dir: Path) -> str:
     """Load SPDX reference texts from the checkout deps/third_party fetched.
 
-    `json_dir` is the `json/` directory of spdx/license-list-data. Deprecated
-    identifiers are skipped: naming a component with one would be reporting a
-    license SPDX has withdrawn.
+    `json_dir` is the `json/` directory of spdx/license-list-data: the licence
+    reference texts, every licence and exception id the list names, and the
+    exceptions' texts. Deprecated licence ids are
+    skipped: naming a component with one would be reporting a license SPDX has
+    withdrawn.
     """
-    global _CORPUS
+    global _CORPUS, _LISTED
     details = json_dir / "details"
     index_file = json_dir / "licenses.json"
     if not details.is_dir() or not index_file.is_file():
@@ -211,7 +226,7 @@ def load_corpus(json_dir: Path) -> str:
 
     cached = _PARSED.get(str(details.resolve()))
     if cached is not None:
-        version, entries = cached
+        version, entries, listed = cached
     else:
         entries = {}
         for path in sorted(details.glob("*.json")):
@@ -232,12 +247,37 @@ def load_corpus(json_dir: Path) -> str:
         if not entries:
             raise CorpusError(f"no usable license texts under {details}")
 
-        version = json.loads(index_file.read_text(encoding="utf-8")).get(
-            "licenseListVersion", "unknown"
+        index = json.loads(index_file.read_text(encoding="utf-8"))
+        version = index.get("licenseListVersion", "unknown")
+        exceptions = json_dir / "exceptions.json"
+        try:
+            exception_ids = frozenset(
+                item["licenseExceptionId"]
+                for item in json.loads(exceptions.read_text(encoding="utf-8"))[
+                    "exceptions"
+                ]
+            )
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+            raise CorpusError(
+                f"{exceptions} could not be read: {error}. Re-configure the build "
+                "so deps/third_party fetches it."
+            ) from error
+        texts: dict[str, str] = {}
+        for path in sorted((json_dir / "exceptions").glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise CorpusError(f"{path} could not be read: {error}") from error
+            if payload.get("licenseExceptionText"):
+                texts[payload["licenseExceptionId"]] = payload["licenseExceptionText"]
+        listed = _Listed(
+            frozenset(item["licenseId"] for item in index["licenses"]),
+            exception_ids,
+            texts,
         )
-        _PARSED[str(details.resolve())] = (version, entries)
+        _PARSED[str(details.resolve())] = (version, entries, listed)
 
-    _CORPUS = (version, entries)
+    _CORPUS, _LISTED = (version, entries), listed
     _CORPUS_META.clear()
     _CORPUS_META.update(
         {
@@ -484,6 +524,11 @@ def expressible(license_id: str) -> bool:
         return False
 
 
+def grammar_names(identifiers) -> bool:
+    """Whether the SPDX grammar this document ships with can name every id."""
+    return all(expressible(item) or is_exception(item) for item in identifiers)
+
+
 def explains_the_text(matches) -> bool:
     """Whether the matched licences account for most of what the file says.
 
@@ -496,6 +541,17 @@ def explains_the_text(matches) -> bool:
 
 def why_unnamed(grants: list[LicenseEvidence]) -> str:
     """Why terms travel verbatim rather than under an SPDX identifier."""
+    if grants and all(item.origin == SPDX_REFERENCE for item in grants):
+        # Declared, not matched: the declaration names an id the grammar lacks.
+        newer = sorted(
+            item.identified
+            for item in grants
+            if item.identified and not grammar_names([item.identified])
+        )
+        return (
+            f"Declares {', '.join(newer) or 'an identifier'}, newer than the SPDX "
+            "grammar this document ships with"
+        )
     if not any(item.matches for item in grants):
         return "Matched no text in the SPDX reference corpus"
     partial = [item for item in grants if not explains_the_text(item.matches)]
@@ -511,6 +567,101 @@ def why_unnamed(grants: list[LicenseEvidence]) -> str:
     # Matched, but under an id the grammar shipped with this document cannot
     # validate, so it cannot be named here.
     return "Matched an identifier newer than the SPDX grammar this document ships with"
+
+
+def _listed() -> _Listed:
+    if _LISTED is None:
+        raise CorpusError("SPDX license list data has not been loaded")
+    return _LISTED
+
+
+def listed_exception(identifier: str) -> bool:
+    """Whether the pinned list names this id as an exception."""
+    return identifier in _listed().exceptions
+
+
+def exception_evidence(component_key: str, expression: str) -> list[LicenseEvidence]:
+    """The SPDX reference text for each exception an expression names."""
+    texts = _listed().exception_texts
+    found = []
+    for key in sorted(set(identifiers_in(expression)) & _listed().exceptions):
+        if key not in texts:
+            raise CorpusError(
+                f"json/exceptions/{key}.json is missing from the SPDX license list "
+                "data; re-configure the build so deps/third_party fetches it."
+            )
+        found.append(
+            evidence_for(
+                component_key, SPDX_REFERENCE, f"{key}.txt", texts[key], "grant"
+            )
+        )
+    return found
+
+
+def why_unlicensed(expressions) -> str | None:
+    """Why one vendored file's REUSE expressions fail the per-file gate, if they do.
+
+    `expressions` are REUSE's `SpdxExpression`s, so REUSE decides what parses.
+    Every licence named needs a reference text: a LicenseRef beside MIT would
+    otherwise be defined in the document by MIT's text, and an obligation with
+    none ships nothing. An exception needs only to be listed as an exception.
+    """
+    entries = corpus()[1]
+    licences: set[str] = set()
+    exceptions: set[str] = set()
+    for item in expressions:
+        try:
+            parsed = (
+                _spdx_licensing().parse(str(item), validate=False)
+                if item.is_valid
+                else None
+            )
+        except (ExpressionError, ValueError, TypeError):
+            parsed = None
+        if parsed is None:
+            return f"{str(item)!r} does not parse"
+        for symbol in _spdx_licensing().license_symbols(parsed, decompose=False):
+            if isinstance(symbol, LicenseWithExceptionSymbol):
+                licences.add(symbol.license_symbol.key)
+                exceptions.add(symbol.exception_symbol.key)
+            else:
+                licences.add(symbol.key)
+    listed = _listed()
+    # `+` is SPDX's or-later operator, not part of the id. Each slot is checked
+    # against its own list: after WITH, SPDX takes only a listed exception.
+    for ids, one, many in (
+        (
+            [key for key in licences if key in listed.exceptions],
+            "is an SPDX exception, not a licence",
+            "are SPDX exceptions, not licences",
+        ),
+        (
+            [
+                key
+                for key in licences
+                if key.removesuffix("+") not in listed.licences
+                and key not in listed.exceptions
+                and not key.startswith(("LicenseRef-", "DocumentRef-"))
+            ],
+            "is not an SPDX identifier",
+            "are not SPDX identifiers",
+        ),
+        (
+            [key for key in exceptions if key not in listed.exceptions],
+            "is not an SPDX exception",
+            "are not SPDX exceptions",
+        ),
+    ):
+        if ids:
+            return f"{', '.join(sorted(ids))} " + (one if len(ids) == 1 else many)
+    textless = sorted(
+        key for key in licences if key not in entries or not entries[key].text
+    )
+    if textless or not licences:
+        return "no current SPDX-listed licence with a reference text" + (
+            f" for {', '.join(textless)}" if textless else ""
+        )
+    return None
 
 
 def expression(
@@ -538,7 +689,7 @@ def expression(
             if item.origin == SPDX_REFERENCE and item.identified
         }
     )
-    if identified and component_key and not all(map(expressible, identified)):
+    if identified and component_key and not grammar_names(identified):
         identified = [license_ref(component_key)]
     if not identified and grants and component_key:
         identified = [license_ref(component_key)]
@@ -814,13 +965,12 @@ def combine(expressions: list[str]) -> str:
 def canonical_evidence(
     component_key: str, expressions: set[str]
 ) -> list[LicenseEvidence]:
-    """The SPDX reference text for the ids a vendored file declares about itself.
+    """The SPDX reference text for the ids a vendored file's REUSE info declares.
 
-    Such a component ships no licence file, so there is nothing of its own to
-    package verbatim and the text its identifier names is the only honest
-    substitute. It comes from the list this build pinned and fetched -- never
-    from this repository's own REUSE pool, whose copies exist to license *this*
-    project and carry its notices, not the component's.
+    The text its identifier names is what conveys those terms. It comes from the
+    list this build pinned and fetched -- never from this repository's own REUSE
+    pool, whose copies exist to license *this* project and carry its notices,
+    not the component's.
     """
     found: list[LicenseEvidence] = []
     seen: set[str] = set()
@@ -829,10 +979,10 @@ def canonical_evidence(
         try:
             parsed = _spdx_licensing().parse(expression, validate=False)
         except (ExpressionError, ValueError, TypeError):
-            # A header tag is written by hand and can say anything -- "Public
+            # REUSE info is written by hand and can say anything -- "Public
             # domain or MIT License" is not an expression. One that will not
-            # parse names no reference text; the component is then reported with
-            # no licence evidence, which is the gap, rather than stopping here.
+            # parse names no reference text; the build's per-file gate names the
+            # file that states it, so nothing stops here.
             continue
         for token in _spdx_licensing().license_keys(parsed):
             reference = entries.get(token)
@@ -901,7 +1051,8 @@ def is_exception(identifier: str) -> bool:
     """Whether an identifier is a licence exception rather than a licence.
 
     An exception modifies the licence it is attached to; the pinned list ships
-    their texts separately and this build fetches only the licences.
+    their texts separately, and one ships only where its expression travels as a
+    LicenseRef.
     """
     try:
         parsed = _spdx_licensing().parse(identifier, validate=False)

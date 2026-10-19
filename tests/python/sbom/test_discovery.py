@@ -184,9 +184,9 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
     ]
     component = next(iter(vendored.values()))
     assert component.license_concluded == "BSL-1.0"
-    # The file states an identifier and carries no text of its own, so the text
-    # comes from the SPDX list this build pinned -- never from this repository's
-    # own REUSE pool, whose copies license this project and carry its notices.
+    # The text for the identifier the file declares comes from the SPDX list this
+    # build pinned -- never from this repository's own REUSE pool, whose copies
+    # license this project and carry its notices.
     assert [item.path for item in component.evidence] == ["BSL-1.0.txt"]
     assert all(item.origin == "spdx-reference" for item in component.evidence)
     # The notice the component states about itself is recorded, not dropped.
@@ -405,3 +405,193 @@ def test_vendored_material_asserts_no_package_identifier(workspace, license_data
     assert component.purl == "NOASSERTION"
     # Who it came from is still stated; that much was observed.
     assert component.supplier == "Organization: Upstream Widgets Ltd"
+
+
+_DECLARED = {
+    "header": {
+        "src/x.h": "// Copyright 2020 Foo Inc\n// SPDX-"
+        + "License-Identifier: MIT OR Apache-2.0\n"
+    },
+    "sidecar": {
+        "src/x.h": "// Copyright 2020 Foo Inc\n",
+        "src/x.h.license": "SPDX-FileCopyrightText: Copyright 2020 Foo Inc\n"
+        "SPDX-" + "License-Identifier: MIT OR Apache-2.0\n",
+    },
+    "REUSE.toml": {
+        "src/x.h": "// Copyright 2020 Foo Inc\n",
+        "REUSE.toml": 'version = 1\n\n[[annotations]]\npath = "src/x.h"\n'
+        'SPDX-FileCopyrightText = "Copyright 2020 Foo Inc"\n'
+        "SPDX-" + 'License-Identifier = "MIT OR Apache-2.0"\n',
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "files", [pytest.param(files, id=name) for name, files in _DECLARED.items()]
+)
+def test_a_vendored_files_terms_are_what_reuse_declares(tmp_path, files):
+    """A header tag, a `.license` sidecar and a REUSE.toml annotation are one
+    declaration; each gives the identifier as written, `OR` and all, and the
+    reference text for every licence it names."""
+    for relative, text in files.items():
+        synth.write(tmp_path / relative, text)
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "src/x.h"}, {"NVIDIA"}
+    )
+    component = components["vendored:foo-inc"]
+
+    assert component.license_concluded == "MIT OR Apache-2.0"
+    assert component.license_declared == "MIT OR Apache-2.0"
+    assert sorted(item.path for item in component.evidence) == [
+        "Apache-2.0.txt",
+        "MIT.txt",
+    ]
+    assert all(item.origin == "spdx-reference" for item in component.evidence)
+    assert component.copyright_text == "Copyright 2020 Foo Inc"
+
+
+@pytest.mark.parametrize(
+    ("tag", "reason"),
+    [
+        ("", "no current SPDX-listed licence"),
+        (
+            "// SPDX-" + "License-Identifier: LicenseRef-Foo\n",
+            "no current SPDX-listed licence",
+        ),
+        # MIT has a text; the LicenseRef would be defined by it in the document.
+        (
+            "// SPDX-" + "License-Identifier: MIT AND LicenseRef-Foo\n",
+            "no current SPDX-listed licence with a reference text for LicenseRef-Foo",
+        ),
+        ("// SPDX-" + "License-Identifier: not ( an expression\n", "does not parse"),
+        # A valid tag, then one quoted in the body: REUSE reads both.
+        (
+            "// SPDX-" + "License-Identifier: MIT\n"
+            'const char *tag = "// SPDX-' + 'License-Identifier: GPL-2.0-only\\n";\n',
+            "does not parse",
+        ),
+        (
+            "// SPDX-" + "License-Identifier: MIT AND Foo-1.0\n",
+            "Foo-1.0 is not an SPDX identifier",
+        ),
+        (
+            "// SPDX-" + "License-Identifier: MIT AND Bar-2.0 AND Foo-1.0\n",
+            "Bar-2.0, Foo-1.0 are not SPDX identifiers",
+        ),
+        # `+` is SPDX's operator, so the id is known; there is just no text for it.
+        (
+            "// SPDX-" + "License-Identifier: Apache-2.0+\n",
+            "no current SPDX-listed licence with a reference text",
+        ),
+        # Listed, but as a licence: the exception slot takes only exceptions.
+        (
+            "// SPDX-" + "License-Identifier: MIT WITH Apache-2.0\n",
+            "Apache-2.0 is not an SPDX exception",
+        ),
+        (
+            "// SPDX-" + "License-Identifier: MIT WITH LicenseRef-Foo\n",
+            "LicenseRef-Foo is not an SPDX exception",
+        ),
+        (
+            "// SPDX-" + "License-Identifier: MIT AND rsync-linking-exception\n",
+            "rsync-linking-exception is an SPDX exception, not a licence",
+        ),
+    ],
+    ids=[
+        "no-info",
+        "licenseref-only",
+        "licenseref-beside-listed",
+        "unparseable",
+        "quoted-in-body",
+        "unknown-id",
+        "unknown-ids",
+        "or-later",
+        "licence-as-exception",
+        "licenseref-as-exception",
+        "exception-as-licence",
+    ],
+)
+def test_a_file_lending_nothing_is_named_not_covered_by_its_sibling(
+    tmp_path, tag, reason
+):
+    """A holder's licences are pooled for the component; a file whose own REUSE
+    info names a licence with no current SPDX reference text, states an
+    expression that does not parse, or names an id that is neither SPDX-listed
+    nor a LicenseRef- is still recorded, with why."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/a.h").write_text(
+        "// Copyright 2020 Foo Inc\n// SPDX-" + "License-Identifier: MIT\n"
+    )
+    (tmp_path / "src/b.h").write_text("// Copyright 2020 Foo Inc\n" + tag)
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "src/a.h", tmp_path / "src/b.h"}, {"NVIDIA"}
+    )
+
+    [(path, why)] = components["vendored:foo-inc"].unlicensed
+    assert path == "src/b.h"
+    assert reason in why
+
+
+def test_the_reuse_hook_lints_every_source_suffix_the_collector_reads(checkout):
+    """The collector reads REUSE info from these; the pre-commit hook is what
+    lints it. Compiled suffixes no tracked-source scan names (.inc, .cu, shader
+    stages) reach the collector as build inputs."""
+    from sbom import evidence
+
+    hook = synth.load("check_licenses", checkout / "scripts" / "check_licenses.py")
+
+    suffixes = evidence._TAGGABLE_SOURCE | {".inc", ".cu", ".cuh", ".frag", ".vert"}
+    assert not [s for s in sorted(suffixes) if not hook.SOURCE_FILES.search(f"x{s}")]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["BSL-1.0 WITH rsync-linking-exception", "GPL-2.0+"],
+    ids=["exception-newer-than-grammar", "deprecated-or-later"],
+)
+def test_a_listed_identifier_passes_the_per_file_gate(tmp_path, expression):
+    """Listed in the pinned SPDX data, whatever the grammar knows: an exception
+    newer than it, or an id it maps through SPDX's `+` or-later operator."""
+    (tmp_path / "x.h").write_text(
+        "// Copyright 2020 Foo Inc\n// SPDX-" + f"License-Identifier: {expression}\n"
+    )
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "x.h"}, {"NVIDIA"}
+    )
+
+    assert components["vendored:foo-inc"].unlicensed == ()
+
+
+def test_a_link_without_reuse_info_takes_its_targets(tmp_path):
+    """The REUSE lint skips symlinks and checks only the target, so a link with
+    no info of its own is read the same way; a link's own info still wins."""
+    synth.write(tmp_path / "src/real/x.h", "// Copyright 2020 Foo Inc\n")
+    (tmp_path / "src/link").mkdir()
+    (tmp_path / "src/link/x.h").symlink_to("../real/x.h")
+    synth.write(
+        tmp_path / "REUSE.toml",
+        'version = 1\n\n[[annotations]]\npath = "src/real/x.h"\n'
+        'SPDX-FileCopyrightText = "Copyright 2020 Foo Inc"\n'
+        "SPDX-" + 'License-Identifier = "MIT"\n',
+    )
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "src/link/x.h"}, {"NVIDIA"}
+    )
+
+    assert components["vendored:foo-inc"].unlicensed == ()
+    assert components["vendored:foo-inc"].license_concluded == "MIT"
+
+    synth.write(
+        tmp_path / "src/link/x.h.license",
+        "SPDX-FileCopyrightText: Copyright 2020 Foo Inc\n"
+        "SPDX-" + "License-Identifier: BSD-3-Clause\n",
+    )
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "src/link/x.h"}, {"NVIDIA"}
+    )
+
+    assert components["vendored:foo-inc"].license_concluded == "BSD-3-Clause"

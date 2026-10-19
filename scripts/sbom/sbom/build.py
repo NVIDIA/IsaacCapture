@@ -319,6 +319,21 @@ def build(
             + "\nThey reached the wheel by a route the collector cannot see."
         )
 
+    unlicensed = sorted(
+        f"{path} ({key}): {reason}"
+        for key, component in inventory.components_present.items()
+        for path, reason in component.unlicensed
+    )
+    if unlicensed:
+        raise BuildError(
+            "the REUSE licence info of these checked-in third-party files fails "
+            "the per-file gate:\n  "
+            + "\n  ".join(unlicensed)
+            + "\nRecord upstream's terms as REUSE info: a header tag, a .license "
+            "sidecar or a REUSE.toml annotation. For a stray tag, see 'How licenses "
+            "are determined' in docs/source/references/sbom.rst."
+        )
+
     missing = [
         key
         for key, component in inventory.components_present.items()

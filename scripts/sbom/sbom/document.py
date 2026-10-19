@@ -48,6 +48,7 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
     texts = [
         f"License evidence: {item.path} (sha256:{item.sha256}, {item.size} bytes, "
         f"{item.origin}, {item.kind}) packaged at "
+        # Whitespace after the path: validate.py reads it up to the first one.
         f"{report.packaged_license_path(dist_info, component.key, item)}"
         + (
             " identified as "
@@ -56,11 +57,10 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
                 for license_id, containment, coverage in item.matches
             )
             if item.matches
-            # No text of its own to package: this is the SPDX reference text for
-            # the identifier the component's files state about themselves, which
-            # is a substitution and not a reading of the component.
-            else f" the SPDX reference text for {item.identified}, substituted "
-            "because this component ships no license file"
+            # The SPDX reference text for an identifier the component's files
+            # declare, which is a substitution and not a reading of the component.
+            else f" — the SPDX reference text for {item.identified}, an identifier "
+            "REUSE declares for this component's files; not the component's own file"
             if item.origin == licensing.SPDX_REFERENCE
             else ""
         )

@@ -304,6 +304,7 @@ FetchContent_Declare(
         "-DSPDX_REPOSITORY=https://github.com/spdx/license-list-data.git"
         "-DSPDX_COMMIT=${SPDX_LICENSE_DATA_COMMIT}"
         "-DSPDX_SOURCE_DIR=${SPDX_LICENSE_DATA_SOURCE_DIR}"
+        "-DSPDX_SPARSE_DIR=json"
         -P "${CMAKE_CURRENT_LIST_DIR}/fetch_license_list_data.cmake"
 )
 FetchContent_MakeAvailable(license_list_data)
@@ -311,9 +312,11 @@ FetchContent_MakeAvailable(license_list_data)
 # What the SBOM collector reads, and what the sbom tests run against.
 set(SPDX_LICENSE_DATA_JSON_DIR "${SPDX_LICENSE_DATA_SOURCE_DIR}/json"
     CACHE INTERNAL "SPDX reference license texts for the SBOM collector")
-if(NOT EXISTS "${SPDX_LICENSE_DATA_JSON_DIR}/licenses.json")
-    message(FATAL_ERROR "SPDX license list data is missing json/licenses.json after fetch")
-endif()
+foreach(_spdx_index licenses.json exceptions.json)
+    if(NOT EXISTS "${SPDX_LICENSE_DATA_JSON_DIR}/${_spdx_index}")
+        message(FATAL_ERROR "SPDX license list data is missing json/${_spdx_index} after fetch")
+    endif()
+endforeach()
 
 # ==============================================================================
 # Chromium physical key table (vendored source, BSD-3-Clause; see chromium/README.md)

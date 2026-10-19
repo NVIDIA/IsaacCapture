@@ -24,6 +24,10 @@ dependencies = [
     "packageurl-python==0.17.6",   # purls
     "packaging==26.3",             # core metadata, requirements
     "pyelftools==0.33",            # ELF dynamic section (auditwheel uses it too)
+    # REUSE metadata of checked-in third-party files. Keep in step with the
+    # reuse-tool rev in .pre-commit-config.yaml, which lints that metadata. Reads
+    # files through python-magic, so `build` needs libmagic1 on the runner.
+    "reuse==6.2.0",
 ]
 
 [project.optional-dependencies]

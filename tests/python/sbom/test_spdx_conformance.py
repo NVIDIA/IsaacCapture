@@ -32,3 +32,42 @@ def test_relationships_survive_the_round_trip(built):
 
     assert {"DESCRIBES", "STATIC_LINK", "CONTAINS", "DEPENDS_ON"} <= kinds
     assert {"GENERATED_FROM", "COPY_OF"} & kinds
+
+
+def test_an_identifier_newer_than_the_grammar_still_validates(workspace):
+    """A vendored file may name an exception the pinned list has and the
+    grammar consumers validate with does not; it travels as a LicenseRef with
+    its texts, and the report lists it as an evidence gap."""
+    import json
+
+    import synth
+    from sbom import build as build_module
+
+    synth.write(
+        workspace.root / "src/vendor/rsync_helper.h",
+        "// Copyright 2024 Rsync Folk\n// SPDX-"
+        + "License-Identifier: BSL-1.0 WITH rsync-linking-exception\n",
+    )
+    synth.track(workspace.root)
+    synth.write_wheel(workspace.wheel, synth.wheel_payload(workspace))
+    out_dir = workspace.root / "sbom"
+    build_module.build(workspace.root, workspace.build, workspace.wheel, out_dir)
+
+    stem = synth.WHEEL_NAME.removesuffix(".whl")
+    document = parse_file(str(out_dir / f"{stem}.spdx.json"))
+    assert validate_full_spdx_document(document) == []
+
+    report = json.loads((out_dir / f"{stem}.licenses.json").read_text())
+    component = next(
+        item
+        for item in report["components"]
+        if item["component"] == "vendored:rsync-folk"
+    )
+    assert component["license_concluded"] == "LicenseRef-vendored-rsync-folk"
+    gaps = {
+        item["component"]: item
+        for item in report["components_with_unidentified_license"]
+    }
+    # The id that caused the fallback is named, and its text ships.
+    assert "rsync-linking-exception" in gaps["vendored:rsync-folk"]["reason"]
+    assert "rsync-linking-exception.txt" in gaps["vendored:rsync-folk"]["evidence"]

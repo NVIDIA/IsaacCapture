@@ -570,3 +570,70 @@ def test_one_wheel_with_differing_evidence_merges(tmp_path, built):
         merged["wheels"][0]["sidecars"]["build_evidence"]["sha256"]
         == (built["manifest"]["wheels"][0]["sidecars"]["build_evidence"]["sha256"])
     )
+
+
+def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
+    """A checked-in header that names no identifier, as Chromium's key table
+    does, under `src/vendor` so the extension that includes it ships it."""
+    synth.write(
+        workspace.root / "src/vendor/keys/include/keys/table.h", synth.UNTAGGED_HEADER
+    )
+    synth.write(
+        workspace.root / "REUSE.toml",
+        'version = 1\n\n[[annotations]]\npath = "src/vendor/keys/**"\n'
+        'SPDX-FileCopyrightText = "Copyright 2013 The Keys Authors"\n'
+        "SPDX-" + 'License-Identifier = "BSD-3-Clause"\n',
+    )
+    synth.track(workspace.root)
+    _rebuild(workspace, synth.wheel_payload(workspace))
+
+    stem = WHEEL_NAME.removesuffix(".whl")
+    evidence = json.loads(
+        (workspace.root / "sbom" / f"{stem}.build-evidence.json").read_text()
+    )
+    component = evidence["components"][synth.UNTAGGED_KEY]
+    assert component["in_this_wheel"]
+    assert component["license_concluded"] == "BSD-3-Clause"
+    assert [item["path"] for item in component["evidence"]] == ["BSD-3-Clause.txt"]
+
+
+@pytest.mark.parametrize(
+    ("relative", "text", "key"),
+    [
+        pytest.param(
+            "src/vendor/keys/include/keys/table.h",
+            synth.UNTAGGED_HEADER,
+            synth.UNTAGGED_KEY,
+            id="no-sibling",
+        ),
+        pytest.param(
+            "src/vendor/widgets_extra.h",
+            "// Copyright 2024, Upstream Widgets Ltd.\n",
+            "vendored:upstream-widgets-ltd",
+            id="no-info",
+        ),
+        pytest.param(
+            "src/vendor/widgets_extra.h",
+            "// Copyright 2024, Upstream Widgets Ltd.\n"
+            "// SPDX-" + "License-Identifier: LicenseRef-Widgets\n",
+            "vendored:upstream-widgets-ltd",
+            id="licenseref-only",
+        ),
+    ],
+)
+def test_each_vendored_file_needs_a_listed_licence_of_its_own(
+    workspace, relative, text, key
+):
+    """`src/vendor/upstream_helper.h` states BSL-1.0 for its holder; a file of
+    another holder, or a second file of theirs, stating nothing or only a
+    LicenseRef with no text, is not covered by it."""
+    synth.write(workspace.root / relative, text)
+    synth.track(workspace.root)
+
+    with pytest.raises(build_module.BuildError) as raised:
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+    message = str(raised.value)
+    assert "fails the per-file gate" in message
+    assert f"{relative} ({key}): no current SPDX-listed licence" in message
+    assert "upstream_helper.h" not in message

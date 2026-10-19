@@ -165,8 +165,13 @@ def notices_markdown(
             lines.append(
                 f"- Text: `{packaged}`"
                 + (
-                    " — the SPDX reference text for this licence, not this "
-                    "component's own file, which it ships none of"
+                    " — the SPDX reference text for this "
+                    + (
+                        "exception"
+                        if licensing.listed_exception(item.identified or "")
+                        else "licence"
+                    )
+                    + ", not this component's own file"
                     if item.origin == licensing.SPDX_REFERENCE
                     else ""
                 )
@@ -175,6 +180,11 @@ def notices_markdown(
             lines.append("- No license text was found in this component's own files.")
         lines.append("")
     return "\n".join(lines)
+
+
+def _lowercase_first(text: str) -> str:
+    """Run a sentence on; its ids keep their case."""
+    return text[:1].lower() + text[1:]
 
 
 def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
@@ -224,7 +234,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                     "component": key,
                     "reason": (
                         "the shipped grant is carried verbatim rather than named: "
-                        + licensing.why_unnamed(grants).lower()
+                        + _lowercase_first(licensing.why_unnamed(grants))
                     ),
                     "evidence": [item.path for item in grants],
                 }

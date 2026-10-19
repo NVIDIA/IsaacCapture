@@ -34,6 +34,7 @@ from .discovery import (
 )
 
 # Suffixes whose files conventionally carry a REUSE header naming their holder.
+# scripts/check_licenses.py lints these too; a test in tests/python/sbom ties them.
 _TAGGABLE_SOURCE = {".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".pyi", ".sh", ".cmake"}
 
 # Cache entries that pin what a wheel contains. The rest of the cache is paths on

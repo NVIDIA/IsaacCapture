@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import pytest
 import synth
 from sbom import licensing
 
@@ -406,12 +407,25 @@ def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
 def test_an_exception_is_not_a_licence_needing_its_own_text(license_data):
     """`X WITH <exception>` must not be unsatisfiable.
 
-    The pinned list ships exception texts separately and this build fetches only
-    the licences, so demanding a text for the exception blocks such a
-    declaration with an instruction nothing in the collector can meet.
+    An exception's text ships only where its expression travels as a LicenseRef,
+    so demanding one for every exception blocks such a declaration for nothing.
     """
     licensing.load_corpus(license_data)
 
     assert licensing.is_exception("LLVM-exception")
     assert licensing.is_exception("Classpath-exception-2.0")
     assert not licensing.is_exception("Apache-2.0")
+
+
+@pytest.mark.parametrize("content", [None, "{not json", '{"licenses": []}'])
+def test_the_exception_list_is_required(tmp_path, content):
+    """Without it, an exception newer than the grammar reads as an unknown id."""
+    synth._stage_license_data(tmp_path)
+    exceptions = tmp_path / "exceptions.json"
+    if content is None:
+        exceptions.unlink()
+    else:
+        exceptions.write_text(content)
+
+    with pytest.raises(licensing.CorpusError, match=r"exceptions\.json"):
+        licensing.load_corpus(tmp_path)

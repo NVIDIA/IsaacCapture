@@ -21,6 +21,7 @@ import base64
 import csv
 import gzip
 import hashlib
+import importlib.util
 import io
 import os
 import json
@@ -165,6 +166,20 @@ FIXTURE_LICENSES = (
     "MIT-0",
     "Zlib",
 )
+# Newer than the grammar the collector ships, which is what the tests need.
+FIXTURE_EXCEPTIONS = ("rsync-linking-exception",)
+
+
+def load(name: str, path: Path):
+    """Import a helper by path.
+
+    Not via `sys.path`: this directory is named `sbom`, so putting its parent on
+    the path would shadow the installed collector package with a namespace one.
+    """
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def set_license_data(path: Path) -> None:
@@ -250,6 +265,15 @@ _VENDORED_HEADER = """\
 #pragma once
 """
 
+# Upstream's header names no identifier; this repository declares it through
+# REUSE instead, as it does for Chromium's key table.
+UNTAGGED_HEADER = """\
+// Copyright 2013 The Keys Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+"""
+UNTAGGED_KEY = "vendored:the-keys-authors"
+
 _PROJECT_PYPROJECT = """\
 # SPDX-FileCopyrightText: Copyright (c) 2026 Example Org. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
@@ -284,7 +308,7 @@ def _git_checkout(root: Path, initialise: bool = True) -> None:
     `build/` and `dist/` are ignored here for the same reason they are in the
     real repository.
     """
-    _write(root / ".gitignore", "build/\ndist/\n")
+    write(root / ".gitignore", "build/\ndist/\n")
     # Fixed identity *and* clock: a commit hashes its timestamp, the collector
     # records the commit, and the wheel carries that record -- so a drifting
     # clock makes two builds of the same project differ.
@@ -311,7 +335,7 @@ def track(root: Path) -> None:
     _git_checkout(root, initialise=False)
 
 
-def _write(path: Path, data: bytes | str) -> None:
+def write(path: Path, data: bytes | str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(data, str):
         path.write_text(data, encoding="utf-8")
@@ -322,19 +346,21 @@ def _write(path: Path, data: bytes | str) -> None:
 def _stage_license_data(target: Path) -> None:
     """Mirror what deps/third_party leaves in _deps, with just the licenses used here."""
     source = license_data()
-    _write(
-        target / "licenses.json", (source / "licenses.json").read_text(encoding="utf-8")
-    )
+    for index in ("licenses.json", "exceptions.json"):
+        write(target / index, (source / index).read_text(encoding="utf-8"))
     for license_id in FIXTURE_LICENSES:
         detail = source / "details" / f"{license_id}.json"
         if detail.is_file():
-            _write(target / "details" / detail.name, detail.read_text(encoding="utf-8"))
+            write(target / "details" / detail.name, detail.read_text(encoding="utf-8"))
+    for exception_id in FIXTURE_EXCEPTIONS:
+        detail = source / "exceptions" / f"{exception_id}.json"
+        write(target / "exceptions" / detail.name, detail.read_text(encoding="utf-8"))
 
 
 def _gitclone_stub(deps: Path, key: str, remote: str) -> None:
     tmp = deps / f"{key}-subbuild" / f"{key}-populate-prefix" / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
-    _write(
+    write(
         tmp / f"{key}-populate-gitclone.cmake",
         "  clone --no-checkout --depth 1 --no-single-branch "
         f'--config "advice.detachedHead=false" "{remote}" "{key}-src"\n'
@@ -375,27 +401,27 @@ def create(root: Path) -> Workspace:
     build = workspace.build
     deps = build / "_deps"
 
-    _write(root / "VERSION", "0.4.x\n")
-    _write(root / "CMakeLists.txt", "cmake_minimum_required(VERSION 3.24)\n")
-    _write(root / "LICENSE.md", spdx_text("Apache-2.0"))
+    write(root / "VERSION", "0.4.x\n")
+    write(root / "CMakeLists.txt", "cmake_minimum_required(VERSION 3.24)\n")
+    write(root / "LICENSE.md", spdx_text("Apache-2.0"))
     for pool_id in ("Apache-2.0", "BSL-1.0"):
-        _write(root / "LICENSES" / f"{pool_id}.txt", spdx_text(pool_id))
-    _write(root / "src/python/isaaccapture/__init__.py", _AUTHORED_INIT)
-    _write(root / "src/vendor/upstream_helper.h", _VENDORED_HEADER)
-    _write(root / "pyproject.toml", _PROJECT_PYPROJECT)
-    _write(build / "CMakeCache.txt", _CACHE)
+        write(root / "LICENSES" / f"{pool_id}.txt", spdx_text(pool_id))
+    write(root / "src/python/isaaccapture/__init__.py", _AUTHORED_INIT)
+    write(root / "src/vendor/upstream_helper.h", _VENDORED_HEADER)
+    write(root / "pyproject.toml", _PROJECT_PYPROJECT)
+    write(build / "CMakeCache.txt", _CACHE)
 
     _stage_license_data(deps / "license-list-data-src" / "json")
 
     for key, (remote, license_name, license_id) in _DEPS.items():
         source = deps / f"{key}-src"
-        _write(source / license_name, spdx_text(license_id))
-        _write(source / f"{key}.cpp", f"// {key}\n")
+        write(source / license_name, spdx_text(license_id))
+        write(source / f"{key}.cpp", f"// {key}\n")
         _gitclone_stub(deps, key, remote)
 
     # vendorpy ships Python that the build stages into the wheel.
-    _write(deps / "vendorpy-src/pkg/mod.py", _VENDOR_MODULE)
-    _write(deps / "vendorpy-src/pkg/assets/hand.xml", _VENDOR_ASSET_SOURCE)
+    write(deps / "vendorpy-src/pkg/mod.py", _VENDOR_MODULE)
+    write(deps / "vendorpy-src/pkg/assets/hand.xml", _VENDOR_ASSET_SOURCE)
 
     sdk_members = _sdk_tarball(root / SDK_ARCHIVE)
 
@@ -405,44 +431,44 @@ def create(root: Path) -> Workspace:
         "_ext.cpython-312-x86_64-linux-gnu.so", ("libstdc++.so.6", "libc.so.6")
     )
     gamma_bytes = elf_shared_object("libgamma_renamed.so", ("libc.so.6",))
-    _write(workspace.staged / extension, extension_bytes)
-    _write(build / "lib/libgamma_renamed.so", gamma_bytes)
-    _write(build / "lib/libdelta.a", b"!<arch>\ndelta\n")
-    _write(build / "generated/_generated.py", _GENERATED)
+    write(workspace.staged / extension, extension_bytes)
+    write(build / "lib/libgamma_renamed.so", gamma_bytes)
+    write(build / "lib/libdelta.a", b"!<arch>\ndelta\n")
+    write(build / "generated/_generated.py", _GENERATED)
     # Empty, like the real PEP 561 marker: RECORD states size 0 for it, and the
     # bytes explain nothing, so it also stands in for any zero-length member.
-    _write(build / "generated/stubs/isaaccapture/py.typed", b"")
+    write(build / "generated/stubs/isaaccapture/py.typed", b"")
 
     # Staged tree: what the wheel is built from.
     # What a package manager installs into the build tree: upstream headers
     # carrying their own contributors' copyright lines.
-    _write(
+    write(
         build / "vcpkg_installed/x64-linux/include/eigen/Core.h",
         b"// Copyright (C) 2008 Gael Guennebaud <gael.guennebaud@inria.fr>\n",
     )
 
-    _write(workspace.staged / "isaaccapture/__init__.py", _AUTHORED_INIT)
-    _write(workspace.staged / "isaaccapture/_generated.py", _GENERATED)
-    _write(workspace.staged / "isaaccapture/py.typed", b"")
-    _write(workspace.staged / "isaaccapture/viz/libgamma_renamed.so", gamma_bytes)
-    _write(workspace.staged / "isaaccapture/viz/GAMMA_LICENSE", spdx_text("Zlib"))
-    _write(
+    write(workspace.staged / "isaaccapture/__init__.py", _AUTHORED_INIT)
+    write(workspace.staged / "isaaccapture/_generated.py", _GENERATED)
+    write(workspace.staged / "isaaccapture/py.typed", b"")
+    write(workspace.staged / "isaaccapture/viz/libgamma_renamed.so", gamma_bytes)
+    write(workspace.staged / "isaaccapture/viz/GAMMA_LICENSE", spdx_text("Zlib"))
+    write(
         workspace.staged / "isaaccapture/sdk/native/libdemo.so",
         sdk_members["libdemo.so"],
     )
     # patchelf drops a NEEDED entry, so the shipped bytes differ from the archive's.
-    _write(
+    write(
         workspace.staged / "isaaccapture/sdk/native/libextra.so",
         elf_shared_object("libextra.so", ("libc.so.6",)),
     )
-    _write(workspace.staged / "vendorpy/mod.py", _VENDOR_MODULE)
-    _write(workspace.staged / "vendorpy/assets/hand.xml", _VENDOR_ASSET_STAGED)
+    write(workspace.staged / "vendorpy/mod.py", _VENDOR_MODULE)
+    write(workspace.staged / "vendorpy/assets/hand.xml", _VENDOR_ASSET_STAGED)
 
     _file_api_reply(
         root, build, (workspace.staged / extension).relative_to(build).as_posix()
     )
     _git_checkout(root)
-    _write(build / "tests/unit_tests", b"\x7fELF-not-really")
+    write(build / "tests/unit_tests", b"\x7fELF-not-really")
     return workspace
 
 
@@ -516,7 +542,7 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
             ],
             "dependencies": [{"id": dep} for dep in spec["dependencies"]],
         }
-        _write(reply / f"target-{name}-Release.json", json.dumps(payload, indent=1))
+        write(reply / f"target-{name}-Release.json", json.dumps(payload, indent=1))
         index.append(
             {"id": name, "name": name, "jsonFile": f"target-{name}-Release.json"}
         )
@@ -527,9 +553,9 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
         "paths": {"source": str(root), "build": str(build)},
         "configurations": [{"name": CONFIG, "targets": index}],
     }
-    _write(reply / "codemodel-v2-fixture.json", json.dumps(codemodel, indent=1))
+    write(reply / "codemodel-v2-fixture.json", json.dumps(codemodel, indent=1))
     # The collector enters through the index, as a file API client must.
-    _write(
+    write(
         reply / "index-2026-01-01T00-00-00-0000.json",
         json.dumps(
             {

@@ -17,8 +17,9 @@ concurrency:
 
 env:
   # Shared apt build dependencies. Each job installs these plus its own extras
-  # (ccache, clang-format, the OAK camera autotools chain).
-  CORE_APT_DEPS: build-essential cmake glslang-tools libegl-dev libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev patchelf pkg-config wayland-protocols
+  # (ccache, clang-format, the OAK camera autotools chain). libmagic1: see
+  # scripts/sbom/pyproject.toml.
+  CORE_APT_DEPS: build-essential cmake glslang-tools libegl-dev libmagic1 libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev patchelf pkg-config wayland-protocols
   # Pin vcpkg to an immutable commit for reproducible, supply-chain-stable CI
   # instead of tracking its moving default branch. Port versions are fixed by the
   # consuming manifest's builtin-baseline (e.g. DepthAI's vcpkg.json), so this

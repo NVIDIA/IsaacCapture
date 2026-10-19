@@ -25,9 +25,9 @@ What a wheel carries
            └── <wheel filename>.spdx.json # SPDX 2.3 contents inventory
 
 Every text there comes from this repository, or from a component the wheel redistributes,
-or — for a component that ships no license file and states only an identifier in its source
-headers — is the reference text that identifier names, beside the copyright line those
-headers state. See `How licenses are determined`_.
+or — for code checked into this repository, whose terms its REUSE metadata declares — is
+the reference text each declared identifier names, beside the copyright line its header
+states. See `How licenses are determined`_.
 
 ``.dist-info/sboms/`` is what the
 `binary distribution format <https://packaging.python.org/en/latest/specifications/binary-distribution-format/>`_
@@ -68,7 +68,8 @@ The collector is a project of its own, :code-file:`scripts/sbom/pyproject.toml`,
 dependencies come with it and are pinned there rather than at each call site. They are the
 packages that own the formats involved — ``installer`` for ``RECORD``, ``packaging`` for
 core metadata, ``license-expression`` for SPDX expressions, ``packageurl-python`` for
-purls, ``pyelftools`` for ELF.
+purls, ``pyelftools`` for ELF, ``reuse`` for REUSE metadata. ``reuse`` reads files through
+libmagic, so ``build`` needs it (``libmagic1`` on Ubuntu); ``check`` does not.
 
 One command, widening with whatever you have. With just a wheel it confirms that
 
@@ -174,11 +175,16 @@ is not for a file matched only by its path.
 How licenses are determined
 ---------------------------
 
-Licenses are never inferred from this project's license, and never read from a list
-someone maintained by hand. For each component the collector finds the license and notice
-files the component itself ships — ``LICENSE``, ``COPYING``, ``BSD-LICENSE``, a ``LICENSES/``
-pool, or, where upstream ships no file at all, the license section of its README — and
-matches each text against a corpus of SPDX reference texts.
+Licenses are never inferred from this project's license, and never read from a list someone
+maintained by hand. REUSE metadata is not such a list: it is how this repository declares
+the terms of each file it holds — an in-file ``SPDX-License-Identifier``, a ``.license``
+sidecar or a ``REUSE.toml`` annotation, one declaration — and the pre-commit hook lints it
+for source files. The collector reads it for third-party code checked in here; such a file
+of any other kind the build reads is still held to the per-file gate below. For each fetched
+component the collector finds the license and notice files the component itself ships —
+``LICENSE``, ``COPYING``, ``BSD-LICENSE``, a ``LICENSES/`` pool, or, where upstream ships no
+file at all, the license section of its README — and matches each text against a corpus of
+SPDX reference texts.
 
 Those reference texts are a dependency like any other. :code-file:`deps/third_party/CMakeLists.txt`
 fetches
@@ -202,9 +208,15 @@ verbatim, copyright holders and all. Substituting a reference text would convey 
 and drop the notice — for MIT and the BSD licenses those are the same file, differing by
 the one line that names who licensed it to you — and it would replace the component's
 actual grant with our reading of it, which is what the matching is for and not what it
-decides. So a reference text is substituted only where there is nothing of the component's
-own to package: it states an identifier in its source headers and ships no licence file.
-The document says so for every such text, in as many words, because a reader cannot tell a
+decides. So a fetched component ships its own text, or, having none, blocks the build
+(below).
+
+Third-party code checked into this repository rather than fetched is the exception: it is
+identified by the copyright holder its header states, and its terms are the identifiers
+REUSE gives each of its files, under REUSE's own precedence. The reference text for each
+licence it names ships, and the expression keeps its structure, so a choice stays a choice;
+an exception's text ships too where the expression travels as a ``LicenseRef-``, above. The
+document says so for every such text, in as many words, because a reader cannot tell a
 template from an author's own notice by looking at it.
 
 A component can also state terms for one part of itself — a vendored asset set inside a
@@ -250,10 +262,20 @@ know which license they are. Those components are listed in the report under *Li
 evidence gaps*.
 
 A component that states a licence nowhere at all blocks publication, because packaging the
-text is the obligation the wheel has to meet. Stating one in its source headers and nowhere
-else is not that case: there the reference text for the identifier those headers name ships
-instead, labelled in the document as a substitution rather than as the component's own words
-— it conveys the terms and names no holder, so the headers' copyright line travels with it.
+text is the obligation the wheel has to meet. For code checked in here that is any one file
+whose REUSE info names no licence, names one with no current SPDX reference text (a
+``LicenseRef-`` among them, even beside one that has a text), states an expression that does
+not parse, or names an id that is neither SPDX-listed nor a ``LicenseRef-`` or
+``DocumentRef-``; an exception needs only to be listed as an exception. The build names each
+such file and why, and another file of the same holder does not lend it its terms. The
+remedy is to record upstream's terms as an ``SPDX-License-Identifier`` in the header, a
+``.license`` sidecar or a ``REUSE.toml`` annotation. A tag that is not one — quoted in a
+string, say, or prose that mentions the tag — goes between ``REUSE-IgnoreStart`` and
+``REUSE-IgnoreEnd``, or is set aside by a ``.license`` sidecar or a ``REUSE.toml``
+annotation with ``precedence = "override"``. Where REUSE declares an identifier, the
+reference text for it ships, labelled in the document as a substitution rather than as the
+component's own words — it conveys the terms and names no holder, so the header's copyright
+line travels with it.
 
 A shared library that none of those indexes explains did not come from this build, so the
 last thing asked is the build machine itself: resolve the library's SONAME, and take its
@@ -299,8 +321,10 @@ inventory with its identity, its license and the route it took to get there.
 Two things do need attention:
 
 - **A component that states its license nowhere stops the build.** The fix is to obtain the
-  terms, not to record an assumption. Stating one only in its source headers is not that
-  case: the reference text for that identifier ships, labelled as a substitution.
+  terms, not to record an assumption. For a file checked in here, obtain the terms, then
+  record them as REUSE licence info naming current SPDX-listed identifiers; a stray tag
+  that does not parse or names no such id is set aside instead. Both remedies are under
+  `How licenses are determined`_.
 - **A new member that the build cannot explain stops the build.** That means something
   reached the wheel by a route the collector cannot see; teach it that route rather than
   excluding the file.

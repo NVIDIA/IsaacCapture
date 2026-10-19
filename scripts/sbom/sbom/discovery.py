@@ -127,6 +127,10 @@ class Component:
     # a holder and then declaring none would contradict the same document.
     copyright_text: str = "NOASSERTION"
     evidence: tuple[licensing.LicenseEvidence, ...] = ()
+    # (path, reason) for checked-in files whose REUSE info fails the per-file
+    # gate. Pooling a holder's licences would otherwise lend one file the terms
+    # of another, or void them all.
+    unlicensed: tuple[tuple[str, str], ...] = ()
 
 
 def repo_head(directory: Path) -> str | None:
@@ -672,12 +676,11 @@ class _Stated:
     """What a source file says about itself in its header."""
 
     holder: str
-    expression: str | None
     notice: str
 
 
 def _stated_by(path: Path) -> _Stated | None:
-    """Holder, licence and notice, from one read of the file's head."""
+    """Holder and notice, from one read of the file's head."""
     try:
         with path.open("rb") as handle:
             head = handle.read(4096).decode("utf-8", "replace")
@@ -693,17 +696,28 @@ def _stated_by(path: Path) -> _Stated | None:
     notice = " ".join(match.group(0).split()).lstrip("/ *#")
     # The tag introduces the notice; it is not part of it.
     notice = re.sub(r"^SPDX-FileCopyrightText:\s*", "", notice)
-    return _Stated(holder, licensing.read_spdx_tag(head), notice)
+    return _Stated(holder, notice)
 
 
 def discover_vendored(
     repo_root: Path, candidates: set[Path], authors: set[str]
 ) -> tuple[dict[str, Component], dict[str, list[Path]]]:
-    """Group checked-in files whose copyright holder is not the project's."""
+    """Group checked-in files whose copyright holder is not the project's.
+
+    Their licences are what REUSE says of each file -- its header, a `.license`
+    sidecar or a REUSE.toml annotation, under REUSE's own precedence -- which is
+    how this repository declares the terms of every file it holds, and what its
+    pre-commit hook lints for source files.
+    """
+    # Here, not at module level: only discovery needs reuse, and reuse needs libmagic.
+    from reuse.project import Project
+
+    project = Project.from_directory(repo_root.resolve())
     grouped: dict[str, list[Path]] = {}
     licences: dict[str, set[str]] = {}
     names: dict[str, str] = {}
     notices: dict[str, set[str]] = {}
+    unlicensed: dict[str, list[tuple[str, str]]] = {}
 
     for path in sorted(candidates):
         stated = _stated_by(path)
@@ -715,18 +729,40 @@ def discover_vendored(
         grouped.setdefault(key, []).append(path)
         names[key] = stated.holder
         notices.setdefault(key, set()).add(stated.notice)
-        if stated.expression:
-            licences.setdefault(key, set()).add(stated.expression)
+        # The link's own path first; a link with no info of its own falls back
+        # to its target's, which is all the REUSE lint checks for a symlink.
+        under_root = path.relative_to(repo_root)
+        target = path.resolve()
+        reuse_declared = []
+        for where in (project.root / under_root, target):
+            if where.is_relative_to(project.root) and not reuse_declared:
+                reuse_declared = [
+                    expression
+                    for info in project.reuse_info_of(where)
+                    for expression in info.spdx_expressions
+                ]
+        reason = licensing.why_unlicensed(reuse_declared)
+        if reason:
+            unlicensed.setdefault(key, []).append((str(under_root), reason))
+        else:
+            licences.setdefault(key, set()).update(map(str, reuse_declared))
 
     components: dict[str, Component] = {}
     for key, paths in grouped.items():
         evidence = licensing.canonical_evidence(key, licences.get(key, set()))
         concluded, declared = licensing.expression(evidence, key)
         if licences.get(key):
-            # The headers' own expressions, structure and all. Rebuilding this
+            # The declared expressions, structure and all. Rebuilding this
             # from the reference texts the identifiers name turns `A OR B` into
             # `A AND B` -- a choice restated as both obligations at once.
             declared = licensing.combine(sorted(licences[key]))
+            # An id the pinned list knows and the grammar does not travels as a
+            # LicenseRef carrying the texts, as `licensing.expression` does.
+            if declared != "NOASSERTION" and not licensing.grammar_names(
+                licensing.identifiers_in(declared)
+            ):
+                evidence += licensing.exception_evidence(key, declared)
+                declared = licensing.license_ref(key)
             concluded = declared
         # Say when the list is shortened; without the marker it reads as the
         # whole set, and the first four by name need not be the ones that ship.
@@ -761,6 +797,7 @@ def discover_vendored(
                 licensing.fold_notices(notices.get(key, {names[key]}))
             ),
             evidence=tuple(evidence),
+            unlicensed=tuple(unlicensed.get(key, ())),
         )
     return components, grouped
 

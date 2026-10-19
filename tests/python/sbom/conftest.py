@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,19 +15,7 @@ from sbom import build as build_module
 from sbom import licensing
 
 
-def _load(name: str, path: Path):
-    """Import a sibling helper by path.
-
-    Not via `sys.path`: this directory is named `sbom`, so putting its parent on
-    the path would shadow the installed collector package with a namespace one.
-    """
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-repo_root = _load(
+repo_root = synth.load(
     "repo_paths", Path(__file__).resolve().parents[1] / "repo_paths.py"
 ).repo_root
 
