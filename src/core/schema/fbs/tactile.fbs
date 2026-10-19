@@ -13,8 +13,7 @@ table TactileData {
   taxel_force: [Point] (id: 0);
 }
 
-// MCAP recording wrapper. Record types are the root types written to MCAP
-// channels; trackers serialize into Record types in serialize_all().
+// MCAP recording wrapper for TactileData.
 table TactileDataRecord {
   data: TactileData (id: 0);
   timestamp: DeviceDataTimestamp (id: 1);
