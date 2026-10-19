@@ -4,7 +4,7 @@
 #pragma once
 #include <deviceio_trackers/@HEADER@.hpp>
 #if @HAS_METADATA@
-#include <live_trackers/schema_metadata_reader.hpp>
+#include <live_trackers/schema_metadata_tracker.hpp>
 #endif
 #include <live_trackers/schema_tracker.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
@@ -54,7 +54,7 @@ private:
     std::unique_ptr<@MCAP_CHANNELS_TYPE@> mcap_channels_;
     @SCHEMA_TRACKER_TYPE@ m_schema_reader;
 #if @HAS_METADATA@
-    SchemaMetadataReader<@METADATA@> m_metadata_reader;
+    SchemaMetadataTracker<@METADATA@> m_metadata_reader;
 #endif
     Serialized<@FB_TABLE@> m_tracked;
 };

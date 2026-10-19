@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "inc/live_trackers/schema_metadata_reader.hpp"
+#include "inc/live_trackers/schema_metadata_tracker.hpp"
 
 #include <schema/tracker_metadata.hpp>
 
@@ -14,7 +14,7 @@
 namespace core
 {
 
-SchemaTrackerConfig tracker_metadata_reader_config(const std::string& collection_id)
+SchemaTrackerConfig schema_metadata_tracker_config(const std::string& collection_id)
 {
     std::string metadata_collection_id = tracker_metadata_collection_id(collection_id);
     // A pusher truncates a longer name, so the reader would wait for a collection that never appears.

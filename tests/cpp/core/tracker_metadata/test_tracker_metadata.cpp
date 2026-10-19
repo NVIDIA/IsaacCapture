@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// The metadata half of a generated tracker: the reader's helpers, when live publishes and records
-// the data, and how replay reads the recording back. The tracker is generated from trackers.toml
-// next to this file; on timespec platforms, a fake tensor runtime stands in for OpenXR.
+// The metadata half of a generated tracker: SchemaMetadataTracker's helpers, when live publishes
+// and records the data, and how replay reads the recording back. The tracker is generated from
+// trackers.toml next to this file; on timespec platforms, a fake tensor runtime stands in for OpenXR.
 
 #if defined(XR_USE_TIMESPEC)
 #    include "fake_tensor_runtime.hpp"
@@ -14,7 +14,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
-#include <live_trackers/schema_metadata_reader.hpp>
+#include <live_trackers/schema_metadata_tracker.hpp>
 #include <mcap/reader.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/writer.hpp>
@@ -186,15 +186,15 @@ struct LiveSession
 
 TEST_CASE("The metadata of a collection is read from <collection>/metadata", "[unit][tracker_metadata]")
 {
-    const auto config = core::tracker_metadata_reader_config("tactile");
+    const auto config = core::schema_metadata_tracker_config("tactile");
     CHECK(config.collection_id == core::tracker_metadata_collection_id("tactile"));
     CHECK(config.collection_id == "tactile/metadata");
     CHECK(config.tensor_identifier == core::TRACKER_METADATA_TENSOR_IDENTIFIER);
     CHECK(config.max_flatbuffer_size == core::TRACKER_METADATA_MAX_SIZE);
 
     const std::string longest(XR_MAX_TENSOR_IDENTIFIER_SIZE - 1 - std::string_view("/metadata").size(), 'c');
-    CHECK_NOTHROW(core::tracker_metadata_reader_config(longest));
-    CHECK_THROWS_AS(core::tracker_metadata_reader_config(longest + "c"), std::invalid_argument);
+    CHECK_NOTHROW(core::schema_metadata_tracker_config(longest));
+    CHECK_THROWS_AS(core::schema_metadata_tracker_config(longest + "c"), std::invalid_argument);
 }
 
 TEST_CASE("Metadata samples compare equal up to their zero padding", "[unit][tracker_metadata]")
