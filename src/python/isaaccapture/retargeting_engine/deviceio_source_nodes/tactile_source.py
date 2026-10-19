@@ -145,7 +145,7 @@ class TactileSource(IDeviceIOSource):
         }
 
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
-        """Copy the forces and shape out, or call ``set_none()`` on whichever is absent."""
+        """Publish the frame's forces and a copy of the shape; ``set_none()`` whichever is absent."""
         data: "TactileData | None" = inputs["deviceio_tactile"][0]
         shape: "TactileShape | None" = inputs["deviceio_tactile"][1]
 
@@ -172,6 +172,7 @@ class TactileSource(IDeviceIOSource):
             )
         for index, tensor_type in enumerate(shape_out.group_type.types):
             value = getattr(shape, tensor_type.name)
-            if value.dtype == np.uint32:
-                value = value.astype(np.int32)
-            shape_out[index] = value
+            # Copied: the views alias the metadata the tracker holds and compares later pushes to.
+            shape_out[index] = value.astype(
+                np.int32 if value.dtype == np.uint32 else value.dtype
+            )

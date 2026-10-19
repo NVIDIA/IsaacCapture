@@ -120,6 +120,19 @@ class TestTactileSource:
             np.tile([0.0, 0.0, 1.0], (NUM_TAXELS, 1)),
         )
 
+    def test_shape_outputs_do_not_alias_the_metadata(self):
+        src = _source()
+        shape = _shape()
+        encoded = shape.to_bytes()
+        outputs = _outputs(src)
+        src.compute(_inputs(src, None, shape), outputs)
+
+        group = outputs[TactileSource.SHAPE]
+        for index in TactileShapeIndex:
+            array = np.asarray(group[index])
+            array[...] = 7
+        assert shape.to_bytes() == encoded
+
     def test_shape_without_data(self):
         src = _source()
         outputs = _outputs(src)
