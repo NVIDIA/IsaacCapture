@@ -204,4 +204,6 @@ def test_recovery_delay_is_rate_limited():
     assert reporter.observe(delayed) == [expected]
     assert reporter.observe(delayed) == []
     now[0] = 31
-    assert reporter.observe({**delayed, "generation": 2}) == [expected]
+    assert reporter.observe(delayed) == [expected]
+    now[0] = 32
+    assert reporter.observe(delayed) == []

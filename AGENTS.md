@@ -123,6 +123,9 @@ the logging packages.
   Note what moving a class name from the message into the logger name costs:
   the two halves are then separated by the level and pid columns, so no fixed
   string spans them any more.
+- **Evaluate timed operator reminders on every status snapshot.** Gate transition
+  messages on state entry, but do not gate elapsed-time reminders on a transition;
+  repeated snapshots are what advance those timers.
 - **Six environment variables are the whole external contract.** The first
   four are read identically by both halves — change one and change both, or
   the two stop agreeing: `ISAACCAPTURE_LOGGING` (see the next rule),

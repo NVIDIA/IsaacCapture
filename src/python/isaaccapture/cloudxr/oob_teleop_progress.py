@@ -134,10 +134,10 @@ class OobProgressReporter:
                     logging.WARNING,
                     f"USB health policy blocked browser launch: {reason}",
                 )
-            elif state == "DEGRADED" or "Recovery episode expired" in reason:
-                if now - self._last_delay_at.get(reason, float("-inf")) >= 30:
-                    emit(logging.WARNING, f"OOB recovery delayed: {reason}")
-                    self._last_delay_at[reason] = now
+        if state == "DEGRADED" or "Recovery episode expired" in reason:
+            if now - self._last_delay_at.get(reason, float("-inf")) >= 30:
+                emit(logging.WARNING, f"OOB recovery delayed: {reason}")
+                self._last_delay_at[reason] = now
 
         if health == "browser_ready" and health != self._last_health:
             emit(
