@@ -12,7 +12,7 @@ ROOT = TactileShape.ROOT_PARENT
 
 
 def shape_arrays(num_joints: int = 2, num_taxels: int = 3) -> dict:
-    """A wrist-rooted chain with every taxel skinned to its last two joints."""
+    """A joint chain rooted at joint 0, with every taxel skinned to its last joint."""
     indices = np.zeros((num_taxels, 4), np.uint32)
     indices[:, 0] = num_joints - 1
     weights = np.zeros((num_taxels, 4), np.float32)
