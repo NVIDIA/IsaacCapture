@@ -140,11 +140,11 @@ Step 4 (optional): Check the trackers with the VUT SDK demo
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To confirm that poses are coming out of VIVE Hub before you involve Isaac Teleop, run the demo
-that ships with the SDK while at least one tracker is tracking:
+that ships with the SDK while at least one tracker is tracking. From the ``VIVEHub-Linux`` folder:
 
 .. code-block:: bash
 
-   cd VIVEHub-Linux/sdk/examples
+   cd sdk/examples
    make && ./vut_demo
 
 Part 2: Stream the trackers into Isaac Teleop
@@ -231,14 +231,17 @@ seconds to ``./recordings/<timestamp>.mcap``:
 To record for a different duration or to a specific file, use
 ``record_se3_vive [duration_s] [output.mcap] [--collections a,b,c]``.
 
-Replay the newest recording. Replay needs no CloudXR runtime and no hardware. Open the printed
-URL (by default ``http://localhost:8080``) to see each tracker as a 3D coordinate frame:
+Replay the newest recording. Replay needs no CloudXR runtime and no hardware. Open
+``http://localhost:8080`` to see each tracker as a 3D coordinate frame. Replay loops until you
+press ``Ctrl+C``:
 
 .. code-block:: bash
 
-   python -m isaaccapture_examples.mcap_record_replay.replay_se3_vive
+   python -m isaaccapture_examples.mcap_record_replay.replay_se3_vive --host 127.0.0.1
 
-Useful options are ``--loop``, ``--rate N``, ``--no-viz`` and ``--collections a,b,c``. See
+Without ``--host``, the viewer binds to ``0.0.0.0`` and anyone who can reach the port on your
+network can see it. Other useful options are ``--rate N``, ``--no-viz``, ``--port N`` and
+``--collections a,b,c``. See
 :doc:`/references/mcap_record_replay` for the underlying MCAP tooling.
 
 Using the Tracker Data
@@ -262,8 +265,8 @@ Collection auto-discovery
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 While the plugin runs, it writes its live collection ids, one per line, to
-``$XDG_RUNTIME_DIR/vive_se3_collections.txt`` (or ``/tmp/vive_se3_collections.txt`` if
-``XDG_RUNTIME_DIR`` is not set). The file is updated as trackers appear and removed when the plugin
+``$XDG_RUNTIME_DIR/vive_se3_collections.txt``. If ``XDG_RUNTIME_DIR`` is not set, it uses a
+private per-user folder instead: ``/tmp/vive_se3_tracker-<uid>/vive_se3_collections.txt``. The file is updated as trackers appear and removed when the plugin
 exits. Readers such as ``record_se3_vive`` use it to find collections without being told the ids.
 
 To read the poses in your own code, create one ``Se3Tracker`` per collection id. See
