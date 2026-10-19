@@ -103,8 +103,8 @@ Python. Only ``direction = "pull"`` supports ``metadata``.
   returned by ``get_metadata()`` for the rest of the session. ``get_data()`` publishes and records
   data only while the producer's metadata is confirmed: from a sample equal to the adopted one
   until the metadata collection goes away, so a restarted producer's data waits for its own
-  metadata. A sample that differs from the adopted one withholds the data for the rest of the
-  session; a sample that is not a valid table is an error.
+  metadata. A sample that differs from the adopted one, or is not a valid table, is an error the
+  session update throws.
 - **Replay.** Reads the recorded metadata when the session opens, and publishes data only from a
   recording that holds it.
 

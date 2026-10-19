@@ -526,8 +526,8 @@ with a <code class="docutils literal notranslate"><span class="pre">TensorPushTr
 returned by <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code> for the rest of the session. <code class="docutils literal notranslate"><span class="pre">get_data()</span></code> publishes and records
 data only while the producer’s metadata is confirmed: from a sample equal to the adopted one
 until the metadata collection goes away, so a restarted producer’s data waits for its own
-metadata. A sample that differs from the adopted one withholds the data for the rest of the
-session; a sample that is not a valid table is an error.</p></li>
+metadata. A sample that differs from the adopted one, or is not a valid table, is an error the
+session update throws.</p></li>
 <li><p><strong>Replay.</strong> Reads the recorded metadata when the session opens, and publishes data only from a
 recording that holds it.</p></li>
 </ul>
