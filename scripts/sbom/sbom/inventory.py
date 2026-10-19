@@ -346,10 +346,10 @@ class Resolver:
     ) -> Attribution:
         """A file this repository holds -- and, where it is not ours, whose.
 
-        Checked-in third-party code states its own copyright, which is how the
-        vendored scan found it. Reporting the member as plain repository source
-        would drop that holder, and the component would be reported as
-        contributing nothing to a wheel that ships its file.
+        Checked-in third-party material declares its own copyright holder,
+        which is how the vendored scan found it. Reporting the member as plain
+        repository source would drop that holder, and the component would be
+        reported as contributing nothing to a wheel that ships its file.
         """
         owner = self.ownership.owner_of(self.repo_root / repo_file.removeprefix("./"))
         return Attribution(

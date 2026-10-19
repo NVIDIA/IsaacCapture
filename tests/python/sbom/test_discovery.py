@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import zlib
 from pathlib import Path
 
 import pytest
@@ -163,9 +165,9 @@ def test_the_graph_is_read_from_the_codemodel_not_from_generator_output(workspac
 
 def test_third_party_checked_in_here_is_still_third_party(workspace):
     """Not everything third-party arrives through FetchContent. A file checked
-    into the repository that someone else wrote says so in its copyright line,
-    and that is what separates it from the project's own code -- not the
-    directory it sits in."""
+    into the repository that someone else wrote says so in its REUSE info, and
+    that is what separates it from the project's own code -- not the directory
+    it sits in."""
     from sbom import evidence as evidence_module
 
     space = evidence_module.discover(workspace.root, workspace.build)
@@ -382,8 +384,8 @@ def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
 def test_vendored_material_asserts_no_package_identifier(workspace, license_data):
     """A copyright holder is not a package.
 
-    Checked-in third-party material is identified by the copyright its files
-    state, because that is the only identity it has. Minting
+    Checked-in third-party material is identified by the copyright holder its
+    REUSE info or header names, because that is the only identity it has. Minting
     `pkg:generic/<holder>` from it named a package that does not exist, and a
     reader resolving that locator finds nothing or finds something else.
     """
@@ -397,7 +399,7 @@ def test_vendored_material_asserts_no_package_identifier(workspace, license_data
         "// SPDX-License-Identifier: BSL-1.0\n"
     )
     components, _ = discovery.discover_vendored(
-        workspace.root, {source}, {"Example Org"}
+        workspace.root, {source}, {"Example Org"}, tracked=()
     )
     component = next(iter(components.values()))
 
@@ -405,6 +407,50 @@ def test_vendored_material_asserts_no_package_identifier(workspace, license_data
     assert component.purl == "NOASSERTION"
     # Who it came from is still stated; that much was observed.
     assert component.supplier == "Organization: Upstream Widgets Ltd"
+
+
+def _discover(root: Path, *candidates: str):
+    """Discover over build inputs alone, as `discover_vendored` sees them."""
+    components, _ = discovery.discover_vendored(
+        root, {root / item for item in candidates}, {"NVIDIA"}, tracked=()
+    )
+    return components
+
+
+def _vendored(root: Path, files: dict[str, str | bytes]):
+    """Discover over files as a checkout tracking all of them would."""
+    for relative, data in files.items():
+        synth.write(root / relative, data)
+    components, _ = discovery.discover_vendored(
+        root, set(), {"NVIDIA"}, tracked=sorted(files)
+    )
+    return components
+
+
+def _link(root: Path, link: str, target: str) -> None:
+    (root / link).parent.mkdir(parents=True, exist_ok=True)
+    (root / link).symlink_to(target)
+
+
+def _notices(components) -> dict[str, set[str]]:
+    return {key: set(c.copyright_text.splitlines()) for key, c in components.items()}
+
+
+_LICENCE_TAG = "SPDX-" + "License-Identifier: MIT"
+_IGNORED_BAR = "// REUSE-IgnoreStart\n// Copyright 2020 Bar Ltd\n// REUSE-IgnoreEnd\n"
+# Third-party headers, by what REUSE can read of them.
+_HEADERS = {
+    "copyright-and-licence": f"// Copyright 2020 Bar Ltd\n// {_LICENCE_TAG}\n",
+    "copyright-only": "// Copyright 2020 Bar Ltd\n",
+    "unparsed-and-licence": f"// Copyright: 2020 Bar Ltd\n// {_LICENCE_TAG}\n",
+    "unparsed-only": "// Copyright: 2020 Bar Ltd\n",
+    "ignored-and-licence": f"{_IGNORED_BAR}// {_LICENCE_TAG}\n",
+    "ignored-only": _IGNORED_BAR,
+    "ignored-and-contributor": f"{_IGNORED_BAR}// SPDX-FileContributor: Someone\n",
+}
+_BAR = {"vendored:bar-ltd": {"Copyright 2020 Bar Ltd"}}
+_BAR_UNPARSED = {"vendored:bar-ltd": {"Copyright: 2020 Bar Ltd"}}
+_FOO = "Copyright 2020 Foo Inc"
 
 
 _DECLARED = {
@@ -419,9 +465,9 @@ _DECLARED = {
     },
     "REUSE.toml": {
         "src/x.h": "// Copyright 2020 Foo Inc\n",
-        "REUSE.toml": 'version = 1\n\n[[annotations]]\npath = "src/x.h"\n'
-        'SPDX-FileCopyrightText = "Copyright 2020 Foo Inc"\n'
-        "SPDX-" + 'License-Identifier = "MIT OR Apache-2.0"\n',
+        "REUSE.toml": synth.reuse_toml(
+            synth.annotation("src/x.h", "Foo Inc", licence="MIT OR Apache-2.0")
+        ),
     },
 }
 
@@ -436,10 +482,7 @@ def test_a_vendored_files_terms_are_what_reuse_declares(tmp_path, files):
     for relative, text in files.items():
         synth.write(tmp_path / relative, text)
 
-    components, _ = discovery.discover_vendored(
-        tmp_path, {tmp_path / "src/x.h"}, {"NVIDIA"}
-    )
-    component = components["vendored:foo-inc"]
+    component = _discover(tmp_path, "src/x.h")["vendored:foo-inc"]
 
     assert component.license_concluded == "MIT OR Apache-2.0"
     assert component.license_declared == "MIT OR Apache-2.0"
@@ -525,25 +568,11 @@ def test_a_file_lending_nothing_is_named_not_covered_by_its_sibling(
     )
     (tmp_path / "src/b.h").write_text("// Copyright 2020 Foo Inc\n" + tag)
 
-    components, _ = discovery.discover_vendored(
-        tmp_path, {tmp_path / "src/a.h", tmp_path / "src/b.h"}, {"NVIDIA"}
-    )
+    components = _discover(tmp_path, "src/a.h", "src/b.h")
 
     [(path, why)] = components["vendored:foo-inc"].unlicensed
     assert path == "src/b.h"
     assert reason in why
-
-
-def test_the_reuse_hook_lints_every_source_suffix_the_collector_reads(checkout):
-    """The collector reads REUSE info from these; the pre-commit hook is what
-    lints it. Compiled suffixes no tracked-source scan names (.inc, .cu, shader
-    stages) reach the collector as build inputs."""
-    from sbom import evidence
-
-    hook = synth.load("check_licenses", checkout / "scripts" / "check_licenses.py")
-
-    suffixes = evidence._TAGGABLE_SOURCE | {".inc", ".cu", ".cuh", ".frag", ".vert"}
-    assert not [s for s in sorted(suffixes) if not hook.SOURCE_FILES.search(f"x{s}")]
 
 
 @pytest.mark.parametrize(
@@ -558,40 +587,544 @@ def test_a_listed_identifier_passes_the_per_file_gate(tmp_path, expression):
         "// Copyright 2020 Foo Inc\n// SPDX-" + f"License-Identifier: {expression}\n"
     )
 
-    components, _ = discovery.discover_vendored(
-        tmp_path, {tmp_path / "x.h"}, {"NVIDIA"}
-    )
-
-    assert components["vendored:foo-inc"].unlicensed == ()
+    assert _discover(tmp_path, "x.h")["vendored:foo-inc"].unlicensed == ()
 
 
 def test_a_link_without_reuse_info_takes_its_targets(tmp_path):
     """The REUSE lint skips symlinks and checks only the target, so a link with
     no info of its own is read the same way; a link's own info still wins."""
     synth.write(tmp_path / "src/real/x.h", "// Copyright 2020 Foo Inc\n")
-    (tmp_path / "src/link").mkdir()
-    (tmp_path / "src/link/x.h").symlink_to("../real/x.h")
+    _link(tmp_path, "src/link/x.h", "../real/x.h")
     synth.write(
         tmp_path / "REUSE.toml",
-        'version = 1\n\n[[annotations]]\npath = "src/real/x.h"\n'
-        'SPDX-FileCopyrightText = "Copyright 2020 Foo Inc"\n'
-        "SPDX-" + 'License-Identifier = "MIT"\n',
+        synth.reuse_toml(synth.annotation("src/real/x.h", "Foo Inc")),
     )
 
-    components, _ = discovery.discover_vendored(
-        tmp_path, {tmp_path / "src/link/x.h"}, {"NVIDIA"}
-    )
+    component = _discover(tmp_path, "src/link/x.h")["vendored:foo-inc"]
 
-    assert components["vendored:foo-inc"].unlicensed == ()
-    assert components["vendored:foo-inc"].license_concluded == "MIT"
+    assert component.unlicensed == ()
+    assert component.license_concluded == "MIT"
 
     synth.write(
         tmp_path / "src/link/x.h.license",
         "SPDX-FileCopyrightText: Copyright 2020 Foo Inc\n"
         "SPDX-" + "License-Identifier: BSD-3-Clause\n",
     )
-    components, _ = discovery.discover_vendored(
-        tmp_path, {tmp_path / "src/link/x.h"}, {"NVIDIA"}
+    component = _discover(tmp_path, "src/link/x.h")["vendored:foo-inc"]
+
+    assert component.license_concluded == "BSD-3-Clause"
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(
+            {
+                "src/x.h": "#pragma once\n",
+                "src/x.h.license": f"SPDX-FileCopyrightText: {_FOO}\n{_LICENCE_TAG}\n",
+            },
+            id="sidecar",
+        ),
+        pytest.param(
+            {
+                "assets/icon.svg": "<svg/>\n",
+                "REUSE.toml": synth.reuse_toml(synth.annotation("assets/*", "Foo Inc")),
+            },
+            id="reuse-toml-svg",
+        ),
+        pytest.param(
+            {
+                "assets/data.json": "{}\n",
+                "REUSE.toml": synth.reuse_toml(synth.annotation("assets/*", "Foo Inc")),
+            },
+            id="reuse-toml-json",
+        ),
+    ],
+)
+def test_a_holder_declared_beside_the_file_is_read(tmp_path, files):
+    """A file of any type whose copyright only REUSE metadata states is still
+    someone else's; the sidecar and REUSE.toml are not candidates themselves."""
+    component = _vendored(tmp_path, files)["vendored:foo-inc"]
+
+    [covered] = [name for name in files if not name.endswith((".license", ".toml"))]
+    assert covered in component.source_info
+    assert component.license_concluded == "MIT"
+    assert component.copyright_text == _FOO
+
+
+@pytest.mark.parametrize(
+    ("header", "holder", "precedence", "expected"),
+    [
+        pytest.param(
+            "copyright-and-licence",
+            "Foo Inc",
+            "override",
+            {"vendored:foo-inc": {_FOO}},
+            id="override-outranks-the-header",
+        ),
+        pytest.param(
+            "copyright-only", None, "override", _BAR, id="override-licence-only"
+        ),
+        pytest.param(
+            "copyright-and-licence",
+            "Foo Inc",
+            "closest",
+            _BAR,
+            id="closest-takes-a-full-header-first",
+        ),
+        pytest.param(
+            "unparsed-only",
+            "NVIDIA CORPORATION",
+            "closest",
+            {},
+            id="closest-stands-in-for-a-file-reuse-finds-nothing-in",
+        ),
+        pytest.param(
+            "unparsed-and-licence",
+            "NVIDIA CORPORATION",
+            "closest",
+            _BAR_UNPARSED,
+            id="closest-beside-a-licence-tag",
+        ),
+        pytest.param(
+            "ignored-and-contributor",
+            "NVIDIA CORPORATION",
+            "closest",
+            _BAR,
+            id="closest-beside-a-contributor-line",
+        ),
+        *(
+            pytest.param(
+                header,
+                "NVIDIA CORPORATION",
+                "aggregate",
+                _BAR_UNPARSED if header.startswith("unparsed") else _BAR,
+                id=f"aggregate-project-{header}",
+            )
+            for header in (
+                "copyright-and-licence",
+                "copyright-only",
+                "unparsed-and-licence",
+                "ignored-and-licence",
+                "unparsed-only",
+                "ignored-only",
+            )
+        ),
+        pytest.param(
+            "copyright-and-licence",
+            "Foo Inc",
+            "aggregate",
+            {"vendored:foo-inc": {_FOO, "Copyright 2020 Bar Ltd"}},
+            id="aggregate-both-give-notices",
+        ),
+    ],
+)
+def test_a_header_counts_where_reuse_applies_it_beside_an_annotation(
+    tmp_path, header, holder, precedence, expected
+):
+    """`override` sets the file aside; `aggregate` applies it beside the
+    annotation whatever REUSE parsed; `closest` applies it where REUSE took
+    anything from it, and stands in for it where REUSE found nothing."""
+    toml = synth.reuse_toml(synth.annotation("src/x.h", holder, precedence=precedence))
+    components = _vendored(tmp_path, {"src/x.h": _HEADERS[header], "REUSE.toml": toml})
+
+    assert _notices(components) == expected
+
+
+def test_declared_notices_naming_the_project_keep_the_file_first_party(tmp_path):
+    """The header's holder does not decide where a sidecar names the project."""
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.h": _HEADERS["copyright-only"],
+            "src/x.h.license": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA "
+            "CORPORATION & AFFILIATES. All rights reserved.\n"
+            "SPDX-" + "License-Identifier: Apache-2.0\n",
+        },
     )
 
-    assert components["vendored:foo-inc"].license_concluded == "BSD-3-Clause"
+    assert components == {}
+
+
+def test_a_file_with_several_declared_holders_is_grouped_by_one(tmp_path):
+    """Grouped under the first other holder by name, whatever its case, with
+    every notice but the project's as its copyright."""
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.h": "#pragma once\n",
+            "src/x.h.license": "SPDX-FileCopyrightText: 2020 Zed Corp\n"
+            "SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION\n"
+            "SPDX-FileCopyrightText: 2021 acme Inc\n" + _LICENCE_TAG + "\n",
+        },
+    )
+
+    assert _notices(components) == {
+        "vendored:acme-inc": {"2020 Zed Corp", "2021 acme Inc"}
+    }
+
+
+def _png_with_text(keyword: bytes, text: bytes) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return len(data).to_bytes(4, "big") + body + zlib.crc32(body).to_bytes(4, "big")
+
+    header = (1).to_bytes(4, "big") * 2 + bytes([8, 0, 0, 0, 0])
+    pixels = zlib.compress(b"\x00\x00")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"tEXt", keyword + b"\x00" + text)
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
+    )
+
+
+def test_a_binary_file_is_not_scraped_for_a_holder(tmp_path):
+    """A PNG's `Copyright` text chunk is not a header."""
+    png = _png_with_text(b"Copyright", b"\nCopyright 2020 Foo Inc\n")
+    assert discovery._COPYRIGHT_TAG.search(png.decode("utf-8", "replace"))
+
+    assert _vendored(tmp_path, {"assets/logo.png": png}) == {}
+
+
+def test_license_files_and_the_pool_are_not_candidates(tmp_path):
+    """REUSE does not cover `LICENSES/` or `LICENSE*`/`COPYING*` files, and the
+    holder one names is its template's or its licensor's."""
+    upstream = "Copyright (c) 2020 Foo Inc\n\nPermission is hereby granted\n"
+    components = _vendored(
+        tmp_path,
+        {
+            "LICENSE": upstream,
+            "COPYING.txt": upstream,
+            "deps/foo/LICENSE.md": upstream,
+            "LICENSES/MIT.txt": synth.spdx_text("MIT"),
+        },
+    )
+
+    assert components == {}
+
+
+def test_a_build_input_reuse_does_not_cover_is_not_a_candidate(tmp_path):
+    """An include directory's licence text and sidecar are not sources."""
+    synth.write(tmp_path / "inc/x.h", "// Copyright 2020 Foo Inc\n")
+    synth.write(tmp_path / "inc/x.h.license", f"SPDX-FileCopyrightText: {_FOO}\n")
+    synth.write(tmp_path / "inc/LICENSE", "Copyright (c) 2020 Bar Ltd\n")
+
+    components = _discover(tmp_path, "inc/x.h", "inc/x.h.license", "inc/LICENSE")
+
+    assert list(components) == ["vendored:foo-inc"]
+    assert "Files: inc/x.h." in components["vendored:foo-inc"].source_info
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["subprojects/foo/x.h", "gen/x.h", "sub/x.h"],
+    ids=["meson-subproject", "vcs-ignored", "submodule"],
+)
+def test_a_build_input_the_project_does_not_cover_is_still_read(tmp_path, relative):
+    """A compiled file ships whether or not REUSE lints it; a tracked one there is
+    held to REUSE's coverage."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    synth.write(tmp_path / ".gitignore", "gen/\n")
+    synth.write(tmp_path / ".gitmodules", '[submodule "sub"]\n\tpath = sub\n')
+    synth.write(tmp_path / relative, "// Copyright 2020 Foo Inc\n")
+
+    assert list(_discover(tmp_path, relative)) == ["vendored:foo-inc"]
+    components, _ = discovery.discover_vendored(
+        tmp_path, set(), {"NVIDIA"}, tracked=[relative]
+    )
+    assert components == {}
+
+
+def test_the_files_the_build_read_are_named_first(tmp_path):
+    for name in ("src/a.h", "src/z.h"):
+        synth.write(tmp_path / name, "// Copyright 2020 Foo Inc\n")
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, {tmp_path / "src/z.h"}, {"NVIDIA"}, tracked=["src/a.h", "src/z.h"]
+    )
+
+    assert "Files: src/z.h, src/a.h." in components["vendored:foo-inc"].source_info
+
+
+def test_a_tracked_non_code_file_reaches_discovery(workspace, license_data):
+    """Through the build's own entry point, not only `discover_vendored`."""
+    from sbom import evidence, licensing
+
+    licensing.load_corpus(license_data)
+    synth.write(workspace.root / "assets/vendor/icon.svg", "<svg/>\n")
+    synth.write(
+        workspace.root / "REUSE.toml",
+        synth.reuse_toml(synth.annotation("assets/vendor/**", "Foo Inc")),
+    )
+    synth.track(workspace.root)
+
+    discovered = evidence.discover(workspace.root, workspace.build)
+
+    assert (
+        "assets/vendor/icon.svg"
+        in discovered.components["vendored:foo-inc"].source_info
+    )
+
+
+def test_a_copyright_string_in_a_first_party_body_names_no_holder(tmp_path):
+    """REUSE reports every copyright line in a file; only the head's first one
+    is the file's own."""
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.py": "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA "
+            "CORPORATION & AFFILIATES. All rights reserved.\n"
+            "# SPDX-" + "License-Identifier: Apache-2.0\n\n"
+            'NOTICE = """\nCopyright 2019 Someone Else\n"""\n',
+        },
+    )
+
+    assert components == {}
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param(
+            {
+                "src/x.h": _HEADERS["copyright-only"],
+                "src/x.h.license": _LICENCE_TAG + "\n",
+            },
+            _BAR,
+            id="sidecar-licence-only",
+        ),
+        pytest.param(
+            {"src/x.h": _HEADERS["unparsed-and-licence"]},
+            _BAR_UNPARSED,
+            id="line-reuse-does-not-parse",
+        ),
+        pytest.param(
+            {"src/x.h": _HEADERS["ignored-and-licence"]},
+            _BAR,
+            id="inside-an-ignore-block",
+        ),
+        pytest.param(
+            {
+                "src/x.h": _HEADERS["copyright-only"],
+                "src/x.h.license": f"SPDX-FileCopyrightText: 2020\n{_LICENCE_TAG}\n",
+            },
+            _BAR,
+            id="declared-notice-naming-nobody",
+        ),
+    ],
+)
+def test_without_a_declared_holder_the_head_still_decides(tmp_path, files, expected):
+    """Where REUSE declares no copyright holder, a text file's first copyright
+    line names it, whether or not REUSE read that line."""
+    assert _notices(_vendored(tmp_path, files)) == expected
+
+
+def test_the_head_is_read_in_the_encoding_it_is_written_in(tmp_path):
+    header = _HEADERS["copyright-and-licence"].encode("utf-16")
+
+    assert list(_vendored(tmp_path, {"src/x.h": header})) == ["vendored:bar-ltd"]
+
+
+@pytest.mark.parametrize("tag", ["SPDX-FileCopyrightText", "SPDX-SnippetCopyrightText"])
+def test_a_declared_notice_is_published_as_written(tmp_path, tag):
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.h": "#pragma once\n",
+            "src/x.h.license": f"{tag}: 2020,2021 Foo Inc\n{_LICENCE_TAG}\n",
+        },
+    )
+
+    assert components["vendored:foo-inc"].copyright_text == "2020,2021 Foo Inc"
+
+
+@pytest.mark.parametrize(
+    "sidecar",
+    [f"SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION\n{_LICENCE_TAG}\n", ""],
+    ids=["declaring", "empty"],
+)
+def test_an_aggregate_annotation_beside_a_sidecar_sets_the_file_aside(
+    tmp_path, sidecar
+):
+    """REUSE reads the sidecar in the file's place, aggregate or not, and
+    whether or not the sidecar says anything."""
+    toml = synth.annotation("src/x.h", "NVIDIA CORPORATION", precedence="aggregate")
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.h": _HEADERS["copyright-and-licence"],
+            "src/x.h.license": sidecar,
+            "REUSE.toml": synth.reuse_toml(toml),
+        },
+    )
+
+    assert components == {}
+
+
+def test_a_nested_override_sets_the_file_aside_beneath_an_aggregate(tmp_path):
+    """REUSE stops reading the file at any override, whatever lies above it."""
+    nvidia = "NVIDIA CORPORATION"
+    components = _vendored(
+        tmp_path,
+        {
+            "src/x.h": _HEADERS["copyright-and-licence"],
+            "REUSE.toml": synth.reuse_toml(
+                synth.annotation("**", nvidia, precedence="aggregate")
+            ),
+            "src/REUSE.toml": synth.reuse_toml(
+                synth.annotation("**", nvidia, precedence="override")
+            ),
+        },
+    )
+
+    assert components == {}
+
+
+def test_a_link_takes_its_targets_holder_where_it_has_none(tmp_path):
+    synth.write(tmp_path / "vendor/x.h", f"// {_LICENCE_TAG}\n")
+    synth.write(
+        tmp_path / "vendor/x.h.license", "SPDX-FileCopyrightText: 2020 Foo Inc\n"
+    )
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+
+    component = _discover(tmp_path, "src/x.h")["vendored:foo-inc"]
+
+    # REUSE gives the target no licence: its sidecar sets the header aside.
+    assert component.license_concluded == "NOASSERTION"
+    assert component.unlicensed
+
+
+def test_a_link_takes_its_own_licence_and_its_targets_holder(tmp_path):
+    synth.write(tmp_path / "vendor/x.h", _HEADERS["copyright-and-licence"])
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+    synth.write(
+        tmp_path / "src/x.h.license", "SPDX-" + "License-Identifier: BSD-3-Clause\n"
+    )
+
+    component = _discover(tmp_path, "src/x.h")["vendored:bar-ltd"]
+
+    assert component.license_concluded == "BSD-3-Clause"
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "expected"),
+    [
+        pytest.param(
+            "SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION\n"
+            "SPDX-" + "License-Identifier: Apache-2.0\n",
+            {},
+            id="target-sidecar-names-the-project",
+        ),
+        pytest.param(
+            f"SPDX-FileCopyrightText: {_FOO}\nSPDX-"
+            + "License-Identifier: BSD-3-Clause\n",
+            {"vendored:foo-inc": "BSD-3-Clause"},
+            id="target-sidecar-names-another",
+        ),
+    ],
+)
+def test_a_link_reads_its_target_as_reuse_does(tmp_path, sidecar, expected):
+    """The bytes a link shares with its target are read under the target's
+    precedence: a header the target's sidecar sets aside decides nothing."""
+    synth.write(tmp_path / "vendor/x.h", _HEADERS["copyright-and-licence"])
+    synth.write(tmp_path / "vendor/x.h.license", sidecar)
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+
+    components = _discover(tmp_path, "src/x.h")
+
+    assert {key: c.license_concluded for key, c in components.items()} == expected
+
+
+@pytest.mark.parametrize("through", ["file", "link"])
+@pytest.mark.parametrize(
+    ("header", "holder", "precedence", "expected"),
+    [
+        pytest.param(
+            "copyright-and-licence",
+            "Foo Inc",
+            "aggregate",
+            {"vendored:foo-inc": "Apache-2.0 AND MIT"},
+            id="aggregate",
+        ),
+        pytest.param(
+            "unparsed-only",
+            "NVIDIA CORPORATION",
+            "aggregate",
+            {"vendored:bar-ltd": "Apache-2.0"},
+            id="aggregate-unparsed",
+        ),
+        pytest.param(
+            "unparsed-and-licence",
+            "NVIDIA CORPORATION",
+            "closest",
+            {"vendored:bar-ltd": "MIT"},
+            id="closest",
+        ),
+    ],
+)
+def test_a_link_with_its_own_annotation_reads_as_a_file_in_its_place(
+    tmp_path, through, header, holder, precedence, expected
+):
+    annotation = synth.annotation(
+        "src/**", holder, licence="Apache-2.0", precedence=precedence
+    )
+    synth.write(tmp_path / "REUSE.toml", synth.reuse_toml(annotation))
+    if through == "link":
+        synth.write(tmp_path / "vendor/x.h", _HEADERS[header])
+        _link(tmp_path, "src/x.h", "../vendor/x.h")
+    else:
+        synth.write(tmp_path / "src/x.h", _HEADERS[header])
+
+    components = _discover(tmp_path, "src/x.h")
+
+    assert {key: c.license_concluded for key, c in components.items()} == expected
+
+
+def test_a_tracked_link_is_not_a_candidate(tmp_path):
+    """REUSE skips links; only a build input is judged by its target."""
+    synth.write(tmp_path / "vendor/x.h", _HEADERS["copyright-and-licence"])
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+
+    components, _ = discovery.discover_vendored(
+        tmp_path, set(), {"NVIDIA"}, tracked=["src/x.h", "vendor/x.h"]
+    )
+
+    assert "Files: vendor/x.h." in components["vendored:bar-ltd"].source_info
+
+
+def test_a_link_keeps_its_own_holder_where_its_target_has_no_info(tmp_path):
+    synth.write(tmp_path / "vendor/x.h", "#pragma once\n")
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+    synth.write(tmp_path / "src/x.h.license", "SPDX-FileCopyrightText: 2020 Foo Inc\n")
+
+    assert list(_discover(tmp_path, "src/x.h")) == ["vendored:foo-inc"]
+
+
+def test_a_link_read_as_its_target_takes_the_targets_precedence(tmp_path):
+    synth.write(tmp_path / "vendor/x.h", _HEADERS["unparsed-only"])
+    synth.write(
+        tmp_path / "REUSE.toml",
+        synth.reuse_toml(
+            synth.annotation("vendor/x.h", "NVIDIA CORPORATION", precedence="aggregate")
+        ),
+    )
+    _link(tmp_path, "src/x.h", "../vendor/x.h")
+
+    assert list(_discover(tmp_path, "src/x.h")) == ["vendored:bar-ltd"]
+
+
+@pytest.mark.parametrize(
+    ("name", "head"),
+    [
+        ("icon.svg", "<!-- Copyright 2020 Bar Ltd -->\n<svg/>\n"),
+        ("x.c", "/* Copyright 2020 Bar Ltd */\nint x;\n"),
+    ],
+    ids=["html", "c"],
+)
+def test_comment_markup_is_not_part_of_a_scraped_holder(tmp_path, name, head):
+    component = _vendored(tmp_path, {f"src/{name}": head})["vendored:bar-ltd"]
+
+    assert component.name == "Vendored source (Bar Ltd)"
+    assert component.copyright_text == "Copyright 2020 Bar Ltd"

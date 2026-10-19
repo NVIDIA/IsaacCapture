@@ -33,10 +33,6 @@ from .discovery import (
     EMPTY_SHA256,
 )
 
-# Suffixes whose files conventionally carry a REUSE header naming their holder.
-# scripts/check_licenses.py lints these too; a test in tests/python/sbom ties them.
-_TAGGABLE_SOURCE = {".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".pyi", ".sh", ".cmake"}
-
 # Cache entries that pin what a wheel contains. The rest of the cache is paths on
 # the builder.
 _CACHE_KEYS = re.compile(
@@ -272,9 +268,6 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         if len(owners) == 1:
             staged_component_dirs[display] = owners.pop()
 
-    # Third-party code checked in here rather than fetched: the candidates are
-    # what the build actually compiles or includes, so nothing outside the build
-    # is inspected.
     ownership = Ownership()
     for root in sorted(deps_dir.glob("*-src")):
         if root.is_dir():
@@ -287,19 +280,13 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         if root.is_dir():
             ownership.register_root(root, root.name.removesuffix("-build"))
 
-    # Every tracked file that can carry a REUSE header, plus whatever the build
-    # compiled. Scanning only compiled sources missed a third party whose code
-    # reaches the wheel as Python: nothing compiles it, so nothing looked at it,
-    # and the component was reported as contributing no file.
-    candidates: set[Path] = {
-        repo_root / item
-        for item in tracked
-        if Path(item).suffix.lower() in _TAGGABLE_SOURCE
-    }
-    candidates.update(graph.repo_inputs(repo_root, build_dir))
-
+    # Third-party material checked in here rather than fetched. Tracked files as
+    # well as build inputs: Python or data reaching the wheel is compiled by nothing.
     vendored, owned_paths = discover_vendored(
-        repo_root, candidates, project_authors(repo_root)
+        repo_root,
+        graph.repo_inputs(repo_root, build_dir),
+        project_authors(repo_root),
+        tracked=tracked,
     )
     components.update(vendored)
     for key, paths in owned_paths.items():

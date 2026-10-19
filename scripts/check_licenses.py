@@ -17,7 +17,7 @@ EGOPOST_SUBTREE = Path("src/python/isaaccapture_egopost")
 EGOPOST_LICENSE = "LicenseRef-OpenMDW-1.1"
 DEFAULT_LICENSE = "Apache-2.0"
 COPYRIGHT_HOLDER = "NVIDIA CORPORATION & AFFILIATES. All rights reserved."
-# Same rule as check-copyright-year's `files:`; covers the SBOM suffixes (tested).
+# Same rule as check-copyright-year's `files:`.
 SOURCE_FILES = re.compile(
     r"\.(py|pyi|js|ts|cpp|cc|c|h|hpp|cxx|hxx|inc|cu|cuh|frag|vert|cmake|md|yaml|yml"
     r"|sh|fbs|toml|html)$"

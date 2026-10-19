@@ -580,9 +580,14 @@ def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
     )
     synth.write(
         workspace.root / "REUSE.toml",
-        'version = 1\n\n[[annotations]]\npath = "src/vendor/keys/**"\n'
-        'SPDX-FileCopyrightText = "Copyright 2013 The Keys Authors"\n'
-        "SPDX-" + 'License-Identifier = "BSD-3-Clause"\n',
+        synth.reuse_toml(
+            synth.annotation(
+                "src/vendor/keys/**",
+                "The Keys Authors",
+                licence="BSD-3-Clause",
+                year=2013,
+            )
+        ),
     )
     synth.track(workspace.root)
     _rebuild(workspace, synth.wheel_payload(workspace))

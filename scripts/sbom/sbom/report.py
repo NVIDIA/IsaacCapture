@@ -28,7 +28,7 @@ _HOW_PROSE = {
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 # What a row is, so a copyright holder is not read as a package name. A vendored
-# row is named for the holder its files state, because that is the only identity
+# row is named for the holder its REUSE info or header names, the only identity
 # such material has -- there is no package behind it.
 _KIND_PROSE = {
     "source-tree": "fetched source",

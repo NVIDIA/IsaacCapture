@@ -275,7 +275,7 @@ UNTAGGED_HEADER = """\
 UNTAGGED_KEY = "vendored:the-keys-authors"
 
 _PROJECT_PYPROJECT = """\
-# SPDX-FileCopyrightText: Copyright (c) 2026 Example Org. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
@@ -328,6 +328,27 @@ def _git_checkout(root: Path, initialise: bool = True) -> None:
         run("init", "-q", "-b", "main")
     run("add", "-A")
     run("commit", "-q", "--allow-empty", "-m", "synthetic project")
+
+
+def annotation(
+    path: str,
+    holder: str | None = None,
+    *,
+    licence: str | None = "MIT",
+    precedence: str = "closest",
+    year: int = 2020,
+) -> str:
+    """One REUSE.toml annotation; it states no copyright where `holder` is None."""
+    lines = ["[[annotations]]", f'path = "{path}"', f'precedence = "{precedence}"']
+    if holder is not None:
+        lines.append(f'SPDX-FileCopyrightText = "Copyright {year} {holder}"')
+    if licence is not None:
+        lines.append("SPDX-" + f'License-Identifier = "{licence}"')
+    return "\n".join(lines) + "\n"
+
+
+def reuse_toml(*annotations: str) -> str:
+    return "version = 1\n\n" + "\n".join(annotations)
 
 
 def track(root: Path) -> None:

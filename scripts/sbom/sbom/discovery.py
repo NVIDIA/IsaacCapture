@@ -29,6 +29,7 @@ import subprocess
 import tomllib
 import tarfile
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -601,7 +602,7 @@ class Ownership:
 # Third-party sources vendored in this repository
 # ==============================================================================
 # Not everything third-party arrives through FetchContent. A file checked in
-# here that someone else wrote says so in its REUSE header, which is the same
+# here that someone else wrote says so in its REUSE info, which is the same
 # thing the project states about its own files -- so the copyright holder is
 # what separates them, not the directory it happens to sit in.
 
@@ -612,6 +613,8 @@ _COPYRIGHT_TAG = re.compile(
     r"|^[^\w\n]*Copyright\b(?P<plain>[^\n\r]+)",
     re.MULTILINE,
 )
+# Comment markup around a copyright line: `//`, `#`, ` * `, `<!-- ... -->`, `/* ... */`.
+_COMMENT_MARKUP = re.compile(r"^(?:<!--|[/*#\s])+|\s*(?:-->|\*/)\s*$")
 _YEARS = re.compile(r"(copyright|\(c\)|©|\d{4}(\s*-\s*\d{4})?|,|\.)", re.IGNORECASE)
 
 
@@ -673,46 +676,173 @@ def project_copyright(repo_root: Path) -> str:
 
 @dataclass(frozen=True)
 class _Stated:
-    """What a source file says about itself in its header."""
+    """Who holds a file, and the notices that say so."""
 
     holder: str
-    notice: str
+    notices: tuple[str, ...]
+
+
+def _holder_in(text: str) -> str:
+    """The holder a copyright statement names, without years or boilerplate."""
+    holder = " ".join(_YEARS.sub(" ", _COMMENT_MARKUP.sub("", text)).split())
+    return holder.removesuffix(" All rights reserved").strip()
+
+
+def _notice_line(text: str) -> str:
+    # The tag introduces the notice; it is not part of it.
+    notice = _COMMENT_MARKUP.sub("", " ".join(text.split()))
+    return re.sub(r"^SPDX-(?:File|Snippet)CopyrightText:\s*", "", notice)
 
 
 def _stated_by(path: Path) -> _Stated | None:
-    """Holder and notice, from one read of the file's head."""
+    """Holder and notice, from the first copyright line in a text file's head."""
+    from reuse.extract import HEURISTICS_CHUNK_SIZE, detect_encoding
+
     try:
         with path.open("rb") as handle:
-            head = handle.read(4096).decode("utf-8", "replace")
+            raw = handle.read(4096)
     except OSError:
         return None
-    match = _COPYRIGHT_TAG.search(head)
+    # REUSE's own text test: a PNG's `Copyright` text chunk is not a header.
+    encoding = detect_encoding(raw[:HEURISTICS_CHUNK_SIZE])
+    if encoding is None:
+        return None
+    match = _COPYRIGHT_TAG.search(raw.decode(encoding, "replace"))
     if not match:
         return None
-    holder = _YEARS.sub(" ", match.group("holder") or match.group("plain") or "")
-    holder = " ".join(holder.split()).removesuffix(" All rights reserved").strip()
-    if not holder:
-        return None
-    notice = " ".join(match.group(0).split()).lstrip("/ *#")
-    # The tag introduces the notice; it is not part of it.
-    notice = re.sub(r"^SPDX-FileCopyrightText:\s*", "", notice)
-    return _Stated(holder, notice)
+    holder = _holder_in(match.group("holder") or match.group("plain") or "")
+    return _Stated(holder, (_notice_line(match.group(0)),)) if holder else None
+
+
+def _header_applies(project, used: Path, infos) -> bool:
+    """Whether REUSE applies the file's own text beside its declared info.
+
+    It does where it took info from the header, and under `aggregate` whatever
+    it parsed -- unless a `.license` sidecar exists or any `override` applies,
+    the conditions `Project.reuse_info_of` tests before reading the file.
+    """
+    from reuse.copyright import SourceType
+    from reuse.global_licensing import PrecedenceType
+
+    if any(info.source_type is SourceType.FILE_HEADER for info in infos):
+        return True
+    if project.global_licensing is None or Path(f"{used}.license").exists():
+        return False
+    found = project.global_licensing.reuse_info_of(project.relative_from_root(used))
+    return PrecedenceType.AGGREGATE in found and PrecedenceType.OVERRIDE not in found
+
+
+def _held_by(project, used: Path, infos, authors: set[str]) -> _Stated | None:
+    """Who other than the project holds a file, as a `_Stated`, if anyone does.
+
+    A sidecar or REUSE.toml notice naming someone else makes the file theirs,
+    under the first such holder by name. The file's first copyright line counts
+    as well unless REUSE applied declared notices that all name a holder in the
+    file's place: a sidecar, `override`, or `closest` where REUSE found nothing
+    in the file. Then the file is ours if those all name the project.
+    """
+    from reuse.copyright import SourceType
+
+    def ours(holder: str) -> bool:
+        return any(author.lower() in holder.lower() for author in authors)
+
+    # (holder, notice, whether it names the project), once per declared notice.
+    declared = [
+        (
+            _holder_in(notice.name),
+            _notice_line(notice.to_string(original=True)),
+            ours(notice.name),
+        )
+        for info in infos
+        if info.source_type is not SourceType.FILE_HEADER
+        for notice in info.copyright_notices
+    ]
+    set_aside = (
+        bool(declared)
+        and all(holder for holder, _, _ in declared)
+        and not _header_applies(project, used, infos)
+    )
+    stated = None if set_aside else _stated_by(used)
+    scraped = stated if stated is not None and not ours(stated.holder) else None
+    foreign = [(holder, line) for holder, line, mine in declared if holder and not mine]
+    if not foreign:
+        return scraped
+    holder = min(foreign, key=lambda item: (item[0].casefold(), item))[0]
+    lines = [line for _, line in foreign] + list(scraped.notices if scraped else ())
+    return _Stated(holder, tuple(lines))
+
+
+def _covered(project, path: Path, *, built: bool) -> bool:
+    """Whether REUSE covers a file.
+
+    For a file the build read, only what REUSE excludes by name counts: a link
+    is judged by its target, and a submodule, a meson subproject or a
+    VCS-ignored file it compiled still ships.
+    """
+    from reuse.covered_files import is_path_ignored
+
+    if not built and path.is_symlink():
+        return False
+    real = path.resolve()
+    if not real.is_relative_to(project.root) or not real.is_file():
+        return False
+    # With no VCS strategy REUSE checks neither ignore rules nor submodules.
+    return not any(
+        is_path_ignored(
+            item,
+            include_submodules=project.include_submodules,
+            include_meson_subprojects=built or project.include_meson_subprojects,
+            vcs_strategy=None if built else project.vcs_strategy,
+        )
+        for item in (real, *real.parents)
+        if item != project.root and item.is_relative_to(project.root)
+    )
+
+
+def _info_for(project, own: Path, target: Path):
+    """REUSE info for a file's holder and for its licence, and the holder's path.
+
+    A link's own declarations are its sidecar and the annotations on its path.
+    Where they give a field, REUSE's view of the link decides it, as for a file
+    in its place; otherwise REUSE's view of the target, which applies the
+    target's precedence to the bytes they share.
+    """
+    from reuse.copyright import SourceType
+
+    infos = project.reuse_info_of(own)
+    if target == own:
+        return infos, infos, own
+    mine = [info for info in infos if info.source_type is not SourceType.FILE_HEADER]
+    theirs = project.reuse_info_of(target)
+    licensed = infos if any(info.spdx_expressions for info in mine) else theirs
+    if any(info.copyright_notices for info in mine):
+        return infos, licensed, own
+    return theirs, licensed, target
 
 
 def discover_vendored(
-    repo_root: Path, candidates: set[Path], authors: set[str]
+    repo_root: Path,
+    candidates: set[Path],
+    authors: set[str],
+    *,
+    tracked: Iterable[str],
 ) -> tuple[dict[str, Component], dict[str, list[Path]]]:
     """Group checked-in files whose copyright holder is not the project's.
 
-    Their licences are what REUSE says of each file -- its header, a `.license`
-    sidecar or a REUSE.toml annotation, under REUSE's own precedence -- which is
-    how this repository declares the terms of every file it holds, and what its
-    pre-commit hook lints for source files.
+    Reads the build inputs in `candidates` and the `tracked` files REUSE covers
+    (`_covered`); `tracked` is required, as without it tracked data and Python
+    go unread. Licences are REUSE's; holders are `_held_by`'s.
     """
     # Here, not at module level: only discovery needs reuse, and reuse needs libmagic.
     from reuse.project import Project
 
     project = Project.from_directory(repo_root.resolve())
+    built = {path for path in candidates if _covered(project, path, built=True)}
+    candidates = built | {
+        path
+        for path in (repo_root / item for item in tracked)
+        if _covered(project, path, built=False)
+    }
     grouped: dict[str, list[Path]] = {}
     licences: dict[str, set[str]] = {}
     names: dict[str, str] = {}
@@ -720,27 +850,19 @@ def discover_vendored(
     unlicensed: dict[str, list[tuple[str, str]]] = {}
 
     for path in sorted(candidates):
-        stated = _stated_by(path)
+        under_root = path.relative_to(repo_root)
+        own = project.root / under_root
+        infos, licensed, used = _info_for(project, own, path.resolve())
+        stated = _held_by(project, used, infos, authors)
         if stated is None:
             continue
-        if any(author.lower() in stated.holder.lower() for author in authors):
-            continue
+        reuse_declared = [
+            expression for info in licensed for expression in info.spdx_expressions
+        ]
         key = f"vendored:{licensing.spdx_safe(stated.holder).lower()}"
         grouped.setdefault(key, []).append(path)
         names[key] = stated.holder
-        notices.setdefault(key, set()).add(stated.notice)
-        # The link's own path first; a link with no info of its own falls back
-        # to its target's, which is all the REUSE lint checks for a symlink.
-        under_root = path.relative_to(repo_root)
-        target = path.resolve()
-        reuse_declared = []
-        for where in (project.root / under_root, target):
-            if where.is_relative_to(project.root) and not reuse_declared:
-                reuse_declared = [
-                    expression
-                    for info in project.reuse_info_of(where)
-                    for expression in info.spdx_expressions
-                ]
+        notices.setdefault(key, set()).update(stated.notices)
         reason = licensing.why_unlicensed(reuse_declared)
         if reason:
             unlicensed.setdefault(key, []).append((str(under_root), reason))
@@ -764,9 +886,14 @@ def discover_vendored(
                 evidence += licensing.exception_evidence(key, declared)
                 declared = licensing.license_ref(key)
             concluded = declared
-        # Say when the list is shortened; without the marker it reads as the
-        # whole set, and the first four by name need not be the ones that ship.
-        named = sorted(str(item.relative_to(repo_root)) for item in paths)
+        # What the build read first, so a shortened list names what ships; say
+        # when it is shortened, or it reads as the whole set.
+        named = [
+            name
+            for _, name in sorted(
+                (item not in built, str(item.relative_to(repo_root))) for item in paths
+            )
+        ]
         relative = ", ".join(named[:4]) + (
             f", and {len(named) - 4} more" if len(named) > 4 else ""
         )
@@ -781,15 +908,15 @@ def discover_vendored(
             supplier=f"Organization: {names[key]}",
             homepage="NOASSERTION",
             # No purl: this is third-party material identified by the copyright
-            # its files state, and there is no package to locate. Minting
-            # `pkg:generic/<holder>` named a package that does not exist, from
-            # an organisation rather than from anything shipped.
+            # holder its REUSE info or header names; there is no package to
+            # locate. Minting `pkg:generic/<holder>` named a package that does
+            # not exist, from an organisation rather than from anything shipped.
             purl="NOASSERTION",
             version="NOASSERTION",
             download_location="NOASSERTION",
             source_info=(
-                f"Checked into this repository rather than fetched; states its own "
-                f"copyright. Files: {relative}."
+                f"Checked into this repository rather than fetched; its REUSE info "
+                f"or header names its copyright holder. Files: {relative}."
             ),
             license_concluded=concluded,
             license_declared=declared,

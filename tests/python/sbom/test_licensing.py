@@ -389,7 +389,9 @@ def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
         "// SPDX-FileCopyrightText: Copyright 2020 Upstream Widgets Ltd\n"
         "// SPDX-License-Identifier: MIT OR GPL-2.0-or-later\n"
     )
-    components, _ = discovery.discover_vendored(tmp_path, {source}, {"NVIDIA"})
+    components, _ = discovery.discover_vendored(
+        tmp_path, {source}, {"NVIDIA"}, tracked=()
+    )
     component = next(iter(components.values()))
 
     assert component.license_concluded == "MIT OR GPL-2.0-or-later"
