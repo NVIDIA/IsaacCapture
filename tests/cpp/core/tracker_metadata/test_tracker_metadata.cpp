@@ -344,8 +344,10 @@ TEST_CASE("A restarted producer's data waits for its metadata, however it is pad
     CHECK(live.step() == 0.3f);
 }
 
-TEST_CASE("Different metadata withholds the data for the rest of the session", "[unit][tracker_metadata]")
+TEST_CASE("Different metadata is an error naming its collection", "[unit][tracker_metadata]")
 {
+    using Catch::Matchers::ContainsSubstring;
+
     LiveSession live;
     live.start_metadata();
     live.start_data();
@@ -356,21 +358,14 @@ TEST_CASE("Different metadata withholds the data for the rest of the session", "
     SECTION("in a tick of its own")
     {
         live.push_metadata(make_metadata("other"));
-        live.push_data(0.2f);
-        CHECK_FALSE(live.step());
     }
     SECTION("followed by the adopted one in the same tick")
     {
         live.push_metadata(make_metadata("other"));
         live.push_metadata(make_metadata("glove"));
-        live.push_data(0.2f);
-        CHECK_FALSE(live.step());
     }
-
-    live.push_metadata(make_metadata("glove"));
-    live.push_data(0.3f);
-    CHECK_FALSE(live.step());
-    CHECK(live.impl->get_metadata()->label()->str() == "glove");
+    live.push_data(0.2f);
+    CHECK_THROWS_WITH(live.step(), ContainsSubstring(METADATA_COLLECTION) && ContainsSubstring("differs"));
 }
 
 TEST_CASE("A metadata sample that is not a valid table is an error naming its collection", "[unit][tracker_metadata]")

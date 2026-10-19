@@ -38,7 +38,7 @@ bool same_tracker_metadata(std::span<const uint8_t> a, std::span<const uint8_t> 
  * The first metadata received is adopted, recorded, and kept for the life of this tracker. The
  * tracker's data may be published and recorded while the producer's metadata is confirmed: from a
  * sample equal to the adopted one until the metadata collection goes away. A sample that differs
- * stops the data for the rest of the session.
+ * from the adopted one, or is not a valid table, makes update() throw.
  */
 template <typename MetadataT>
 class SchemaMetadataTracker : public SchemaTrackerBase
@@ -58,23 +58,16 @@ public:
     /*!
      * @brief Reads the pending metadata. Call once per tick, before reading the data.
      * @return Whether the data may be published and recorded this tick.
-     * @throws std::runtime_error when a sample is not a valid MetadataT.
+     * @throws std::runtime_error when a sample is not a valid MetadataT, or differs from the
+     *         adopted one.
      */
     bool update()
     {
-        if (mismatched_)
-        {
-            return false;
-        }
-
         std::vector<SampleResult> samples;
         const bool present = read_all_samples(samples);
         for (auto& sample : samples)
         {
-            if (!accept(sample))
-            {
-                return false;
-            }
+            accept(sample);
         }
 
         if (!present)
@@ -96,8 +89,8 @@ public:
     }
 
 private:
-    //! Adopts the first sample. Returns false, for good, once a sample differs from it.
-    bool accept(SampleResult& sample)
+    //! Adopts the first sample and checks every later one against it.
+    void accept(SampleResult& sample)
     {
         const std::string& collection_id = config().collection_id;
         flatbuffers::Verifier verifier(sample.buffer.data(), sample.buffer.size());
@@ -117,24 +110,19 @@ private:
             }
             logger_->info(
                 "{}: adopted {} B of {}", collection_id, metadata_.buffer().size(), MetadataT::GetFullyQualifiedName());
-            return true;
+            return;
         }
 
-        if (same_tracker_metadata(metadata_.buffer(), sample.buffer))
+        if (!same_tracker_metadata(metadata_.buffer(), sample.buffer))
         {
-            return true;
+            throw std::runtime_error(collection_id + ": received a " + MetadataT::GetFullyQualifiedName() +
+                                     " that differs from the one adopted");
         }
-
-        mismatched_ = true;
-        logger_->error("{}: received a {} that differs from the one adopted; the data stays withheld this session",
-                       collection_id, MetadataT::GetFullyQualifiedName());
-        return false;
     }
 
     Channels* mcap_channels_;
     Serialized<MetadataT> metadata_;
     bool confirmed_ = false;
-    bool mismatched_ = false;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.SchemaMetadataTracker");
 };
 
