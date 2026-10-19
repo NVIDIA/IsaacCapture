@@ -16,7 +16,7 @@ namespace core
 
 //! Largest metadata sample a tracker accepts. A producer sizes its metadata collection to its
 //! encoded table, up to this.
-inline constexpr size_t TRACKER_METADATA_MAX_SIZE = 16384;
+inline constexpr size_t TRACKER_METADATA_MAX_SIZE = 68864;
 
 //! Collection the metadata of the tracker reading `collection_id` is pushed on.
 inline std::string tracker_metadata_collection_id(std::string_view collection_id)

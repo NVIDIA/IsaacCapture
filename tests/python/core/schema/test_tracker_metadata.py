@@ -16,4 +16,4 @@ def test_metadata_collection_is_named_after_the_data_collection():
 
 def test_wire_contract():
     assert TRACKER_METADATA_TENSOR_IDENTIFIER == "metadata"
-    assert TRACKER_METADATA_MAX_SIZE == 16384
+    assert TRACKER_METADATA_MAX_SIZE == 68864
