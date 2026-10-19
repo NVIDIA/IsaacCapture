@@ -9,7 +9,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Contributing &#8212; Isaac Teleop Documentation</title>
+    <title>Contributing &#8212; Isaac Capture Documentation</title>
   
   
   
@@ -59,8 +59,6 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Device Trackers" href="../device/trackers.html" />
-    <link rel="prev" title="reBot B601-RS on Jetson AGX Orin" href="lerobot/rebot.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -142,11 +140,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a></div>
     
@@ -208,10 +206,6 @@
   
 
   
-    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
-      <span class="fa-solid fa-outdent"></span>
-    </button>
-  
 </div>
 
     </header>
@@ -243,11 +237,11 @@
       
     
     
-    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Teleop Documentation - Home"/>
-    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Teleop Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
   
   
-    <p class="title logo__title">Isaac Teleop Documentation</p>
+    <p class="title logo__title">Isaac Capture Documentation</p>
   
 </a>
 
@@ -304,7 +298,7 @@
           
           
           
-          <a href="https://github.com/NVIDIA/IsaacTeleop" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
         </li>
         <li class="nav-item">
           
@@ -315,7 +309,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -338,36 +332,42 @@
   <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
   <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../index.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
-<ul class="current nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="build_from_source/index.html">Build from Source</a></li>
-<li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
-<li class="toctree-l1"><a class="reference internal" href="teleop_control_state_machine.html">Teleop Control State Machine</a></li>
-<li class="toctree-l1"><a class="reference internal" href="televiz.html">Televiz</a></li>
-<li class="toctree-l1"><a class="reference internal" href="lerobot/index.html">LeRobot and SO-101</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Contributing</a></li>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Device Trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/soma.html">SOMA Pose Transport</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/joint_space.html">Generic Joint-Space Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking.html">Body Tracking</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/manus.html">MANUS Gloves</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oak.html">OAK Camera Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/oglo.html">OGLO Tactile Glove Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/wuji_glove.html">Wuji Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/sharpa_avatar.html">Sharpa AvatarExo Glove</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/haptikos.html">Haptikos Exoskeletons</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/spacemouse.html">SpaceMouse Plugin</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/gamepad.html">Gamepad Plugin</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -380,9 +380,8 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/license.html">License</a></li>
 </ul>
 </div>
 </nav></div>
@@ -436,68 +435,7 @@
                   
   <section id="contributing">
 <h1>Contributing<a class="headerlink" href="#contributing" title="Link to this heading">#</a></h1>
-<p>We welcome contributions. Please see the repository’s <a class="reference external" href="https://github.com/NVIDIA/IsaacTeleop/blob/main/CONTRIBUTING.md" rel="noopener noreferrer" target="_blank">CONTRIBUTING.md</a> for:</p>
-<ul class="simple">
-<li><p>Code of conduct and how to contribute</p></li>
-<li><p>Development setup and coding standards</p></li>
-<li><p>Pull request process</p></li>
-</ul>
-<section id="previewing-documentation-changes">
-<h2>Previewing documentation changes<a class="headerlink" href="#previewing-documentation-changes" title="Link to this heading">#</a></h2>
-<section id="local-build">
-<h3>Local build<a class="headerlink" href="#local-build" title="Link to this heading">#</a></h3>
-<p>Build the docs locally to catch broken links and rendering issues before opening
-a pull request:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>docs
-pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>requirements.txt
-make<span class="w"> </span>current-docs
-</pre></div>
-</div>
-<p>The output is written to <code class="docutils literal notranslate"><span class="pre">docs/build/current/</span></code>. Open <code class="docutils literal notranslate"><span class="pre">index.html</span></code> in a
-browser to inspect it. Sphinx is run with <code class="docutils literal notranslate"><span class="pre">-W</span> <span class="pre">--keep-going</span></code>, so warnings are
-treated as errors — fix them locally before pushing.</p>
-</section>
-<section id="pr-preview-on-github-pages">
-<h3>PR preview on GitHub Pages<a class="headerlink" href="#pr-preview-on-github-pages" title="Link to this heading">#</a></h3>
-<p>Every PR preview is published to a single canonical location:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>https://nvidia.github.io/IsaacCapture/preview/pr-&lt;N&gt;/
-</pre></div>
-</div>
-<p>How the preview gets built depends on where the PR’s branch lives.</p>
-<section id="prs-from-a-branch-on-nvidia-isaacteleop">
-<h4>PRs from a branch on <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacTeleop</span></code><a class="headerlink" href="#prs-from-a-branch-on-nvidia-isaacteleop" title="Link to this heading">#</a></h4>
-<p>The <code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> workflow runs automatically on every push to the
-PR branch and publishes the preview. The preview URL is added to the workflow
-run’s <em>Summary</em> tab and refreshed on every push. No extra action required.</p>
-</section>
-<section id="prs-from-a-fork">
-<h4>PRs from a fork<a class="headerlink" href="#prs-from-a-fork" title="Link to this heading">#</a></h4>
-<p>GitHub Actions on PRs from forks run with a read-only token, so the workflow
-cannot push to <code class="docutils literal notranslate"><span class="pre">gh-pages</span></code> automatically. Instead:</p>
-<ol class="arabic">
-<li><p><code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> still runs and uploads the built artifacts; only
-the deploy step is skipped.</p></li>
-<li><p>When a fork PR is opened, a bot comments with instructions.</p></li>
-<li><p>A maintainer (anyone with write access to <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacTeleop</span></code>) deploys
-the preview by commenting on the PR:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>/preview-docs
-</pre></div>
-</div>
-</li>
-<li><p>The maintainer-triggered workflow downloads the artifacts that
-<code class="docutils literal notranslate"><span class="pre">Build</span> <span class="pre">&amp;</span> <span class="pre">deploy</span> <span class="pre">docs</span></code> already produced for that commit and pushes them
-to <code class="docutils literal notranslate"><span class="pre">preview/pr-&lt;N&gt;/</span></code>, reacting to the comment with 👀 while deploying
-and 👍 once published. A follow-up comment posts the preview URL.</p></li>
-</ol>
-<p>Because the deploy reuses the same artifacts that the build job validated,
-<code class="docutils literal notranslate"><span class="pre">/preview-docs</span></code> does not run any PR code itself. Re-comment
-<code class="docutils literal notranslate"><span class="pre">/preview-docs</span></code> after new commits land to redeploy from the latest build.</p>
-<p>Previews are not auto-cleaned; maintainers can run the
-<code class="docutils literal notranslate"><span class="pre">Cleanup</span> <span class="pre">docs</span> <span class="pre">PR</span> <span class="pre">previews</span></code> workflow from the <em>Actions</em> tab to clear the
-<code class="docutils literal notranslate"><span class="pre">preview/</span></code> tree.</p>
-</section>
-</section>
-</section>
+<p>This page has moved to <a class="reference internal" href="../development/contributing.html"><span class="doc">Contributing</span></a>.</p>
 </section>
 
 
@@ -510,24 +448,6 @@ and 👍 once published. A follow-up comment posts the preview URL.</p></li>
                 <footer class="prev-next-footer d-print-none">
                   
 <div class="prev-next-area">
-    <a class="left-prev"
-       href="lerobot/rebot.html"
-       title="previous page">
-      <i class="fa-solid fa-angle-left"></i>
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">reBot B601-RS on Jetson AGX Orin</p>
-      </div>
-    </a>
-    <a class="right-next"
-       href="../device/trackers.html"
-       title="next page">
-      <div class="prev-next-info">
-        <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Device Trackers</p>
-      </div>
-      <i class="fa-solid fa-angle-right"></i>
-    </a>
 </div>
                 </footer>
               
@@ -535,33 +455,9 @@ and 👍 once published. A follow-up comment posts the preview URL.</p></li>
             
             
 
-
-              
-                <dialog id="pst-secondary-sidebar-modal"></dialog>
-                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+<div class="bd-sidebar-secondary"></div>
 
 
-  <div class="sidebar-secondary-item">
-<div
-    id="pst-page-navigation-heading-2"
-    class="page-toc tocsection onthispage">
-    <i class="fa-solid fa-list"></i> On this page
-  </div>
-  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
-    <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#previewing-documentation-changes">Previewing documentation changes</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#local-build">Local build</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pr-preview-on-github-pages">PR preview on GitHub Pages</a><ul class="nav section-nav flex-column">
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#prs-from-a-branch-on-nvidia-isaacteleop">PRs from a branch on <code class="docutils literal notranslate"><span class="pre">NVIDIA/IsaacTeleop</span></code></a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#prs-from-a-fork">PRs from a fork</a></li>
-</ul>
-</li>
-</ul>
-</li>
-</ul>
-  </nav></div>
-
-</div></div>
               
             
 
@@ -640,7 +536,7 @@ and 👍 once published. A follow-up comment posts the preview URL.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 14, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 19, 2026.
       <br/>
     
   </p>

@@ -111,7 +111,7 @@ while the mapping-table cross-check still runs because it needs no SDK.
 
 .. seealso::
 
-   :doc:`/device/wuji_glove` -- install and run the Wuji glove input plugin.
+   :doc:`/device/hand_tracking/wuji_glove` -- install and run the Wuji glove input plugin.
 
    :ref:`isaac-teleop-pipeline-builder` -- connect the hand source and retargeter
    into a complete pipeline.

@@ -644,7 +644,7 @@ On startup the launcher:
 2. Resolves the WebXR static directory from
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
-   the published client (see :doc:`../getting_started/build_from_source/webxr`).
+   the published client (see :doc:`../development/build_from_source/webxr`).
 3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
    proxy's existing TLS listener.
 4. After the selected headset is ready, checks its non-loopback network,
@@ -712,7 +712,7 @@ and ``bundle.emulator.js`` (desktop emulation only). If the static cache under
 **Fix:** Ensure ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` are present
 under the static dir — run the launcher once with network, copy a full ``npm run build``
 output, or use the GitHub Pages URL directly. See
-:doc:`../getting_started/build_from_source/webxr`.
+:doc:`../development/build_from_source/webxr`.
 
 CDP: startButton marked failed / not actionable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

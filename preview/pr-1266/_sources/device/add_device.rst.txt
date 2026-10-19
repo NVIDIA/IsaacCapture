@@ -3,11 +3,11 @@
 Add a New Device
 ================
 
-For new hardware that requires a custom driver or SDK, create an Isaac Teleop device plugin
+For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
 (C++ level). Plugins push data via OpenXR tensor collections. Existing plugins include Manus
 gloves, OAK-D camera, Haptikos exoskeletons, controller synthetic hands, and foot pedals. After
 creating the plugin, update the retargeting pipeline config to consume data from the new plugin's
-source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/>`_
+source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/>`_
 for examples.
 
 To add a new device that streams typed data over the OpenXR runtime, follow these four steps.
@@ -261,7 +261,7 @@ Both exit after 1000 samples, or press Ctrl+C to exit early.
 
 The same build installs ``se3_printer``, ``full_body_printer`` and ``frame_metadata_printer`` next
 to them. Those read other schemas and need their own data source, so they are not part of this
-example; ``full_body_printer`` is covered in :doc:`body_tracking`.
+example; ``full_body_printer`` is covered in :doc:`body_tracking/index`.
 
 **Components**
 
@@ -281,3 +281,6 @@ example; ``full_body_printer`` is covered in :doc:`body_tracking`.
 - **DeviceIOSession** — Session manager: collects required OpenXR extensions from registered
   trackers, creates tracker implementations with session handles, and calls ``update()`` on all
   trackers during the update loop.
+
+For the shared library build and contribution workflow, see
+:doc:`/development/build_from_source/index` and :doc:`/development/contributing`.
