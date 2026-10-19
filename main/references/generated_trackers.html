@@ -551,6 +551,37 @@ Python edit at all.</p>
 <p><code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stubs need no work either: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/python/generate_stubs.py" rel="noopener noreferrer" target="_blank">src/core/python/generate_stubs.py</a> derives them from
 the built module.</p>
 </section>
+<section id="trackers-with-metadata">
+<span id="tracker-metadata"></span><h2>Trackers with metadata<a class="headerlink" href="#trackers-with-metadata" title="Link to this heading">#</a></h2>
+<p>A device that describes itself once rather than every frame (a tactile glove’s taxel layout, for
+example) declares that description as the tracker’s <code class="docutils literal notranslate"><span class="pre">metadata</span></code> table:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[tracker]]</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tactile"</span>
+<span class="n">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileData"</span>
+<span class="n">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileShape"</span>
+</pre></div>
+</div>
+<p>The metadata table is the <code class="docutils literal notranslate"><span class="pre">root_type</span></code> of a schema of its own, named after the table in snake case
+(<code class="docutils literal notranslate"><span class="pre">tactile_shape.fbs</span></code>), with no Record wrapper: MCAP records the table itself. Like the data table,
+it needs a hand-written <code class="docutils literal notranslate"><span class="pre">schema/python/*_bindings.h</span></code> before <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code> can return it to
+Python. Only <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;pull&quot;</span></code> supports <code class="docutils literal notranslate"><span class="pre">metadata</span></code>.</p>
+<ul class="simple">
+<li><p><strong>Producer.</strong> Pushes the encoded table on <code class="docutils literal notranslate"><span class="pre">tracker_metadata_collection_id(collection_id)</span></code>
+(<code class="docutils literal notranslate"><span class="pre">&lt;collection_id&gt;/metadata</span></code>), tensor <code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_TENSOR_IDENTIFIER</span></code>, in samples of at most
+<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> bytes; see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/cpp/inc/schema/tracker_metadata.hpp" rel="noopener noreferrer" target="_blank">src/core/schema/cpp/inc/schema/tracker_metadata.hpp</a>.
+It pushes when it starts and periodically after that, always the same encoded table, so a consumer
+that starts later still receives it. A C++ producer does this with a <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>, a Python one
+with a <code class="docutils literal notranslate"><span class="pre">TensorPushTracker</span></code>, either sized to the encoded table.</p></li>
+<li><p><strong>Live.</strong> The first metadata received is adopted, recorded once on <code class="docutils literal notranslate"><span class="pre">&lt;channel&gt;_metadata</span></code>, and
+returned by <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code> for the rest of the session. <code class="docutils literal notranslate"><span class="pre">get_data()</span></code> publishes and records
+data only while the producer’s metadata is confirmed: from a sample equal to the adopted one
+until the metadata collection goes away, so a restarted producer’s data waits for its own
+metadata. A sample that differs from the adopted one, or is not a valid table, is an error the
+session update throws.</p></li>
+<li><p><strong>Replay.</strong> Reads the recorded metadata when the session opens, and publishes data only from a
+recording that holds it.</p></li>
+</ul>
+</section>
 <section id="generated-today">
 <h2>Generated today<a class="headerlink" href="#generated-today" title="Link to this heading">#</a></h2>
 <div class="pst-scrollable-table-container"><table class="table">
@@ -741,6 +772,7 @@ correct outcome — the generator exists to remove mechanical duplication, not t
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-it-works">How it works</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-each-entry-produces">What each entry produces</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#trackers-with-metadata">Trackers with metadata</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#generated-today">Generated today</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#still-hand-written">Still hand-written</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#future-work">Future work</a></li>
@@ -826,7 +858,7 @@ correct outcome — the generator exists to remove mechanical duplication, not t
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 17, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 19, 2026.
       <br/>
     
   </p>

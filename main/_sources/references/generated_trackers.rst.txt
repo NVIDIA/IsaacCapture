@@ -73,6 +73,41 @@ Python edit at all.
 ``.pyi`` stubs need no work either: :code-file:`src/core/python/generate_stubs.py` derives them from
 the built module.
 
+.. _tracker-metadata:
+
+Trackers with metadata
+----------------------
+
+A device that describes itself once rather than every frame (a tactile glove's taxel layout, for
+example) declares that description as the tracker's ``metadata`` table:
+
+.. code-block:: toml
+
+   [[tracker]]
+   name = "tactile"
+   table = "TactileData"
+   metadata = "TactileShape"
+
+The metadata table is the ``root_type`` of a schema of its own, named after the table in snake case
+(``tactile_shape.fbs``), with no Record wrapper: MCAP records the table itself. Like the data table,
+it needs a hand-written ``schema/python/*_bindings.h`` before ``get_metadata()`` can return it to
+Python. Only ``direction = "pull"`` supports ``metadata``.
+
+- **Producer.** Pushes the encoded table on ``tracker_metadata_collection_id(collection_id)``
+  (``<collection_id>/metadata``), tensor ``TRACKER_METADATA_TENSOR_IDENTIFIER``, in samples of at most
+  ``TRACKER_METADATA_MAX_SIZE`` bytes; see :code-file:`src/core/schema/cpp/inc/schema/tracker_metadata.hpp`.
+  It pushes when it starts and periodically after that, always the same encoded table, so a consumer
+  that starts later still receives it. A C++ producer does this with a ``SchemaPusher``, a Python one
+  with a ``TensorPushTracker``, either sized to the encoded table.
+- **Live.** The first metadata received is adopted, recorded once on ``<channel>_metadata``, and
+  returned by ``get_metadata()`` for the rest of the session. ``get_data()`` publishes and records
+  data only while the producer's metadata is confirmed: from a sample equal to the adopted one
+  until the metadata collection goes away, so a restarted producer's data waits for its own
+  metadata. A sample that differs from the adopted one, or is not a valid table, is an error the
+  session update throws.
+- **Replay.** Reads the recorded metadata when the session opens, and publishes data only from a
+  recording that holds it.
+
 Generated today
 ---------------
 
