@@ -98,14 +98,15 @@ class FrankaTaskSession:
             value = self.client.state(max_age)
         except (URLError, OSError):
             value = json.loads((self.observation_dir / "sim-state.json").read_text())
-            # Only an orderly terminal snapshot can outlive its HTTP server.
-            if value.get("phase") != "completed" or value.get("completion_error"):
+            # Retry only until the supervisor publishes a terminal snapshot.
+            if value.get("phase") != "completed":
                 raise ObserverUnavailable(
                     "Observer disconnected before orderly completion"
                 ) from None
-        value = validate_observation(value)
+        # A failed worker may exit before publishing a complete observation schema.
         if value.get("phase") == "completed" and value.get("completion_error"):
             raise RuntimeError("Observer failed: " + value["completion_error"])
+        value = validate_observation(value)
         if Path(value["run_dir"]).resolve() != self.observation_dir:
             raise RuntimeError("Feedback belongs to a different observation directory")
         if self.run_id is not None and value["run_id"] != self.run_id:
