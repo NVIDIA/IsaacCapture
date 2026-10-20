@@ -24,13 +24,13 @@ import json
 import os
 import platform
 import re
-import shutil
+import shlex
 import subprocess
 import tomllib
 import tarfile
 import zipfile
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from packageurl import PackageURL
@@ -114,7 +114,8 @@ class Component:
 
     key: str
     name: str
-    kind: str  # "source-tree" | "archive" | "system-library"
+    # "source-tree" | "archive" | "system-library" | "vendored-source" | "vcpkg-port"
+    kind: str
     supplier: str
     homepage: str
     purl: str
@@ -149,21 +150,7 @@ def repo_head(directory: Path) -> str | None:
 
 def git(repo: Path, *args: str) -> str | None:
     """Run a read-only git query, or return None if git cannot answer."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return (
-        result.stdout.strip()
-        if result.returncode == 0 and result.stdout.strip()
-        else None
-    )
+    return _ask("git", "-C", str(repo), *args).strip() or None
 
 
 def notice_from(evidence) -> str:
@@ -303,6 +290,225 @@ class _Node:
     sources: tuple[Path, ...]
     includes: tuple[Path, ...]
     dependencies: tuple[str, ...]
+    # What its link line names. Only linkable targets have one; a static
+    # library's own requirements land on its consumers' lines.
+    linked: tuple[Path, ...] = ()  # outputs of targets in this graph
+    inputs: tuple[LinkInput, ...] = ()  # everything else that can carry code
+
+
+@dataclass(frozen=True)
+class LinkInput:
+    """An archive or object a link line names, or a name it could not resolve."""
+
+    named: str  # as the link line spells it
+    path: Path | None
+    kind: str  # "archive" | "object" | "unresolved"
+    reason: str = ""
+    members: int | None = None  # an archive's object files
+
+    @property
+    def key(self) -> str:
+        return str(self.path) if self.path else self.named
+
+
+@dataclass
+class _Line:
+    """One target's link line while it is read."""
+
+    link_dir: Path
+    directories: list[Path]
+    sysroot: str = ""
+    linked: list[Path] = field(default_factory=list)
+    inputs: list[LinkInput] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _Search:
+    """Where `-l` looks after the `-L` directories, and the sysroot `=` names.
+
+    The linker's own directories are read under `sysroot`, which a target's
+    CMAKE_SYSROOT replaces.
+    """
+
+    compiler_dirs: list[Path]
+    compiler: str | None
+    sysroot: str
+
+    @property
+    def directories(self) -> list[Path]:
+        linker = (
+            _linker_search_dirs(self.compiler, self.sysroot) if self.compiler else []
+        )
+        return self.compiler_dirs + linker
+
+
+# Driver and linker options whose value is the next word. Skipping the value
+# keeps a version script or an rpath from being read as an input.
+_DRIVER_TAKES_VALUE = frozenset(
+    """
+    -o -x -T -u -e -z -I -B -isystem -include -imacros -MF -MT -MQ
+    -Xassembler -Xpreprocessor --param
+    """.split()
+)
+_LINKER_TAKES_VALUE = frozenset(
+    """
+    -rpath --rpath -rpath-link --rpath-link --version-script -soname --soname -h
+    -z -T --script -Map --Map --dynamic-list -e --entry -u --undefined --defsym
+    -o --output --sysroot -y --trace-symbol --wrap -m -R --just-symbols
+    -dynamic-linker --dynamic-linker -I -F -f --filter --auxiliary --exclude-libs
+    -plugin --plugin -plugin-opt --plugin-opt --section-start -Ttext -Tdata -Tbss
+    --retain-symbols-file -Y -G --gpsize -a -A --architecture -b --format -assert
+    -init -fini -c --mri-script -P --depaudit --audit --require-defined
+    --export-dynamic-symbol --export-dynamic-symbol-list --dependency-file
+    --sort-section --section-ordering-file
+    """.split()
+)
+_STATIC_MODE = frozenset({"-Bstatic", "-dn", "-non_shared", "-static"})
+_DYNAMIC_MODE = frozenset({"-Bdynamic", "-dy", "-call_shared"})
+# GNU ld script commands that name inputs; AS_NEEDED nests inside them.
+_SCRIPT_INPUTS = re.compile(r"\b(?:INPUT|GROUP)\s*\(")
+_SCRIPT_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SCRIPT_DEPTH = 8
+_NOT_FOUND = (
+    "not found; if it is the value of a linker option, that option is one the "
+    "collector does not know takes a value"
+)
+_UNKNOWN_KIND = "not an archive, an object, a shared library or a linker script"
+_UNSEARCHED = (
+    "found in no -L directory, compiler link directory or linker search directory"
+)
+_NO_COMPILER = (
+    "found in no -L directory, and the build records no compiler to ask for its "
+    "search directories; reconfigure so the file API writes its toolchains reply"
+)
+
+
+def _linker_words(fragments: list[dict]) -> tuple[list[str], list[str]]:
+    """What a link line hands the linker, in order, and fragments that do not parse.
+
+    Every role is read, because CMake files a path given as a link option
+    under `flags`. Driver options go with their values; `-Wl,` lists and
+    `-Xlinker` words are unpacked, which is how `--whole-archive` wrappers
+    arrive. The driver's `-static` governs the whole line wherever it sits.
+    """
+    stream: list[str] = []
+    unparsed: list[str] = []
+    static = False
+    for fragment in fragments:
+        try:
+            words = iter(shlex.split(fragment["fragment"]))
+        except ValueError:
+            unparsed.append(fragment["fragment"])
+            continue
+        if fragment.get("role") == "libraryPath":
+            stream.extend(f"-L{word.removeprefix('-L')}" for word in words)
+            continue
+        for word in words:
+            if word.startswith("-Wl,"):
+                stream.extend(word[4:].split(","))
+            elif word == "-Xlinker":
+                stream.append(next(words, ""))
+            elif word in _DRIVER_TAKES_VALUE:
+                next(words, None)
+            elif word == "-static":
+                static = True
+            elif word.startswith(("-l", "-L")) or not word.startswith("-"):
+                stream.append(word)
+    return (["-Bstatic"] if static else []) + _joined(stream), unparsed
+
+
+def _joined(stream: list[str]) -> list[str]:
+    """Each search option as one word: `-l x`, `--library x` and `--library=x`
+    all become `-lx`, and the same for `-L`."""
+    words: list[str] = []
+    pending = iter(word for word in stream if word)
+    for word in pending:
+        option, equals, value = word.partition("=")
+        if word in ("-L", "--library-path", "-l", "--library"):
+            option, value = word, next(pending, "")
+        elif not (equals and option in ("--library-path", "--library")):
+            words.append(word)
+            continue
+        words.append(("-L" if option in ("-L", "--library-path") else "-l") + value)
+    return words
+
+
+def _search_library(name: str, directories: list[Path], static: bool) -> Path | None:
+    """The file ld takes for `-l<name>`: `.so` before `.a` in each directory."""
+    if name.startswith(":"):
+        candidates = [name[1:]]
+    else:
+        candidates = ([] if static else [f"lib{name}.so"]) + [f"lib{name}.a"]
+    for directory in directories:
+        for candidate in candidates:
+            if (directory / candidate).is_file():
+                return directory / candidate
+    return None
+
+
+def _sysrooted(text: str, sysroot: str, base: Path) -> Path:
+    """A search directory as ld reads it: a leading `=` stands for the sysroot."""
+    if text.startswith("="):
+        return Path(sysroot + text[1:]).resolve()
+    return (base / text).resolve()
+
+
+def _inspect(path: Path) -> tuple[str | None, int | None, list[str] | None]:
+    """(kind, archive members, script entries), judged by content.
+
+    The kind is "archive", "object", "shared", "script", "missing", or None for
+    a file that is none of them.
+    """
+    if not path.is_file():
+        return "missing", None, None
+    members = archive_members(path)
+    if members is not None:
+        return "archive", members, None
+    kind = {"ET_REL": "object", "ET_DYN": "shared"}.get(elf.file_type(path) or "")
+    if kind:
+        return kind, None, None
+    entries = _script_inputs(path)
+    return ("script" if entries is not None else None), None, entries
+
+
+def _script_inputs(path: Path) -> list[str] | None:
+    """The files and `-l` names a GNU ld script's INPUT and GROUP commands name.
+
+    None if the file is not such a script.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(1 << 16)
+    except OSError:
+        return None
+    if b"\0" in head:
+        return None
+    body = _SCRIPT_COMMENT.sub(" ", head.decode("utf-8", "replace"))
+    commands = list(_SCRIPT_INPUTS.finditer(body))
+    if not commands:
+        return None
+    found: list[str] = []
+    for match in commands:
+        depth, end = 1, match.end()
+        while end < len(body) and depth:
+            depth += {"(": 1, ")": -1}.get(body[end], 0)
+            end += 1
+        found += [
+            item
+            for item in re.split(r"[\s,()]+", body[match.end() : end - 1])
+            if item and item != "AS_NEEDED"
+        ]
+    return found
+
+
+def owned_input(item: LinkInput, ownership: Ownership | None) -> str | None:
+    """The component a linked archive or object belongs to by the ownership
+    index -- a fetched tree, a vcpkg port, vendored material -- if it holds code."""
+    if ownership is None or item.path is None or item.kind == "unresolved":
+        return None
+    if item.members == 0:
+        return None
+    return ownership.owner_of(item.path)
 
 
 def _owner(path: Path, ownership: Ownership | None) -> str | None:
@@ -341,8 +547,8 @@ def _within(repo_root: Path, build_dir: Path):
     return check
 
 
-def _codemodel_file(reply: Path) -> Path | None:
-    """The current reply's codemodel, reached through its index.
+def _reply_objects(reply: Path) -> tuple[dict[str, Path], str]:
+    """The current reply's objects by kind, reached through its index, and the generator.
 
     Every other reply filename is documented as unspecified and not to be
     interpreted, and CMake only *attempts* to delete what it did not just
@@ -351,19 +557,116 @@ def _codemodel_file(reply: Path) -> Path | None:
     order: "the one with the largest name in lexicographic order is the current
     index file".
     """
-    if not reply.is_dir():
-        return None
-    indexes = sorted(reply.glob("index-*.json"))
+    indexes = sorted(reply.glob("index-*.json")) if reply.is_dir() else []
     if not indexes:
-        return None
+        return {}, ""
     index = json.loads(indexes[-1].read_text(encoding="utf-8"))
+    generator = index.get("cmake", {}).get("generator", {}).get("name", "")
+    wanted = {"codemodel": 2, "toolchains": 1}
+    objects: dict[str, Path] = {}
     for item in index.get("objects", []):
         version = item.get("version") or {}
-        if item.get("kind") == "codemodel" and version.get("major") == 2:
+        if item.get("kind") in wanted and wanted[item["kind"]] == version.get("major"):
             # Index references are relative to the reply directory.
             found = reply / item["jsonFile"]
-            return found if found.is_file() else None
+            if found.is_file():
+                objects[item["kind"]] = found
+    return objects, generator
+
+
+_CACHE_COMPILER = re.compile(r"^CMAKE_(?P<language>[A-Z]+)_COMPILER$")
+_SEARCH_DIR = re.compile(r'SEARCH_DIR\("(?P<path>[^"]+)"\)')
+
+
+def cmake_cache(build_dir: Path) -> dict[str, str]:
+    """Every entry of a build tree's CMakeCache.txt, by name; empty if it has none."""
+    cache = build_dir / "CMakeCache.txt"
+    if not cache.is_file():
+        return {}
+    entries: dict[str, str] = {}
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(("#", "//")) or "=" not in line or ":" not in line:
+            continue
+        entries[line.split(":", 1)[0]] = line.split("=", 1)[1]
+    return entries
+
+
+def _search_directories(toolchains: Path | None, build_dir: Path) -> dict[str, _Search]:
+    """Where `-l` looks after the `-L` directories, by link language.
+
+    First the directories the compiler hands the linker: CMake's toolchains
+    reply, or the compiler asked directly for a language the reply does not
+    cover -- CMake records them only for languages the top-level project
+    enables. Then the linker's own built-in SEARCH_DIRs.
+    """
+    compilers = {
+        match["language"]: value
+        for name, value in cmake_cache(build_dir).items()
+        if (match := _CACHE_COMPILER.match(name))
+    }
+    recorded: dict[str, list[str] | None] = {}
+    if toolchains is not None:
+        payload = json.loads(toolchains.read_text(encoding="utf-8"))
+        for item in payload.get("toolchains", []):
+            compiler = item.get("compiler", {})
+            recorded[item["language"]] = compiler.get("implicit", {}).get(
+                "linkDirectories"
+            )
+            if compiler.get("path"):
+                compilers[item["language"]] = compiler["path"]
+
+    found: dict[str, _Search] = {}
+    for language in sorted(set(compilers) | set(recorded)):
+        compiler = compilers.get(language)
+        listed = recorded.get(language)
+        if listed is not None:
+            directories = [Path(item) for item in listed]
+        elif compiler:
+            directories = _compiler_search_dirs(compiler)
+        else:
+            directories = None
+        if directories is None:
+            continue
+        sysroot = _ask(compiler, "-print-sysroot").strip() if compiler else ""
+        found[language] = _Search(directories, compiler, sysroot)
+    return found
+
+
+def _ask(*command: str) -> str:
+    """A command's standard output, or empty where it cannot run or fails."""
+    try:
+        result = subprocess.run(
+            list(command), capture_output=True, text=True, check=False, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+@functools.lru_cache(maxsize=None)
+def _compiler_search_dirs(compiler: str) -> list[Path] | None:
+    """The `libraries:` list of `<compiler> -print-search-dirs`, GCC's and Clang's."""
+    for line in _ask(compiler, "-print-search-dirs").splitlines():
+        if line.startswith("libraries:"):
+            listed = line.split(":", 1)[1].strip().removeprefix("=")
+            return [
+                Path(item).resolve()
+                for item in listed.split(":")
+                if Path(item).is_dir()
+            ]
     return None
+
+
+@functools.lru_cache(maxsize=None)
+def _linker_search_dirs(compiler: str, sysroot: str) -> list[Path]:
+    """The SEARCH_DIRs of the linker the compiler runs, from `ld --verbose`."""
+    linker = _ask(compiler, "-print-prog-name=ld").strip() or "ld"
+    found = []
+    for match in _SEARCH_DIR.finditer(_ask(linker, "--verbose")):
+        directory = _sysrooted(match["path"], sysroot, Path("/"))
+        if directory.is_dir():
+            found.append(directory)
+    return found
 
 
 class BuildGraph:
@@ -382,16 +685,26 @@ class BuildGraph:
         self._nodes: dict[str, _Node] = {}
         self._by_name: dict[str, list[Artifact]] = {}
         self._closures: dict[str, tuple[_Node, ...]] = {}
+        self._static: dict[str, dict[LinkInput, set[str]]] = {}
+        self._inspected: dict[
+            Path, tuple[str | None, int | None, list[str] | None]
+        ] = {}
         self._load(config)
 
     def _load(self, config: str | None) -> None:
         reply = self.build_dir / ".cmake" / "api" / "v1" / "reply"
-        model_file = _codemodel_file(reply)
-        if model_file is None:
+        objects, generator = _reply_objects(reply)
+        if "codemodel" not in objects:
             raise FileApiError(
                 f"no CMake file API codemodel under {reply}. Configure the project "
                 "with CMake 3.27 or newer, which is where cmake_file_api() asks for it."
             )
+        model_file = objects["codemodel"]
+        search = _search_directories(objects.get("toolchains"), self.build_dir)
+        # A relative link-line path is relative to where the link runs: the
+        # target's own build directory under the Makefile generators, the top
+        # of the build tree under Ninja.
+        per_directory = "Makefiles" in generator or "WMake" in generator
 
         codemodel = json.loads(model_file.read_text(encoding="utf-8"))
         source_root = Path(codemodel["paths"]["source"])
@@ -417,6 +730,7 @@ class BuildGraph:
             path = Path(raw)
             return path if path.is_absolute() else (root / path)
 
+        lines: dict[str, tuple[list[str], list[str], Path, _Search | None]] = {}
         for entry in chosen["targets"]:
             # Relative to the codemodel, which is what the format says, even
             # though CMake writes it into the reply directory alongside these.
@@ -428,6 +742,20 @@ class BuildGraph:
                 for group in target.get("compileGroups", [])
                 for item in group.get("includes", [])
             }
+            link_dir = (
+                resolve(target.get("paths", {}).get("build", "."), build_root)
+                if per_directory
+                else build_root
+            )
+            link = target.get("link", {})
+            words, unparsed = _linker_words(link.get("commandFragments", []))
+            found = search.get(link.get("language", ""))
+            # CMAKE_SYSROOT reaches the linker as --sysroot, which the compiler's
+            # own -print-sysroot does not report.
+            sysroot = link.get("sysroot", {}).get("path")
+            if found is not None and sysroot:
+                found = replace(found, sysroot=sysroot)
+            lines[entry["id"]] = (words, unparsed, link_dir, found)
             self._nodes[entry["id"]] = _Node(
                 name=target["name"],
                 kind=target["type"],
@@ -447,6 +775,119 @@ class BuildGraph:
                 )
                 self.artifacts[output] = artifact
                 self._by_name.setdefault(output.name, []).append(artifact)
+
+        # Read once every target's outputs are known: an output of this graph
+        # is that target's contribution, whatever its content.
+        for target_id, (words, unparsed, link_dir, found) in lines.items():
+            line = self._read_line(words, link_dir, found)
+            line.inputs += [
+                LinkInput(item, None, "unresolved", "does not parse as shell words")
+                for item in unparsed
+            ]
+            self._nodes[target_id] = replace(
+                self._nodes[target_id],
+                linked=tuple(dict.fromkeys(line.linked)),
+                inputs=tuple(dict.fromkeys(line.inputs)),
+            )
+
+    def _read_line(
+        self, words: list[str], link_dir: Path, search: _Search | None
+    ) -> _Line:
+        """What a linker word stream names.
+
+        ld applies every `-L` to every `-l`, then the compiler's directories,
+        then its own built-in ones -- `search`, or None where the build records
+        no compiler. A `-l` name that ld would satisfy with a shared library
+        adds nothing, since DT_NEEDED records it.
+        """
+        sysroot = search.sysroot if search else ""
+        line = _Line(
+            link_dir,
+            [
+                _sysrooted(word[2:], sysroot, link_dir)
+                for word in words
+                if word.startswith("-L")
+            ]
+            + (search.directories if search else []),
+            sysroot,
+        )
+        static = False
+        saved: list[bool] = []
+        pending = iter(words)
+        for word in pending:
+            if word in _STATIC_MODE:
+                static = True
+            elif word in _DYNAMIC_MODE:
+                static = False
+            elif word == "--push-state":
+                saved.append(static)
+            elif word == "--pop-state":
+                static = saved.pop() if saved else False
+            elif word.startswith("-l"):
+                hit = _search_library(word[2:], line.directories, static)
+                if hit is None:
+                    reason = _UNSEARCHED if search else _NO_COMPILER
+                    line.inputs.append(LinkInput(word, None, "unresolved", reason))
+                else:
+                    self._classify(word, hit, line, static)
+            elif word.startswith("-"):
+                if word in _LINKER_TAKES_VALUE:
+                    next(pending, None)
+            else:
+                self._classify(word, link_dir / word, line, static)
+        return line
+
+    def _classify(
+        self, spelling: str, path: Path, line: _Line, static: bool, depth: int = 0
+    ) -> None:
+        """Add what one path on a link line brings in, a linker script followed
+        under the `-Bstatic` state in force where the line names it.
+
+        A shared library adds nothing, since DT_NEEDED records it.
+        """
+        # ld looks beside the name it was given, not beside a symlink's target.
+        beside = path.parent
+        path = path.resolve()
+        if path in self.artifacts:
+            line.linked.append(path)
+            return
+        if path not in self._inspected:
+            self._inspected[path] = _inspect(path)
+        kind, members, entries = self._inspected[path]
+        if kind in ("archive", "object"):
+            line.inputs.append(LinkInput(spelling, path, kind, members=members))
+        elif kind == "missing":
+            line.inputs.append(LinkInput(spelling, path, "unresolved", _NOT_FOUND))
+        elif kind is None:
+            line.inputs.append(LinkInput(spelling, path, "unresolved", _UNKNOWN_KIND))
+        elif kind == "script" and depth > _SCRIPT_DEPTH:
+            line.inputs.append(
+                LinkInput(
+                    spelling, path, "unresolved", "linker scripts nest too deeply here"
+                )
+            )
+        elif kind == "script":
+            # An absolute name in a script inside the sysroot, or one opening
+            # with `=`, is read under the sysroot.
+            in_sysroot = bool(line.sysroot) and path.is_relative_to(
+                Path(line.sysroot).resolve()
+            )
+            for entry in entries or []:
+                if entry.startswith("-l"):
+                    hit = _search_library(entry[2:], line.directories, static)
+                else:
+                    if entry.startswith("=") or (in_sysroot and entry.startswith("/")):
+                        entry = line.sysroot + entry.removeprefix("=")
+                    # Beside the script, then where the link runs, then the
+                    # search path; an absolute name is itself in each.
+                    hit = _search_library(
+                        ":" + entry, [beside, line.link_dir, *line.directories], static
+                    )
+                if hit is None:
+                    named = f"{spelling} ({path.name}: {entry})"
+                    line.inputs.append(LinkInput(named, None, "unresolved", _NOT_FOUND))
+                else:
+                    self._classify(spelling, hit, line, static, depth + 1)
 
     def by_name(self, name: str) -> list[Artifact]:
         return self._by_name.get(name, [])
@@ -474,15 +915,14 @@ class BuildGraph:
                     )
         return found
 
-    def _closure(self, target_id: str) -> tuple[_Node, ...]:
-        """The target and everything it depends on, transitively.
+    def _reach(self, target_id: str, prune=None) -> tuple[_Node, ...]:
+        """The target and everything it depends on or links, transitively.
 
-        Memoised per instance, not with `lru_cache`: a cache on the class would
-        hold every graph ever built alive for the life of the process.
+        A link line naming another target's output brings that target, whether
+        or not it is also a declared dependency. A node `prune` accepts, other
+        than the target itself, is left out with everything reached only
+        through it.
         """
-        cached = self._closures.get(target_id)
-        if cached is not None:
-            return cached
         seen: set[str] = set()
         stack = [target_id]
         found: list[_Node] = []
@@ -492,10 +932,37 @@ class BuildGraph:
                 continue
             seen.add(current)
             node = self._nodes[current]
+            if prune is not None and current != target_id and prune(node):
+                continue
             found.append(node)
             stack.extend(node.dependencies)
-        self._closures[target_id] = tuple(found)
+            stack.extend(self.artifacts[item].target_id for item in node.linked)
+        return tuple(found)
+
+    def _closure(self, target_id: str) -> tuple[_Node, ...]:
+        """`_reach`, memoised per instance, not with `lru_cache`: a cache on the
+        class would hold every graph ever built alive for the life of the process."""
+        if target_id not in self._closures:
+            self._closures[target_id] = self._reach(target_id)
         return self._closures[target_id]
+
+    def static_inputs(self, artifact: Artifact) -> dict[LinkInput, set[str]]:
+        """What the closure links that no target here produced.
+
+        Maps each to the targets whose link line names it. Another executable
+        or module is a build-order dependency -- a code generator, say -- and
+        nothing links it or what it links.
+        """
+        if artifact.target_id not in self._static:
+            found: dict[LinkInput, set[str]] = {}
+            for node in self._reach(
+                artifact.target_id,
+                lambda node: node.kind in ("EXECUTABLE", "MODULE_LIBRARY"),
+            ):
+                for item in node.inputs:
+                    found.setdefault(item, set()).add(node.name)
+            self._static[artifact.target_id] = found
+        return self._static[artifact.target_id]
 
     def contributions(
         self, artifact: Artifact, ownership: Ownership | None = None
@@ -504,7 +971,7 @@ class BuildGraph:
 
         Walks the target's dependency closure. Compiled sources name a component
         outright; include paths are the only trace a header-only dependency
-        leaves anywhere.
+        leaves anywhere; a linked archive or object names whoever holds it.
         """
         found: dict[str, set[str]] = {}
 
@@ -526,6 +993,10 @@ class BuildGraph:
                     # way a fetched include directory is.
                     for owner in ownership.owners_under(include):
                         note(owner, "header-include")
+        for item in self.static_inputs(artifact):
+            owner = owned_input(item, ownership)
+            if owner:
+                note(owner, "prebuilt-library")
         return found
 
     def first_party(
@@ -559,20 +1030,30 @@ class Ownership:
     """
 
     def __init__(self) -> None:
-        self._files: dict[Path, str] = {}
+        # path -> (owner, whether an include directory credits it outright)
+        self._files: dict[Path, tuple[str, bool]] = {}
         self._roots: list[tuple[Path, str]] = []
+        # directory -> (owners credited outright, owners credited if alone)
+        self._index: dict[Path, tuple[set[str], set[str]]] | None = None
 
     def register_root(self, root: Path, key: str) -> None:
         self._roots.append((root.resolve(), key))
 
-    def register_file(self, path: Path, key: str) -> None:
-        self._files[path.resolve()] = key
+    def register_file(self, path: Path, key: str, *, by_directory: bool = True) -> None:
+        """Record a file's owner.
+
+        An include directory credits every owner of a file under it; one whose
+        files are registered with `by_directory=False` only where it holds every
+        such file there.
+        """
+        self._files[path.resolve()] = (key, by_directory)
+        self._index = None
 
     def owner_of(self, path: Path) -> str | None:
         resolved = path.resolve()
-        owner = self._files.get(resolved)
-        if owner is not None:
-            return owner
+        entry = self._files.get(resolved)
+        if entry is not None:
+            return entry[0]
         # Longest root wins, so a vendored subdirectory beats its parent.
         best: tuple[int, str] | None = None
         for root, key in self._roots:
@@ -584,18 +1065,28 @@ class Ownership:
 
     def owners_under(self, directory: Path) -> set[str]:
         """Components with files inside a directory, for include-path evidence."""
-        prefix = str(directory.resolve())
-        found = {
-            key
-            for path, key in self._files.items()
-            if str(path) == prefix or str(path).startswith(prefix + "/")
-        }
+        resolved = directory.resolve()
+        outright, alone = self._by_directory().get(resolved, (set(), set()))
+        found = set(outright)
+        prefix = str(resolved)
         found.update(
             key
             for root, key in self._roots
             if str(root) == prefix or str(root).startswith(prefix + "/")
         )
+        if len(alone) == 1:
+            found |= alone
         return found
+
+    def _by_directory(self) -> dict[Path, tuple[set[str], set[str]]]:
+        """Each registered file's owner under the file and every directory above it."""
+        if self._index is None:
+            self._index = {}
+            for path, (key, outright) in self._files.items():
+                for directory in (path, *path.parents):
+                    entry = self._index.setdefault(directory, (set(), set()))
+                    entry[0 if outright else 1].add(key)
+        return self._index
 
 
 # ==============================================================================
@@ -930,10 +1421,122 @@ def discover_vendored(
 
 
 # ==============================================================================
+# vcpkg
+# ==============================================================================
+# vcpkg installs into the build tree, so what it builds is neither a target of
+# this build nor a fetched checkout. Its install records name the port that
+# put each file there, as dpkg's do on the build host.
+
+
+def discover_vcpkg(
+    installed: Path, target_triplet: str | None = None
+) -> tuple[dict[str, Component], dict[str, list[Path]]]:
+    """Every port vcpkg installed under `installed`, and the files each owns.
+
+    A port installed for the host as well is described from its install for
+    `target_triplet` -- what the build links -- where there is one.
+    """
+    info = installed / "vcpkg" / "info"
+    components: dict[str, Component] = {}
+    owned: dict[str, list[Path]] = {}
+    for listing in sorted(info.glob("*.list")) if info.is_dir() else []:
+        # <port>_<version>_<triplet>.list; port names carry no underscore.
+        port, _, rest = listing.stem.partition("_")
+        version, _, triplet = rest.rpartition("_")
+        key = f"vcpkg:{port}"
+        # A port installed for both the host and the target triplet has a list
+        # for each, and both installs are its files.
+        owned.setdefault(key, []).extend(
+            installed / line
+            for line in listing.read_text(encoding="utf-8").splitlines()
+            if line and not line.endswith("/")
+        )
+        if key not in components or triplet == target_triplet:
+            components[key] = _vcpkg_component(key, port, version, triplet, installed)
+    return components, owned
+
+
+def _vcpkg_component(
+    key: str, port: str, version: str, triplet: str, installed: Path
+) -> Component:
+    """A port, identified by the upstream source its own SBOM says it built.
+
+    vcpkg writes `share/<port>/vcpkg.spdx.json` with the recipe and the
+    downloaded sources, and copies upstream's licence to `share/<port>/copyright`.
+    """
+    share = installed / triplet / "share" / port
+    try:
+        sbom = json.loads((share / "vcpkg.spdx.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        sbom = {}
+    packages = {item.get("SPDXID"): item for item in sbom.get("packages", [])}
+    recipe = packages.get("SPDXRef-port", {})
+    sources = [
+        item["downloadLocation"]
+        for spdx_id, item in packages.items()
+        if str(spdx_id).startswith("SPDXRef-resource-") and item.get("downloadLocation")
+    ]
+    port_version = recipe.get("versionInfo") or version
+    # `#<n>` is the recipe's revision, not anything upstream released.
+    version = port_version.partition("#")[0]
+    # One source names the upstream; several (or none) name no single one.
+    upstream = sources[0] if len(sources) == 1 else None
+    location = (upstream or "").removeprefix("git+")
+    remote, _, ref = (
+        location.rpartition("@")
+        if "@" in location.rsplit("/", 1)[-1]
+        else (location, "", "")
+    )
+    if remote and _GITHUB_REMOTE.search(remote):
+        supplier, homepage, purl, download = _identity(remote, port, ref or None)
+    else:
+        supplier, homepage, download = "NOASSERTION", "NOASSERTION", upstream
+        purl = PackageURL(type="generic", name=port, version=version).to_string()
+    homepage = recipe.get("homepage") or homepage
+
+    evidence = []
+    licence = share / "copyright"
+    if licence.is_file():
+        evidence.append(
+            licensing.evidence_for(
+                key,
+                "vcpkg-port",
+                licence.relative_to(installed.parent).as_posix(),
+                licence.read_text(encoding="utf-8", errors="replace"),
+                "grant",
+            )
+        )
+    concluded, declared = licensing.expression(evidence, key)
+    details = [
+        f"Built and installed by vcpkg port {port} {port_version} for {triplet}."
+    ]
+    if upstream:
+        details.append(f"Source: {upstream}.")
+    if recipe.get("downloadLocation"):
+        details.append(f"Port recipe: {recipe['downloadLocation']}.")
+    return Component(
+        key=key,
+        name=port,
+        kind="vcpkg-port",
+        supplier=supplier,
+        homepage=homepage,
+        purl=purl,
+        version=version,
+        download_location=download or "NOASSERTION",
+        source_info=" ".join(details),
+        license_concluded=concluded,
+        license_declared=declared,
+        copyright_text=notice_from(evidence),
+        evidence=tuple(evidence),
+    )
+
+
+# ==============================================================================
 # The build host
 # ==============================================================================
-# The last discovery source: a shared library that no index explains was not
-# produced or fetched by this build, so ask the machine that supplied it.
+# The last discovery source: a shared library that no index explains, or a
+# static archive linked from outside the tree, was not produced or fetched by
+# this build, so ask the machine that supplied it.
 
 _SEARCH_ROOTS = (
     "/usr/lib/x86_64-linux-gnu",
@@ -948,24 +1551,11 @@ _SEARCH_ROOTS = (
 def _host_library_paths() -> list[Path]:
     """Every shared library the loader can see, plus the CUDA trees it cannot."""
     paths: set[Path] = set()
-    if shutil.which("ldconfig"):
-        try:
-            result = subprocess.run(
-                ["ldconfig", "-p"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=60,
-            )
-            for line in result.stdout.splitlines():
-                _, _, target = line.partition("=>")
-                target = target.strip()
-                if target:
-                    paths.add(Path(target))
-        except (OSError, subprocess.SubprocessError):
-            pass
-    roots = _library_roots()
-    for root in roots:
+    for line in _ask("ldconfig", "-p").splitlines():
+        _, _, target = line.partition("=>")
+        if target.strip():
+            paths.add(Path(target.strip()))
+    for root in _library_roots():
         paths.update(item for item in root.glob("*.so*") if item.is_file())
     return sorted(paths)
 
@@ -993,35 +1583,10 @@ def _host_build_id_index() -> dict[str, str]:
     return index
 
 
-def resolve_system_library_by_build_id(build_id: str) -> dict:
-    """Trace a vendored library back by build-id, whatever it was renamed to."""
-    origin: dict = {
-        "soname": None,
-        "build_id": build_id,
-        "resolved_path": None,
-        "package": None,
-        "copyright": None,
-    }
-    found = _host_build_id_index().get(build_id)
-    if found is None:
-        return origin
-    library = Path(found).resolve()
-    origin["soname"] = library.name
-    origin["resolved_path"] = str(library)
-    return _identify_host_package(library, origin)
-
-
-def resolve_system_library(soname: str) -> dict:
-    """Trace an auditwheel-vendored library back to the package that supplied it."""
-    origin: dict = {
-        "soname": soname,
-        "resolved_path": None,
-        "package": None,
-        "copyright": None,
-    }
-    roots = _library_roots()
-
-    library = next((root / soname for root in roots if (root / soname).exists()), None)
+def _host_origin(library: Path | None, **known) -> dict:
+    """What the build machine says about a file: where it resolves, and the
+    package that owns it with that package's terms."""
+    origin: dict = {**known, "resolved_path": None, "package": None, "copyright": None}
     if library is None:
         return origin
     library = library.resolve()
@@ -1029,24 +1594,79 @@ def resolve_system_library(soname: str) -> dict:
     return _identify_host_package(library, origin)
 
 
+def resolve_system_library_by_build_id(build_id: str) -> dict:
+    """Trace a vendored library back by build-id, whatever it was renamed to."""
+    found = _host_build_id_index().get(build_id)
+    library = Path(found).resolve() if found else None
+    return _host_origin(
+        library, soname=library.name if library else None, build_id=build_id
+    )
+
+
+def resolve_system_library(soname: str) -> dict:
+    """Trace an auditwheel-vendored library back to the package that supplied it."""
+    library = next(
+        (root / soname for root in _library_roots() if (root / soname).exists()), None
+    )
+    return _host_origin(library, soname=soname)
+
+
+def resolve_static_archive(archive: Path) -> dict:
+    """Trace an archive or object the build linked to the package or toolkit it came from.
+
+    A shared library is explained once its SONAME resolves on the machine: that
+    is how the repair tool found the file it vendored. A link line already
+    names a static input's path, so finding it proves nothing; only a package
+    or a toolkit that states its terms explains one.
+    """
+    if not archive.is_file():
+        return _host_origin(None, toolkit_root=None)
+    root = _toolkit_root(archive)
+    return _host_origin(archive, toolkit_root=str(root) if root else None)
+
+
+def archive_members(path: Path) -> int | None:
+    """How many object files a `!<arch>` archive holds; None if it is not one.
+
+    glibc 2.34 folded librt, libpthread and libdl into libc and left each as an
+    archive with no members, so naming one on a link line links nothing.
+    """
+    try:
+        with path.open("rb") as handle:
+            magic = handle.read(8)
+            if magic not in (b"!<arch>\n", b"!<thin>\n"):
+                return None
+            count = 0
+            while header := handle.read(60):
+                if len(header) < 60 or header[58:60] != b"`\n":
+                    return None
+                name = header[:16].rstrip()
+                size = int(header[48:58])
+                skip = size + size % 2
+                # BSD writes a long name at the head of the member's data.
+                if name.startswith(b"#1/"):
+                    length = int(name[3:])
+                    name = handle.read(length).rstrip(b"\0")
+                    skip -= length
+                # The symbol table and the long-name table are not members.
+                index = name in (b"/", b"//", b"/SYM64/") or name.startswith(
+                    b"__.SYMDEF"
+                )
+                count += not index
+                # A thin archive stores only its index; members stay outside it.
+                if index or magic == b"!<arch>\n":
+                    handle.seek(skip, os.SEEK_CUR)
+            return count
+    except (OSError, ValueError):
+        return None
+
+
 def _identify_host_package(library: Path, origin: dict) -> dict:
     """Name the distro package that owns a resolved host library."""
-    if shutil.which("dpkg-query") is None:
+    owned = _ask("dpkg-query", "-S", str(library))
+    if ":" not in owned:
         return origin
-    try:
-        result = subprocess.run(
-            ["dpkg-query", "-S", str(library)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return origin
-    if result.returncode != 0 or ":" not in result.stdout:
-        return origin
-
-    package = result.stdout.split(":", 1)[0].strip()
+    package = owned.split(":", 1)[0].strip()
     origin["package"] = package
     origin["supplier"] = _package_supplier(package)
     origin["version"] = _package_field(package, "Version")
@@ -1059,18 +1679,7 @@ def _identify_host_package(library: Path, origin: dict) -> dict:
 
 def _package_field(package: str, field: str) -> str | None:
     """One field of a distro package's metadata, as dpkg records it."""
-    try:
-        result = subprocess.run(
-            ["dpkg-query", "-W", f"-f=${{{field}}}", package],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    value = result.stdout.strip()
-    return value if result.returncode == 0 and value else None
+    return _ask("dpkg-query", "-W", f"-f=${{{field}}}", package).strip() or None
 
 
 def _os_release_id() -> str | None:
@@ -1100,17 +1709,39 @@ def _package_supplier(package: str) -> str | None:
 def _library_roots() -> list[Path]:
     """Where a pre-built library the build machine supplied can be found."""
     roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
-    return roots + [Path(item) for item in sorted(glob.glob("/usr/local/cuda*/lib64"))]
+    return roots + [root / "lib64" for root in _toolkit_roots()]
+
+
+@functools.lru_cache(maxsize=None)
+def _toolkit_roots() -> list[Path]:
+    """Toolkits that may install outside the package manager: CUDA's."""
+    return sorted(
+        {
+            Path(item).resolve()
+            for item in glob.glob("/usr/local/cuda*")
+            if Path(item).is_dir()
+        }
+    )
+
+
+def _toolkit_root(path: Path) -> Path | None:
+    resolved = path.resolve()
+    return next(
+        (root for root in _toolkit_roots() if resolved.is_relative_to(root)), None
+    )
 
 
 def _license_near(library: Path) -> Path | None:
     """A toolchain that installs outside the package manager still ships its terms.
 
-    CUDA is the case that matters: the runtime lands in /usr/local/cuda*/lib64 with
-    EULA.txt a level or two up, and dpkg knows nothing about it.
+    CUDA is the case that matters: its libraries resolve into
+    targets/<arch>/lib with EULA.txt at the toolkit root, and dpkg need know
+    nothing about it. Under a toolkit root the search runs up to that root.
     """
-    current = library.parent
-    for _ in range(3):
+    root = _toolkit_root(library)
+    current = library.resolve().parent
+    levels = 3 if root is None else len(current.relative_to(root).parts) + 1
+    for _ in range(levels):
         for entry in sorted(current.iterdir()) if current.is_dir() else []:
             if entry.is_file() and licensing.classify(entry.name):
                 return entry
@@ -1120,10 +1751,30 @@ def _license_near(library: Path) -> Path | None:
     return None
 
 
-def system_component(soname: str, origin: dict) -> Component:
-    """A pre-built library the build machine supplied, named by what it came from."""
+def _system_notice(evidence: list[licensing.LicenseEvidence]) -> str:
+    """The holders a machine-readable Debian copyright file names, or NOASSERTION.
+
+    Any other text -- an EULA, a free-form copyright file -- quotes the notices
+    of whatever it bundles, and scraping those names other people's code as the
+    holders of this library. The packaged text still carries all of it.
+    """
+    for item in evidence:
+        fields = licensing.dep5_copyright(item.text)
+        if fields:
+            return "\n".join(licensing.fold_notices(fields))
+    return "NOASSERTION"
+
+
+def system_component(
+    soname: str, origin: dict, route: str | None = None, key: str | None = None
+) -> Component:
+    """A pre-built library the build machine supplied, named by what it came from.
+
+    `route` says how it reached the wheel; the default is auditwheel's. `key`
+    defaults to `system:<soname>`.
+    """
     evidence: list[licensing.LicenseEvidence] = []
-    key = f"system:{soname}"
+    key = key or f"system:{soname}"
     license_path = origin.get("copyright")
     if not license_path and origin.get("resolved_path"):
         found = _license_near(Path(origin["resolved_path"]))
@@ -1141,7 +1792,8 @@ def system_component(soname: str, origin: dict) -> Component:
 
     package = origin.get("package")
     details = [
-        f"Vendored into the wheel by auditwheel from {origin.get('resolved_path') or soname}."
+        route
+        or f"Vendored into the wheel by auditwheel from {origin.get('resolved_path') or soname}."
     ]
     if package:
         details.append(f"Supplied by system package {package}.")
@@ -1150,10 +1802,7 @@ def system_component(soname: str, origin: dict) -> Component:
         name=soname,
         kind="system-library",
         supplier=origin.get("supplier") or "NOASSERTION",
-        # The distro copyright file is where the holder is stated, and it was
-        # read, packaged and put on the file record -- then left off the package
-        # and out of the notices every other component appears in.
-        copyright_text=notice_from(evidence),
+        copyright_text=_system_notice(evidence),
         homepage="NOASSERTION",
         # A distro package the machine can name resolves; pkg:generic does not.
         purl=(

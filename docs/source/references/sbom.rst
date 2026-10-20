@@ -146,11 +146,16 @@ produced the wheel, so a dependency that builds is a dependency that appears:
    FetchContent checkouts. ``git`` in each one supplies the commit, the remote, and from
    the remote the supplier, homepage and purl.
 
+vcpkg's install records
+   Where the build uses vcpkg, the ``vcpkg/info`` lists under ``VCPKG_INSTALLED_DIR`` (by
+   default the build tree's ``vcpkg_installed``): which port installed each file.
+
 CMake's file API codemodel
    The build graph, as CMake itself describes it: which sources were compiled into which
-   binary, which targets it depends on, and — through include paths — which header-only
-   dependencies it was compiled against. Followed transitively, so a library linked into a
-   library linked into the wheel is still reported. The top-level ``CMakeLists.txt`` asks
+   binary, which targets it depends on, what its link line names, and —
+   through include paths — which header-only dependencies it was compiled against.
+   Followed transitively, so a library linked into a library linked into the wheel is still
+   reported. The top-level ``CMakeLists.txt`` asks
    for it with ``cmake_file_api()``, which CMake 3.27 added — so a wheel with an SBOM
    needs at least that, though the project builds without it. Reading the generator's own
    output instead would only work under Makefiles, since Ninja writes no ``link.txt``.
@@ -287,7 +292,61 @@ license from the supplying package's copyright file, or from a license file besi
 library for toolchains that install outside the package manager. Resolving the SONAME is
 what licenses the claim — a library the machine cannot find is reported as unexplained,
 not attributed to something nobody located. No repair tool's directory name is consulted,
-so a library the build produced is attributed to the build wherever it ends up.
+so a library the build produced is attributed to the build wherever it ends up. Its
+copyright notice is read only from the ``Copyright:`` fields of a machine-readable Debian
+copyright file, leaving out stanzas that cover only the Debian packaging; any other
+text — an EULA, a free-form copyright file — quotes the notices of what it bundles, so
+none is asserted, and the packaged text still carries them all.
+
+Static code leaves no ``DT_NEEDED`` entry behind, so the link line is where it is read —
+every fragment CMake records for it, ``-Wl,`` and ``-Xlinker`` words included, with the
+values of options known to take one set aside. A path on it is judged by its content, not
+its name: an archive or an object file is static code, a shared library is left to
+``DT_NEEDED``, and a GNU ``ld`` script — ``libc.so`` is one, naming ``libc_nonshared.a`` —
+is followed to the files and ``-l`` names its ``INPUT`` and ``GROUP`` commands give, a
+relative name looked up beside the script first, as ``ld`` does. A
+``-l`` name is resolved the way ``ld`` resolves it: through the line's ``-L`` directories,
+then the directories the compiler hands the linker — CMake's toolchains reply, or the
+compiler's own ``-print-search-dirs`` for a language that reply does not cover — then the
+linker's built-in ``SEARCH_DIR`` list from ``ld --verbose``, taking a shared library before
+an archive unless ``-Bstatic`` is in force. A leading ``=`` in either names the sysroot —
+the target's ``CMAKE_SYSROOT``, else the compiler's — as does an absolute name in a script
+inside it. ``--push-state`` and ``--pop-state`` are
+honoured, and the driver's ``-static`` governs the whole line. The lines read are the
+member's own and those of shared libraries it depends on; an executable or module it
+merely waits for, such as a code generator, links nothing into it, and neither does
+anything reached only through one.
+
+What is found is then attributed:
+
+- an archive or object a target of this build produced is that target's contribution;
+- one inside a fetched component's tree is that component's;
+- one vcpkg installed belongs to the port whose install record
+  (``vcpkg/info/<port>_<version>_<triplet>.list``) names it. The port is identified by the
+  upstream source its own ``share/<port>/vcpkg.spdx.json`` says it built — a ``pkg:github``
+  purl where its one source is on GitHub, ``pkg:generic`` with no supplier where it is not
+  or where several sources name no single upstream, since purl has no vcpkg type — at the
+  upstream version, without vcpkg's ``#<n>`` recipe revision. Its licence is read from
+  ``share/<port>/copyright``;
+- one tracked in this repository belongs to the holder its REUSE info names, and is this
+  project's own where that is this project;
+- one from the build machine is asked about the same way as a shared library: the package
+  that owns it and that package's copyright file, or, for an archive under a CUDA toolkit,
+  the license file the toolkit ships;
+- an archive with no members links no code — glibc 2.34 left ``librt.a``, ``libpthread.a``
+  and ``libdl.a`` as such stubs — and is recorded in the build evidence rather than as a
+  component.
+
+Each component found this way is recorded with ``STATIC_LINK``. Anything else stops the
+build: a name that resolves to nothing, a fragment that does not parse, a path that is none
+of those kinds — which is also what an unknown option's value looks like — and an archive
+inside the build tree that no target produced and no install record names, which is where
+ExternalProject leaves its output. Not inventoried: what the compiler driver adds without
+naming it on the link line, ``libgcc`` and the C runtime's start files among it; and a
+vcpkg port's headers read through an include directory other ports also install into.
+Every port shares one include root, so an include directory credits a port only where each
+file vcpkg installed under it is that port's; headers read from the shared root are
+credited only through a linked archive of the same port.
 
 Running the collector locally
 -----------------------------
@@ -322,7 +381,7 @@ Adding a dependency takes no SBOM change: declare it the way you already would �
 ``FetchContent_Declare``, a tarball under ``deps/`` — and it appears in the next wheel's
 inventory with its identity, its license and the route it took to get there.
 
-Two things do need attention:
+These do need attention:
 
 - **A component that states its license nowhere stops the build.** The fix is to obtain the
   terms, not to record an assumption. For a file checked in here, obtain the terms, then
@@ -332,6 +391,10 @@ Two things do need attention:
 - **A new member that the build cannot explain stops the build.** That means something
   reached the wheel by a route the collector cannot see; teach it that route rather than
   excluding the file.
+- **Static code on a link line that the collector cannot trace stops the build.** Link
+  what it can trace — a target of this build, a fetched dependency, a system package or a
+  known toolkit — or teach it the route that input took, such as an ExternalProject install
+  into the build tree.
 
 Moving to a newer SPDX license list is a dependency bump like any other: change
 ``SPDX_LICENSE_DATA_COMMIT`` in :code-file:`deps/third_party/CMakeLists.txt`, with its release

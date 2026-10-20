@@ -23,11 +23,13 @@ from .discovery import (
     git,
     BuildGraph,
     Component,
+    cmake_cache,
     FileIndex,
     discover_archives,
     discover_vendored,
     project_authors,
     discover_source_trees,
+    discover_vcpkg,
     notice_from,
     tracked_files,
     EMPTY_SHA256,
@@ -76,14 +78,11 @@ def _cmake_cache(build_dir: Path) -> dict[str, str]:
         raise EvidenceError(
             f"{cache} not found; point --build-dir at a configured build tree"
         )
-    entries: dict[str, str] = {}
-    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith(("#", "//")) or "=" not in line or ":" not in line:
-            continue
-        name = line.split(":", 1)[0]
-        if _CACHE_KEYS.match(name):
-            entries[name] = line.split("=", 1)[1]
-    return entries
+    return {
+        name: value
+        for name, value in cmake_cache(build_dir).items()
+        if _CACHE_KEYS.match(name)
+    }
 
 
 def _fetched_from(archive: Path) -> str | None:
@@ -280,6 +279,17 @@ def discover(repo_root: Path, build_dir: Path) -> Discovery:
         if root.is_dir():
             ownership.register_root(root, root.name.removesuffix("-build"))
 
+    # What vcpkg built, where VCPKG_INSTALLED_DIR (by default the build tree's
+    # vcpkg_installed) records which port installed each file.
+    ports, port_files = discover_vcpkg(
+        Path(cache.get("VCPKG_INSTALLED_DIR") or build_dir / "vcpkg_installed"),
+        cache.get("VCPKG_TARGET_TRIPLET"),
+    )
+    components.update(ports)
+    for key, paths in port_files.items():
+        for path in paths:
+            ownership.register_file(path, key, by_directory=False)
+
     # Third-party material checked in here rather than fetched. Tracked files as
     # well as build inputs: Python or data reaching the wheel is compiled by nothing.
     vendored, owned_paths = discover_vendored(
@@ -332,7 +342,10 @@ def document(
     artifacts = []
     for artifact in discovery.graph.artifacts.values():
         contributions = discovery.graph.contributions(artifact, discovery.ownership)
-        if not contributions:
+        # Resolved to components only where a wheel member links them; see
+        # `static_inputs`.
+        inputs = sorted({item.key for item in discovery.graph.static_inputs(artifact)})
+        if not contributions and not inputs:
             continue
         try:
             output = artifact.output.relative_to(discovery.build_dir).as_posix()
@@ -348,6 +361,7 @@ def document(
                 "contributions": {
                     key: sorted(how) for key, how in sorted(contributions.items())
                 },
+                **({"static_inputs": inputs} if inputs else {}),
             }
         )
 

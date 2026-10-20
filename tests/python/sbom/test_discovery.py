@@ -228,6 +228,11 @@ def test_the_codemodel_reader_works_on_a_codemodel_cmake_wrote(
         for how in graph.contributions(artifact).values():
             assert how <= {"compiled-source", "header-include"}
 
+    # Relative link-line paths resolve against the directory the link ran in;
+    # resolved against any other, an archive this build made matches no target.
+    named = {path for node in graph._nodes.values() for path in node.linked}
+    assert named & set(graph.artifacts), "this project links static libraries it builds"
+
 
 def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data):
     """A developer's other build directory holds staged copies of the repo.

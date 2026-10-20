@@ -18,6 +18,7 @@ SPDX corpus.
 from __future__ import annotations
 
 import base64
+import contextlib
 import csv
 import gzip
 import hashlib
@@ -591,6 +592,234 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
             indent=1,
         ),
     )
+
+
+@contextlib.contextmanager
+def _edit_json(path: Path):
+    """Read a reply file, let the caller change it, write it back."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    yield payload
+    path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+
+
+def _reply(build: Path) -> Path:
+    return build / ".cmake" / "api" / "v1" / "reply"
+
+
+def _edit_target(build: Path, target: str):
+    return _edit_json(_reply(build) / f"target-{target}-{CONFIG}.json")
+
+
+def _edit_index(build: Path):
+    return _edit_json(next(_reply(build).glob("index-*.json")))
+
+
+def link_line(
+    build: Path,
+    target: str,
+    fragments: tuple[str | tuple[str, str], ...],
+    *,
+    dependencies: tuple[str, ...] = (),
+    directory: str | None = None,
+    sysroot: Path | None = None,
+) -> None:
+    """Give a fixture target the link line CMake records for a linkable target.
+
+    A fragment is its text, filed under `libraries`, or (text, role).
+    `directory` is the target's build directory, which is what a relative
+    fragment is relative to under the Makefile generators. `sysroot` is
+    CMAKE_SYSROOT, as the reply records it.
+    """
+    with _edit_target(build, target) as payload:
+        payload["link"] = {
+            "language": "CXX",
+            "commandFragments": [
+                {"fragment": item, "role": "libraries"}
+                if isinstance(item, str)
+                else {"fragment": item[0], "role": item[1]}
+                for item in fragments
+            ],
+        }
+        if sysroot is not None:
+            payload["link"]["sysroot"] = {"path": str(sysroot)}
+        payload["dependencies"] += [{"id": item} for item in dependencies]
+        if directory is not None:
+            payload["paths"] = {"build": directory, "source": directory}
+
+
+def set_toolchains(
+    build: Path,
+    link_directories: dict[str, list[str] | None],
+    compilers: dict[str, str] | None = None,
+) -> None:
+    """A toolchains reply: each language's compiler and implicit link directories.
+
+    None for a language's directories is what CMake writes for a language the
+    top-level project does not enable.
+    """
+    compilers = compilers or {}
+    toolchains = []
+    for language, directories in link_directories.items():
+        compiler: dict = {
+            "implicit": {} if directories is None else {"linkDirectories": directories}
+        }
+        if language in compilers:
+            compiler["path"] = compilers[language]
+        toolchains.append({"language": language, "compiler": compiler})
+    write(
+        _reply(build) / "toolchains-v1-fixture.json",
+        json.dumps(
+            {
+                "kind": "toolchains",
+                "version": {"major": 1, "minor": 0},
+                "toolchains": toolchains,
+            }
+        ),
+    )
+    with _edit_index(build) as index:
+        index["objects"].append(
+            {
+                "kind": "toolchains",
+                "version": {"major": 1, "minor": 0},
+                "jsonFile": "toolchains-v1-fixture.json",
+            }
+        )
+
+
+def add_include(build: Path, target: str, directory: Path) -> None:
+    """Put one more directory on a fixture target's include path."""
+    with _edit_target(build, target) as payload:
+        payload["compileGroups"][0]["includes"].append({"path": str(directory)})
+
+
+def set_type(build: Path, target: str, kind: str) -> None:
+    """Change a fixture target's CMake type."""
+    with _edit_target(build, target) as payload:
+        payload["type"] = kind
+
+
+def set_generator(build: Path, name: str) -> None:
+    """Record the generator in the file API index, as a real configure does."""
+    with _edit_index(build) as index:
+        index["cmake"] = {"generator": {"name": name, "multiConfig": False}}
+
+
+def vcpkg_port(
+    installed: Path,
+    port: str,
+    version: str,
+    files: dict[str, bytes],
+    licence: str,
+    source: str | tuple[str, ...],
+    triplet: str = "x64-linux",
+) -> None:
+    """A port as vcpkg installs it: its files, its install list and its SBOM.
+
+    Shaped after what vcpkg 2026-04-08 writes for fmt 11.0.2#1.
+    """
+    base = version.partition("#")[0]
+    for relative, data in files.items():
+        write(installed / triplet / relative, data)
+    share = installed / triplet / "share" / port
+    write(share / "copyright", licence)
+    write(
+        share / "vcpkg.spdx.json",
+        json.dumps(
+            {
+                "spdxVersion": "SPDX-2.2",
+                "SPDXID": "SPDXRef-DOCUMENT",
+                "packages": [
+                    {
+                        "name": port,
+                        "SPDXID": "SPDXRef-port",
+                        "versionInfo": version,
+                        "downloadLocation": "git+https://github.com/Microsoft/vcpkg@07a73a7565e5de9eb42e90c16c133bdfdfebbcda",
+                        "homepage": f"https://github.com/{port}lib/{port}",
+                    },
+                    {
+                        "name": f"{port}:{triplet}",
+                        "SPDXID": "SPDXRef-binary",
+                        "downloadLocation": "NONE",
+                    },
+                    *(
+                        {
+                            "SPDXID": f"SPDXRef-resource-{index}",
+                            "name": item,
+                            "downloadLocation": f"git+https://github.com/{item}@{base}",
+                        }
+                        for index, item in enumerate(
+                            (source,) if isinstance(source, str) else source
+                        )
+                    ),
+                ],
+            }
+        ),
+    )
+    listed = sorted(
+        {f"{triplet}/{item}" for item in files}
+        | {
+            f"{triplet}/share/{port}/copyright",
+            f"{triplet}/share/{port}/vcpkg.spdx.json",
+        }
+    )
+    write(
+        installed / "vcpkg" / "info" / f"{port}_{base}_{triplet}.list",
+        "".join(f"{line}\n" for line in [f"{triplet}/", *listed]),
+    )
+
+
+def stub_compiler(directory: Path, libraries: Path, sysroot: Path, search: str) -> Path:
+    """A compiler driver that answers the questions the collector asks one.
+
+    Its linker lists `search` as a SEARCH_DIR under the sysroot, `=` and all.
+    """
+    linker = directory / "ld"
+    write(
+        linker,
+        f'#!/bin/sh\necho \'SEARCH_DIR("={search}"); SEARCH_DIR("/nonexistent")\'\n',
+    )
+    compiler = directory / "cc"
+    write(
+        compiler,
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f'  -print-search-dirs) echo "libraries: ={libraries}" ;;\n'
+        f'  -print-prog-name=ld) echo "{linker}" ;;\n'
+        f'  -print-sysroot) echo "{sysroot}" ;;\n'
+        "esac\n",
+    )
+    for path in (linker, compiler):
+        path.chmod(0o755)
+    return compiler
+
+
+def elf_object() -> bytes:
+    """A relocatable ELF, the kind a compiler writes and an archive holds."""
+    image = bytearray(elf_shared_object("object.o"))
+    struct.pack_into("<H", image, 0x10, 1)  # ET_REL
+    return bytes(image)
+
+
+def ar_header(name: bytes, size: int) -> bytes:
+    """One `ar` member header, its name written as given."""
+    return (
+        name.ljust(16)
+        + b"0".ljust(12)
+        + b"0".ljust(6)
+        + b"0".ljust(6)
+        + b"644".ljust(8)
+        + str(size).encode().ljust(10)
+        + b"`\n"
+    )
+
+
+def ar_archive(members: dict[str, bytes]) -> bytes:
+    """A static archive in the GNU `ar` format, holding `members`."""
+    image = bytearray(b"!<arch>\n")
+    for name, data in members.items():
+        image += ar_header(f"{name}/".encode(), len(data))
+        image += data + b"\n" * (len(data) % 2)
+    return bytes(image)
 
 
 # ==============================================================================

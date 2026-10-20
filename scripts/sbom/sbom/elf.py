@@ -71,23 +71,27 @@ def build_id_of(data: bytes) -> str | None:
         return None
 
 
-def read_build_id(path: Path) -> str | None:
-    """The build-id of a file on disk, read without loading it.
+def _from_file(path: Path, read):
+    """`read(ELFFile)` over a file on disk, or None if it is not readable ELF.
 
-    Scanning a machine's libraries means touching hundreds of files, some of
-    them hundreds of megabytes. pyelftools seeks, so only the headers and the
-    note are ever read.
+    pyelftools seeks, so only the headers and what `read` asks for are read --
+    which matters when scanning hundreds of a machine's libraries, some of
+    them hundreds of megabytes. Scanning also meets files that only look like
+    ELF, and a truncated one raises `struct.error` from the parser.
     """
     try:
         with path.open("rb") as handle:
             if handle.read(4) != ELF_MAGIC:
                 return None
             handle.seek(0)
-            return _build_id_from(ELFFile(handle))
-    except (OSError, ELFError):
-        # Scanning a machine's libraries meets files that only look like ELF.
-        # Anything else raising here is a bug in this parser, not bad input.
+            return read(ELFFile(handle))
+    except (OSError, ELFError, struct.error):
         return None
+
+
+def read_build_id(path: Path) -> str | None:
+    """The build-id of a file on disk, read without loading it."""
+    return _from_file(path, _build_id_from)
 
 
 def read_dynamic(data: bytes) -> DynamicInfo:
@@ -117,3 +121,9 @@ def read_dynamic(data: bytes) -> DynamicInfo:
         machine=_ARCH.get(machine, machine),
         build_id=_build_id_from(elffile),
     )
+
+
+def file_type(path: Path) -> str | None:
+    """A file's ELF `e_type` -- `ET_REL` for an object, `ET_DYN` for a shared
+    library -- or None if it is not an ELF file."""
+    return _from_file(path, lambda elffile: elffile.header["e_type"])

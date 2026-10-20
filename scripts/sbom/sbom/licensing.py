@@ -74,7 +74,9 @@ class LicenseEvidence:
     """A license text that was read out of the component, not assumed."""
 
     component: str
-    origin: str  # "component-file" | "archive-member" | "readme-section" | "build-host"
+    # "component-file" | "archive-member" | "readme-section" | "build-host"
+    # | "vcpkg-port"
+    origin: str
     path: str
     sha256: str
     size: int
@@ -892,6 +894,37 @@ def read_notices(text: str) -> list[str]:
     return found
 
 
+_NO_HOLDER = frozenset({"none", "n/a", "unknown"})
+
+
+def _copyright_fields(lines: list[str]) -> list[list[list[str]]]:
+    """Each Debian `Copyright:` field's paragraphs, each a list of its lines.
+
+    The field runs on over indented lines and ` .` stands for a blank one,
+    which separates paragraphs. Debian writes `None` where a package states no
+    holder, and what follows that is commentary, not a holder.
+    """
+    fields: list[list[list[str]]] = []
+    for index, line in enumerate(lines):
+        if not line.lower().startswith("copyright:"):
+            continue
+        raw = [line[len("copyright:") :]]
+        for following in lines[index + 1 :]:
+            if not following[:1].isspace() or not following.strip():
+                break
+            raw.append(following)
+        paragraphs: list[list[str]] = [[]]
+        for value in (" ".join(item.split()) for item in raw):
+            if value.lower() in _NO_HOLDER:
+                break
+            if value == ".":
+                paragraphs.append([])
+            elif value:
+                paragraphs[-1].append(value)
+        fields.append([paragraph for paragraph in paragraphs if paragraph])
+    return fields
+
+
 def _debian_copyright_fields(lines: list[str]) -> list[str]:
     """Holders a Debian copyright file states without the word `Copyright`.
 
@@ -900,31 +933,120 @@ def _debian_copyright_fields(lines: list[str]) -> list[str]:
     in the file names them, so a parser looking for the word finds nobody.
     """
     found: list[str] = []
-    for index, line in enumerate(lines):
-        if not line.startswith("Copyright:"):
-            continue
-        # Debian writes the field either way, and the same-line form is the
-        # commoner by far. `Copyright: Jane Doe` matches no notice pattern --
-        # the colon breaks it -- so without this such a package credits nobody.
-        inline = line[len("Copyright:") :].strip()
-        values = ([f" {inline}"] if inline else []) + list(lines[index + 1 :])
+    for field in _copyright_fields(lines):
+        values = [value for paragraph in field for value in paragraph]
         for position, value in enumerate(values):
-            if not value[:1].isspace() or not value.strip():
-                break
-            holder = " ".join(value.split()).rstrip(".")
+            holder = value.rstrip(".")
             # A field whose value opens with a notice proper is read by the scan
             # below, prose and all; only a field naming a bare holder is read
             # here, and only for as long as it keeps naming one.
             if _PLAIN_COPYRIGHT.match(holder) or _PROSE.search(holder):
-                break
-            # Debian writes `None` where a package states no holder.
-            if holder.lower() in {"none", "n/a", "unknown"}:
                 break
             if position and len(holder) > 60:
                 break
             if _names_a_holder(f"Copyright {holder}") and holder not in found:
                 found.append(holder)
     return found
+
+
+def dep5_copyright(text: str) -> list[str] | None:
+    """The notices in the `Copyright:` fields of a machine-readable Debian
+    copyright file; None where the file is not one (no `Format:` field opening
+    it).
+
+    Only the fields are read: licence paragraphs quote other people's notices.
+    Stanzas covering only the Debian packaging name its packagers, not the
+    library's holders.
+    """
+    lines = text.splitlines()
+    first = next((line for line in lines if line.strip()), "")
+    if not first.lower().startswith("format:"):
+        return None
+    return [
+        notice
+        for stanza in _stanzas(lines)
+        if not _packaging_only(stanza)
+        for field in _copyright_fields(stanza)
+        for paragraph in field
+        for notice in _notices_in(paragraph)
+    ]
+
+
+_OPENS_NOTICE = re.compile(r"(?:copyright\b|©|\(c\))", re.IGNORECASE)
+_LEADING_YEAR = re.compile(r"\d{4}")
+# Markers, years and punctuation only: a notice that names no holder yet.
+_NO_HOLDER_YET = re.compile(r"^(?:copyright\b|\(c\)|©|\d{4}|[\s,\-–;/.])*$", re.I)
+
+
+def _notices_in(paragraph: list[str]) -> list[str]:
+    """A field paragraph's lines, grouped into the notices they state.
+
+    `Copyright`, © or (c) starts a notice, and so does a year -- unless the
+    notice above names no holder yet, or is a sentence left unfinished -- and
+    a bare name after a bare name. Any other line continues the notice above.
+    """
+
+    def marked(text: str) -> bool:
+        return bool(_OPENS_NOTICE.match(text) or _LEADING_YEAR.match(text))
+
+    def bare(text: str) -> bool:
+        return not ("\n" in text or marked(text) or _PROSE.search(text))
+
+    def unfinished(current: str) -> bool:
+        first = current.split("\n", 1)[0]
+        return (
+            not marked(first)
+            and bool(_PROSE.search(first))
+            and not current.endswith(".")
+        )
+
+    def opens(line: str, current: str) -> bool:
+        if _OPENS_NOTICE.match(line):
+            return True
+        if _LEADING_YEAR.match(line):
+            return not (_NO_HOLDER_YET.match(current) or unfinished(current))
+        if current.endswith(",") and line[:1].islower():
+            return False
+        return bare(current) and bare(line)
+
+    notices: list[str] = []
+    for line in paragraph:
+        if not notices or opens(line, notices[-1]):
+            notices.append(line)
+        else:
+            notices[-1] += "\n" + line
+    return notices
+
+
+def _stanzas(lines: list[str]) -> list[list[str]]:
+    """A Debian control-style file's stanzas, split at blank lines."""
+    stanzas: list[list[str]] = [[]]
+    for line in lines:
+        if line.strip():
+            stanzas[-1].append(line)
+        elif stanzas[-1]:
+            stanzas.append([])
+    return [stanza for stanza in stanzas if stanza]
+
+
+def _packaging_only(stanza: list[str]) -> bool:
+    """Whether a stanza's `Files:` patterns all lie under `debian/`.
+
+    Those name whoever packaged the library for Debian, not its holders. A
+    stanza with no `Files:` field -- the header -- is not one.
+    """
+    patterns: list[str] = []
+    for index, line in enumerate(stanza):
+        if line.lower().startswith("files:"):
+            patterns += line[len("files:") :].split()
+            for following in stanza[index + 1 :]:
+                if not following[:1].isspace():
+                    break
+                patterns += following.split()
+    patterns = [item.removeprefix("./") for item in patterns]
+    return bool(patterns) and all(
+        item == "debian" or item.startswith("debian/") for item in patterns
+    )
 
 
 def _without_dangling(notice: str) -> str:

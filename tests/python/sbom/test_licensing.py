@@ -431,3 +431,105 @@ def test_the_exception_list_is_required(tmp_path, content):
 
     with pytest.raises(licensing.CorpusError, match=r"exceptions\.json"):
         licensing.load_corpus(tmp_path)
+
+
+def test_a_machine_readable_copyright_field_is_read_as_debian_writes_it():
+    """Field names ignore case; `None` (or `n/a`) states no holder, and what
+    follows it in the field is commentary. A notice wrapped over lines stays
+    one paragraph, its lines in order."""
+    text = (
+        "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n"
+        "Files: a\ncopyright: 2001 Lower Case Holder\n .\n 2002 Second Holder\n"
+        "License: MIT\n\n"
+        "Files: b\nCopyright: None\n Copied from elsewhere\nLicense: public-domain\n\n"
+        "Files: c\nCopyright: n/a\nLicense: MIT\n\n"
+        "Files: d\nCopyright:\n Copyright 1989\n   The Regents.  All rights reserved.\n"
+        "License: BSD-3-clause\n"
+    )
+
+    assert licensing.dep5_copyright(text) == [
+        "2001 Lower Case Holder",
+        "2002 Second Holder",
+        "Copyright 1989\nThe Regents. All rights reserved.",
+    ]
+
+
+def test_the_debian_packaging_stanza_names_no_holder_of_the_library():
+    """`Files: debian/*` credits whoever packaged it; `*` and the header count."""
+    text = (
+        "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n"
+        "Copyright: 2000 Header Holder\n\n"
+        "Files: *\nCopyright: 2001 Upstream Holder\nLicense: MIT\n\n"
+        "Files: debian/*\n debian/patches/fix.patch\n"
+        "Copyright: 2020 Debian Packager\nLicense: MIT\n\n"
+        "Files:\n debian/*\nCopyright: 2020 Second Packager\nLicense: MIT\n\n"
+        "Files: debian ./debian/control\nCopyright: 2020 Third Packager\n"
+        "License: MIT\n\n"
+        "Files: debian/rules src/mixed.c\nCopyright: 2021 Mixed Stanza Holder\n"
+        "License: MIT\n"
+    )
+
+    assert licensing.dep5_copyright(text) == [
+        "2000 Header Holder",
+        "2001 Upstream Holder",
+        "2021 Mixed Stanza Holder",
+    ]
+
+
+def test_a_field_paragraph_is_split_into_the_notices_it_states():
+    """A notice wraps, so a line continues the one above unless it opens a
+    notice of its own -- and one line per holder is the common layout, which
+    folding needs to see one at a time."""
+    text = (
+        "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n"
+        "Files: *\nCopyright: Copyright © 1980, 1982\n"
+        " The Regents of the University. All rights reserved.\n"
+        " 2004-2024 Guillem Jover\n 2012 Guillem Jover\n .\n"
+        " Some code is derived from software contributed to Berkeley by\n"
+        " Somebody, as part of Summer of Code\n 2005 program.\n"
+        "License: BSD-3-clause\n\n"
+        "Files: md5.c\nCopyright:\n Colin Plumb\n Todd C. Miller\nLicense: MIT\n"
+    )
+
+    notices = licensing.dep5_copyright(text)
+
+    assert notices == [
+        "Copyright © 1980, 1982\nThe Regents of the University. All rights reserved.",
+        "2004-2024 Guillem Jover",
+        "2012 Guillem Jover",
+        "Some code is derived from software contributed to Berkeley by\n"
+        "Somebody, as part of Summer of Code\n2005 program.",
+        "Colin Plumb",
+        "Todd C. Miller",
+    ]
+    assert "2012 Guillem Jover" not in licensing.fold_notices(notices)
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        # A year list wrapping onto the holder's line is one notice.
+        (
+            "Copyright: © 1994, 1995,\n 1996 Free Software Foundation, Inc.\n",
+            ["© 1994, 1995,\n1996 Free Software Foundation, Inc."],
+        ),
+        # A holder whose name reads like prose does not swallow the next one.
+        (
+            "Copyright: 1999-2022 Python Software Foundation\n"
+            " 1992-1993 Jean-loup Gailly\n",
+            ["1999-2022 Python Software Foundation", "1992-1993 Jean-loup Gailly"],
+        ),
+        # A line ending in a comma runs on into a lower-case one.
+        (
+            "Copyright:\n Christian Tismer <tismer@example.org>,\n contributors\n",
+            ["Christian Tismer <tismer@example.org>,\ncontributors"],
+        ),
+    ],
+)
+def test_a_notice_is_not_cut_or_merged_at_a_line_break(field, expected):
+    text = (
+        "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n"
+        f"Files: *\n{field}License: MIT\n"
+    )
+
+    assert licensing.dep5_copyright(text) == expected

@@ -319,6 +319,17 @@ def build(
             + "\nThey reached the wheel by a route the collector cannot see."
         )
 
+    if inventory.untraced:
+        raise BuildError(
+            "the link lines of wheel members name these, and nothing says whose "
+            "code they hold:\n  "
+            + "\n  ".join(inventory.untraced)
+            + "\nLink only what the collector can trace -- a target of this build, a "
+            "fetched dependency's tree, a system package or a known toolkit -- or "
+            "teach it the route this input took. ExternalProject installs into the "
+            "build tree by a route it does not know."
+        )
+
     unlicensed = sorted(
         f"{path} ({key}): {reason}"
         for key, component in inventory.components_present.items()
@@ -462,6 +473,7 @@ def build(
     )
     evidence_doc["ci"] = environment_summary()
     evidence_doc["system_libraries"] = resolver.system_libraries
+    evidence_doc["static_inputs"] = resolver.static_inputs
 
     spdx = document_module.build_document(
         _project_facts(repo_root, wheel_metadata),

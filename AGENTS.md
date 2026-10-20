@@ -276,10 +276,13 @@ build itself. There is **no checked-in dependency registry** and adding one woul
 be a second source of truth — declare a dependency the way you already would and
 it appears in the next wheel's inventory.
 
-Three things fail the Release build rather than shipping a gap, and none is
-fixed by excluding a file or writing down an assumption:
+These fail the Release build rather than shipping a gap, and none is fixed by
+excluding a file or writing down an assumption:
 
 - **a wheel member the build cannot explain** — teach the collector that route;
+- **static code on a link line the collector cannot trace** — from the build
+  machine, or installed into the build tree by ExternalProject; link a
+  traceable copy, or teach the collector that route;
 - **a redistributed component with no license text** — obtain the terms;
 - **a checked-in third-party file that fails the per-file REUSE gate** — record
   upstream's terms in its REUSE info (sbom.rst says how).

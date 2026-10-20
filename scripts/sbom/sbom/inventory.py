@@ -12,6 +12,7 @@ this collector cannot see, and it stops publication.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,7 +21,10 @@ from . import elf, licensing
 from .discovery import (
     Component,
     EMPTY_SHA256,
+    LinkInput,
     component_of,
+    owned_input,
+    resolve_static_archive,
     resolve_system_library,
     resolve_system_library_by_build_id,
     sha256_file,
@@ -33,6 +37,13 @@ if TYPE_CHECKING:  # pragma: no cover
     from .evidence import Discovery
 
 FIRST_PARTY = "__first_party__"
+
+# How a component that reached no file got into the build, by kind. Checked-in
+# sources were never fetched, and the collector's own vocabulary says so.
+_ARRIVED = {
+    "vendored-source": "checked into this repository",
+    "vcpkg-port": "installed by vcpkg for this build",
+}
 
 # Text-ish members worth reading a REUSE tag out of.
 _TAGGABLE = {
@@ -92,6 +103,8 @@ class Inventory:
     external_runtime: dict[str, list[str]]
     requires_dist: list[str]
     unattributed: list[str] = field(default_factory=list)
+    # Link-line inputs nothing explains, as `<input> (linked by ...): <why>`.
+    untraced: list[str] = field(default_factory=list)
     absent_components: dict[str, str] = field(default_factory=dict)
     _indexed: tuple[dict, dict] | None = field(default=None, repr=False)
 
@@ -125,6 +138,11 @@ class Resolver:
     def __init__(self, discovery: Discovery, system_resolver=None) -> None:
         self._system_resolver = system_resolver or resolve_system_library
         self.system_libraries: dict[str, dict] = {}
+        # Archives and objects this wheel's members link that no target
+        # produced, by path, with what explains each -- or `explained: False`
+        # for the build to refuse.
+        self.static_inputs: dict[str, dict] = {}
+        self._input_keys: dict[str, str] = {}
         self.repo_root = discovery.repo_root
         self.build_dir = discovery.build_dir
         self.graph = discovery.graph
@@ -155,7 +173,16 @@ class Resolver:
                     )
 
     def _from_artifact(self, artifact, path: str, detail: str) -> Attribution:
+        # What a fetched tree, a vcpkg port or vendored material holds is
+        # credited there; what is left is the build machine's, or the gate's.
         contributions = self.graph.contributions(artifact, self.ownership)
+        linked = self.graph.static_inputs(artifact)
+        for item in sorted(linked, key=lambda item: (item.key, item.named)):
+            if owned_input(item, self.ownership):
+                continue
+            key = self._static_input(item, linked[item])
+            if key:
+                contributions.setdefault(key, set()).add("prebuilt-library")
         first_party = self.graph.first_party(artifact, self.repo_root, self.ownership)
         primary = None
         if not first_party:
@@ -174,6 +201,84 @@ class Resolver:
             components={key: set(how) for key, how in contributions.items()},
             primary=primary,
         )
+
+    def _static_input(self, item: LinkInput, targets: set[str]) -> str | None:
+        """The component a linked archive or object belongs to, if any."""
+        record = self.static_inputs.get(item.key)
+        if record is None:
+            record = self.static_inputs[item.key] = self._input_record(item)
+        record["named_as"] = sorted({*record["named_as"], item.named})
+        record["linked_by"] = sorted({*record["linked_by"], *targets})
+        return record["component"]
+
+    def _input_record(self, item: LinkInput) -> dict:
+        """What explains one input the ownership index does not: the repository,
+        the host, or nothing -- which the build refuses."""
+        record: dict = {
+            "kind": item.kind,
+            "named_as": [],
+            "linked_by": [],
+            "component": None,
+            "explained": True,
+        }
+
+        def refused(outcome: str) -> dict:
+            record["explained"] = False
+            record["outcome"] = outcome
+            return record
+
+        if item.path is None or item.kind == "unresolved":
+            return refused(item.reason)
+        path = item.path
+        if item.kind == "archive":
+            record["members"] = item.members
+            if item.members == 0:
+                record["outcome"] = "contributes no code: the archive has no members"
+                return record
+        if path.is_relative_to(self.build_dir.resolve()):
+            return refused(
+                "inside the build tree, but no target produced it and nothing "
+                "records which component installed it"
+            )
+        if self.repo_files.digest_of(path):
+            # REUSE names a holder for every tracked file, and the vendored
+            # scan registers one that is not this project.
+            record["outcome"] = "tracked in this repository, held by this project"
+            return record
+
+        origin = resolve_static_archive(path)
+        record.update(origin)
+        if not (origin["package"] or origin["toolkit_root"]):
+            return refused(
+                "no package on the build machine owns it and no known toolkit holds it"
+                if origin["resolved_path"]
+                else "not found on the build machine"
+            )
+        component = system_component(
+            path.name,
+            origin,
+            route=f"Statically linked from {path}.",
+            key=self._input_key(path),
+        )
+        self.components[component.key] = component
+        record["component"] = component.key
+        record["outcome"] = (
+            f"supplied by system package {origin['package']}"
+            if origin["package"]
+            else f"part of the toolkit at {origin['toolkit_root']}"
+        )
+        return record
+
+    def _input_key(self, path: Path) -> str:
+        """`system:<name>`, unless another linked file already holds that name.
+
+        A shared library's key is its SONAME, which no archive or object shares.
+        """
+        key = f"system:{path.name}"
+        if self._input_keys.get(key, str(path)) != str(path):
+            key += "@" + hashlib.sha256(str(path).encode()).hexdigest()[:8]
+        self._input_keys[key] = str(path)
+        return key
 
     def resolve(
         self,
@@ -620,14 +725,8 @@ def build(
         for key in sorted(roles)
         if key in resolver.components
     }
-    # Say how the component got here. Checked-in sources were never fetched, and
-    # the collector's own vocabulary for them elsewhere says so.
     absent = {
-        key: (
-            "checked into this repository"
-            if resolver.components[key].kind == "vendored-source"
-            else "fetched for this build"
-        )
+        key: _ARRIVED.get(resolver.components[key].kind, "fetched for this build")
         + "; contributes to no file in this wheel"
         for key in sorted(resolver.components)
         if key not in roles
@@ -649,6 +748,11 @@ def build(
         },
         requires_dist=sorted(metadata.get("requires_dist") or []),
         unattributed=sorted(unattributed),
+        untraced=sorted(
+            f"{path} (linked by {', '.join(record['linked_by'])}): {record['outcome']}"
+            for path, record in resolver.static_inputs.items()
+            if not record["explained"]
+        ),
         absent_components=absent,
     )
 

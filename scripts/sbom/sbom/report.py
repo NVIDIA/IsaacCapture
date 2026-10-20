@@ -35,6 +35,7 @@ _KIND_PROSE = {
     "archive": "fetched archive",
     "system-library": "build machine",
     "vendored-source": "vendored source",
+    "vcpkg-port": "vcpkg port",
 }
 
 
