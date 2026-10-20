@@ -207,5 +207,68 @@ class ManifestResolverTest(unittest.TestCase):
         self.assertEqual(ctx.traits, "OakRecordingTraits")
 
 
+class MetadataTest(unittest.TestCase):
+    """The optional ``metadata`` key. The C++ it renders is compiled by tests/cpp/core/tracker_metadata."""
+
+    def _context(self, **overrides):
+        from templates import enrich_context
+
+        raw = {"name": "tactile", "table": "TactileData", **overrides}
+        return enrich_context(resolve_tracker_entry(raw, load_defaults(DEFAULTS_PATH)))
+
+    def test_unset_by_default(self) -> None:
+        self.assertIsNone(self._context().metadata)
+
+    def test_names_derive_from_the_table_and_channel(self) -> None:
+        from templates import MetadataGenContext
+
+        self.assertEqual(
+            self._context(metadata="TactileShape").metadata,
+            MetadataGenContext("TactileShape", "tactile_shape", "tactile_metadata"),
+        )
+        self.assertEqual(
+            self._context(metadata="TactileShape", channel="glove").metadata.channel,
+            "glove_metadata",
+        )
+
+    def test_schema_stem_splits_acronyms_and_digits(self) -> None:
+        from templates import camel_to_snake
+
+        self.assertEqual(camel_to_snake("Se3TrackerPose"), "se3_tracker_pose")
+        self.assertEqual(camel_to_snake("HTTPHeader"), "http_header")
+
+    def test_invalid_values_are_rejected(self) -> None:
+        for overrides in (
+            {"metadata": ""},
+            {"metadata": 1},
+            {"metadata": "TactileShape", "direction": "push"},
+        ):
+            with self.subTest(**overrides), self.assertRaises(ValueError) as ctx:
+                self._context(**overrides)
+            self.assertIn("metadata", str(ctx.exception))
+
+    def test_every_placeholder_is_filled(self) -> None:
+        from generate_trackers import (
+            _live_factory_template,
+            _render_fragment,
+            _replay_factory_template,
+            render_for_entry,
+        )
+
+        for metadata in (None, "TactileShape"):
+            ctx = self._context(**({"metadata": metadata} if metadata else {}))
+            files = render_for_entry(ctx)
+            for fragment in (
+                _live_factory_template(ctx),
+                _replay_factory_template(ctx),
+                "pybind_pull.template",
+                "recording_traits_pull.template",
+            ):
+                files[fragment] = _render_fragment(fragment, ctx)
+            for name, text in files.items():
+                with self.subTest(metadata=metadata, file=name):
+                    self.assertNotRegex(text, r"@[A-Z_]+@")
+
+
 if __name__ == "__main__":
     unittest.main()

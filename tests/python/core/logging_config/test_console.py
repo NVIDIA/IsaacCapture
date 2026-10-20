@@ -60,6 +60,17 @@ class TestLoggerNameFilter:
         assert not handler.filter(record(name="isaaccapture.plugins.manusx"))
         assert not handler.filter(record(name="isaaccapture.plugins"))
 
+    def test_oob_progress_keeps_parent_filter_compatibility(self):
+        handler = _console.ensure_handler()
+        parent = "isaaccapture.cloudxr.oob_teleop_env"
+        progress = parent + ".oob-progress"
+        logging_config.set_console_logger_name_filter({parent})
+        assert handler.filter(record(name=progress))
+
+        logging_config.set_console_logger_name_filter({progress})
+        assert handler.filter(record(name=progress))
+        assert not handler.filter(record(name=parent))
+
     def test_a_name_left_out_of_the_next_set_no_longer_passes(self):
         handler = _console.ensure_handler()
         logging_config.set_console_logger_name_filter({"isaaccapture.plugins.manus"})
@@ -223,8 +234,11 @@ class TestColourFormatter:
         assert "isaaccapture.core.Probe" not in _console._logger_colors
 
     def test_oob_progress_logger_is_cyan_by_default(self):
-        name = "isaaccapture.cloudxr.oob_teleop_env"
+        name = "isaaccapture.cloudxr.oob_teleop_env.oob-progress"
         assert f"[\033[36m{name}{_RESET}]" in render(_Tty(), name=name)
+        assert f"[\033[36moob-progress{_RESET}]" in render(
+            _Tty(), name=name, use_short_name=True
+        )
 
     def test_the_last_segment_keeps_the_full_names_colour(self):
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})

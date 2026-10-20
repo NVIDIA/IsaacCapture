@@ -24,8 +24,19 @@ SCHEMA_VERSION = 1
 REPORT_STALE_AFTER_NS = 3_000_000_000
 OPENXR_PROVIDER_ID = "openxr/runtime"
 OPENXR_DEVICE_ID = "openxr/headset"
+OPENXR_LEFT_CONTROLLER_DEVICE_ID = "openxr/controller/left"
+OPENXR_RIGHT_CONTROLLER_DEVICE_ID = "openxr/controller/right"
+OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS = 1_000_000_000
 PLUGIN_STATUS_COLLECTION_SUFFIX = "/device_status"
 OPENXR_IDENTIFIER_MAX_BYTES = 255
+
+_OPENXR_CONTROLLER_DEVICES = (
+    ("left", OPENXR_LEFT_CONTROLLER_DEVICE_ID, "/controller/left"),
+    ("right", OPENXR_RIGHT_CONTROLLER_DEVICE_ID, "/controller/right"),
+)
+_OPENXR_CONTROLLER_SIDE_BY_ID = {
+    device_id: side for side, device_id, _path in _OPENXR_CONTROLLER_DEVICES
+}
 
 _PLUGIN_DEVICE_REASON_MAP = {
     "NONE": StatusReason.NONE,
@@ -393,6 +404,10 @@ class StatusMonitor:
         self._plugin_runtimes: tuple[_PluginRuntime, ...] = ()
         self._external_openxr = False
         self._runtime_failed = False
+        self._controller_untracked_since_ns: dict[str, int | None] = {
+            "left": None,
+            "right": None,
+        }
 
     def get_status(self) -> StatusSnapshot:
         with self._lock:
@@ -412,6 +427,7 @@ class StatusMonitor:
         *,
         include_openxr: bool,
         external_openxr: bool,
+        include_openxr_controllers: bool = False,
         now_ns: int | None = None,
     ) -> None:
         """Validate and install a fresh INITIALIZING startup inventory."""
@@ -475,7 +491,12 @@ class StatusMonitor:
                 )
 
         if include_openxr:
-            if OPENXR_PROVIDER_ID in provider_ids or OPENXR_DEVICE_ID in device_ids:
+            openxr_device_ids = {OPENXR_DEVICE_ID}
+            if include_openxr_controllers:
+                openxr_device_ids.update(
+                    device_id for _side, device_id, _path in _OPENXR_CONTROLLER_DEVICES
+                )
+            if OPENXR_PROVIDER_ID in provider_ids or openxr_device_ids & device_ids:
                 raise ValueError(
                     "OpenXR provider or device ID conflicts with plugin inventory"
                 )
@@ -501,10 +522,25 @@ class StatusMonitor:
                     error="",
                 )
             )
+            if include_openxr_controllers:
+                devices.extend(
+                    DeviceStatus(
+                        id=device_id,
+                        path=path,
+                        type="controller",
+                        description=f"{side.title()} OpenXR controller",
+                        provider_id=OPENXR_PROVIDER_ID,
+                        status=DeviceState.INITIALIZING,
+                        reason=StatusReason.PROVIDER_INITIALIZING,
+                        error="",
+                    )
+                    for side, device_id, path in _OPENXR_CONTROLLER_DEVICES
+                )
 
         self._plugin_runtimes = tuple(_PluginRuntime(spec) for spec in plugin_specs)
         self._external_openxr = external_openxr
         self._runtime_failed = False
+        self._controller_untracked_since_ns = {"left": None, "right": None}
         self._replace_snapshot(
             StatusSnapshot(
                 time.monotonic_ns() if now_ns is None else now_ns,
@@ -535,6 +571,16 @@ class StatusMonitor:
             )
         for device in snapshot.devices:
             if device.provider_id == OPENXR_PROVIDER_ID:
+                if device.id != OPENXR_DEVICE_ID:
+                    devices.append(
+                        replace(
+                            device,
+                            status=DeviceState.UNKNOWN,
+                            reason=StatusReason.NO_CURRENT_DATA,
+                            error="waiting for the first controller tracking sample",
+                        )
+                    )
+                    continue
                 devices.append(
                     replace(
                         device,
@@ -573,6 +619,7 @@ class StatusMonitor:
         deviceio_session: Any,
         openxr_session: Any = None,
         *,
+        openxr_controllers: dict[str, Any] | None = None,
         now_ns: int | None = None,
     ) -> None:
         """Poll owned provider inputs and publish one reduced snapshot."""
@@ -580,6 +627,7 @@ class StatusMonitor:
             self._refresh(
                 deviceio_session,
                 openxr_session,
+                openxr_controllers=openxr_controllers,
                 now_ns=now_ns,
             )
 
@@ -588,6 +636,7 @@ class StatusMonitor:
         deviceio_session: Any,
         openxr_session: Any,
         *,
+        openxr_controllers: dict[str, Any] | None,
         now_ns: int | None,
     ) -> None:
         if self._runtime_failed:
@@ -632,7 +681,10 @@ class StatusMonitor:
 
         if OPENXR_PROVIDER_ID in providers_by_id and not self._external_openxr:
             provider = providers_by_id[OPENXR_PROVIDER_ID]
-            headset = devices_by_provider[OPENXR_PROVIDER_ID][0]
+            openxr_devices = devices_by_provider[OPENXR_PROVIDER_ID]
+            headset = next(
+                device for device in openxr_devices if device.id == OPENXR_DEVICE_ID
+            )
             if provider.status != ProviderState.FAILED:
                 try:
                     if openxr_session is None:
@@ -655,7 +707,33 @@ class StatusMonitor:
                         error=str(error),
                     )
                 providers_by_id[OPENXR_PROVIDER_ID] = provider
-                devices_by_provider[OPENXR_PROVIDER_ID] = (headset,)
+                openxr_devices = tuple(
+                    headset if device.id == OPENXR_DEVICE_ID else device
+                    for device in openxr_devices
+                )
+            devices_by_provider[OPENXR_PROVIDER_ID] = openxr_devices
+
+        if OPENXR_PROVIDER_ID in providers_by_id:
+            provider = providers_by_id[OPENXR_PROVIDER_ID]
+            openxr_devices = devices_by_provider[OPENXR_PROVIDER_ID]
+            if provider.status == ProviderState.FAILED:
+                devices_by_provider[OPENXR_PROVIDER_ID] = tuple(
+                    replace(
+                        device,
+                        status=DeviceState.UNAVAILABLE,
+                        reason=provider.reason,
+                        error=provider.error,
+                    )
+                    for device in openxr_devices
+                )
+            elif openxr_controllers is not None:
+                devices_by_provider[OPENXR_PROVIDER_ID] = (
+                    self._reduce_openxr_controllers(
+                        openxr_devices,
+                        openxr_controllers,
+                        now_ns,
+                    )
+                )
 
         providers = tuple(
             providers_by_id[provider.id] for provider in snapshot.providers
@@ -666,6 +744,77 @@ class StatusMonitor:
             for device in devices_by_provider[provider.id]
         )
         self._replace_snapshot(StatusSnapshot(now_ns, providers, devices))
+
+    def _reduce_openxr_controllers(
+        self,
+        devices: tuple[DeviceStatus, ...],
+        snapshots: dict[str, Any],
+        now_ns: int,
+    ) -> tuple[DeviceStatus, ...]:
+        reduced = []
+        for device in devices:
+            side = _OPENXR_CONTROLLER_SIDE_BY_ID.get(device.id)
+            if side is None:
+                reduced.append(device)
+                continue
+
+            snapshot = snapshots.get(side)
+            try:
+                aim_valid = snapshot is not None and bool(snapshot.aim_pose.is_valid)
+                grip_valid = snapshot is not None and bool(snapshot.grip_pose.is_valid)
+            except Exception as error:  # noqa: BLE001 - native status reads are isolated
+                self._controller_untracked_since_ns[side] = None
+                reduced.append(
+                    replace(
+                        device,
+                        status=DeviceState.UNKNOWN,
+                        reason=StatusReason.OPENXR_POLL_ERROR,
+                        error=str(error),
+                    )
+                )
+                continue
+
+            if aim_valid and grip_valid:
+                self._controller_untracked_since_ns[side] = None
+                reduced.append(
+                    replace(
+                        device,
+                        status=DeviceState.CONNECTED,
+                        reason=StatusReason.NONE,
+                        error="",
+                    )
+                )
+                continue
+
+            untracked_since_ns = self._controller_untracked_since_ns[side]
+            if untracked_since_ns is None:
+                self._controller_untracked_since_ns[side] = now_ns
+                reduced.append(device)
+                continue
+            if now_ns - untracked_since_ns < OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS:
+                reduced.append(device)
+                continue
+
+            if snapshot is None:
+                status = DeviceState.DISCONNECTED
+                detail = "controller is inactive"
+            else:
+                status = DeviceState.DEGRADED
+                missing = [
+                    pose
+                    for pose, valid in (("aim", aim_valid), ("grip", grip_valid))
+                    if not valid
+                ]
+                detail = f"{' and '.join(missing)} pose tracking unavailable"
+            reduced.append(
+                replace(
+                    device,
+                    status=status,
+                    reason=StatusReason.NO_CURRENT_DATA,
+                    error=f"{detail} for at least 1 second",
+                )
+            )
+        return tuple(reduced)
 
     def refresh_plugin_processes(self, *, now_ns: int | None = None) -> None:
         """Refresh process-owned states without polling device reports."""

@@ -14,8 +14,11 @@ from isaaccapture.teleop_session_manager import (
     StatusReason,
 )
 from isaaccapture.teleop_session_manager.status_monitor import (
+    OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS,
     OPENXR_DEVICE_ID,
+    OPENXR_LEFT_CONTROLLER_DEVICE_ID,
     OPENXR_PROVIDER_ID,
+    OPENXR_RIGHT_CONTROLLER_DEVICE_ID,
     PluginProviderSpec,
     StatusMonitor,
 )
@@ -80,6 +83,13 @@ def openxr_snapshot(
         reason=reason,
         result_code=result_code,
         error=error,
+    )
+
+
+def controller_snapshot(*, aim_valid=True, grip_valid=True):
+    return SimpleNamespace(
+        aim_pose=SimpleNamespace(is_valid=aim_valid),
+        grip_pose=SimpleNamespace(is_valid=grip_valid),
     )
 
 
@@ -358,6 +368,198 @@ def test_openxr_owned_and_external_states(external, device_state, reason):
     )
     assert monitor.get_device_status(OPENXR_DEVICE_ID).status == device_state
     assert monitor.get_device_status(OPENXR_DEVICE_ID).reason == reason
+
+
+def test_openxr_controller_inventory_is_opt_in_and_waits_for_first_sample():
+    without_controllers = StatusMonitor()
+    without_controllers.rebuild(
+        (),
+        include_openxr=True,
+        external_openxr=False,
+        now_ns=1,
+    )
+
+    with_controllers = StatusMonitor()
+    with_controllers.rebuild(
+        (),
+        include_openxr=True,
+        external_openxr=False,
+        include_openxr_controllers=True,
+        now_ns=1,
+    )
+    with_controllers.mark_available(now_ns=2)
+
+    assert [device.id for device in without_controllers.get_status().devices] == [
+        OPENXR_DEVICE_ID
+    ]
+    assert [device.id for device in with_controllers.get_status().devices] == [
+        OPENXR_DEVICE_ID,
+        OPENXR_LEFT_CONTROLLER_DEVICE_ID,
+        OPENXR_RIGHT_CONTROLLER_DEVICE_ID,
+    ]
+    for device_id in (
+        OPENXR_LEFT_CONTROLLER_DEVICE_ID,
+        OPENXR_RIGHT_CONTROLLER_DEVICE_ID,
+    ):
+        device = with_controllers.get_device_status(device_id)
+        assert device.status == DeviceState.UNKNOWN
+        assert device.reason == StatusReason.NO_CURRENT_DATA
+
+
+def test_openxr_controllers_track_each_side_after_one_second_grace_and_recover():
+    monitor = StatusMonitor()
+    monitor.rebuild(
+        (),
+        include_openxr=True,
+        external_openxr=False,
+        include_openxr_controllers=True,
+        now_ns=1,
+    )
+    monitor.mark_available(now_ns=2)
+    session = FakeOpenXRSession(openxr_snapshot())
+    both_connected = {
+        "left": controller_snapshot(),
+        "right": controller_snapshot(),
+    }
+    monitor.refresh(
+        object(),
+        session,
+        openxr_controllers=both_connected,
+        now_ns=10,
+    )
+
+    loss_started_ns = 20
+    missing_tracking = {
+        "left": controller_snapshot(aim_valid=False),
+        "right": None,
+    }
+    monitor.refresh(
+        object(),
+        session,
+        openxr_controllers=missing_tracking,
+        now_ns=loss_started_ns,
+    )
+    monitor.refresh(
+        object(),
+        session,
+        openxr_controllers=missing_tracking,
+        now_ns=loss_started_ns + OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS - 1,
+    )
+    assert (
+        monitor.get_device_status(OPENXR_LEFT_CONTROLLER_DEVICE_ID).status
+        == DeviceState.CONNECTED
+    )
+    assert (
+        monitor.get_device_status(OPENXR_RIGHT_CONTROLLER_DEVICE_ID).status
+        == DeviceState.CONNECTED
+    )
+
+    monitor.refresh(
+        object(),
+        session,
+        openxr_controllers=missing_tracking,
+        now_ns=loss_started_ns + OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS,
+    )
+    left = monitor.get_device_status(OPENXR_LEFT_CONTROLLER_DEVICE_ID)
+    right = monitor.get_device_status(OPENXR_RIGHT_CONTROLLER_DEVICE_ID)
+    assert (left.status, left.reason) == (
+        DeviceState.DEGRADED,
+        StatusReason.NO_CURRENT_DATA,
+    )
+    assert "aim pose" in left.error
+    assert (right.status, right.reason) == (
+        DeviceState.DISCONNECTED,
+        StatusReason.NO_CURRENT_DATA,
+    )
+    assert "inactive" in right.error
+
+    monitor.refresh(
+        object(),
+        session,
+        openxr_controllers=both_connected,
+        now_ns=loss_started_ns + OPENXR_CONTROLLER_TRACKING_LOSS_DELAY_NS + 1,
+    )
+    for device_id in (
+        OPENXR_LEFT_CONTROLLER_DEVICE_ID,
+        OPENXR_RIGHT_CONTROLLER_DEVICE_ID,
+    ):
+        device = monitor.get_device_status(device_id)
+        assert (device.status, device.reason, device.error) == (
+            DeviceState.CONNECTED,
+            StatusReason.NONE,
+            "",
+        )
+
+
+def test_openxr_controller_observation_errors_are_isolated_per_side():
+    monitor = StatusMonitor()
+    monitor.rebuild(
+        (),
+        include_openxr=True,
+        external_openxr=True,
+        include_openxr_controllers=True,
+        now_ns=1,
+    )
+    monitor.mark_available(now_ns=2)
+
+    monitor.refresh(
+        object(),
+        openxr_controllers={
+            "left": SimpleNamespace(),
+            "right": controller_snapshot(),
+        },
+        now_ns=3,
+    )
+
+    left = monitor.get_device_status(OPENXR_LEFT_CONTROLLER_DEVICE_ID)
+    right = monitor.get_device_status(OPENXR_RIGHT_CONTROLLER_DEVICE_ID)
+    assert (left.status, left.reason) == (
+        DeviceState.UNKNOWN,
+        StatusReason.OPENXR_POLL_ERROR,
+    )
+    assert (right.status, right.reason) == (
+        DeviceState.CONNECTED,
+        StatusReason.NONE,
+    )
+    assert (
+        monitor.get_device_status(OPENXR_DEVICE_ID).reason
+        == StatusReason.EXTERNAL_OPENXR_HEALTH_UNKNOWN
+    )
+
+
+def test_openxr_provider_failure_makes_controller_inventory_unavailable():
+    monitor = StatusMonitor()
+    monitor.rebuild(
+        (),
+        include_openxr=True,
+        external_openxr=False,
+        include_openxr_controllers=True,
+        now_ns=1,
+    )
+    monitor.mark_available(now_ns=2)
+
+    monitor.refresh(
+        object(),
+        FakeOpenXRSession(
+            openxr_snapshot(
+                state="FAILED",
+                reason="SESSION_LOST",
+                error="session lost",
+            )
+        ),
+        openxr_controllers={
+            "left": controller_snapshot(),
+            "right": controller_snapshot(),
+        },
+        now_ns=3,
+    )
+
+    assert {device.status for device in monitor.get_status().devices} == {
+        DeviceState.UNAVAILABLE
+    }
+    assert {device.reason for device in monitor.get_status().devices} == {
+        StatusReason.OPENXR_SESSION_LOST
+    }
 
 
 @pytest.mark.parametrize(

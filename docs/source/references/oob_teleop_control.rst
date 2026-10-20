@@ -46,6 +46,14 @@ change opens a fresh 60-second recovery episode. Override the positive,
 finite values with ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC`` and
 ``TELEOP_OOB_RETRY_INTERVAL_SEC``; invalid values fail host preflight.
 
+At INFO, OOB progress reports headset waiting and connection, browser readiness,
+and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
+USB-health blocks remain visible with operator action. An unchanged wait for
+an absent headset is announced once; routine setup steps are DEBUG messages.
+Progress uses the ``isaaccapture.cloudxr.oob_teleop_env.oob-progress`` logger.
+It remains visible through filters selecting its parent logger, while embedded
+applications can also select progress alone.
+
 To start the hub **without** any ``adb`` interaction — useful in containers,
 CI, or wireless-only environments — set ``TELEOP_OOB_HUB_ONLY=1`` and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
@@ -636,7 +644,7 @@ On startup the launcher:
 2. Resolves the WebXR static directory from
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
-   the published client (see :doc:`../getting_started/build_from_source/webxr`).
+   the published client (see :doc:`../development/build_from_source/webxr`).
 3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
    proxy's existing TLS listener.
 4. After the selected headset is ready, checks its non-loopback network,
@@ -704,7 +712,7 @@ and ``bundle.emulator.js`` (desktop emulation only). If the static cache under
 **Fix:** Ensure ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` are present
 under the static dir — run the launcher once with network, copy a full ``npm run build``
 output, or use the GitHub Pages URL directly. See
-:doc:`../getting_started/build_from_source/webxr`.
+:doc:`../development/build_from_source/webxr`.
 
 CDP: startButton marked failed / not actionable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

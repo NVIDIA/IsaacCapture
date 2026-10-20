@@ -233,6 +233,7 @@ class TeleopSession:
         self._in_context: bool = False
         # Discover sources and external leaves from pipeline
         self._discover_sources()
+        self._controller_status_trackers = self._find_controller_status_trackers()
         # Vendor selection is a live-only concern; reject it up front in replay.
         self._reject_vendor_selection_in_replay()
 
@@ -580,7 +581,11 @@ class TeleopSession:
         except BaseException as error:
             self._status_monitor.mark_runtime_failed(error)
             raise
-        self._status_monitor.refresh(self.deviceio_session, self._oxr_session)
+        self._status_monitor.refresh(
+            self.deviceio_session,
+            self._oxr_session,
+            openxr_controllers=self._controller_status_snapshots(),
+        )
         pipeline_inputs = self._collect_tracker_data()
 
         if request.external_inputs:
@@ -1007,6 +1012,36 @@ class TeleopSession:
             for source in self._sources
         }
 
+    def _find_controller_status_trackers(self) -> tuple[Any, ...]:
+        """Controller trackers belonging to configured input sources."""
+        trackers = []
+        seen_ids = set()
+        for source in self._sources:
+            tracker = source.get_tracker()
+            if (
+                id(tracker) in seen_ids
+                or not callable(getattr(tracker, "get_left_controller", None))
+                or not callable(getattr(tracker, "get_right_controller", None))
+            ):
+                continue
+            seen_ids.add(id(tracker))
+            trackers.append(tracker)
+        return tuple(trackers)
+
+    def _controller_status_snapshots(self) -> dict[str, Any] | None:
+        """Read the latest cached per-side samples without another DeviceIO update."""
+        if not self._controller_status_trackers:
+            return None
+        snapshots = {"left": None, "right": None}
+        for tracker in self._controller_status_trackers:
+            for side in snapshots:
+                sample = getattr(tracker, f"get_{side}_controller")(
+                    self.deviceio_session
+                )
+                if snapshots[side] is None and sample is not None:
+                    snapshots[side] = sample
+        return snapshots
+
     def _check_plugin_health(self):
         """Check health of all running plugins."""
         for plugin_context in self.plugin_contexts:
@@ -1095,6 +1130,8 @@ class TeleopSession:
             (),
             include_openxr=live_mode,
             external_openxr=live_mode and external_openxr,
+            include_openxr_controllers=live_mode
+            and bool(self._controller_status_trackers),
         )
         if live_mode:
             self._resolve_monitored_plugins()
@@ -1106,6 +1143,7 @@ class TeleopSession:
                 ),
                 include_openxr=True,
                 external_openxr=external_openxr,
+                include_openxr_controllers=bool(self._controller_status_trackers),
             )
 
         # Auto-populate mcap_config from pipeline sources if recording or replaying.

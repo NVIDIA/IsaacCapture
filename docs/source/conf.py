@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ex
 
 # -- Project information -----------------------------------------------------
 
-project = "Isaac Teleop"
+project = "Isaac Capture"
 build_time = datetime.now(timezone.utc)
 copyright = f"2025-{build_time.year}, NVIDIA CORPORATION & AFFILIATES"
 copyright += f", last updated on {build_time.strftime('%B %d, %Y')}"
@@ -86,7 +86,7 @@ smv_tag_whitelist = os.getenv("SMV_TAG_WHITELIST", r"^v[1-9]\d*\.\d+\.\d+$")
 
 # -- Options for HTML output ---------------------------------------------------
 
-html_title = "Isaac Teleop Documentation"
+html_title = "Isaac Capture Documentation"
 html_theme = "nvidia_sphinx_theme"
 html_favicon = "_static/favicon.ico"
 html_show_copyright = True
@@ -101,8 +101,8 @@ _smv_name = _smv_ref_name()
 
 _DEFAULT_ICONS = {
     "teleop_version": "main",
-    "teleop_url": "https://github.com/NVIDIA/IsaacTeleop",
-    "cloudxr_version": "6.2",
+    "teleop_url": "https://github.com/NVIDIA/IsaacCapture",
+    "cloudxr_version": "6.3.0",
     "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk",
     "lab_version": "3.0",
     "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -110,16 +110,72 @@ _DEFAULT_ICONS = {
 _VERSION_ICON_MAP = {
     "release/1.0.x": {
         "teleop_version": "1.0",
-        "teleop_url": "https://github.com/NVIDIA/IsaacTeleop/tree/release/1.0.x",
-        "cloudxr_version": "6.1",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.0.x",
+        "cloudxr_version": "6.1.0",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab/develop",
     },
+    "release/1.1.x": {
+        "teleop_version": "1.1",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.1.x",
+        "cloudxr_version": "6.1.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.2.x": {
+        "teleop_version": "1.2",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.2.x",
+        "cloudxr_version": "6.1.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.3.x": {
+        "teleop_version": "1.3",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.3.x",
+        "cloudxr_version": "6.2.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.4.x": {
+        "teleop_version": "1.4",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.4.x",
+        "cloudxr_version": "6.3.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.5.x": {
+        "teleop_version": "1.5",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x",
+        "cloudxr_version": "6.3.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.6.x": {
+        "teleop_version": "1.6",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.6.x",
+        "cloudxr_version": "6.3.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
+    "release/1.7.x": {
+        "teleop_version": "1.7",
+        "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.7.x",
+        "cloudxr_version": "6.3.0",
+        "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
+        "lab_version": "3.0",
+        "lab_url": "https://isaac-sim.github.io/IsaacLab",
+    },
 }
 _icons = _VERSION_ICON_MAP.get(_smv_name, _DEFAULT_ICONS)
 
-# Branch-specific CloudXR web client ("CloudXR.js") deployment.  docs.yaml
+# Branch-specific CloudXR web client ("CloudXR.js") deployment.  docs-build-and-deploy.yaml
 # publishes the prebuilt web client to ``/client/<slug>/`` where ``<slug>`` is
 # the built ref name with ``/`` replaced by ``-`` (e.g. ``main``,
 # ``release-1.3.x``, ``v1.2.3``).  Resolving the same slug here lets each
@@ -197,13 +253,13 @@ def _versioning_context(app, pagename, templatename, context, doctree):
 # Edit page button: link to GitHub so users can suggest edits (PyData theme uses html_context)
 html_context = {
     "github_user": "NVIDIA",
-    "github_repo": "IsaacTeleop",
+    "github_repo": "IsaacCapture",
     "github_version": _smv_name or "main",
     "doc_path": "docs/source",
 }
 
 # Base URL for linking to repository source (used by code-file and code-dir roles).
-_GH_BASE = "https://github.com/NVIDIA/IsaacTeleop"
+_GH_BASE = "https://github.com/NVIDIA/IsaacCapture"
 _GH_BRANCH = html_context["github_version"]
 
 

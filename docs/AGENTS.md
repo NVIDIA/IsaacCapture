@@ -18,10 +18,17 @@ example wrappers and lifecycle walkthroughs unless needed to use the option.
 is what CI runs, so a new warning fails the build. Check a docs change with that target
 rather than a bare `sphinx-build`.
 
+During a merge, `check-merge-conflict` can mistake seven-character RST heading
+underlines for conflict markers. Verify that no unmerged paths remain, finish
+the merge commit, then rerun all hooks; preserve valid headings.
+
 `make multi-docs` is the other half, and it constrains how extensions are written:
 sphinx-multiversion builds every whitelisted ref with `-c` pointing at the checkout that
 invoked it, so `app.confdir` is that checkout while `app.srcdir` is the ref being built.
 Resolve paths from one of those two, never from the working directory or the repo root.
+
+Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches;
+verify CloudXR entries against each branch's `deps/cloudxr/.env.default` when updating them.
 
 The config is therefore a site-wide input, not a per-version one: the deploy job takes
 `docs/` from `main` before building, or a release or tag push renders main's pages with an
@@ -100,3 +107,18 @@ and `logo_dark`.
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## RST restructuring
+
+When moving a guide, keep its setup content until any deferred replacement pages
+exist. Preserve old URLs with compatibility pages and retain explicit labels in
+the destination. Recompute RST heading underlines when renaming their text.
+Device metadata containing docnames must come from `app.srcdir` so a multiversion
+build uses paths that exist in that ref, even when `conf.py` comes from the deploy
+checkout.
+
+Reuse the README architecture image in the RST overview so both entry points
+share one maintained diagram.
+
+Group vendor device guides under category toctrees in the Devices navigation;
+folder placement alone does not create sidebar nesting.

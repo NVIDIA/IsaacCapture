@@ -63,6 +63,11 @@ def template_values(ctx: TrackerGenContext) -> dict[str, str]:
         "PYTHON_ACCESSOR": ctx.python_accessor,
         "TENSOR_IDENTIFIER_EXPR": _tensor_identifier_expr(ctx),
         "HAS_TENSOR_IDENTIFIER": "1" if ctx.facade_tensor_constant else "0",
+        "HAS_METADATA": "1" if ctx.metadata else "0",
+        # Only referenced inside `#if @HAS_METADATA@` blocks.
+        "METADATA": ctx.metadata.table if ctx.metadata else "",
+        "METADATA_SCHEMA": ctx.metadata.schema if ctx.metadata else "",
+        "METADATA_CHANNEL": ctx.metadata.channel if ctx.metadata else "",
     }
     if ctx.mcap_channels is not None:
         values["RECORDING_CHANNELS"] = ", ".join(f'"{c}"' for c in ctx.mcap_channels)
