@@ -140,8 +140,15 @@ def main(argv: list[str] | None = None) -> int:
         help="discover what a build put in its wheels, then package the evidence into them",
     )
     build.add_argument("--build-dir", required=True, help="configured CMake build tree")
-    build.add_argument("--wheel", required=True, action="append")
-    build.add_argument("--out-dir", required=True)
+    build.add_argument(
+        "--wheel",
+        required=True,
+        action="append",
+        help="wheel to describe; rewritten in place, repeatable",
+    )
+    build.add_argument(
+        "--out-dir", required=True, help="receives the sidecars and manifest.json"
+    )
     build.add_argument(
         "--license-data",
         help=(
@@ -155,7 +162,9 @@ def main(argv: list[str] | None = None) -> int:
         "check",
         help="check a wheel against the SBOM it carries, plus any evidence you supply",
     )
-    check.add_argument("--wheel", required=True, action="append")
+    check.add_argument(
+        "--wheel", required=True, action="append", help="wheel to check; repeatable"
+    )
     check.add_argument(
         "--build-evidence", help="also check that the build accounts for every member"
     )
@@ -170,20 +179,24 @@ def main(argv: list[str] | None = None) -> int:
     check_set = subparsers.add_parser(
         "check-set", help="run check over every wheel a merged manifest advertises"
     )
-    check_set.add_argument("--manifest", required=True)
+    check_set.add_argument(
+        "--manifest", required=True, help="merged manifest of the release"
+    )
     check_set.add_argument(
         "--wheel-dir",
         required=True,
         help="the release's wheels; one the manifest does not list fails the set",
     )
-    check_set.add_argument("--evidence-dir", required=True)
+    check_set.add_argument(
+        "--evidence-dir", required=True, help="where the release's sidecars live"
+    )
     check_set.set_defaults(handler=_cmd_check_set)
 
     merge = subparsers.add_parser(
         "merge-manifests", help="fold per-variant manifests into one"
     )
-    merge.add_argument("--output", required=True)
-    merge.add_argument("manifest", nargs="+")
+    merge.add_argument("--output", required=True, help="merged manifest to write")
+    merge.add_argument("manifest", nargs="+", help="per-variant manifests")
     merge.set_defaults(handler=_cmd_merge_manifests)
 
     args = parser.parse_args(argv)
