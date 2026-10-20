@@ -200,6 +200,13 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
    For a real headset, open the same URL in your **Meta Quest or PICO browser**.
 
+   .. note::
+
+      The default client shows an in-XR control panel with connection information and controls
+      useful during development. To hide it, select one of the **Real Robot** teleop applications
+      under **Change teleop application** before connecting. These start with the panel hidden
+      by default; use the small **Show** control to reopen it. See :ref:`camera-streaming-web-client`.
+
    .. important::
 
       If using a physical headset, make sure it is updated to the latest firmware before connecting.
