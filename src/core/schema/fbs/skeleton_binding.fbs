@@ -1,0 +1,47 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// How a device's rigid segments are named in a skeleton that poses them at run time.
+// The registered profiles and their rules are in docs/source/references/skeleton_binding.rst.
+
+namespace core;
+
+// Side of the body a device is worn on or mounted to.
+enum BodySide : ubyte {
+  UNSPECIFIED = 0,
+  LEFT = 1,
+  RIGHT = 2,
+}
+
+// A registered skeleton profile: the skeleton definition segment names refer to.
+table SkeletonProfileRef {
+  // Registered id, e.g. "openxr.hand"; vendor profiles start with a reverse-DNS prefix.
+  id: string (id: 0);
+
+  // Major version of the profile definition.
+  version: uint (id: 1);
+}
+
+// An external description a profile needs, such as a URDF, identified by its exact bytes.
+table AssetRef {
+  // RFC 6920 name of the bytes: "ni:///sha-256;" and the unpadded base64url SHA-256 digest.
+  digest: string (id: 0);
+
+  // Where the bytes can be fetched (RFC 3986 URI); the digest decides whether they are the right ones.
+  uri: string (id: 1);
+
+  // Media type of the bytes, e.g. "application/xml".
+  media_type: string (id: 2);
+}
+
+// Names the rigid segments of a device in a skeleton.
+table SkeletonBinding {
+  // Absent for a generic binding, whose names are labels only.
+  profile: SkeletonProfileRef (id: 0);
+
+  // The asset the profile names segments in; required by profiles defined over an asset.
+  asset: AssetRef (id: 1);
+
+  // segment_names[i] names segment i of the device in the profile's namespace.
+  segment_names: [string] (id: 2);
+}

@@ -11,6 +11,7 @@ add_executable(schema_tests
   test_full_body.cpp
   test_controller.cpp
   test_pedals.cpp
+  test_skeleton_binding.cpp
   test_steering_wheel.cpp
   test_spacemouse.cpp
   test_gamepad.cpp

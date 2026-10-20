@@ -95,6 +95,18 @@ from ._schema import (
     BodyJoints,
     FullBodyPose,
     FullBodyPoseRecord,
+    # Skeleton binding types and the skeleton profile registry.
+    BodySide,
+    SkeletonProfileRef,
+    AssetRef,
+    SkeletonBinding,
+    SkeletonProfile,
+    SKELETON_PROFILE_OPENXR_HAND,
+    SKELETON_PROFILE_OPENXR_BODY_BD,
+    SKELETON_PROFILE_URDF_LINK,
+    skeleton_profiles,
+    find_skeleton_profile,
+    validate_skeleton_binding,
     # Shared SOMA types.
     SomaHandSide,
     # SOMA body joint-rotation types.
@@ -116,6 +128,7 @@ from ._schema import (
     SomaHandJointPoses,
     SomaHandJointPosesRecord,
 )
+from .skeleton_assets import asset_digest, check_skeleton_asset
 
 # Deprecated aliases, resolved lazily via __getattr__ so accessing them emits a
 # DeprecationWarning. Omitted from __all__.
@@ -231,6 +244,20 @@ __all__ = [
     "BodyJoints",
     "FullBodyPose",
     "FullBodyPoseRecord",
+    # Skeleton binding types and the skeleton profile registry.
+    "BodySide",
+    "SkeletonProfileRef",
+    "AssetRef",
+    "SkeletonBinding",
+    "SkeletonProfile",
+    "SKELETON_PROFILE_OPENXR_HAND",
+    "SKELETON_PROFILE_OPENXR_BODY_BD",
+    "SKELETON_PROFILE_URDF_LINK",
+    "skeleton_profiles",
+    "find_skeleton_profile",
+    "validate_skeleton_binding",
+    "asset_digest",
+    "check_skeleton_asset",
     # Shared SOMA types.
     "SomaHandSide",
     # SOMA body joint-rotation types.
