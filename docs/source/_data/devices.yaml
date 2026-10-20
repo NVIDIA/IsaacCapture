@@ -166,7 +166,7 @@ devices:
         - label: VIVE Tracker Plugin
           url: https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/vive_se3_tracker
         - label: VIVE Ultimate Tracker docs
-          doc: /device/body_tracking/vive_ultimate_tracker
+          doc: /device/trackers/vive_ultimate_tracker
         - label: Developer Guide
           url: https://github.com/ViveRoboticsSoftware/vive-ultimate-tracker-sdk/blob/main/VIVE-Ultimate-Tracker-SDK-Guide-EN.md
       requirements:

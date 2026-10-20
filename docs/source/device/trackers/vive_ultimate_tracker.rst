@@ -5,7 +5,7 @@ VIVE Ultimate Tracker
 =====================
 
 Use `HTC VIVE Ultimate Trackers <https://www.vive.com/us/accessory/vive-ultimate-tracker/>`_
-with the Isaac Teleop framework. The ``vive_se3_tracker`` plugin streams each tracker as its own
+with the Isaac Capture framework. The ``vive_se3_tracker`` plugin streams each tracker as its own
 generic SE3 (6-DoF) pose collection, which can be read live with ``Se3Tracker``, recorded to MCAP
 and replayed. Currently only Linux is supported, on x86_64 and arm64. No headset is required.
 
@@ -16,12 +16,12 @@ and replayed. Currently only Linux is supported, on x86_64 and arm64. No headset
 Overview
 --------
 
-Tracker data reaches Isaac Teleop through two pieces of software:
+Tracker data reaches Isaac Capture through two pieces of software:
 
 1. **VIVE Hub for Linux** (from HTC) pairs the trackers with the dongle, builds the tracking map,
    and runs the ``tracker_server`` daemon. The daemon publishes tracker poses over the VUT
    (VIVE Ultimate Tracker) SDK socket.
-2. **The** ``vive_se3_tracker`` **plugin** (in Isaac Teleop) reads those poses through the VUT
+2. **The** ``vive_se3_tracker`` **plugin** (in Isaac Capture) reads those poses through the VUT
    SDK and pushes them into the Teleop session as one SE3 tensor collection per tracker.
 
 .. code-block:: text
@@ -49,13 +49,13 @@ Prerequisites
 - **VIVE Ultimate Trackers** and the **VIVE Ultimate Tracker dongle**.
 - **VIVE Hub for Linux 1.0.1 or newer.** Version 1.0.0 does not include the VUT SDK; the plugin
   will neither build nor connect with it.
-- **Isaac Teleop built from source**. See :doc:`/development/build_from_source/index`.
+- **Isaac Capture built from source**. See :doc:`/development/build_from_source/index`.
 
 Quick Start
 -----------
 
 Part 1 brings the trackers up with VIVE Hub. Part 2 builds the plugin and streams the trackers
-into Isaac Teleop.
+into Isaac Capture.
 
 Part 1: Set up the trackers with VIVE Hub
 -----------------------------------------
@@ -113,7 +113,7 @@ Then **unplug and replug the tracker dongle** so the new permissions take effect
 
 .. note::
 
-   udev rules only take effect on the host machine. If you build Isaac Teleop in a container, run
+   udev rules only take effect on the host machine. If you build Isaac Capture in a container, run
    ``install-udev.sh`` on the host, not inside the container.
 
 Step 3: Pair the trackers and build the tracking map
@@ -139,7 +139,7 @@ In the VIVE Hub UI:
 Step 4 (optional): Check the trackers with the VUT SDK demo
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To confirm that poses are coming out of VIVE Hub before you involve Isaac Teleop, run the demo
+To confirm that poses are coming out of VIVE Hub before you involve Isaac Capture, run the demo
 that ships with the SDK while at least one tracker is tracking. From the ``VIVEHub-Linux`` folder:
 
 .. code-block:: bash
@@ -147,14 +147,14 @@ that ships with the SDK while at least one tracker is tracking. From the ``VIVEH
    cd sdk/examples
    make && ./vut_demo
 
-Part 2: Stream the trackers into Isaac Teleop
----------------------------------------------
+Part 2: Stream the trackers into Isaac Capture
+----------------------------------------------
 
-Step 5: Build Isaac Teleop with the plugin
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 5: Build Isaac Capture with the plugin
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The plugin links against the VUT SDK in the VIVE Hub package. Point ``VUT_SDK_DIR`` at its
-``sdk`` folder when you configure the build. From the Isaac Teleop root:
+``sdk`` folder when you configure the build. From the Isaac Capture root:
 
 .. code-block:: bash
 
@@ -192,7 +192,7 @@ the plugin in a new terminal:
 
 .. code-block:: bash
 
-   cd IsaacTeleop/
+   cd IsaacCapture/
    source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/vive_se3_tracker/vive_se3_tracker_plugin
 
@@ -207,14 +207,14 @@ printer. Use a collection id printed by the plugin in Step 7:
 
 .. code-block:: bash
 
-   cd IsaacTeleop/
+   cd IsaacCapture/
    source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/se3_printer vive_tracker_<serial>
 
 Step 9 (optional): Record and replay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the examples package once, from the Isaac Teleop root:
+Install the examples package once, from the Isaac Capture root:
 
 .. code-block:: bash
 
@@ -270,7 +270,7 @@ private per-user folder instead: ``/tmp/vive_se3_tracker-<uid>/vive_se3_collecti
 exits. Readers such as ``record_se3_vive`` use it to find collections without being told the ids.
 
 To read the poses in your own code, create one ``Se3Tracker`` per collection id. See
-:doc:`/device/trackers`.
+:doc:`/device/trackers/index`.
 
 Reference frame
 ~~~~~~~~~~~~~~~
@@ -283,7 +283,7 @@ with headset or controller data.
 Timestamps and validity
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-VUT pose timestamps use the host ``CLOCK_MONOTONIC`` clock, the same local clock that Isaac Teleop
+VUT pose timestamps use the host ``CLOCK_MONOTONIC`` clock, the same local clock that Isaac Capture
 uses, so each sample keeps its original sample time. The plugin runs at about 90 Hz and, for each
 tracker:
 
@@ -334,7 +334,7 @@ Troubleshooting
 - **VIVE Hub does not see the dongle.** Run ``sudo ./install-udev.sh`` on the host, then unplug and
   replug the dongle.
 - **Testing without hardware.** Run the plugin with ``VIVE_SE3_SYNTHETIC=1`` to check the Isaac
-  Teleop side on its own.
+  Capture side on its own.
 - **Reporting a VIVE Hub problem.** Open an issue on the
   `vivehub-linux repository <https://github.com/ViveRoboticsSoftware/vivehub-linux/issues>`_ and
   attach the newest ``vivehub_*.log`` and ``tracker_server_*.log`` files from

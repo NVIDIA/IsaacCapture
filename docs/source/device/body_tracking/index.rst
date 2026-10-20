@@ -288,4 +288,3 @@ For body and hand data from vendor adapters, see the SOMA transport guide.
    :maxdepth: 1
 
    soma
-   vive_ultimate_tracker
