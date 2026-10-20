@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(schema_tests
   test_oak.cpp
   test_pose.cpp
+  test_profile.cpp
   test_head.cpp
   test_hand.cpp
   test_full_body.cpp

@@ -26,6 +26,7 @@
 #include <schema/timestamp_generated.h>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,6 +41,19 @@ template <typename T>
 py::class_<Serialized<T>> serialized_class(py::module& m, const char* name, const char* doc)
 {
     return py::class_<Serialized<T>>(m, name, doc)
+        .def_static(
+            "from_bytes",
+            [name](py::bytes encoded)
+            {
+                const std::string bytes = encoded;
+                flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+                if (!verifier.VerifyBuffer<T>(nullptr))
+                {
+                    throw py::value_error(std::string(name) + ": invalid FlatBuffer");
+                }
+                return Serialized<T>::adopt(std::vector<uint8_t>(bytes.begin(), bytes.end()));
+            },
+            py::arg("encoded"), "Validate and adopt standalone FlatBuffer bytes rooted at this table.")
         .def(
             "to_bytes",
             [](const Serialized<T>& self)
@@ -56,6 +70,17 @@ py::class_<Serialized<T>> serialized_class(py::module& m, const char* name, cons
                 return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             },
             "Copy this table into standalone FlatBuffer bytes, including when read from a record.");
+}
+
+//! `field()` for a byte vector, copied into Python bytes. An absent vector is empty.
+template <typename T>
+auto bytes_field(const flatbuffers::Vector<uint8_t>* (T::*getter)() const)
+{
+    return [getter](const Serialized<T>& self)
+    {
+        const auto* values = ((*self).*getter)();
+        return values != nullptr ? py::bytes(reinterpret_cast<const char*>(values->data()), values->size()) : py::bytes();
+    };
 }
 
 /*!
@@ -190,7 +215,8 @@ void bind_record(py::module& m, const char* name, const char* data_name)
             "timestamp", [](const Serialized<RecordT>& self) { return self->timestamp(); },
             py::return_value_policy::reference_internal, "Capture timestamp, or None when absent.")
         .def("__repr__",
-             [name, data_name](const Serialized<RecordT>& self) {
+             [name, data_name](const Serialized<RecordT>& self)
+             {
                  return std::string(name) +
                         "(data=" + (self->data() != nullptr ? std::string(data_name) + "(...)" : "None") + ")";
              });

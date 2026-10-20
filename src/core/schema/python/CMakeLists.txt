@@ -17,6 +17,7 @@ pybind11_add_module(schema_py
     pedals_bindings.h
     plugin_device_status_bindings.h
     pose_bindings.h
+    profile_bindings.h
     schema_array_views.h
     schema_serialized.h
     se3_tracker_bindings.h

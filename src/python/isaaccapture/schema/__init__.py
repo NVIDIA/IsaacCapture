@@ -21,6 +21,10 @@ from ._schema import (
     Point,
     Quaternion,
     Pose,
+    # Generic typed profiles.
+    ContentDescriptor,
+    ProfileHandling,
+    SemanticProfile,
     # Head-related types.
     HeadPose,
     HeadPoseRecord,
@@ -157,6 +161,10 @@ __all__ = [
     "Point",
     "Quaternion",
     "Pose",
+    # Generic typed profiles.
+    "ContentDescriptor",
+    "ProfileHandling",
+    "SemanticProfile",
     # Head types.
     "HeadPose",
     "HeadPoseRecord",

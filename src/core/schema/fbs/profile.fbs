@@ -1,0 +1,56 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace core;
+
+// How a consumer handles a profile it does not understand.
+enum ProfileHandling : ubyte {
+  // The core payload remains meaningful without this profile.
+  OPTIONAL = 0,
+
+  // The profile is required for semantic interpretation. Unknown consumers may
+  // preserve and forward the bytes, but must not claim to understand the payload.
+  REQUIRED = 1,
+}
+
+// A stable reference to content used by a profile, such as a URDF.
+table ContentDescriptor {
+  // Profile-local stable identifier referenced by the typed payload.
+  logical_id: string (id: 0);
+
+  // IANA media type when one exists, for example "application/xml".
+  media_type: string (id: 1);
+
+  // Publisher-defined asset version. Integrity comes from sha256, not this label.
+  version: string (id: 2);
+
+  // Ordered retrieval locations. A recording remains self-contained when inline_data
+  // is present; URIs are alternatives, not the asset identity.
+  uris: [string] (id: 3);
+
+  // SHA-256 digest of the referenced bytes. Empty only when no bytes are referenced.
+  sha256: [ubyte] (id: 4);
+
+  // Size of the referenced bytes, before transport encoding.
+  byte_size: uint64 (id: 5);
+
+  // Optional embedded fallback. When present, it must match sha256 and byte_size.
+  inline_data: [ubyte] (id: 6);
+}
+
+// Versioned, namespaced, typed extension data.
+//
+// profile_id identifies the semantics and version_major controls compatibility.
+// payload_schema names the fully qualified FlatBuffers root stored in payload.
+// Keeping the payload opaque lets an unaware relay preserve profiles losslessly.
+table SemanticProfile {
+  profile_id: string (id: 0);
+  version_major: uint16 (id: 1);
+  version_minor: uint16 (id: 2);
+  handling: ProfileHandling = OPTIONAL (id: 3);
+  payload_schema: string (id: 4);
+  payload: [ubyte] (id: 5);
+  resources: [ContentDescriptor] (id: 6);
+}
+
+root_type SemanticProfile;
