@@ -38,10 +38,7 @@ def test_an_identifier_newer_than_the_grammar_still_validates(workspace):
     """A vendored file may name an exception the pinned list has and the
     grammar consumers validate with does not; it travels as a LicenseRef with
     its texts, and the report lists it as an evidence gap."""
-    import json
-
     import synth
-    from sbom import build as build_module
 
     synth.write(
         workspace.root / "src/vendor/rsync_helper.h",
@@ -50,14 +47,12 @@ def test_an_identifier_newer_than_the_grammar_still_validates(workspace):
     )
     synth.track(workspace.root)
     synth.write_wheel(workspace.wheel, synth.wheel_payload(workspace))
-    out_dir = workspace.root / "sbom"
-    build_module.build(workspace.root, workspace.build, workspace.wheel, out_dir)
+    collected = synth.collect(workspace)
 
-    stem = synth.WHEEL_NAME.removesuffix(".whl")
-    document = parse_file(str(out_dir / f"{stem}.spdx.json"))
+    document = parse_file(str(collected["out_dir"] / f"{synth.STEM}.spdx.json"))
     assert validate_full_spdx_document(document) == []
 
-    report = json.loads((out_dir / f"{stem}.licenses.json").read_text())
+    report = collected["licenses"]
     component = next(
         item
         for item in report["components"]

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import synth
 from sbom import build as build_module
@@ -15,22 +13,12 @@ from sbom import document as document_module
 from sbom import evidence as evidence_module
 
 EXTENSION = "_ext.cpython-312-x86_64-linux-gnu.so"
-STEM = synth.WHEEL_NAME.removesuffix(".whl")
 ONE_OBJECT = synth.ar_archive({"runtime.o": b"\x7fELF object"})
 # An agreement that quotes the notices of what it bundles, as the CUDA EULA does.
 EULA = (
     synth.PROPRIETARY_LICENSE
     + "\nThird-party notices\n\nCopyright (c) 2011 Upstream Compression Ltd.\n"
 )
-
-
-def _collect(workspace) -> dict:
-    out_dir = workspace.root / "sbom"
-    build_module.build(workspace.root, workspace.build, workspace.wheel, out_dir)
-    return {
-        kind: json.loads((out_dir / f"{STEM}.{kind}.json").read_text())
-        for kind in ("spdx", "licenses", "build-evidence")
-    }
 
 
 def _no_package(monkeypatch) -> None:
@@ -565,7 +553,7 @@ def test_a_packaged_archive_is_inventoried_through_its_package(
     )
     _link(workspace, str(archive))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     row = _row(collected, "system:libsquash.a")
     assert row["license_concluded"] == "Zlib"
@@ -617,7 +605,7 @@ def test_a_system_component_names_only_the_holders_its_package_declares(
     _packaged(monkeypatch, "libsquash-dev", copyright_file)
     _link(workspace, str(archive))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     row = _row(collected, "system:libsquash.a")
     assert _package(row, collected["spdx"])["copyrightText"] == expected
@@ -634,7 +622,7 @@ def test_a_cuda_archive_is_a_component_under_the_toolkits_terms(
     monkeypatch.setattr(discovery, "_toolkit_roots", lambda: [toolkit.resolve()])
     _link(workspace, str(archive))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     key = "system:libcudart_static.a"
     row = _row(collected, key)
@@ -673,7 +661,7 @@ def test_two_archives_sharing_a_name_are_two_components(
     )
     _link(workspace, str(first), str(second))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     records = collected["build-evidence"]["static_inputs"]
     keys = {records[str(first)]["component"], records[str(second)]["component"]}
@@ -689,7 +677,7 @@ def test_an_archive_with_no_members_is_recorded_not_inventoried(
     _no_package(monkeypatch)
     _link(workspace, str(archive))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     record = collected["build-evidence"]["static_inputs"][str(archive)]
     assert record["members"] == 0
@@ -721,7 +709,7 @@ def test_a_tracked_archive_is_credited_to_the_holder_reuse_names(
 ):
     _tracked_archive(workspace, monkeypatch, "Upstream Archive Co")
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     row = _row(collected, "vendored:upstream-archive-co")
     assert "prebuilt-library" in row["how_it_reaches_the_wheel"]
@@ -733,7 +721,7 @@ def test_a_tracked_archive_naming_no_other_holder_is_the_projects(
     """Every tracked file has REUSE info; one naming nobody else is the project's."""
     archive = _tracked_archive(workspace, monkeypatch)
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     record = collected["build-evidence"]["static_inputs"][str(archive)]
     assert record["component"] is None
@@ -757,7 +745,7 @@ def test_an_input_nothing_explains_stops_the_build(
     with pytest.raises(
         build_module.BuildError, match=r"libmystery\.a \(linked by ext\)"
     ):
-        _collect(workspace)
+        synth.collect(workspace)
 
 
 FMT_LICENCE_HEAD = (
@@ -797,7 +785,7 @@ def test_a_vcpkg_archive_is_credited_to_the_port_that_installed_it(
     _no_package(monkeypatch)
     _link(workspace, str(installed / "x64-linux" / "lib" / "libfmt.a"))
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     row = _row(collected, "vcpkg:fmt")
     assert row["kind"] == "vcpkg-port"
@@ -872,7 +860,7 @@ def test_a_file_no_port_lists_is_still_unexplained(workspace, monkeypatch):
     _link(workspace, str(stray))
 
     with pytest.raises(build_module.BuildError, match=r"libstray\.a \(linked by ext\)"):
-        _collect(workspace)
+        synth.collect(workspace)
 
 
 def test_an_unlinked_port_is_excluded_as_installed_by_vcpkg(workspace):
@@ -885,7 +873,7 @@ def test_an_unlinked_port_is_excluded_as_installed_by_vcpkg(workspace):
         "madler/zlib",
     )
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     exclusion = next(
         item
@@ -926,7 +914,7 @@ def test_an_include_directory_one_port_owns_credits_that_port(workspace):
 def test_a_port_with_several_sources_names_no_upstream(workspace):
     _eigen_port(workspace.build / "vcpkg_installed")
 
-    collected = _collect(workspace)
+    collected = synth.collect(workspace)
 
     row = _row(collected, "vcpkg:eigen3")
     assert row["version"] == "3.4.0"

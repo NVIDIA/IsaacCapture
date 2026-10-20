@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 import synth
-from sbom import build as build_module
 from sbom import licensing
 
 
@@ -102,23 +101,21 @@ def workspace(tmp_path):
 @pytest.fixture
 def built(workspace):
     """The workspace after the collector has packaged evidence into the wheel."""
-    out_dir = workspace.root / "sbom"
-    manifest = build_module.build(
-        workspace.root, workspace.build, workspace.wheel, out_dir
-    )
+    collected = synth.collect(workspace)
+    out_dir = collected["out_dir"]
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(collected["manifest"], indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    stem = synth.WHEEL_NAME.removesuffix(".whl")
     return {
         "workspace": workspace,
         "root": workspace.root,
         "wheel": workspace.wheel,
         "out_dir": out_dir,
-        "manifest": manifest,
+        "manifest": collected["manifest"],
         "manifest_path": manifest_path,
-        "evidence_path": out_dir / f"{stem}.build-evidence.json",
-        "spdx_path": out_dir / f"{stem}.spdx.json",
-        "report_path": out_dir / f"{stem}.licenses.json",
+        "evidence_path": out_dir / f"{synth.STEM}.build-evidence.json",
+        "spdx_path": out_dir / f"{synth.STEM}.spdx.json",
+        "report_path": out_dir / f"{synth.STEM}.licenses.json",
     }

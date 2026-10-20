@@ -160,6 +160,13 @@ CMake's file API codemodel
    needs at least that, though the project builds without it. Reading the generator's own
    output instead would only work under Makefiles, since Ninja writes no ``link.txt``.
 
+The compiler's dependency output
+   Which headers each object read: the per-object depfiles and ``compiler_depend.make``
+   under the Makefile generators, ``ninja -t deps`` under Ninja — so a Ninja build is
+   collected where ``ninja`` is on ``PATH``, and the collector says so once when it is
+   not. Any target whose records do not cover every source it compiles falls back to
+   what it lists and includes.
+
 Archives in the repository
    Every member of every tarball is hashed. A wheel member that matches one is recorded as
    having been unpacked from that archive.
@@ -228,11 +235,21 @@ an exception's text ships too where the expression travels as a ``LicenseRef-``,
 document says so for every such text, in as many words, because a reader cannot tell a
 template from an author's own notice by looking at it.
 
-A component can also state terms for one part of itself — a vendored asset set inside a
-larger project, with its own ``LICENSE`` and its own holder. Those are read and packaged
-too, but only where that directory reached the wheel, and they never change the component's
-own licence: they name a holder for the bytes that shipped, which is what the notice
-obligation is about.
+A component can also state terms for one part of itself — a vendored asset set or a bundled
+library inside a larger project, with its own ``LICENSE`` and its own holder. Those are read
+and packaged too, but only where something under that directory reached the wheel: a file
+copied or derived from it — a copy the build made into the component's own build tree
+included — a source compiled from it, or a header the compiler's dependency output says it
+read. Where a target compiles something its dependency output does not account for, the
+sources it lists count instead, and so does any include directory above or below that
+directory. An archive of the component linked in keeps all of them, since what it holds is
+unknown. A REUSE ``.license`` sidecar covers only the file it annotates. Which of those kept
+each text is in the build evidence.
+
+A bundled library compiled in ships its texts and holders, each listed as terms stated for
+part of the component; the component's concluded licence stays its own grant. In the evidence
+listed for a text, one that matches several identifiers sharing one reference text —
+``GPL-3.0-only`` and ``GPL-3.0-or-later`` — is listed as matching either, not both.
 
 The distribution's own declared licence is an obligation like any other. A wheel declaring
 ``License-Expression`` and shipping no text for it stops the build, the same as a

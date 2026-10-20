@@ -44,6 +44,11 @@ def verification_code(sha1_digests: list[str]) -> str:
     return hashlib.sha1("".join(sorted(sha1_digests)).encode("ascii")).hexdigest()  # noqa: S324
 
 
+def _scored(match) -> str:
+    license_id, containment, coverage = match
+    return f"{license_id} (containment {containment:.2f}, coverage {coverage:.2f})"
+
+
 def _attribution_texts(component: Component, dist_info: str) -> list[str]:
     texts = [
         f"License evidence: {item.path} (sha256:{item.sha256}, {item.size} bytes, "
@@ -51,10 +56,9 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
         # Whitespace after the path: validate.py reads it up to the first one.
         f"{report.packaged_license_path(dist_info, component.key, item)}"
         + (
-            " identified as "
-            + "; ".join(
-                f"{license_id} (containment {containment:.2f}, coverage {coverage:.2f})"
-                for license_id, containment, coverage in item.matches
+            " "
+            + licensing.matched_prose(
+                item.matches, name=_scored, join="; ", lead="identified as "
             )
             if item.matches
             # The SPDX reference text for an identifier the component's files
@@ -64,6 +68,7 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
             if item.origin == licensing.SPDX_REFERENCE
             else ""
         )
+        + (f" — {report.NESTED_ROLE}" if item.kind == "nested" else "")
         for item in component.evidence
     ]
     if not any(item.kind == "grant" for item in component.evidence):

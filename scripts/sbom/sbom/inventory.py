@@ -22,6 +22,7 @@ from .discovery import (
     Component,
     EMPTY_SHA256,
     LinkInput,
+    note_reach,
     component_of,
     owned_input,
     resolve_static_archive,
@@ -76,10 +77,13 @@ class Attribution:
     # the other made the same fact answerable two ways depending on which index
     # happened to hold the bytes.
     exact: bool = False
-    # Where in the component these bytes came from, where an index named it.
-    # The detail string says it in prose; this is the same fact in a form the
-    # rest of the collector can use to ask what else sits in that directory.
+    # Where in the component these bytes came from, where an index named it:
+    # the detail string's fact in a form the evidence JSON can carry.
     source_path: str | None = None
+    # Each component's paths these bytes were made from -- the file copied, or
+    # what compiling it read -- named as `source_path` names them, with their
+    # `discovery.REACH`.
+    read: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def as_json(self) -> dict:
         return {
@@ -200,7 +204,58 @@ class Resolver:
             detail=f"{detail}; linked by target {artifact.target}",
             components={key: set(how) for key, how in contributions.items()},
             primary=primary,
+            read=self._displayed(self.graph.reached(artifact, self.ownership)),
         )
+
+    def _displayed(
+        self, reached: dict[str, dict[Path, str]]
+    ) -> dict[str, dict[str, str]]:
+        """Reached paths as a component's own files are named: `<root name>/<path>`.
+
+        Only a component with a tree of its own has a name for them, and only
+        such a component states terms for part of itself. A file the build
+        copied or generated into another tree registered for the component --
+        its `-build` tree -- stands where it sits relative to that tree, and is
+        also any file of the source tree holding the same bytes. An include
+        directory holding a whole tree stands for the component's root.
+        """
+        shown: dict[str, dict[str, str]] = {}
+        for key, paths in reached.items():
+            component = self.components.get(key)
+            if component is None or component.root is None:
+                continue
+            name = component.root.name
+            source = component.root.resolve()
+            trees = [
+                source,
+                *(root for root in self.ownership.roots_of(key) if root != source),
+            ]
+            into = shown.setdefault(key, {})
+            for path, how in paths.items():
+                tree = next((root for root in trees if path.is_relative_to(root)), None)
+                if tree is None:
+                    if how == "include-dir" and any(
+                        root.is_relative_to(path) for root in trees
+                    ):
+                        note_reach(into, name, how)
+                    continue
+                for display in self._names_in(name, tree != source, tree, path):
+                    note_reach(into, display, how)
+        return shown
+
+    def _names_in(self, name: str, built: bool, tree: Path, path: Path) -> list[str]:
+        """`path` as named in the source tree `name`; see `_displayed`."""
+        positional = (Path(name) / path.relative_to(tree)).as_posix()
+        digest = self.build_files.digest_of(path) if built else None
+        # An empty file matches every other one, which says nothing.
+        if digest is None or digest == EMPTY_SHA256:
+            return [positional]
+        same = [
+            display
+            for display in self.source_files.all_by_hash.get(digest, [])
+            if display.startswith(name + "/")
+        ]
+        return [*same, positional]
 
     def _static_input(self, item: LinkInput, targets: set[str]) -> str | None:
         """The component a linked archive or object belongs to, if any."""
@@ -373,6 +428,7 @@ class Resolver:
                 components={key: {"copied-file"}},
                 primary=key,
                 source_path=component_file,
+                read={key: {component_file: "copied-file"}},
             )
 
         member = self.archives.by_hash.get(candidate_digest)
@@ -678,6 +734,7 @@ class Resolver:
                 components={key: {"copied-file" if same else "derived-file"}},
                 primary=key,
                 source_path=component_file,
+                read={key: {component_file: "copied-file" if same else "derived-file"}},
             )
 
         build_file = self.build_files.path_suffix_match(wheel_path)

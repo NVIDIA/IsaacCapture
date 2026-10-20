@@ -32,8 +32,11 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+from sbom import build as build_module
+
 CONFIG = "Release"
 WHEEL_NAME = "isaaccapture-0.4.0-cp312-cp312-manylinux_2_35_x86_64.whl"
+STEM = WHEEL_NAME.removesuffix(".whl")
 DIST_INFO = "isaaccapture-0.4.0.dist-info"
 SDK_ARCHIVE = "deps/vendor/demosdk-1.2.0-linux-amd64.tar.gz"
 SDK_DEMO_BUILD_ID = "1111111111111111111111111111111111111111"
@@ -163,6 +166,8 @@ FIXTURE_LICENSES = (
     "BSL-1.0",
     "CC-BY-4.0",
     "ECL-2.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
     "MIT",
     "MIT-0",
     "Zlib",
@@ -550,24 +555,13 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
         },
     ]
 
-    reply = build / ".cmake" / "api" / "v1" / "reply"
+    reply = _reply(build)
     index = []
     for spec in targets:
-        name = spec["name"]
-        payload = {
-            "name": name,
-            "type": spec["type"],
-            "artifacts": [{"path": item} for item in spec["artifacts"]],
-            "sources": [{"path": item} for item in spec["sources"]],
-            "compileGroups": [
-                {"includes": [{"path": item} for item in spec["includes"]]}
-            ],
-            "dependencies": [{"id": dep} for dep in spec["dependencies"]],
-        }
-        write(reply / f"target-{name}-Release.json", json.dumps(payload, indent=1))
-        index.append(
-            {"id": name, "name": name, "jsonFile": f"target-{name}-Release.json"}
-        )
+        entry = _target_entry(spec["name"])
+        payload = _target_payload(**spec)
+        write(reply / entry["jsonFile"], json.dumps(payload, indent=1))
+        index.append(entry)
 
     codemodel = {
         "kind": "codemodel",
@@ -592,6 +586,38 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
             indent=1,
         ),
     )
+
+
+def _source(path: str) -> dict:
+    """A codemodel source entry; one CMake compiles names its compile group."""
+    compiled = path.endswith((".c", ".cpp"))
+    return {"path": path, **({"compileGroupIndex": 0} if compiled else {})}
+
+
+def _target_payload(
+    name: str,
+    type: str,  # noqa: A002 - the codemodel's own key
+    artifacts: list[str],
+    sources: list[str],
+    includes: list[str] | None,
+    dependencies: list[str],
+) -> dict:
+    """A codemodel target; one with no compile groups compiles nothing."""
+    payload = {
+        "name": name,
+        "type": type,
+        "artifacts": [{"path": item} for item in artifacts],
+        "sources": [_source(item) for item in sources],
+        "dependencies": [{"id": dep} for dep in dependencies],
+    }
+    if includes is not None:
+        payload["compileGroups"] = [{"includes": [{"path": item} for item in includes]}]
+    return payload
+
+
+def _target_entry(name: str) -> dict:
+    """A target's entry in the codemodel's configuration."""
+    return {"id": name, "name": name, "jsonFile": f"target-{name}-{CONFIG}.json"}
 
 
 @contextlib.contextmanager
@@ -643,8 +669,8 @@ def link_line(
         if sysroot is not None:
             payload["link"]["sysroot"] = {"path": str(sysroot)}
         payload["dependencies"] += [{"id": item} for item in dependencies]
-        if directory is not None:
-            payload["paths"] = {"build": directory, "source": directory}
+    if directory is not None:
+        set_directory(build, target, directory)
 
 
 def set_toolchains(
@@ -690,6 +716,82 @@ def add_include(build: Path, target: str, directory: Path) -> None:
     """Put one more directory on a fixture target's include path."""
     with _edit_target(build, target) as payload:
         payload["compileGroups"][0]["includes"].append({"path": str(directory)})
+
+
+def add_source(build: Path, target: str, path: Path) -> None:
+    """Compile one more source into a fixture target."""
+    with _edit_target(build, target) as payload:
+        payload["sources"].append(_source(str(path)))
+
+
+def depfile(
+    build: Path,
+    target: str,
+    source: Path | str,
+    read: tuple[Path | str, ...] = (),
+    directory: str = ".",
+) -> None:
+    """The depfile GCC leaves beside one of a target's objects under the
+    Makefile generators: the object, its source, every header it read, and
+    `-MP`'s empty rule per header. `directory` is the target's build directory.
+    """
+    obj = f"CMakeFiles/{target}.dir/{Path(source).name}.o"
+    rule = " \\\n ".join([f"{obj}: {source}", *(str(item) for item in read)])
+    write(
+        build / directory / f"{obj}.d",
+        rule + "\n" + "".join(f"\n{item}:\n" for item in read),
+    )
+
+
+def compiler_depend(
+    build: Path, target: str, rules: dict[str, tuple[str, ...]], directory: str = "."
+) -> None:
+    """compiler_depend.make as CMake consolidates a target's depfiles: one rule
+    per object, paths inside the build tree relative to its top. No rules is
+    the placeholder CMake writes before the first build."""
+    path = build / directory / "CMakeFiles" / f"{target}.dir" / "compiler_depend.make"
+    if not rules:
+        write(
+            path,
+            f"# Empty compiler generated dependencies file for {target}.\n"
+            "# This may be replaced when dependencies are built.\n",
+        )
+        return
+    write(
+        path,
+        "# CMAKE generated file: DO NOT EDIT!\n\n"
+        + "\n".join(
+            " \\\n  ".join([f"{obj}: {prerequisites[0]}", *prerequisites[1:]])
+            for obj, prerequisites in rules.items()
+        )
+        + "\n",
+    )
+
+
+def add_target(
+    build: Path, name: str, kind: str, sources: tuple[str, ...], dependent: str
+) -> None:
+    """One more target, which `dependent` depends on, producing nothing shipped."""
+    entry = _target_entry(name)
+    payload = _target_payload(
+        name=name,
+        type=kind,
+        artifacts=[f"tools/{name}"] if kind == "EXECUTABLE" else [],
+        sources=list(sources),
+        includes=None if kind == "UTILITY" else [],
+        dependencies=[],
+    )
+    write(_reply(build) / entry["jsonFile"], json.dumps(payload))
+    with _edit_json(_reply(build) / "codemodel-v2-fixture.json") as codemodel:
+        codemodel["configurations"][0]["targets"].append(entry)
+    with _edit_target(build, dependent) as target:
+        target["dependencies"].append({"id": name})
+
+
+def set_directory(build: Path, target: str, directory: str) -> None:
+    """Put a fixture target in a subdirectory of the build tree."""
+    with _edit_target(build, target) as payload:
+        payload["paths"] = {"build": directory, "source": directory}
 
 
 def set_type(build: Path, target: str, kind: str) -> None:
@@ -881,6 +983,26 @@ def wheel_payload(workspace: Workspace) -> dict[str, bytes]:
     # on the shape a released wheel actually has.
     payload[f"{DIST_INFO}/sboms/{AUDITWHEEL_SBOM}"] = AUDITWHEEL_CDX
     return payload
+
+
+def collect(workspace: Workspace, **options) -> dict:
+    """Run the collector over the workspace's wheel and read back what it wrote."""
+    out_dir = workspace.root / "sbom"
+    manifest = build_module.build(
+        workspace.root, workspace.build, workspace.wheel, out_dir, **options
+    )
+    with zipfile.ZipFile(workspace.wheel) as archive:
+        notices = archive.read(f"{DIST_INFO}/licenses/THIRD-PARTY-NOTICES.md")
+    return {
+        "out_dir": out_dir,
+        "manifest": manifest,
+        **{
+            kind: json.loads((out_dir / f"{STEM}.{kind}.json").read_text("utf-8"))
+            for kind in ("spdx", "licenses", "build-evidence")
+        },
+        "md": (out_dir / f"{STEM}.licenses.md").read_text("utf-8"),
+        "notices": notices.decode("utf-8"),
+    }
 
 
 def _record_hash(data: bytes) -> str:

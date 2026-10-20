@@ -80,6 +80,11 @@ def declared_license_path(dist_info: str, member: str) -> str:
     return member.removeprefix(licenses_root(dist_info))
 
 
+# What a nested text is, wherever one is listed. Some restate the component's
+# own grant, so this says only where they apply.
+NESTED_ROLE = "terms stated for part of this component"
+
+
 def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
     """Where one component's license text lands inside the wheel.
 
@@ -174,6 +179,8 @@ def notices_markdown(
                     )
                     + ", not this component's own file"
                     if item.origin == licensing.SPDX_REFERENCE
+                    else f" — {NESTED_ROLE}"
+                    if item.kind == "nested"
                     else ""
                 )
             )
@@ -301,6 +308,7 @@ def report_markdown(payload: dict) -> str:
         parts = [
             f"`{record['path']}`"
             + (f" → {record['identified']}" if record["identified"] else "")
+            + (f" ({NESTED_ROLE})" if record["kind"] == "nested" else "")
             + (
                 " (SPDX reference text, substituted)"
                 if record["origin"] == licensing.SPDX_REFERENCE

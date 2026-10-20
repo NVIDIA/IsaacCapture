@@ -21,6 +21,7 @@ import functools
 import glob
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -31,7 +32,8 @@ import tarfile
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from packageurl import PackageURL
 
@@ -64,6 +66,8 @@ _DEPS_SOURCE = re.compile(r"_deps/(?P<name>[A-Za-z0-9_.+-]+)-src(?:/|$)")
 
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+_LOG = logging.getLogger("isaaccapture.sbom.discovery")
 
 
 def component_of(display: str) -> str:
@@ -294,6 +298,58 @@ class _Node:
     # library's own requirements land on its consumers' lines.
     linked: tuple[Path, ...] = ()  # outputs of targets in this graph
     inputs: tuple[LinkInput, ...] = ()  # everything else that can carry code
+    # The sources it compiles, as opposed to merely lists, and the directory
+    # its objects and their dependency output land in.
+    compiled: tuple[Path, ...] = ()
+    objects: Path | None = None
+
+
+# How a path of a component reached an artifact, strongest evidence first. A
+# member made from a file of the component, then the sources compiled into it,
+# then the headers the compiler's dependency output says it read. A target that
+# compiles something but left no such output stands in the sources it lists and
+# its include directories. A linked archive of the component is not a path: its
+# contents are unknowable, so it stands for the whole component.
+REACH = (
+    "copied-file",
+    "derived-file",
+    "compiled-source",
+    "header-read",
+    "listed-source",
+    "include-dir",
+)
+PREBUILT = "prebuilt-library"
+
+
+class Reach(NamedTuple):
+    """The evidence that kept a nested text: how, through which path, into
+    which wheel member."""
+
+    how: str
+    path: str
+    member: str
+
+
+def reach_rank(how: str) -> int:
+    """Strongest first; a linked archive ranks below every path."""
+    return REACH.index(how) if how in REACH else len(REACH)
+
+
+def note_reach(found: dict, path, how: str) -> None:
+    """Record `how` for `path` unless stronger evidence is already there."""
+    current = found.get(path)
+    if current is None or reach_rank(how) < reach_rank(current):
+        found[path] = how
+
+
+def covers(path: str, how: str, scope: str) -> bool:
+    """Whether a reached path puts something under a nested text's scope in
+    the wheel. An include directory may have been read anywhere beneath it,
+    so one above the scope keeps it too."""
+    reached, scope_path = PurePosixPath(path), PurePosixPath(scope)
+    return reached.is_relative_to(scope_path) or (
+        how == "include-dir" and scope_path.is_relative_to(reached)
+    )
 
 
 @dataclass(frozen=True)
@@ -519,6 +575,18 @@ def _owner(path: Path, ownership: Ownership | None) -> str | None:
     return ownership.owner_of(path) if ownership is not None else None
 
 
+def _include_owners(include: Path, ownership: Ownership | None) -> set[str]:
+    """The components an include directory credits.
+
+    Which file in it was used is unknowable, so every component with files
+    there is credited, the same way a fetched include directory is.
+    """
+    match = _DEPS_SOURCE.search(include.as_posix())
+    if match:
+        return {match.group("name")}
+    return ownership.owners_under(include) if ownership is not None else set()
+
+
 class SupplierError(Exception):
     """The project does not name exactly one author to record as supplier."""
 
@@ -643,6 +711,132 @@ def _ask(*command: str) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
+# A make rule as GCC and Clang write a depfile, and CMake's Makefile generators
+# consolidate them into compiler_depend.make.
+_MAKE_CONTINUATION = re.compile(r"\\\r?\n")
+_MAKE_RULE = re.compile(r"^(?:\\.|[^:\\#])+:(?:\s+(?P<prerequisites>.*))?$")
+_MAKE_WORD = re.compile(r"(?:\\.|[^\s\\])+")
+_MAKE_ESCAPE = re.compile(r"\\(.)")
+_NINJA_DEPS = re.compile(r"^(?P<output>\S.*): #deps \d+")
+# The `CMakeFiles/<target>.dir/` an output sits in, from the top of the build.
+_OBJECTS_DIR = re.compile(r"^(?:.*?/)?CMakeFiles/[^/]+\.dir/")
+
+
+def _make_rules(text: str) -> list[list[str]]:
+    """The prerequisites of each rule of a depfile that names any, unescaped.
+
+    An object's rule names its source first; `-MP`'s rules for headers name
+    nothing.
+    """
+    found = []
+    for line in _MAKE_CONTINUATION.sub(" ", text).splitlines():
+        match = _MAKE_RULE.match(line)
+        words = _MAKE_WORD.findall(match["prerequisites"] or "") if match else []
+        if words:
+            found.append(
+                [_MAKE_ESCAPE.sub(r"\1", word).replace("$$", "$") for word in words]
+            )
+    return found
+
+
+def _ninja_deps(build_root: Path) -> dict[str, list[str]]:
+    """`ninja -t deps`: each output's recorded dependencies, by output path."""
+    found: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in _ask("ninja", "-C", str(build_root), "-t", "deps").splitlines():
+        match = _NINJA_DEPS.match(line)
+        if match:
+            current = found.setdefault(match["output"], [])
+        elif current is not None and line.startswith(" ") and line.strip():
+            current.append(line.strip())
+    return found
+
+
+class DependencyLog:
+    """What the compiler recorded reading, per target objects directory."""
+
+    def __init__(self, generator: str, build_root: Path) -> None:
+        self._ninja_generator = "Ninja" in generator
+        self._build_root = build_root
+        # Ninja's records grouped by the objects directory they sit in.
+        self._ninja: dict[str, list[list[str]]] | None = None
+        self._resolved: dict[str, Path] = {}
+        self._read: dict[Path, tuple[set[Path], bool]] = {}
+
+    def read(self, objects: Path, compiled: tuple[Path, ...]) -> tuple[set[Path], bool]:
+        """What compiling into `objects` read, and whether every source in
+        `compiled` has a record of its own: a stale object, or a generator
+        that keeps no record, leaves a gap, and a source another object
+        merely includes is not its own record."""
+        if objects not in self._read:
+            read: set[Path] = set()
+            recorded: set[Path] = set()
+            wanted, own = set(compiled), objects.resolve()
+            for base, prerequisites in self._records(objects):
+                paths = [self._resolve_under(base, item) for item in prerequisites]
+                # A record for a source the target no longer compiles is stale;
+                # one CMake generated into the objects directory (a PCH) is
+                # current, except a unity source the codemodel no longer lists.
+                source = paths[0]
+                generated = source.is_relative_to(own) and not source.is_relative_to(
+                    own / "Unity"
+                )
+                if source not in wanted and not generated:
+                    continue
+                recorded.add(source)
+                read.update(paths)
+            self._read[objects] = (read, set(compiled) <= recorded)
+        return self._read[objects]
+
+    def _records(self, objects: Path) -> list[tuple[Path, list[str]]]:
+        """One record per object, its source first, with the directory its
+        relative paths are relative to."""
+        if self._ninja_generator:
+            return self._ninja_records(objects)
+        return self._make_records(objects) if objects.is_dir() else []
+
+    def _ninja_records(self, objects: Path) -> list[tuple[Path, list[str]]]:
+        """Ninja's deps log names objects and paths from the top of the build."""
+        if self._ninja is None:
+            self._ninja = {}
+            for output, items in _ninja_deps(self._build_root).items():
+                match = _OBJECTS_DIR.match(output)
+                if match and items:
+                    self._ninja.setdefault(match.group(0), []).append(items)
+            if not self._ninja:
+                _LOG.warning(
+                    "`ninja -t deps` in %s recorded nothing; nested licence "
+                    "texts are kept by what targets list and include instead. "
+                    "Collect where `ninja` is on PATH.",
+                    self._build_root,
+                )
+        try:
+            prefix = objects.relative_to(self._build_root).as_posix() + "/"
+        except ValueError:
+            return []
+        return [(self._build_root, items) for items in self._ninja.get(prefix, [])]
+
+    def _make_records(self, objects: Path) -> list[tuple[Path, list[str]]]:
+        """A depfile is written where make runs the compiler, the target's own
+        build directory; compiler_depend.make is relative to the top."""
+        files = [
+            *((objects.parent.parent, path) for path in sorted(objects.rglob("*.d"))),
+            (self._build_root, objects / "compiler_depend.make"),
+        ]
+        return [
+            (base, rule)
+            for base, path in files
+            if path.is_file()
+            for rule in _make_rules(path.read_text(encoding="utf-8", errors="replace"))
+        ]
+
+    def _resolve_under(self, base: Path, item: str) -> Path:
+        joined = os.path.join(base, item)
+        if joined not in self._resolved:
+            self._resolved[joined] = Path(joined).resolve()
+        return self._resolved[joined]
+
+
 @functools.lru_cache(maxsize=None)
 def _compiler_search_dirs(compiler: str) -> list[Path] | None:
     """The `libraries:` list of `<compiler> -print-search-dirs`, GCC's and Clang's."""
@@ -689,6 +883,12 @@ class BuildGraph:
         self._inspected: dict[
             Path, tuple[str | None, int | None, list[str] | None]
         ] = {}
+        self._dependencies = DependencyLog("", build_dir)
+        self._linked: dict[str, tuple[_Node, ...]] = {}
+        # By (target name, which CMake keeps unique; the ownership asked with).
+        self._node_reach: dict[
+            tuple[str, Ownership | None], dict[str, dict[Path, str]]
+        ] = {}
         self._load(config)
 
     def _load(self, config: str | None) -> None:
@@ -709,6 +909,7 @@ class BuildGraph:
         codemodel = json.loads(model_file.read_text(encoding="utf-8"))
         source_root = Path(codemodel["paths"]["source"])
         build_root = Path(codemodel["paths"]["build"])
+        self._dependencies = DependencyLog(generator, build_root)
 
         configurations = codemodel["configurations"]
         chosen = next(
@@ -742,11 +943,8 @@ class BuildGraph:
                 for group in target.get("compileGroups", [])
                 for item in group.get("includes", [])
             }
-            link_dir = (
-                resolve(target.get("paths", {}).get("build", "."), build_root)
-                if per_directory
-                else build_root
-            )
+            target_dir = resolve(target.get("paths", {}).get("build", "."), build_root)
+            link_dir = target_dir if per_directory else build_root
             link = target.get("link", {})
             words, unparsed = _linker_words(link.get("commandFragments", []))
             found = search.get(link.get("language", ""))
@@ -767,6 +965,13 @@ class BuildGraph:
                 dependencies=tuple(
                     item["id"] for item in target.get("dependencies", [])
                 ),
+                compiled=tuple(
+                    resolve(item["path"], source_root).resolve()
+                    for item in target.get("sources", [])
+                    if "compileGroupIndex" in item
+                ),
+                # Where the Makefile and Ninja generators put a target's objects.
+                objects=target_dir / "CMakeFiles" / f"{target['name']}.dir",
             )
             for item in target.get("artifacts", []):
                 output = resolve(item["path"], build_root).resolve()
@@ -955,14 +1160,20 @@ class BuildGraph:
         """
         if artifact.target_id not in self._static:
             found: dict[LinkInput, set[str]] = {}
-            for node in self._reach(
-                artifact.target_id,
-                lambda node: node.kind in ("EXECUTABLE", "MODULE_LIBRARY"),
-            ):
+            for node in self._linked_closure(artifact.target_id):
                 for item in node.inputs:
                     found.setdefault(item, set()).add(node.name)
             self._static[artifact.target_id] = found
         return self._static[artifact.target_id]
+
+    def _linked_closure(self, target_id: str) -> tuple[_Node, ...]:
+        """`_reach` without other executables and modules, nor what only they
+        reach: what can end up inside the artifact."""
+        if target_id not in self._linked:
+            self._linked[target_id] = self._reach(
+                target_id, lambda node: node.kind in ("EXECUTABLE", "MODULE_LIBRARY")
+            )
+        return self._linked[target_id]
 
     def contributions(
         self, artifact: Artifact, ownership: Ownership | None = None
@@ -971,7 +1182,8 @@ class BuildGraph:
 
         Walks the target's dependency closure. Compiled sources name a component
         outright; include paths are the only trace a header-only dependency
-        leaves anywhere; a linked archive or object names whoever holds it.
+        leaves in the codemodel; a linked archive or object names whoever holds
+        it.
         """
         found: dict[str, set[str]] = {}
 
@@ -984,19 +1196,54 @@ class BuildGraph:
                 if owner:
                     note(owner, "compiled-source")
             for include in node.includes:
-                match = _DEPS_SOURCE.search(include.as_posix())
-                if match:
-                    note(match.group("name"), "header-include")
-                elif ownership is not None:
-                    # Which file in the directory was used is unknowable, so
-                    # every component with files there is credited, the same
-                    # way a fetched include directory is.
-                    for owner in ownership.owners_under(include):
-                        note(owner, "header-include")
+                for owner in _include_owners(include, ownership):
+                    note(owner, "header-include")
         for item in self.static_inputs(artifact):
             owner = owned_input(item, ownership)
             if owner:
-                note(owner, "prebuilt-library")
+                note(owner, PREBUILT)
+        return found
+
+    def reached(
+        self, artifact: Artifact, ownership: Ownership | None = None
+    ) -> dict[str, dict[Path, str]]:
+        """The resolved paths of each component that went into an artifact,
+        each with its strongest `REACH`."""
+        reached: dict[str, dict[Path, str]] = {}
+        for node in self._linked_closure(artifact.target_id):
+            for key, paths in self._reach_of(node, ownership).items():
+                into = reached.setdefault(key, {})
+                for path, how in paths.items():
+                    note_reach(into, path, how)
+        return reached
+
+    def _reach_of(
+        self, node: _Node, ownership: Ownership | None
+    ) -> dict[str, dict[Path, str]]:
+        """One target's owned paths by `REACH`; what it lists and includes only
+        where it compiles something its dependency output does not cover."""
+        if (node.name, ownership) in self._node_reach:
+            return self._node_reach[(node.name, ownership)]
+        found: dict[str, dict[Path, str]] = {}
+
+        def mark(owner: str | None, path: Path, how: str) -> None:
+            if owner:
+                note_reach(found.setdefault(owner, {}), path, how)
+
+        if node.objects is None:
+            return found
+        for source in node.compiled:
+            mark(_owner(source, ownership), source, "compiled-source")
+        read, covered = self._dependencies.read(node.objects, node.compiled)
+        for path in read:
+            mark(_owner(path, ownership), path, "header-read")
+        if not covered:
+            for source in node.sources:
+                mark(_owner(source, ownership), source, "listed-source")
+            for include in node.includes:
+                for owner in _include_owners(include, ownership):
+                    mark(owner, include, "include-dir")
+        self._node_reach[(node.name, ownership)] = found
         return found
 
     def first_party(
@@ -1035,9 +1282,16 @@ class Ownership:
         self._roots: list[tuple[Path, str]] = []
         # directory -> (owners credited outright, owners credited if alone)
         self._index: dict[Path, tuple[set[str], set[str]]] | None = None
+        # Every header a compile read is asked about, most of them many times.
+        self._owners: dict[Path, str | None] = {}
 
     def register_root(self, root: Path, key: str) -> None:
         self._roots.append((root.resolve(), key))
+        self._owners.clear()
+
+    def roots_of(self, key: str) -> list[Path]:
+        """The resolved trees registered for a component."""
+        return [root for root, owner in self._roots if owner == key]
 
     def register_file(self, path: Path, key: str, *, by_directory: bool = True) -> None:
         """Record a file's owner.
@@ -1048,8 +1302,14 @@ class Ownership:
         """
         self._files[path.resolve()] = (key, by_directory)
         self._index = None
+        self._owners.clear()
 
     def owner_of(self, path: Path) -> str | None:
+        if path not in self._owners:
+            self._owners[path] = self._find_owner(path)
+        return self._owners[path]
+
+    def _find_owner(self, path: Path) -> str | None:
         resolved = path.resolve()
         entry = self._files.get(resolved)
         if entry is not None:

@@ -24,7 +24,15 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from . import discovery as discovery_module
-from .discovery import project_copyright, project_supplier, sha256_file
+from .discovery import (
+    PREBUILT,
+    Reach,
+    covers,
+    project_copyright,
+    project_supplier,
+    reach_rank,
+    sha256_file,
+)
 from .document import NOASSERTION
 from .inventory import Attribution
 from .wheelfile import Entry
@@ -85,40 +93,53 @@ def default_license_data(build_dir: Path) -> Path:
 
 
 def _with_reached_nested(inventory, components: dict) -> dict:
-    """Drop nested terms whose directory contributed nothing to this wheel.
+    """Keep nested terms only where what they cover reached this wheel.
 
-    A nested LICENSE states a holder for part of a component -- the assets under
-    it -- and dropping it names the wrong holder for those bytes. Keeping all of
-    them names holders for code that never shipped.
+    A nested LICENSE states a holder for part of a component -- a bundled
+    library, an asset set -- and dropping it names the wrong holder for those
+    bytes. Keeping all of them names holders for code that never shipped.
     """
-    reached: dict[str, set[str]] = {}
-    for attribution in inventory.attributions.values():
-        if attribution.source_path:
-            for key in attribution.components:
-                reached.setdefault(key, set()).add(attribution.source_path)
+    # One entry per path and how, under its first member: members linking one
+    # library read the same headers, and every nested text scans these.
+    reached: dict[str, dict[tuple[str, str], Reach]] = {}
+    # A linked archive of the component holds what it holds: all of it reached.
+    prebuilt: dict[str, str] = {}
+    for member, attribution in inventory.attributions.items():
+        for key, paths in attribution.read.items():
+            into = reached.setdefault(key, {})
+            for path, how in paths.items():
+                known = into.get((path, how))
+                if known is None or member < known.member:
+                    into[(path, how)] = Reach(how, path, member)
+        for key, roles in attribution.components.items():
+            if PREBUILT in roles:
+                prebuilt[key] = min(member, prebuilt.get(key, member))
+
+    def strength(hit: Reach):
+        return reach_rank(hit.how), hit.path, hit.member
 
     updated = {}
     for key, component in components.items():
-        nested = [item for item in component.evidence if item.kind == "nested"]
-        if not nested:
+        if not any(item.kind == "nested" for item in component.evidence):
             continue
-        sources = reached.get(key, set())
-        kept = [
-            item
-            for item in nested
-            if any(
-                source.startswith(item.path.rsplit("/", 1)[0] + "/")
-                for source in sources
-            )
-        ]
-        if len(kept) == len(nested):
-            continue
-        evidence = tuple(
-            item for item in component.evidence if item.kind != "nested" or item in kept
-        )
+        evidence = []
+        for item in component.evidence:
+            if item.kind != "nested":
+                evidence.append(item)
+                continue
+            hits = [
+                hit
+                for hit in reached.get(key, {}).values()
+                if covers(hit.path, hit.how, item.scope)
+            ]
+            if key in prebuilt:
+                whole = component.root.name if component.root else key
+                hits.append(Reach(PREBUILT, whole, prebuilt[key]))
+            if hits:
+                evidence.append(replace(item, reached_by=min(hits, key=strength)))
         updated[key] = replace(
             component,
-            evidence=evidence,
+            evidence=tuple(evidence),
             copyright_text=discovery_module.notice_from(evidence),
         )
     return updated
@@ -292,11 +313,12 @@ def build(
     # component so the document, the reports, the packaged notices and the
     # evidence sidecar all describe the same thing.
     #
-    # Terms stated for one subdirectory apply only if that directory reached
-    # this wheel: a test suite's licence is not this wheel's business, a
-    # vendored asset set's is. And components carrying byte-identical terms
-    # share one LicenseRef -- settled here because deciding it in the renderer
-    # left the notices file naming an id the SBOM beside it did not define.
+    # Terms stated for one subdirectory apply only if something under it
+    # reached this wheel: a test suite's licence is not this wheel's business,
+    # a vendored asset set's or a compiled-in library's is. And components
+    # carrying byte-identical terms share one LicenseRef -- settled here because
+    # deciding it in the renderer left the notices file naming an id the SBOM
+    # beside it did not define.
     settled = _with_reached_nested(inventory, inventory.components_present)
     present = {**inventory.components_present, **settled}
     renamed = licensing.shared_refs(present.values())

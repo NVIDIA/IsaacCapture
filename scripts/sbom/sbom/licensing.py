@@ -14,7 +14,8 @@ import hashlib
 import json
 import re
 from functools import lru_cache
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from license_expression import (
     ExpressionError,
@@ -23,6 +24,9 @@ from license_expression import (
     get_spdx_licensing,
 )
 from pathlib import Path
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .discovery import Reach
 
 
 # Root-level names that carry a grant, and the ones that carry notices instead.
@@ -85,12 +89,18 @@ class LicenseEvidence:
     # "pool" a REUSE LICENSES/ entry that applies to individual files only, and
     # "nested" terms stated for one subdirectory of a larger component.
     kind: str
+    # Display text for a reader, not an expression; the ids are in `matches`.
     identified: str | None = None
     matches: tuple[tuple[str, float, float], ...] = ()
     spdx_tag: str | None = None
+    # For "nested" terms: what they cover, as a path in the component -- their
+    # directory, or the one file a REUSE `.license` sidecar annotates -- and,
+    # where a wheel keeps them, the strongest evidence that it reached a member.
+    scope: str | None = None
+    reached_by: Reach | None = None
 
     def as_json(self) -> dict:
-        return {
+        found = {
             "component": self.component,
             "origin": self.origin,
             "path": self.path,
@@ -108,6 +118,9 @@ class LicenseEvidence:
             ],
             "spdx_tag": self.spdx_tag,
         }
+        if self.reached_by:
+            found["reached_by"] = self.reached_by._asdict()
+        return found
 
 
 # What counts as a text that discharges the packaging obligation. A REUSE pool
@@ -368,12 +381,62 @@ def _dominated(
         for right in scored:
             if left == right or right in dropped:
                 continue
-            shared = len(entries[left].grams & entries[right].grams)
-            related = shared / min(entries[left].size, entries[right].size)
-            if related >= _FAMILY_THRESHOLD and scored[right][2] > scored[left][2]:
+            if _family(entries, left, right) and scored[right][2] > scored[left][2]:
                 dropped.add(left)
                 break
     return dropped
+
+
+def _family(entries: dict[str, Reference], left: str, right: str) -> bool:
+    if left not in entries or right not in entries:
+        return False
+    shared = len(entries[left].grams & entries[right].grams)
+    return shared / min(entries[left].size, entries[right].size) >= _FAMILY_THRESHOLD
+
+
+def alternatives(matches) -> list[tuple[str, ...]]:
+    """Matched ids, grouped where one text cannot tell them apart.
+
+    Family members that tie survive `_dominated` together: GPL-3.0-only and
+    GPL-3.0-or-later share one reference text, and which applies is a notice's
+    choice, not the text's.
+    """
+    entries = corpus()[1]
+    groups: list[list[str]] = []
+    for license_id, _, _ in matches:
+        group = next(
+            (
+                group
+                for group in groups
+                if any(_family(entries, license_id, other) for other in group)
+            ),
+            None,
+        )
+        if group is None:
+            groups.append([license_id])
+        else:
+            group.append(license_id)
+    return [tuple(group) for group in groups]
+
+
+def matched_prose(matches, name=lambda match: match[0], join=" AND ", lead=""):
+    """What a text matched, for a reader: a tie is one text matching either
+    reference, never both licences at once. `name` renders one match, and
+    `lead` precedes the matches named outright, joined by `join`; a prose
+    clause is set off with "; " so no " AND " ever reads as joining it."""
+    if not matches:
+        return None
+    by_id = {match[0]: match for match in matches}
+    groups = alternatives(matches)
+    single = [name(by_id[group[0]]) for group in groups if len(group) == 1]
+    prose = [
+        "matches the reference text of "
+        + " or ".join(name(by_id[item]) for item in group)
+        for group in groups
+        if len(group) > 1
+    ]
+    parts = ([lead + join.join(single)] if single else []) + prose
+    return ("; " if prose else join).join(parts)
 
 
 def _read(path: Path) -> str | None:
@@ -394,11 +457,13 @@ def evidence_for(
 ) -> LicenseEvidence:
     # A reference text is not matched: scoring it against the corpus it came
     # from returns a perfect score, which reads as a measurement of the
-    # component's own file and is a measurement of nothing.
-    matchable = kind == "grant" and origin != SPDX_REFERENCE
+    # component's own file and is a measurement of nothing. Nested terms are
+    # matched to tell their holders from the licence's steward, never to
+    # conclude the component's licence.
+    matchable = kind in ("grant", "nested") and origin != SPDX_REFERENCE
     tag = _SPDX_TAG.search(text[:4096]) if matchable else None
     matches = tuple(identify(text)) if matchable else ()
-    identified = " AND ".join(license_id for license_id, _, _ in matches) or None
+    identified = matched_prose(matches)
     if origin == SPDX_REFERENCE:
         # Named by the identifier it was fetched for, with no score behind it.
         identified = Path(display).stem
@@ -444,7 +509,8 @@ def discover_in_tree(
     # A subdirectory can carry its own terms and its own holder -- a vendored
     # asset set inside a larger project. Collected as "nested" so it neither
     # discharges the component's packaging obligation nor changes its licence,
-    # and kept only where that directory reached the wheel; see `nested_for`.
+    # and kept only where what it covers reached the wheel; see
+    # `build._with_reached_nested`.
     for path in sorted(root.rglob("*")) if root.is_dir() else []:
         if (
             path.is_file()
@@ -459,7 +525,14 @@ def discover_in_tree(
         if text is None:
             continue
         display = f"{display_prefix}/{path.relative_to(root).as_posix()}"
-        found.append(evidence_for(component, "component-file", display, text, kind))
+        item = evidence_for(component, "component-file", display, text, kind)
+        if kind == "nested":
+            annotated = path.name.removesuffix(".license")
+            sidecar = path.with_name(annotated) if annotated else path
+            covered = sidecar if sidecar != path and sidecar.is_file() else path.parent
+            scope = f"{display_prefix}/{covered.relative_to(root).as_posix()}"
+            item = replace(item, scope=scope)
+        found.append(item)
     # "nested" never satisfies the grant test below; that is the point.
 
     if not any(item.kind == "grant" for item in found):
@@ -832,12 +905,19 @@ def notice_is_the_licence_authors(notice: str, identified: list[str]) -> bool:
     keeping a list of stewards.
     """
     entries = corpus()[1]
-    collapsed = " ".join(notice.split())
+    collapsed = _steward_form(notice)
     return any(
         (reference := entries.get(license_id))
-        and collapsed in " ".join(reference.text.split())
+        and collapsed in _steward_form(reference.text)
         for license_id in identified
     )
+
+
+def _steward_form(text: str) -> str:
+    """Folded the way copies of one steward's line differ: the GPL's reads
+    `(C)` and `http://` as upstreams ship it, `©` and `https://` in the list."""
+    folded = " ".join(text.split()).lower().replace("©", "(c)")
+    return folded.replace("https://", "http://")
 
 
 def read_notices(text: str) -> list[str]:

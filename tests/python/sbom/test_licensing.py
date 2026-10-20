@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 import synth
+from sbom import discovery, document
 from sbom import licensing
 
 
@@ -244,6 +245,63 @@ def test_a_component_carrying_two_licenses_combines_them():
     concluded, _ = licensing.expression(evidence, "dual")
 
     assert concluded == "Apache-2.0 AND CC-BY-4.0"
+
+
+def test_a_bare_license_file_covers_its_directory(tmp_path):
+    synth.write(tmp_path / "LICENSE", synth.spdx_text("MIT"))
+    synth.write(tmp_path / "third/.license", "SPDX-FileCopyrightText: 2020 A\n")
+    # Named like a sidecar, with no file beside it to annotate.
+    synth.write(tmp_path / "third/stb.license", synth.spdx_text("MIT"))
+
+    nested = [
+        item
+        for item in licensing.discover_in_tree("thing", tmp_path, "thing-src")
+        if item.kind == "nested"
+    ]
+
+    assert [(item.path, item.scope) for item in nested] == [
+        ("thing-src/third/.license", "thing-src/third"),
+        ("thing-src/third/stb.license", "thing-src/third"),
+    ]
+
+
+def test_a_text_carrying_two_licences_lists_both_not_a_choice():
+    dual = licensing.evidence_for(
+        "dual",
+        "component-file",
+        "dual/LICENSE",
+        synth.spdx_text("Apache-2.0") + "\n\n" + synth.spdx_text("CC-BY-4.0"),
+        "grant",
+    )
+
+    assert dual.identified == "Apache-2.0 AND CC-BY-4.0"
+    component = discovery.Component(
+        key="dual",
+        name="dual",
+        kind="source-tree",
+        supplier="NOASSERTION",
+        homepage="NOASSERTION",
+        purl="pkg:generic/dual",
+        version="1",
+        download_location="NOASSERTION",
+        source_info="",
+        evidence=(dual,),
+    )
+    rendered = document._attribution_texts(component, synth.DIST_INFO)[0]
+    assert " identified as Apache-2.0 (" in rendered
+    assert "; CC-BY-4.0 (" in rendered
+    assert "reference text of" not in rendered
+
+
+def test_a_choice_is_never_joined_to_a_licence_with_and():
+    gpl = [("GPL-3.0-only", 1.0, 0.6), ("GPL-3.0-or-later", 1.0, 0.6)]
+    alternatives = "matches the reference text of GPL-3.0-only or GPL-3.0-or-later"
+
+    assert licensing.matched_prose(gpl) == alternatives
+    assert (
+        licensing.matched_prose([("Apache-2.0", 1.0, 0.2), *gpl, ("MIT", 1.0, 0.1)])
+        == f"Apache-2.0 AND MIT; {alternatives}"
+    )
 
 
 def test_an_index_of_licenses_is_not_a_grant(tmp_path):
