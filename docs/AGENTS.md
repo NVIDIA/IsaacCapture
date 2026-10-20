@@ -12,9 +12,6 @@ the CSS — where it moves when the code moves.
 Keep small API-option updates to purpose, prerequisites, and usage; avoid
 example wrappers and lifecycle walkthroughs unless needed to use the option.
 
-Land documentation fixes needed on both `main` and release branches on `main`
-first, then cherry-pick the merged fix into the release branch.
-
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which
