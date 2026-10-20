@@ -204,6 +204,23 @@ The ``service-*`` commands manage the robot's RTP sender; CloudXR has separate
 
 Run ``.venv/bin/python camera_viz.py --help`` for viewer and CloudXR launcher flags.
 
+.. _camera-streaming-web-client:
+
+Web client for camera visualization
+-----------------------------------
+
+The default `Isaac Teleop Web Client`_ shows an in-XR control panel with connection information
+and controls that are useful during development. To hide this panel for camera viewing, open
+**Advanced settings → In-XR comfort** before connecting and set **Control panel when entering XR
+(saved per teleop application)** to **Hide control panel**.
+
+This preference is saved for the selected teleop application and takes effect when entering XR.
+If already connected, leave and re-enter XR to apply it. Use the small **Show** control to reopen
+the panel and **Hide** to dismiss it while the camera stream continues.
+
+Follow the :ref:`headset connection steps <connect-quest-pico>` for the server address,
+certificate acceptance, and connection.
+
 .. _recorded-camera-streaming:
 
 First run — a recording, no camera required

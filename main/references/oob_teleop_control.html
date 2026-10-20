@@ -525,6 +525,13 @@ observing every 5 seconds. A meaningful device, network, rule, or browser
 change opens a fresh 60-second recovery episode. Override the positive,
 finite values with <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code> and
 <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code>; invalid values fail host preflight.</p>
+<p>At INFO, OOB progress reports headset waiting and connection, browser readiness,
+and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
+USB-health blocks remain visible with operator action. An unchanged wait for
+an absent headset is announced once; routine setup steps are DEBUG messages.
+Progress uses the <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr.oob_teleop_env.oob-progress</span></code> logger.
+It remains visible through filters selecting its parent logger, while embedded
+applications can also select progress alone.</p>
 <p>To start the hub <strong>without</strong> any <code class="docutils literal notranslate"><span class="pre">adb</span></code> interaction — useful in containers,
 CI, or wireless-only environments — set <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_HUB_ONLY=1</span></code> and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
