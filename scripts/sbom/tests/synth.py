@@ -22,7 +22,6 @@ import contextlib
 import csv
 import gzip
 import hashlib
-import importlib.util
 import io
 import os
 import json
@@ -32,7 +31,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-from sbom import build as build_module
+from isaaccapture_sbom import build as build_module
 
 CONFIG = "Release"
 WHEEL_NAME = "isaaccapture-0.4.0-cp312-cp312-manylinux_2_35_x86_64.whl"
@@ -174,18 +173,6 @@ FIXTURE_LICENSES = (
 )
 # Newer than the grammar the collector ships, which is what the tests need.
 FIXTURE_EXCEPTIONS = ("rsync-linking-exception",)
-
-
-def load(name: str, path: Path):
-    """Import a helper by path.
-
-    Not via `sys.path`: this directory is named `sbom`, so putting its parent on
-    the path would shadow the installed collector package with a namespace one.
-    """
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def set_license_data(path: Path) -> None:

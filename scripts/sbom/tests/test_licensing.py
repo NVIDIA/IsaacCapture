@@ -10,8 +10,7 @@ from dataclasses import replace
 
 import pytest
 import synth
-from sbom import discovery, document, report
-from sbom import licensing
+from isaaccapture_sbom import discovery, document, licensing, report
 
 
 def test_corpus_loads():
@@ -774,7 +773,6 @@ def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
     name loses the operator, and the roll-up that splits an expression into
     identifiers loses it again.
     """
-    from sbom import discovery
 
     licensing.load_corpus(license_data)
     source = tmp_path / "vendored.h"

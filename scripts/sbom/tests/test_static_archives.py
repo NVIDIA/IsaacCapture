@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 import synth
 from packageurl import PackageURL
-from sbom import build as build_module
-from sbom import discovery
-from sbom import document as document_module
-from sbom import evidence as evidence_module
+from isaaccapture_sbom import build as build_module
+from isaaccapture_sbom import discovery
+from isaaccapture_sbom import document as document_module
+from isaaccapture_sbom import evidence as evidence_module
 
 EXTENSION = "_ext.cpython-312-x86_64-linux-gnu.so"
 ONE_OBJECT = synth.ar_archive({"runtime.o": b"\x7fELF object"})

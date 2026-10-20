@@ -10,15 +10,27 @@ from pathlib import Path
 
 import pytest
 import synth
-from sbom import discovery, licensing
-
-
-repo_root = synth.load(
-    "repo_paths", Path(__file__).resolve().parents[1] / "repo_paths.py"
-).repo_root
+from isaaccapture_sbom import discovery, licensing
 
 LICENSE_DATA_ENV = "ISAACCAPTURE_SBOM_LICENSE_DATA"
 BUILD_DIR_ENV = "ISAACCAPTURE_SBOM_BUILD_DIR"
+
+
+def repo_root() -> Path | None:
+    """The source tree these tests sit in: the first ancestor with VERSION and CMakeLists.txt."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "VERSION").is_file() and (parent / "CMakeLists.txt").is_file():
+            return parent
+    return None
+
+
+def _candidates(env: str, *in_checkout: str):
+    """The environment override, then the checkout's default, asked lazily."""
+    if os.environ.get(env):
+        yield Path(os.environ[env])
+    root = repo_root()
+    if root is not None:
+        yield root.joinpath(*in_checkout)
 
 
 @pytest.fixture(scope="session")
@@ -29,14 +41,9 @@ def license_data():
     default build directory; if neither exists the license tests skip rather
     than run against data that is not what the build pinned.
     """
-    candidates = []
-    if os.environ.get(LICENSE_DATA_ENV):
-        candidates.append(Path(os.environ[LICENSE_DATA_ENV]))
-    candidates.append(
-        repo_root() / "build" / "_deps" / "license-list-data-src" / "json"
-    )
-
-    for candidate in candidates:
+    for candidate in _candidates(
+        LICENSE_DATA_ENV, "build", "_deps", "license-list-data-src", "json"
+    ):
         try:
             licensing.load_corpus(candidate)
             return candidate
@@ -73,7 +80,10 @@ def _fresh_checkout_answers():
 @pytest.fixture(scope="session")
 def checkout():
     """This repository, as the collector would be pointed at it."""
-    return repo_root()
+    root = repo_root()
+    if root is None:
+        pytest.skip("not inside this repository's source tree")
+    return root
 
 
 @pytest.fixture(scope="session")
@@ -84,12 +94,7 @@ def live_build_dir():
     the anchor to what it actually emits, so a change to the codemodel's shape
     fails here instead of passing everywhere.
     """
-    candidates = []
-    if os.environ.get(BUILD_DIR_ENV):
-        candidates.append(Path(os.environ[BUILD_DIR_ENV]))
-    candidates.append(repo_root() / "build")
-
-    for candidate in candidates:
+    for candidate in _candidates(BUILD_DIR_ENV, "build"):
         if sorted(
             (candidate / ".cmake" / "api" / "v1" / "reply").glob("codemodel-v2-*.json")
         ):

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 import synth
-from sbom import elf
+from isaaccapture_sbom import elf
 
 
 def test_reads_soname_and_needed():
@@ -59,7 +59,7 @@ def test_reads_a_real_system_library():
 def test_verification_does_not_parse_binaries(built):
     """A consumer checking a downloaded wheel should not run a binary parser
     over it; scanning only reads the dynamic section when asked to."""
-    from sbom import wheelfile
+    from isaaccapture_sbom import wheelfile
 
     plain = wheelfile.scan(built["wheel"])
     analyzed = wheelfile.scan(built["wheel"], analyze_elf=True)

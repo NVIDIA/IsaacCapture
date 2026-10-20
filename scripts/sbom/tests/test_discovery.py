@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import synth
-from sbom import discovery
+from isaaccapture_sbom import discovery
 
 
 def test_source_trees_are_found_without_being_listed(workspace):
@@ -558,7 +558,7 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
     into the repository that someone else wrote says so in its REUSE info, and
     that is what separates it from the project's own code -- not the directory
     it sits in."""
-    from sbom import evidence as evidence_module
+    from isaaccapture_sbom import evidence as evidence_module
 
     space = evidence_module.discover(workspace.root, workspace.build)
     vendored = {
@@ -586,7 +586,7 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
 
 
 def test_a_vendored_header_is_credited_to_the_artifact_that_includes_it(workspace):
-    from sbom import evidence as evidence_module
+    from isaaccapture_sbom import evidence as evidence_module
 
     space = evidence_module.discover(workspace.root, workspace.build)
     artifact = space.graph.by_name("_ext.cpython-312-x86_64-linux-gnu.so")[0]
@@ -631,7 +631,7 @@ def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data)
     an unexplained wheel member rather than a wrong one. A configured tree says
     what it is with a CMakeCache.txt.
     """
-    from sbom import evidence, licensing
+    from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
     stray = workspace.root / "build-debug"
@@ -656,7 +656,7 @@ def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
     rather than guessed; without that file the document must say it does not
     know.
     """
-    from sbom import evidence, licensing
+    from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
     archive = workspace.root / synth.SDK_ARCHIVE
@@ -682,7 +682,7 @@ def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
 def test_a_build_tree_with_no_configuration_says_so(workspace):
     """Guessing Release would read a directory that need not exist, and every
     member it would have explained becomes an unexplained one instead."""
-    from sbom import evidence
+    from isaaccapture_sbom import evidence
 
     cache = workspace.build / "CMakeCache.txt"
     cache.write_text(
@@ -700,7 +700,6 @@ def test_a_build_tree_with_no_configuration_says_so(workspace):
 
 def test_the_supplier_is_read_from_the_project_not_written_here(workspace):
     """A fork or a rename must not leave the document naming the wrong party."""
-    from sbom import discovery
 
     assert discovery.project_supplier(workspace.root) == "Organization: NVIDIA"
 
@@ -717,7 +716,6 @@ def test_the_supplier_is_read_from_the_project_not_written_here(workspace):
 
 def test_a_project_naming_several_authors_stops_rather_than_choosing(workspace):
     """SPDX records one supplier; which one is not this tool's call to make."""
-    from sbom import discovery
 
     pyproject = workspace.root / "pyproject.toml"
     pyproject.write_text(
@@ -742,7 +740,7 @@ def test_a_relative_build_dir_still_keeps_the_staged_tree_out(
     member has to pass. The exclusion compared an absolute skip path against
     relative walked ones and silently matched nothing.
     """
-    from sbom import evidence, licensing
+    from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
     monkeypatch.chdir(workspace.root)
@@ -764,7 +762,7 @@ def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
     of them on a real build -- each then failing the gate for shipping no licence
     text of its own.
     """
-    from sbom import evidence, licensing
+    from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
     port = workspace.build / "vcpkg_installed/x64-linux/include/eigen/Core.h"
@@ -784,7 +782,7 @@ def test_vendored_material_asserts_no_package_identifier(workspace, license_data
     `pkg:generic/<holder>` from it named a package that does not exist, and a
     reader resolving that locator finds nothing or finds something else.
     """
-    from sbom import discovery, licensing
+    from isaaccapture_sbom import licensing
 
     licensing.load_corpus(license_data)
     source = workspace.root / "src" / "vendor" / "widget.hpp"
@@ -1245,7 +1243,7 @@ def test_the_files_the_build_read_are_named_first(tmp_path):
 
 def test_a_tracked_non_code_file_reaches_discovery(workspace, license_data):
     """Through the build's own entry point, not only `discover_vendored`."""
-    from sbom import evidence, licensing
+    from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
     synth.write(workspace.root / "assets/vendor/icon.svg", "<svg/>\n")

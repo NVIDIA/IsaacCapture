@@ -12,11 +12,11 @@ import zipfile
 
 import pytest
 import synth
-from sbom import build as build_module
-from sbom import cli
-from sbom import licensing
-from sbom import wheelfile
-from sbom import validate as validate_module
+from isaaccapture_sbom import build as build_module
+from isaaccapture_sbom import cli
+from isaaccapture_sbom import licensing
+from isaaccapture_sbom import wheelfile
+from isaaccapture_sbom import validate as validate_module
 
 DIST_INFO = synth.DIST_INFO
 WHEEL_NAME = synth.WHEEL_NAME
@@ -523,7 +523,6 @@ def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data)
     on -- and a differing build-id says it is the wrong one. Claiming it would
     hand this binary the other component's licence.
     """
-    from sbom import licensing
 
     licensing.load_corpus(license_data)
     payload = synth.wheel_payload(workspace)
@@ -548,7 +547,7 @@ def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data)
 def test_an_unreadable_archive_says_so(workspace, license_data):
     """Only archives this build fetched are indexed, so one that will not open
     is a broken download -- not a stray file to walk past."""
-    from sbom import discovery, licensing
+    from isaaccapture_sbom import discovery
 
     licensing.load_corpus(license_data)
     (workspace.root / synth.SDK_ARCHIVE).write_bytes(b"not an archive at all")
@@ -571,7 +570,6 @@ def test_bytes_more_than_one_component_holds_name_no_single_source(
     obligation under another's. Say the bytes are shared and claim no single
     source instead.
     """
-    from sbom import licensing
 
     licensing.load_corpus(license_data)
     shared = synth.spdx_text("Apache-2.0").encode()
@@ -659,7 +657,7 @@ def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
     document names licence texts the evidence cannot account for and the wheel
     fails its own verification.
     """
-    from sbom import evidence as evidence_module
+    from isaaccapture_sbom import evidence as evidence_module
 
     copyright_file = tmp_path / "copyright"
     copyright_file.write_text(synth.spdx_text("Zlib"), encoding="utf-8")
@@ -712,7 +710,6 @@ def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_d
     a wheel that stopped shipping its own LICENSE still passed and the only copy
     of its terms sat under `third-party/`, attributed to somebody else.
     """
-    from sbom import build as build_module
 
     licensing.load_corpus(license_data)
     assert build_module._own_license_texts(

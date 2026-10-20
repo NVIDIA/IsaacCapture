@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 import synth
-from sbom import build as build_module
-from sbom import document as document_module
-from sbom import inventory as inventory_module
-from sbom import licensing
-from sbom import report as report_module
-from sbom import validate as validate_module
-from sbom import wheelfile
+from isaaccapture_sbom import build as build_module
+from isaaccapture_sbom import document as document_module
+from isaaccapture_sbom import inventory as inventory_module
+from isaaccapture_sbom import licensing
+from isaaccapture_sbom import report as report_module
+from isaaccapture_sbom import validate as validate_module
+from isaaccapture_sbom import wheelfile
 
 DIST_INFO = synth.DIST_INFO
 WHEEL_NAME = synth.WHEEL_NAME
@@ -426,7 +426,6 @@ def test_source_date_epoch_normalizes_timestamps_the_input_wheel_carried(
 @pytest.fixture
 def shared_text(workspace, license_data):
     """alpha and beta ship the demo SDK's proprietary terms byte for byte."""
-    from sbom import licensing
 
     licensing.load_corpus(license_data)
     for key in ("alpha", "beta"):
@@ -498,7 +497,7 @@ def test_a_requirement_this_run_also_built_is_not_an_unknown(
     only one direction could ever carry such a reference, and a `py3-none-any`
     wheel pinning one matrix entry's sibling stops being universal.
     """
-    from sbom import cli
+    from isaaccapture_sbom import cli
 
     synth.write_wheel(workspace.wheel, synth.wheel_payload(workspace))
     companion = workspace.wheel.parent / "isaacteleop-0.4.0-py3-none-any.whl"

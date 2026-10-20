@@ -301,10 +301,10 @@ isaaccapture-sbom ...`. Its dependency pins live in `scripts/sbom/pyproject.toml
 and nowhere else — never restate them as `--with` flags in a workflow or a doc.
 
 **Read [`docs/source/references/sbom.rst`](docs/source/references/sbom.rst)
-first** if you are changing anything under `scripts/sbom/` or
-`tests/python/sbom/`, changing how a dependency reaches a wheel, or touching the
-wheel-packaging steps in `build-ubuntu.yml`. It covers discovery, license
-matching and the maintenance rules; nothing here repeats them.
+first** if you are changing anything under `scripts/sbom/`, changing how a
+dependency reaches a wheel, or touching the wheel-packaging steps in
+`build-ubuntu.yml`. It covers discovery, license matching and the maintenance
+rules; nothing here repeats them.
 
 ## A rule changed in one place is changed in none
 

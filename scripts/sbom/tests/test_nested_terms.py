@@ -11,12 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 import synth
-from sbom import build as build_module
-from sbom import discovery
-from sbom import evidence as evidence_module
-from sbom import inventory as inventory_module
-from sbom import licensing
-from sbom import report
+from isaaccapture_sbom import build as build_module
+from isaaccapture_sbom import discovery
+from isaaccapture_sbom import evidence as evidence_module
+from isaaccapture_sbom import inventory as inventory_module
+from isaaccapture_sbom import licensing
+from isaaccapture_sbom import report
 
 BUNDLED = "Copyright (c) 2019 Bundled Authors\n\n" + "Permission is hereby granted."
 EXTENSION = "isaaccapture/_ext.cpython-312-x86_64-linux-gnu.so"

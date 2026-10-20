@@ -5,7 +5,7 @@
 # IsaacTeleop tests (pytest + Catch2/CTest)
 # ==============================================================================
 #
-# Production libraries live under src/ and examples/; all pytest and Catch2
+# Production libraries live under src/ and examples/; pytest and Catch2
 # suites live here under tests/python/ and tests/cpp/.
 
 if(BUILD_TESTING)

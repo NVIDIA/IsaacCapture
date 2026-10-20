@@ -14,9 +14,6 @@ if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(compat)
 endif()
 
-# Tooling tests: synthetic fixtures, so no built package is needed.
-add_subdirectory(sbom)
-
 if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(examples/teleop)
 endif()

@@ -5,6 +5,7 @@
 # declared once, here, rather than repeated at every call site.
 #
 #   uv run --project scripts/sbom isaaccapture-sbom --help
+#   uv run --project scripts/sbom --extra dev pytest scripts/sbom/tests
 #
 # See docs: references/sbom.
 
@@ -35,11 +36,15 @@ dependencies = [
 dev = ["pytest", "spdx-tools==0.8.3"]
 
 [project.scripts]
-isaaccapture-sbom = "sbom.cli:main"
+isaaccapture-sbom = "isaaccapture_sbom.cli:main"
 
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["sbom*"]
+include = ["isaaccapture_sbom*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]  # `import synth`, whatever --import-mode is

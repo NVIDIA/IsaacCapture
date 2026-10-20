@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# ==============================================================================
-# SBOM collector tests
-# ==============================================================================
-# These drive synthetic wheels and build trees, so they need no built package
-# and no configured dependency tree -- only the SPDX data the build fetched.
+# Registers the SBOM collector's tests with CTest; they need no built package.
 
 file(GLOB TEST_FILES
     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/test_*.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.py"
 )
 
 foreach(test_file ${TEST_FILES})
@@ -17,7 +13,8 @@ foreach(test_file ${TEST_FILES})
 
     add_test(
         NAME "sbom_${test_name}"
-        COMMAND uv run --python ${ISAAC_TELEOP_PYTHON_VERSION} --extra dev pytest -v --tb=short "${test_file}"
+        COMMAND uv run --project "${CMAKE_CURRENT_SOURCE_DIR}" --python ${ISAAC_TELEOP_PYTHON_VERSION}
+                --extra dev pytest -v --tb=short "${test_file}"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 

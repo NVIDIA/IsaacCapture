@@ -175,6 +175,7 @@ endif()
 # Tests (pytest + Catch2/CTest). After production libs so link targets exist.
 if(BUILD_TESTING)
     add_subdirectory(tests)
+    add_subdirectory(scripts/sbom)
 endif()
 
 # Formatting enforcement (runs on Linux by default)
