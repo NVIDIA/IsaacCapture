@@ -263,15 +263,17 @@ def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
     Every component, not only the ones the build could not name: Apache-2.0 does
     not cover MIT, Zlib, BSD-3-Clause, Qhull or BSL-1.0, so leaving those out
     said the wheel carries no code under them. Only a component concluding the
-    declared licence itself adds nothing.
+    declared licence itself adds nothing. One component with unresolved terms
+    leaves the whole wheel's unresolved: NOASSERTION cannot be AND-ed.
     """
+    present = inventory.components_present.values()
+    if any(item.license_concluded == NOASSERTION for item in present):
+        return NOASSERTION
     # Decomposed, so an id two components share appears once and a compound one
     # does not arrive nested -- but never through an `OR`, which is one choice
     # and becomes a claim on both halves if it is split.
     operands: set[str] = set()
-    for component in inventory.components_present.values():
-        if component.license_concluded == NOASSERTION:
-            continue
+    for component in present:
         operands.update(licensing.operands_of(component.license_concluded))
     if declared != NOASSERTION:
         operands.update(licensing.operands_of(declared))

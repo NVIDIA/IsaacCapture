@@ -12,6 +12,7 @@ import zipfile
 import pytest
 import synth
 from sbom import build as build_module
+from sbom import report as report_module
 from sbom import validate as validate_module
 from sbom import wheelfile
 
@@ -29,17 +30,27 @@ def _embedded(wheel):
         return json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
 
 
+def _wheel_package(spdx: dict) -> dict:
+    return next(
+        item for item in spdx["packages"] if item["SPDXID"] == "SPDXRef-Package-wheel"
+    )
+
+
+def _release_failures(built) -> list[str]:
+    """What `check` says of the wheel with its build evidence and manifest."""
+    return validate_module.check(
+        built["wheel"],
+        build_evidence=built["evidence_path"],
+        manifest=built["manifest_path"],
+    )
+
+
 def test_wheel_verifies_against_its_own_sbom(built):
     assert validate_module.check(built["wheel"]) == []
 
 
 def test_release_validation_passes(built):
-    failures = validate_module.check(
-        built["wheel"],
-        build_evidence=built["evidence_path"],
-        manifest=built["manifest_path"],
-    )
-    assert failures == []
+    assert _release_failures(built) == []
 
 
 def test_sbom_lands_in_dist_info_sboms_beside_any_other_tools(built):
@@ -190,14 +201,76 @@ def test_an_unmatched_grant_beside_a_matched_one_is_carried_and_reported(
         "named: matched no text in the SPDX reference corpus",
         "evidence": ["alpha-src/LICENSE-EULA.txt"],
     }
-    assert (
-        validate_module.check(
-            built["wheel"],
-            build_evidence=built["evidence_path"],
-            manifest=built["manifest_path"],
-        )
-        == []
+    assert _release_failures(built) == []
+
+
+def test_a_component_shipping_only_a_reuse_pool_is_a_reported_gap(workspace):
+    """The pool passes the gate and concludes nothing, so it cannot fall
+    between the lists and leave the summary saying every licence is known."""
+    source = workspace.build / "_deps" / "alpha-src"
+    (source / "LICENSES").mkdir()
+    (source / "LICENSE").rename(source / "LICENSES" / "MIT.txt")
+    synth.track(workspace.root)
+    built = synth.collect_and_bind(workspace)
+
+    report = built["licenses"]
+    alpha = next(item for item in report["components"] if item["component"] == "alpha")
+    assert alpha["license_concluded"] == "NOASSERTION"
+    listing = {
+        key: [item for item in report[key] if item["component"] == "alpha"]
+        for key in report_module.GAP_LISTS
+    }
+    assert [key for key, found in listing.items() if found] == [
+        "components_with_unresolved_license"
+    ]
+    [entry] = listing["components_with_unresolved_license"]
+    assert entry["evidence"] == ["alpha-src/LICENSES/MIT.txt"]
+    assert entry["reason"].startswith("only REUSE pool texts ship (MIT)")
+    [record] = built["manifest"]["wheels"]
+    assert record["components_with_unresolved_license"] == [entry]
+    # The wheel's own conclusion cannot AND in terms nobody concluded.
+    assert _wheel_package(built["spdx"])["licenseConcluded"] == "NOASSERTION"
+    assert _release_failures(built) == []
+
+
+def _report_of(**gaps) -> dict:
+    """A report payload with one identified component and the given gap lists."""
+    row = {
+        "name": "alpha",
+        "kind": "source-tree",
+        "version": "1",
+        "license_concluded": "MIT",
+        "how_it_reaches_the_wheel": [],
+        "evidence": [],
+    }
+    return {
+        "wheel": WHEEL_NAME,
+        "generated_from_commit": None,
+        "spdx_license_list_version": None,
+        "components": [row],
+        "externally_supplied_runtime": [],
+        "consumer_requirements": [],
+        "exclusions": [],
+        **{key: gaps.get(key, []) for key in report_module.GAP_LISTS},
+    }
+
+
+def test_an_identified_set_reports_no_gaps():
+    rendered = report_module.report_markdown(_report_of())
+
+    assert rendered.endswith(
+        "## License evidence gaps\n\n"
+        "None; every redistributed component ships an identified license.\n"
     )
+
+
+@pytest.mark.parametrize("key", list(report_module.GAP_LISTS))
+def test_any_gap_list_withholds_the_all_identified_summary(key):
+    gap = {"component": "alpha", "reason": "why"}
+    rendered = report_module.report_markdown(_report_of(**{key: [gap]}))
+
+    assert f"{report_module.GAP_LISTS[key]}\n\n- `alpha` — why\n" in rendered
+    assert "None; every redistributed component" not in rendered
 
 
 def _rewrite_alpha(built, expression: str) -> list[str]:
@@ -535,10 +608,7 @@ def test_a_wheel_shipping_no_source_still_names_its_licensor(workspace, license_
         ).decode()
         members = set(archive.namelist())
 
-    wheel_package = next(
-        item for item in spdx["packages"] if item["SPDXID"] == "SPDXRef-Package-wheel"
-    )
-    assert wheel_package["copyrightText"] != "NOASSERTION"
+    assert _wheel_package(spdx)["copyrightText"] != "NOASSERTION"
     assert "Copyright" in notices
     assert "Example Org" in notices
     # The SPDX spelling of a supplier is not prose.

@@ -557,12 +557,7 @@ def build(
                 "sbom_in_wheel": sbom_name,
                 # What a sibling wheel's document cites to reference this one.
                 "describes": _describes(spdx, metadata_raw, sidecars["spdx"].name),
-                "components_without_license_evidence": payload[
-                    "components_without_license_evidence"
-                ],
-                "components_with_unidentified_license": payload[
-                    "components_with_unidentified_license"
-                ],
+                **{key: payload[key] for key in report_module.GAP_LISTS},
                 "sidecars": {
                     kind: {
                         "filename": path.name,

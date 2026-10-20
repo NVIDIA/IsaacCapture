@@ -144,6 +144,16 @@ def grant_texts(evidence) -> list[LicenseEvidence]:
     return [item for item in evidence if item.kind == "grant"]
 
 
+def pool_texts(evidence) -> list[LicenseEvidence]:
+    """A REUSE pool's texts: what individual files are under, not the component."""
+    return [item for item in evidence if item.kind == "pool"]
+
+
+def pool_names(paths) -> str:
+    """A pool's texts by the licence each is named for, as `MIT, Zlib`."""
+    return ", ".join(sorted(Path(path).stem for path in paths))
+
+
 def carried_texts(evidence) -> list[LicenseEvidence]:
     """The grants a component's LicenseRef stands for."""
     return [item.text for item in _reading(evidence).carried]
@@ -701,6 +711,23 @@ def why_unnamed(evidence) -> str:
     if matched:
         reasons.append(f"matched {', '.join(matched)}, {_NEWER}")
     return "; ".join(reasons)
+
+
+def why_unresolved(evidence) -> str:
+    """Why a component whose texts shipped concludes NOASSERTION.
+
+    Without a grant, its only texts are a REUSE pool. With one, its grants
+    yielded no id: the grammar refused to combine them, or an SPDX reference
+    text carries no identified id.
+    """
+    if grants := grant_texts(evidence):
+        paths = ", ".join(sorted(item.path for item in grants))
+        return f"its grants ({paths}) yield no SPDX expression"
+    pooled = pool_names(item.path for item in pool_texts(evidence))
+    return (
+        f"only REUSE pool texts ship ({pooled}); no grant states which of them "
+        "are the component's terms"
+    )
 
 
 def _listed() -> _Listed:

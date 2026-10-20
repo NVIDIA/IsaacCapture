@@ -282,8 +282,10 @@ not say who licensed it to them.
 
 ``licenseDeclared`` on the wheel is what the distribution says of itself. ``licenseConcluded``
 is what this document found in it, so a wheel carrying a component whose terms the build
-could not name states that expression alongside the declaration — a reader asking "what is
-this artifact" is told about the proprietary payload rather than about the declaration only.
+could not name states that component's ``LicenseRef-`` alongside the declaration — a reader
+asking "what is this artifact" is told about the proprietary payload rather than about the
+declaration only. Where nothing at all is concluded for a component, neither is anything
+for the wheel: it states ``NOASSERTION``.
 
 Never a file from this checkout. ``LICENSES/`` holds this repository's REUSE pool, whose
 copies exist to license *this* project and carry its notices; packaging one as a third
@@ -313,6 +315,12 @@ text, so the text is carried too. So is a text its identifiers account for less 
 fifths of, its copyright notices aside, beside the identifiers it names: the rest may be
 terms no identifier names, as in fmt's MIT with its exception paragraph. The ``LicenseRef-`` carries exactly the texts
 carried. Those components are listed in the report under *License evidence gaps*.
+
+A component whose only texts are a REUSE ``LICENSES/`` pool ships them, and that meets
+the obligation below, but a pool says what each file is under, not what the component is.
+Nothing is concluded for it, so its licence is ``NOASSERTION``, and it is listed under
+*License evidence gaps* too — as is a component whose grants name nothing the grammar
+accepts.
 
 A component that states a licence nowhere at all blocks publication, because packaging the
 text is the obligation the wheel has to meet. For material checked in here that is any one

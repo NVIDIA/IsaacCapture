@@ -19,6 +19,7 @@ from . import discovery
 from . import wheelfile
 from . import evidence as evidence_module
 from . import licensing
+from . import report as report_module
 from . import validate as validate_module
 
 
@@ -93,12 +94,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     print(f"manifest: {manifest_path}")
 
     for item in merged["wheels"]:
-        # Both gap lists. They sit in the same record and mean the same kind of
-        # thing to a reader; surfacing one and not the other hid the stricter one.
-        for key in (
-            "components_without_license_evidence",
-            "components_with_unidentified_license",
-        ):
+        for key in report_module.GAP_LISTS:
             for entry in item[key]:
                 print(
                     f"::warning::{item['filename']}: {entry['component']}: "

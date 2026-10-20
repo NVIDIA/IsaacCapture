@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from . import licensing
 from .inventory import Inventory
@@ -40,6 +39,15 @@ _KIND_PROSE = {
 
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+# Every list of components whose terms a reader cannot take as identified, with
+# its Markdown heading. The report, its Markdown, the manifest and the CI
+# warnings all read this, so a list added here cannot be left out of one.
+GAP_LISTS = {
+    "components_without_license_evidence": "No license text found for:",
+    "components_with_unresolved_license": "No license concluded for:",
+    "components_with_unidentified_license": "License text carried verbatim:",
+}
 
 
 def _short(version: str) -> str:
@@ -218,12 +226,10 @@ def _carried_reason(evidence) -> str:
 def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
     """Machine-readable component-to-license report, including what is missing."""
     components = []
-    no_evidence = []
-    unidentified = []
+    gaps: dict[str, list[dict]] = {key: [] for key in GAP_LISTS}
 
     for key, component in inventory.components_present.items():
         obligations = licensing.obligation_texts(component.evidence)
-        carried = licensing.carried_texts(component.evidence)
         components.append(
             {
                 "component": key,
@@ -247,18 +253,28 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
         # text. Requiring a grant here advertised "no licence evidence" for a
         # component the gates deliberately accepted on the pool they packaged.
         if not obligations:
-            no_evidence.append(
+            gaps["components_without_license_evidence"].append(
                 {
                     "component": key,
                     "reason": "no license grant found in the component's own files",
                 }
             )
-        elif carried:
+        elif component.license_concluded == NOASSERTION:
+            # Texts that pass the gate can still name nothing
+            # (`licensing.why_unresolved`).
+            gaps["components_with_unresolved_license"].append(
+                {
+                    "component": key,
+                    "reason": licensing.why_unresolved(component.evidence),
+                    "evidence": [item.path for item in obligations],
+                }
+            )
+        elif carried := licensing.carried_texts(component.evidence):
             # Not whether anything matched: a text can match and still be
             # carried (`licensing.carried_texts`), and one beside it can match
             # and be named. Either way these terms are only readable as the
             # text this wheel carries.
-            unidentified.append(
+            gaps["components_with_unidentified_license"].append(
                 {
                     "component": key,
                     "reason": _carried_reason(component.evidence),
@@ -287,8 +303,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
             {"component": key, "reason": reason}
             for key, reason in sorted(inventory.absent_components.items())
         ],
-        "components_without_license_evidence": no_evidence,
-        "components_with_unidentified_license": unidentified,
+        **gaps,
     }
 
 
@@ -335,7 +350,7 @@ def report_markdown(payload: dict) -> str:
             for record in shown
         ]
         if pooled:
-            names = ", ".join(sorted(Path(record["path"]).stem for record in pooled))
+            names = licensing.pool_names(record["path"] for record in pooled)
             parts.append(f"REUSE pool ({len(pooled)}): {names}")
         evidence = "<br>".join(parts) or "—"
         how = "; ".join(
@@ -387,19 +402,14 @@ def report_markdown(payload: dict) -> str:
         lines.append("None.")
 
     lines += ["", "## License evidence gaps", ""]
-    gaps = payload["components_without_license_evidence"]
-    unidentified = payload["components_with_unidentified_license"]
-    if gaps:
-        lines += ["No license text found for:", ""]
-        lines += [f"- `{item['component']}` — {item['reason']}" for item in gaps]
-        lines.append("")
-    if unidentified:
-        lines += ["License text carried verbatim:", ""]
+    listed = [key for key in GAP_LISTS if payload[key]]
+    for key in listed:
+        lines += [GAP_LISTS[key], ""]
         lines += [
-            f"- `{item['component']}` — {item['reason']}" for item in unidentified
+            f"- `{item['component']}` — {item['reason']}" for item in payload[key]
         ]
         lines.append("")
-    if not gaps and not unidentified:
+    if not listed:
         lines.append(
             "None; every redistributed component ships an identified license."
             if payload["components"]

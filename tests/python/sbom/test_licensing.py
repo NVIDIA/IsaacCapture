@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 import synth
@@ -122,8 +123,10 @@ def test_a_real_license_survives_surrounding_packaging_boilerplate():
     assert [license_id for license_id, _, _ in licensing.identify(wrapped)] == ["Zlib"]
 
 
-def _grant(key: str, name: str, text: str) -> licensing.LicenseEvidence:
-    return licensing.evidence_for(key, "component-file", f"{key}/{name}", text, "grant")
+def _grant(
+    key: str, name: str, text: str, kind: str = "grant"
+) -> licensing.LicenseEvidence:
+    return licensing.evidence_for(key, "component-file", f"{key}/{name}", text, kind)
 
 
 def test_unmatched_grant_becomes_a_license_ref_not_a_guess():
@@ -383,6 +386,30 @@ def test_the_report_says_whether_a_carried_grant_is_named_too(mit_is_newer):
     assert report._carried_reason(evidence) == (
         "its 2 shipped grants are carried verbatim rather than named: declares "
         f"MIT, {_NEWER}"
+    )
+
+
+def test_grants_concluding_nothing_are_not_blamed_on_a_pool(monkeypatch):
+    """Grants conclude nothing where the SPDX grammar rejects their ids or a
+    reference text names none."""
+    mit = _grant("demo", "LICENSE", synth.spdx_text("MIT"))
+    pool = _grant("demo", "LICENSES/MIT.txt", mit.text, kind="pool")
+    unnamed = replace(mit, origin=licensing.SPDX_REFERENCE, identified=None)
+    reason = "its grants (demo/LICENSE) yield no SPDX expression"
+
+    assert licensing.expression([unnamed, pool], "demo")[0] == "NOASSERTION"
+    assert licensing.why_unresolved([unnamed, pool]) == reason
+
+    def rejected(*_args, **_kwargs):
+        raise licensing.ExpressionError("rejected")
+
+    monkeypatch.setattr(licensing, "combine_expressions", rejected)
+
+    assert licensing.expression([mit, pool], "demo")[0] == "NOASSERTION"
+    assert licensing.why_unresolved([mit, pool]) == reason
+    assert licensing.why_unresolved([pool]) == (
+        "only REUSE pool texts ship (MIT); no grant states which of them are "
+        "the component's terms"
     )
 
 
