@@ -84,7 +84,6 @@ _SCP_REMOTE = re.compile(r"^(?P<user>[^@/:]+@)?(?P<host>[^@/:]{2,}):(?!//)/?")
 _VERSION_IN_NAME = re.compile(r"(\d+\.\d+[\w.+-]*?)(?=-|\.tar|\.tgz|\.zip|$)")
 # The ref ExternalProject's clone script checks out; `clone --no-checkout` is not one.
 _GITCLONE_TAG = re.compile(r'(?<![-\w])checkout\s+"(?P<tag>[^"]+)"')
-_INCLUDE_FLAG = re.compile(r"-(?:I|isystem)\s*(\S+)")
 _DEPS_SOURCE = re.compile(r"_deps/(?P<name>[A-Za-z0-9_.+-]+)-src(?:/|$)")
 
 

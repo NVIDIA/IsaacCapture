@@ -37,8 +37,6 @@ from .wheelfile import Entry, WheelInfo
 if TYPE_CHECKING:  # pragma: no cover
     from .evidence import Discovery
 
-FIRST_PARTY = "__first_party__"
-
 # How a component that reached no file got into the build, by kind. Checked-in
 # sources were never fetched, and the collector's own vocabulary says so.
 _ARRIVED = {

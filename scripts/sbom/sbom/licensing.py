@@ -1341,12 +1341,6 @@ def _names_a_holder(notice: str) -> bool:
     return bool(re.search(r"[A-Za-z]{2}", rest))
 
 
-def read_notice(text: str) -> str | None:
-    """The first notice a licence text states, where only one is wanted."""
-    notices = read_notices(text)
-    return notices[0] if notices else None
-
-
 def read_copyright(text: str) -> str | None:
     """The notice a file states about itself, beside its REUSE tag."""
     match = _FILE_COPYRIGHT.search(text)

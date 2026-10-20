@@ -207,11 +207,9 @@ def siblings_of(wheels: list[Path], repo_root: Path) -> dict[str, dict]:
         _, parsed = wheelfile.read_metadata(wheel, wheelfile.dist_info_of(wheel))
         facts = _project_facts(repo_root, parsed)
         known[canonicalize_name(parsed["name"])] = {
-            "name": parsed["name"],
             "version": parsed.get("version") or NOASSERTION,
             "supplier": facts["supplier"],
             "license_declared": facts["license"],
-            "wheel": wheel.name,
         }
     return known
 
