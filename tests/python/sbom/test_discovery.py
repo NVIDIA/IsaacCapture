@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -483,6 +484,30 @@ def test_archive_version_and_license_come_from_the_archive(workspace):
 
     assert record["version_text"] == "1.2.0"
     assert [member.path for member, _ in record["license_members"]] == ["LICENSE.txt"]
+
+
+def test_an_archive_root_sidecar_is_not_a_license_member(tmp_path):
+    archive = tmp_path / "sdk.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("LICENSE.txt", synth.spdx_text("MIT"))
+        handle.writestr("libdemo.so", b"\0")
+        handle.writestr("libdemo.so.license", "SPDX-License-Identifier: MIT\n")
+        handle.writestr("stb.license", synth.spdx_text("MIT"))
+    index = discovery.ArchiveIndex()
+
+    index.add_archive(archive, "sdk.zip")
+
+    assert [
+        member.path for member, _ in index.archives["sdk.zip"]["license_members"]
+    ] == ["LICENSE.txt", "stb.license"]
+
+
+def test_a_toolkit_licence_beside_a_library_is_not_a_sidecar(tmp_path):
+    synth.write(tmp_path / "lib/libx.so.1", "\0")
+    synth.write(tmp_path / "lib/libx.so.1.license", "SPDX-License-Identifier: MIT\n")
+    synth.write(tmp_path / "EULA.txt", "terms\n")
+
+    assert discovery._license_near(tmp_path / "lib/libx.so.1") == tmp_path / "EULA.txt"
 
 
 def test_a_build_tree_without_a_file_api_reply_says_so(workspace):

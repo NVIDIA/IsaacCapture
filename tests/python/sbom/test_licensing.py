@@ -602,6 +602,55 @@ def test_an_index_of_licenses_is_not_a_grant(tmp_path):
     assert licensing.discover_in_tree("catalogue", tmp_path, "catalogue-src") == []
 
 
+@pytest.mark.parametrize(
+    ("name", "beside", "expected"),
+    [
+        ("README.md.license", {"README.md"}, None),
+        ("LICENSE.license", {"LICENSE"}, None),
+        ("stb.license", set(), "grant"),
+        (".license", {""}, "grant"),
+    ],
+)
+def test_a_license_suffix_is_a_sidecar_only_beside_what_it_annotates(
+    name, beside, expected
+):
+    assert licensing.classify(name, beside.__contains__) == expected
+
+
+def test_a_root_sidecar_is_not_a_fetched_tree_s_grant(tmp_path):
+    """Nor is it a README whose licence section the fallback could read."""
+    (tmp_path / "README.md").write_text("# Thing\n\nprose\n", encoding="utf-8")
+    (tmp_path / "README.md.license").write_text(
+        "SPDX-License-Identifier: MIT\n\n## License\nMIT\n", encoding="utf-8"
+    )
+
+    assert licensing.discover_in_tree("thing", tmp_path, "thing-src") == []
+
+
+def test_root_license_named_files_are_kept_unless_they_annotate_one(tmp_path):
+    synth.write(tmp_path / "LICENSE", synth.spdx_text("MIT"))
+    synth.write(tmp_path / "stb.license", synth.spdx_text("MIT"))
+    synth.write(tmp_path / ".license", synth.spdx_text("MIT"))
+    synth.write(tmp_path / "mit", "data\n")
+    synth.write(tmp_path / "mit.license", "SPDX-License-Identifier: MIT\n")
+
+    evidence = licensing.discover_in_tree("thing", tmp_path, "thing-src")
+
+    assert [(item.path, item.kind) for item in evidence] == [
+        ("thing-src/.license", "grant"),
+        ("thing-src/LICENSE", "grant"),
+        ("thing-src/stb.license", "grant"),
+    ]
+
+
+def test_an_orphan_license_file_alone_is_a_fetched_tree_s_grant(tmp_path):
+    synth.write(tmp_path / "stb.license", synth.spdx_text("MIT"))
+
+    (item,) = licensing.discover_in_tree("thing", tmp_path, "thing-src")
+
+    assert (item.kind, item.identified) == ("grant", "MIT")
+
+
 def test_a_project_title_is_not_a_license_section(tmp_path):
     """`# License List Data` heads a README; it does not grant anything."""
     (tmp_path / "README.md").write_text(

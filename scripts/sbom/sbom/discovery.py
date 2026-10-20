@@ -2170,7 +2170,9 @@ def _license_near(library: Path) -> Path | None:
     levels = 3 if root is None else len(current.relative_to(root).parts) + 1
     for _ in range(levels):
         for entry in sorted(current.iterdir()) if current.is_dir() else []:
-            if entry.is_file() and licensing.classify(entry.name):
+            if entry.is_file() and licensing.classify(
+                entry.name, licensing.files_in(current)
+            ):
                 return entry
         if current.parent == current:
             break
@@ -2290,6 +2292,11 @@ class ArchiveIndex:
             "size": size,
             "member_count": len(members),
         }
+        at_root = frozenset(
+            Path(member.path).name
+            for member, _ in members
+            if Path(member.path).parent.as_posix() in {".", ""}
+        )
         for member, data in members:
             # `data` is the whole member only at the archive root; elsewhere it
             # is the head kept for exactly this, so ask only for the build-id.
@@ -2300,9 +2307,11 @@ class ArchiveIndex:
             self.by_hash.setdefault(member.sha256, member)
             self.all_by_hash.setdefault(member.sha256, []).append(member)
             self.by_name.setdefault(Path(member.path).name, []).append(member)
-            self._maybe_license(display, member, data)
+            self._maybe_license(display, member, data, at_root)
 
-    def _maybe_license(self, display: str, member: Member, data: bytes) -> None:
+    def _maybe_license(
+        self, display: str, member: Member, data: bytes, at_root: frozenset[str]
+    ) -> None:
         name = Path(member.path).name
         if Path(member.path).parent.as_posix() not in {".", ""}:
             return  # only the archive root states the bundle's own terms
@@ -2312,7 +2321,7 @@ class ArchiveIndex:
             text = data.decode("utf-8", "replace").strip().splitlines()
             self.archives[display]["version_text"] = text[0].strip() if text else ""
             return
-        if not licensing.classify(name):
+        if not licensing.classify(name, at_root.__contains__):
             return
         self.archives[display].setdefault("license_members", []).append((member, data))
 

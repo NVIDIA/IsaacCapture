@@ -47,6 +47,18 @@ def test_a_component_with_no_license_text_blocks_the_build(workspace):
         _rebuild(workspace, synth.wheel_payload(workspace))
 
 
+def test_a_root_sidecar_is_not_a_fetched_component_s_license_text(workspace):
+    alpha = workspace.build / "_deps/alpha-src"
+    (alpha / "LICENSE").unlink()
+    (alpha / "README.md").write_text("# alpha\n", encoding="utf-8")
+    (alpha / "README.md.license").write_text(
+        "SPDX-License-Identifier: MIT\n", encoding="utf-8"
+    )
+
+    with pytest.raises(build_module.BuildError, match=r"no license text.*alpha"):
+        _rebuild(workspace, synth.wheel_payload(workspace))
+
+
 def test_an_empty_license_file_does_not_count_as_evidence(workspace):
     # delta reaches the wheel through a static archive, so emptying its license
     # leaves the wheel's contents untouched and isolates the evidence gate.

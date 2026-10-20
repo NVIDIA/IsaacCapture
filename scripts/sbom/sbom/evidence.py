@@ -133,7 +133,8 @@ def _archive_components(
                 "archive-member",
                 f"{display}!{member.path}",
                 data.decode("utf-8", "replace"),
-                licensing.classify(Path(member.path).name) or "grant",
+                # Sidecars were set aside when the member was kept.
+                licensing.classify(Path(member.path).name, lambda _: False) or "grant",
             )
             for member, data in record.get("license_members", [])
         ]

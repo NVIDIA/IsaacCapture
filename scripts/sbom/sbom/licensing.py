@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -527,8 +528,20 @@ def evidence_for(
     )
 
 
-def classify(name: str) -> str | None:
-    if Path(name).suffix.lower() in _SKIP_SUFFIXES:
+def files_in(directory: Path) -> Callable[[str], bool]:
+    """Whether `directory` holds a file of a given name: `is_sidecar`'s `beside`."""
+    return lambda name: (directory / name).is_file()
+
+
+def is_sidecar(name: str, beside: Callable[[str], bool]) -> bool:
+    """A REUSE `.license` sidecar: the annotation of a file `beside` finds next
+    to it. Named so with nothing to annotate, it is a licence file."""
+    annotated = name.removesuffix(".license")
+    return annotated not in {name, ""} and beside(annotated)
+
+
+def classify(name: str, beside: Callable[[str], bool]) -> str | None:
+    if Path(name).suffix.lower() in _SKIP_SUFFIXES or is_sidecar(name, beside):
         return None
     if _GRANT_NAMES.search(name):
         return "grant"
@@ -545,7 +558,7 @@ def discover_in_tree(
     candidates: list[tuple[Path, str]] = []
 
     for entry in sorted(root.iterdir()) if root.is_dir() else []:
-        if entry.is_file() and (kind := classify(entry.name)):
+        if entry.is_file() and (kind := classify(entry.name, files_in(root))):
             candidates.append((entry, kind))
         elif entry.is_dir() and entry.name.upper() in {"LICENSES", "LICENSE"}:
             candidates.extend(
@@ -562,7 +575,11 @@ def discover_in_tree(
             path.is_file()
             and path.parent != root
             and path.parent.name.upper() not in {"LICENSES", "LICENSE"}
-            and (classify(path.name) or _NOTICE_NAMES.match(path.name))
+            and (
+                classify(path.name, files_in(path.parent))
+                or _NOTICE_NAMES.match(path.name)
+                or is_sidecar(path.name, files_in(path.parent))
+            )
         ):
             candidates.append((path, "nested"))
 
@@ -573,9 +590,11 @@ def discover_in_tree(
         display = f"{display_prefix}/{path.relative_to(root).as_posix()}"
         item = evidence_for(component, "component-file", display, text, kind)
         if kind == "nested":
-            annotated = path.name.removesuffix(".license")
-            sidecar = path.with_name(annotated) if annotated else path
-            covered = sidecar if sidecar != path and sidecar.is_file() else path.parent
+            covered = (
+                path.with_name(path.name.removesuffix(".license"))
+                if is_sidecar(path.name, files_in(path.parent))
+                else path.parent
+            )
             scope = f"{display_prefix}/{covered.relative_to(root).as_posix()}"
             item = replace(item, scope=scope)
         found.append(item)
@@ -591,7 +610,11 @@ def _readme_fallback(
 ) -> list[LicenseEvidence]:
     """Some upstreams state the grant in a README section and ship no license file."""
     for entry in sorted(root.iterdir()) if root.is_dir() else []:
-        if not entry.is_file() or not _README_NAMES.match(entry.name):
+        if (
+            not entry.is_file()
+            or not _README_NAMES.match(entry.name)
+            or is_sidecar(entry.name, files_in(root))
+        ):
             continue
         text = _read(entry)
         if text is None:
