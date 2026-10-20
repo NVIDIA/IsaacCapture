@@ -198,6 +198,75 @@ class TaskTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 session.wait_for_export(timeout=0.001)
 
+    def test_terminal_worker_error_is_reported_without_polling(self):
+        for offline in (False, True):
+            for initialized in (False, True):
+                with (
+                    self.subTest(offline=offline, initialized=initialized),
+                    TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    if initialized:
+                        value = observation(root)
+                        value["exported_successful_episodes"] = 1
+                        (root / "sim-state.json").write_text(json.dumps(value))
+                    value = completion_snapshot(root, "one", 23)
+                    (root / "sim-state.json").write_text(json.dumps(value))
+                    session = FrankaTaskSession(
+                        observation_dir=root, output=root / "task"
+                    )
+                    session.client.state = (
+                        Mock(side_effect=URLError("disconnected"))
+                        if offline
+                        else Mock(return_value=value)
+                    )
+                    with (
+                        patch(
+                            "isaaccapture_examples.synthetic_xr.franka.session.time.sleep",
+                            side_effect=AssertionError(
+                                "Terminal failures must not retry"
+                            ),
+                        ) as sleep,
+                        self.assertRaisesRegex(
+                            RuntimeError,
+                            "Observer failed: Worker exited with status 23",
+                        ),
+                    ):
+                        session.wait_for_export()
+                    sleep.assert_not_called()
+                    self.assertFalse((root / "task/result.json").exists())
+
+    def test_export_retries_nonterminal_snapshot_until_orderly_completion(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "task"
+            output.mkdir()
+            value = observation(root)
+            (root / "sim-state.json").write_text(json.dumps(value))
+            session = FrankaTaskSession(observation_dir=root, output=output)
+            session.run_id = "one"
+            session.client.state = Mock(side_effect=URLError("disconnected"))
+            session.mark = Mock()
+
+            def finish_worker(_):
+                value.update(
+                    exported_successful_episodes=1, native_environment_closed=True
+                )
+                (root / "sim-state.json").write_text(json.dumps(value))
+                (root / "sim-state.json").write_text(
+                    json.dumps(completion_snapshot(root, "one", 0))
+                )
+
+            with patch(
+                "isaaccapture_examples.synthetic_xr.franka.session.time.sleep",
+                side_effect=finish_worker,
+            ) as sleep:
+                self.assertEqual(session.wait_for_export()["phase"], "completed")
+            sleep.assert_called_once()
+            self.assertEqual(
+                json.loads((output / "result.json").read_text())["status"], "PASS"
+            )
+
     def test_invalid_tool_and_gripper_inputs_never_send_motion(self):
         session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
         session.controller = Mock()
