@@ -496,6 +496,9 @@ and streams them to an XR headset — one plane per camera, aspect-fit — eithe
 robot to a workstation over the network (split mode). It can also stream <a class="reference internal" href="#recorded-camera-streaming"><span class="std std-ref">recorded camera
 data</span></a> — a video file replayed in place of a live camera — and render
 to a desktop window instead of the headset.</p>
+<p>Controllers adjust the camera view, including its placement, shape, and stereo settings.
+This sample does not send robot commands or record robot demonstrations; see <a class="reference internal" href="#next-steps">Next steps</a>
+for robot-control and recording integrations.</p>
 <p>The sample lives at <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz" rel="noopener noreferrer" target="_blank">examples/camera_viz/</a>. This page walks you
 from setup and a camera-free first run to real cameras and the robot → workstation split mode.
 It is the primary user guide for the sample, including commands, configuration, controller
@@ -869,6 +872,11 @@ needs values it supports (inspect them with <code class="docutils literal notran
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>run<span class="w"> </span>configs/v4l2.yaml<span class="w">     </span><span class="c1"># or oakd.yaml / zed.yaml</span>
 </pre></div>
 </div>
+<p><strong>ZED Mini: UVC or SDK stereo.</strong> In the 2560×720 UVC mode used by <code class="docutils literal notranslate"><span class="pre">v4l2.yaml</span></code>, the left
+and right camera images are packed side by side. The sample displays that entire image on one
+plane, with the same packed image in both headset eyes. For per-eye stereo, install ZED support
+with <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">setup</span> <span class="pre">--with-zed</span></code> and use <code class="docutils literal notranslate"><span class="pre">configs/zed.yaml</span></code> (<code class="docutils literal notranslate"><span class="pre">type:</span> <span class="pre">zed</span></code>,
+<code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code>), which retrieves a separate image for each eye through the ZED SDK.</p>
 <p><strong>You should see</strong> the same startup lines as above with the camera’s tag (<code class="docutils literal notranslate"><span class="pre">[v4l2]</span></code>,
 <code class="docutils literal notranslate"><span class="pre">[oakd]</span></code>, <code class="docutils literal notranslate"><span class="pre">[zed]</span></code>) and the live feed. Multiple entries in the <code class="docutils literal notranslate"><span class="pre">cameras</span></code> list render as one
 plane each.</p>
@@ -1412,6 +1420,10 @@ extensions and forwards the handles through <code class="docutils literal notran
 <li><p><a class="reference internal" href="#split-mode"><span class="std std-ref">Stream from a robot</span></a> when capture and viewing run on separate machines.</p></li>
 <li><p><a class="reference internal" href="../development/televiz.html#sharing-the-xr-session"><span class="std std-ref">Share the XR session with teleoperation</span></a> and map inputs with
 the <a class="reference internal" href="retargeting/index.html"><span class="doc">retargeting interface</span></a>.</p></li>
+<li><p>Control a physical SO-101 and record demonstrations with
+<a class="reference internal" href="../integrations/lerobot/data_collection_real.html"><span class="doc">LeRobot</span></a>.</p></li>
+<li><p>Teleoperate a simulated SO-101 and record demonstrations with
+<a class="reference internal" href="../integrations/lerobot/data_collection_sim.html"><span class="doc">Isaac Lab</span></a>.</p></li>
 </ul>
 </section>
 </section>
