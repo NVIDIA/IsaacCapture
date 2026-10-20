@@ -9,7 +9,7 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
 .. code-block:: text
    :class: code-100col
 
-   IsaacTeleop/
+   IsaacCapture/
    ├── CMakeLists.txt              # Top-level: deps, core, examples, plugins, etc.
    ├── cmake/
    │   ├── DepthAIVcpkgManifest.cmake  # OAK/DepthAI vcpkg manifest (pre-project)
@@ -57,22 +57,21 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``:
+After building, install the wheels with ``uv`` or ``pip``, pinning the local build's version
+``X.Y+local`` (``X.Y`` from the repository's ``VERSION`` file):
 
 .. code-block:: bash
 
-   # Install the wheel by path so a newer release on the index cannot win over the local build
-   # (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.
-   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
+   # The pin keeps a newer release on the index from winning over the local build.
    # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
-   uv pip install "${WHEEL}" --find-links=./install/wheels/ --reinstall-package isaaccapture
+   uv pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install install/wheels/isaaccapture-*.whl
+   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
-``import isaacteleop`` resolves without a second install; see :doc:`migration`.
+``import isaacteleop`` resolves without a second install; see :doc:`../development/migration`.
 
 Installing from source with pip (scikit-build-core)
 ---------------------------------------------------
@@ -91,7 +90,7 @@ driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
 For the walkthrough — how this scoped build differs from the classic flow (ABI,
 omitted type stubs, versioning) and the caveat on iterating on pure-Python
 subpackages under an editable install — see
-:doc:`/getting_started/build_from_source/index`.
+:doc:`/development/build_from_source/index`.
 
 Build directory layout and per-Python-version builds
 ----------------------------------------------------
