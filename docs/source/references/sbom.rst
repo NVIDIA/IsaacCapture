@@ -47,7 +47,8 @@ Integrity and provenance are the packaging ecosystem's job, not this document's:
 
 `PEP 740 <https://peps.python.org/pep-0740/>`_ attestations
    Signed attestations binding a publisher identity to an artifact's hash, served
-   through PyPI's Integrity API. That is the provenance mechanism.
+   through PyPI's Integrity API. That is the ecosystem's mechanism for binding
+   provenance to a distribution; these releases are not published with attestations.
 
 The SBOM *describes* what those files are — where each came from, under what license.
 Its per-file digests are there so the description can be shown to belong to the wheel in
