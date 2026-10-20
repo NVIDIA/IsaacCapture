@@ -23,7 +23,6 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import re
 import shlex
 import subprocess
@@ -2088,36 +2087,110 @@ def archive_members(path: Path) -> int | None:
 
 
 def _identify_host_package(library: Path, origin: dict) -> dict:
-    """Name the distro package that owns a resolved host library."""
-    owned = _ask("dpkg-query", "-S", str(library))
-    if ":" not in owned:
+    """Name the package dpkg says owns a resolved host library."""
+    # dpkg names a multiarch package with its architecture, `libc6:i386`, and
+    # dpkg-query -W and apt answer for one architecture only when asked so.
+    qualified = _dpkg_owner(library)
+    if not qualified:
         return origin
-    package = owned.split(":", 1)[0].strip()
+    package = qualified.partition(":")[0]
     origin["package"] = package
-    origin["supplier"] = _package_supplier(package)
-    origin["version"] = _package_field(package, "Version")
-    origin["distro"] = _os_release_id()
+    origin["supplier"] = _package_supplier(qualified)
+    origin["version"] = _package_field(qualified, "Version")
+    origin["apt_origin"], origin["apt_origin_from"] = _apt_origin(qualified)
     copyright_file = Path("/usr/share/doc") / package / "copyright"
     if copyright_file.is_file():
         origin["copyright"] = str(copyright_file)
     return origin
 
 
+# A package name as dpkg prints it, with its architecture where it has one.
+_DPKG_PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.-]+(?::[a-z0-9-]+)?$")
+
+
+def _dpkg_owner(library: Path) -> str | None:
+    """The first package `dpkg-query -S` names as owning `library`.
+
+    Its last line answers, `<package>[, <package>...]: <path>`; diversion lines
+    come before it, translated. Where `library` is diverted, the file there may
+    not be the listed package's, so none is named.
+    """
+    lines = _ask("dpkg-query", "-S", str(library)).splitlines()
+    suffix = f": {library}"
+    if not lines or any(line.endswith(suffix) for line in lines[:-1]):
+        return None
+    if not lines[-1].endswith(suffix):
+        return None
+    owner = lines[-1].removesuffix(suffix).split(",", 1)[0].strip()
+    return owner if _DPKG_PACKAGE.match(owner) else None
+
+
 def _package_field(package: str, field: str) -> str | None:
-    """One field of a distro package's metadata, as dpkg records it."""
+    """One field of a package's metadata, as dpkg records it."""
     return _ask("dpkg-query", "-W", f"-f=${{{field}}}", package).strip() or None
 
 
-def _os_release_id() -> str | None:
-    """The distribution this package manager belongs to, for the purl type."""
-    try:
-        return platform.freedesktop_os_release().get("ID") or None
-    except OSError:
-        return None
+# `apt-cache policy` lines. Its headings are translated; these are not. With no
+# package named: a source (`%4i <description>`) and, directly under it, its
+# Release fields. In a version table: a version (`***` when installed, perhaps
+# with a note such as `(phased 20%)`) and, indented further, a source listing it.
+_APT_SOURCE = re.compile(r"^(?P<indent> *)-?\d+ (?P<source>\S.*?)\s*$")
+_APT_RELEASE = re.compile(r"^ {5}release (?P<fields>.*)$")
+_APT_RELEASE_FIELD = re.compile(r",(?=[a-z]=)")
+_APT_VERSION = re.compile(r"^ (?P<installed>\*\*\*|   ) \S+ -?\d+(?: .*)?$")
+
+
+@functools.lru_cache(maxsize=1)
+def _apt_releases() -> dict[str, dict[str, str]]:
+    """Each source apt knows, with the fields of its Release file (`o` is Origin)."""
+    releases: dict[str, dict[str, str]] = {}
+    source = None
+    for line in _ask("apt-cache", "policy").splitlines():
+        listed = _APT_SOURCE.match(line)
+        if listed and len(listed["indent"]) <= 3:
+            source = listed["source"]
+            releases[source] = {}
+        elif source and (release := _APT_RELEASE.match(line)):
+            releases[source] = dict(
+                item.partition("=")[::2]
+                for item in _APT_RELEASE_FIELD.split(release["fields"])
+            )
+            source = None
+        else:
+            source = None
+    return releases
+
+
+@functools.lru_cache(maxsize=None)
+def _apt_origin(package: str) -> tuple[str | None, str | None]:
+    """`(Origin, "installed version")` where the archives listing the installed
+    version agree on one, ignoring case; else `(Origin, "other versions")` where
+    none lists it and those listing other versions agree; else `(None, None)`.
+    """
+    releases = _apt_releases()
+    # Installed or not: lowercased Origin ("" for none) -> first spelling.
+    origins: dict[bool, dict[str, str]] = {True: {}, False: {}}
+    installed = False
+    for line in _ask("apt-cache", "policy", package).splitlines():
+        if version := _APT_VERSION.match(line):
+            installed = version["installed"] == "***"
+        elif (listed := _APT_SOURCE.match(line)) and len(listed["indent"]) >= 5:
+            fields = releases.get(listed["source"], {})
+            # dpkg's status file, release `a=now`, says what is installed, not
+            # where it came from.
+            if fields.get("a") != "now":
+                origin = fields.get("o", "")
+                origins[installed].setdefault(origin.lower(), origin)
+    decided_by_installed = bool(origins[True])
+    found = origins[decided_by_installed]
+    if len(found) == 1 and "" not in found:
+        decided = "installed version" if decided_by_installed else "other versions"
+        return next(iter(found.values())), decided
+    return None, None
 
 
 def _package_supplier(package: str) -> str | None:
-    """Who ships a distro package, in the form SPDX wants.
+    """Who ships a package dpkg can name, in the form SPDX wants.
 
     The package name is not a supplier: `libbsd0` names the thing, not whoever
     provided it. dpkg records a maintainer, which is the answer.
@@ -2193,6 +2266,25 @@ def _system_notice(evidence: list[licensing.LicenseEvidence]) -> str:
     return "NOASSERTION"
 
 
+def _system_purl(soname: str, origin: dict) -> str:
+    """`pkg:deb/<vendor>/...` for a package an archive's Origin names, else generic.
+
+    The deb type requires its namespace, the vendor, lowercased. ECMA-427 5.6.3
+    keeps `/` out of a namespace segment and a URL host out of a namespace, so
+    an Origin that is a URL or a host name names no vendor either.
+    """
+    package = origin.get("package")
+    vendor = (origin.get("apt_origin") or "").lower() if package else ""
+    if "/" in vendor or ("." in vendor and not re.search(r"\s", vendor)):
+        vendor = ""
+    return PackageURL(
+        type="deb" if vendor else "generic",
+        namespace=vendor or None,
+        name=package or soname,
+        version=origin.get("version"),
+    ).to_string()
+
+
 def system_component(
     soname: str, origin: dict, route: str | None = None, key: str | None = None
 ) -> Component:
@@ -2232,17 +2324,7 @@ def system_component(
         supplier=origin.get("supplier") or "NOASSERTION",
         copyright_text=_system_notice(evidence),
         homepage="NOASSERTION",
-        # A distro package the machine can name resolves; pkg:generic does not.
-        purl=(
-            PackageURL(
-                type="deb",
-                namespace=origin.get("distro"),
-                name=origin["package"],
-                version=origin.get("version"),
-            ).to_string()
-            if origin.get("package")
-            else PackageURL(type="generic", name=soname).to_string()
-        ),
+        purl=_system_purl(soname, origin),
         version=origin.get("version") or "NOASSERTION",
         download_location="NOASSERTION",
         source_info=" ".join(details),

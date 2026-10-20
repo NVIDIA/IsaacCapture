@@ -63,8 +63,11 @@ def _license_data_loaded(license_data):
 
 @pytest.fixture(autouse=True)
 def _fresh_checkout_answers():
-    """Each test builds its own checkouts; a cached answer is a previous test's."""
+    """Each test builds its own checkouts and fakes its own host; a cached
+    answer is a previous test's."""
     discovery._is_own_checkout.cache_clear()
+    discovery._apt_releases.cache_clear()
+    discovery._apt_origin.cache_clear()
 
 
 @pytest.fixture(scope="session")

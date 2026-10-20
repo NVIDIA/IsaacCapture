@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import synth
+from packageurl import PackageURL
 from sbom import build as build_module
 from sbom import discovery
 from sbom import document as document_module
@@ -549,7 +552,8 @@ def test_a_packaged_archive_is_inventoried_through_its_package(
         copyright_file,
         supplier="Organization: Example Distro (devel@example.com)",
         version="1.0-1",
-        distro="ubuntu",
+        apt_origin="Ubuntu",
+        apt_origin_from="installed version",
     )
     _link(workspace, str(archive))
 
@@ -563,11 +567,323 @@ def test_a_packaged_archive_is_inventoried_through_its_package(
     evidence = collected["build-evidence"]
     record = evidence["static_inputs"][str(archive)]
     assert record["package"] == "libsquash-dev"
+    assert record["apt_origin"] == "Ubuntu"
+    assert record["apt_origin_from"] == "installed version"
     assert record["linked_by"] == ["ext"]
     linked = next(
         item for item in evidence["link_artifacts"] if item["target"] == "ext"
     )
     assert linked["static_inputs"] == [str(archive)]
+
+
+# `apt-cache policy` as apt prints it. NVIDIA's CUDA repository is a flat one,
+# `deb <uri>/ /`, listed with an empty distribution.
+UBUNTU_SOURCE = "http://archive.ubuntu.com/ubuntu jammy-updates/main amd64 Packages"
+NVIDIA_SOURCE = (
+    "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64"
+    "  Packages"
+)
+SECURITY_SOURCE = "http://security.ubuntu.com/ubuntu jammy-security/main amd64 Packages"
+FLAT_SOURCE = "https://repo.example.com/apt ./ Packages"
+# A repository with no Release file states no Origin.
+BARE_SOURCE = "file:/srv/debs ./ Packages"
+# libnvidia-container's Origin is a URL.
+URL_ORIGIN = "https://nvidia.github.io/libnvidia-container/stable"
+URL_SOURCE = f"{URL_ORIGIN}/deb/amd64  Packages"
+# A mirror spelling Ubuntu's Origin in lower case.
+MIRROR_SOURCE = "http://mirror.example.org/ubuntu jammy-updates/main amd64 Packages"
+HOST_SOURCE = "https://packages.example.com/apt stable/main amd64 Packages"
+APT_SOURCES = f"""Package files:
+ 100 /var/lib/dpkg/status
+     release a=now
+ 600 {NVIDIA_SOURCE}
+     release o=NVIDIA,l=NVIDIA CUDA,c=
+     origin developer.download.nvidia.com
+ 500 {UBUNTU_SOURCE}
+     release v=22.04,o=Ubuntu,a=jammy-updates,n=jammy,l=Ubuntu,c=main,b=amd64
+     origin archive.ubuntu.com
+ 500 {FLAT_SOURCE}
+     release o=Example,c=
+     origin repo.example.com
+ 500 {SECURITY_SOURCE}
+     release v=22.04,o=Ubuntu,a=jammy-security,n=jammy,l=Ubuntu,c=main,b=amd64
+     origin security.ubuntu.com
+ 500 {BARE_SOURCE}
+ 500 {URL_SOURCE}
+     release o={URL_ORIGIN},l=NVIDIA CORPORATION <cudatools@nvidia.com>,c=
+     origin nvidia.github.io
+ 500 {MIRROR_SOURCE}
+     release o=ubuntu,a=jammy-updates,c=main,b=amd64
+     origin mirror.example.org
+ 500 {HOST_SOURCE}
+     release o=packages.example.com,a=stable,c=main,b=amd64
+     origin packages.example.com
+Pinned packages:
+"""
+
+
+def _version_table(*versions: tuple) -> str:
+    """`(version, installed, sources[, note])` per version, as apt lists them."""
+    lines = ["libsquash-dev:", "  Installed: 1.0-1", "  Version table:"]
+    for version, installed, sources, *note in versions:
+        lines.append(
+            " ".join([f" {'***' if installed else '   '} {version} 500", *note])
+        )
+        lines += [f"        500 {source}" for source in sources]
+    return "\n".join(lines) + "\n"
+
+
+STATUS = "/var/lib/dpkg/status"
+LIBRARY = "/usr/lib/libsquash.a"
+
+
+def _host_package(
+    monkeypatch,
+    policy,
+    owned=f"libsquash-dev:amd64: {LIBRARY}\n",
+    qualified="libsquash-dev:amd64",
+    sources=None,
+):
+    """What `_identify_host_package` makes of dpkg answering `owned`, and what it
+    asked. dpkg-query -W and apt answer only for `qualified`."""
+    answers = {
+        ("dpkg-query", "-S", LIBRARY): owned,
+        ("dpkg-query", "-W", "-f=${Version}", qualified): "1.0-1",
+        ("apt-cache", "policy"): APT_SOURCES if sources is None else sources,
+        ("apt-cache", "policy", qualified): policy,
+    }
+    asked = []
+
+    def ask(*command, env=None):
+        asked.append(command)
+        return answers.get(command, "")
+
+    monkeypatch.setattr(discovery, "_ask", ask)
+    return discovery._identify_host_package(Path(LIBRARY), {}), asked
+
+
+@pytest.mark.parametrize(
+    ("policy", "namespace", "decided"),
+    [
+        pytest.param(
+            _version_table(
+                ("1.0-1", True, [UBUNTU_SOURCE, STATUS]),
+                ("0.9-1", False, [FLAT_SOURCE]),
+            ),
+            "ubuntu",
+            "installed version",
+            id="installed-version-decides-not-another",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [NVIDIA_SOURCE, STATUS])),
+            "nvidia",
+            "installed version",
+            id="nvidia",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [FLAT_SOURCE])),
+            "example",
+            "installed version",
+            id="flat",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [UBUNTU_SOURCE, FLAT_SOURCE, STATUS])),
+            None,
+            None,
+            id="disagreeing",
+        ),
+        pytest.param(
+            _version_table(
+                ("1.0-1", True, [BARE_SOURCE, STATUS]),
+                ("0.9-1", False, [UBUNTU_SOURCE]),
+            ),
+            None,
+            None,
+            id="no-origin",
+        ),
+        # As for libc6 in an ubuntu:22.04 image.
+        pytest.param(
+            _version_table(
+                ("1.1-1", False, [UBUNTU_SOURCE, SECURITY_SOURCE]),
+                ("1.0-1", True, [STATUS]),
+                ("0.9-1", False, [UBUNTU_SOURCE]),
+            ),
+            "ubuntu",
+            "other versions",
+            id="installed-version-unlisted-other-versions-decide",
+        ),
+        pytest.param(
+            _version_table(
+                ("1.1-1", False, [UBUNTU_SOURCE]),
+                ("1.0-1", True, [STATUS]),
+                ("0.9-1", False, [FLAT_SOURCE]),
+            ),
+            None,
+            None,
+            id="installed-version-unlisted-others-disagree",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [STATUS])), None, None, id="local-deb"
+        ),
+        pytest.param("", None, None, id="apt-knows-nothing"),
+        # A phased update carries a note after its priority, translated.
+        pytest.param(
+            _version_table(
+                ("1.0-1", True, [UBUNTU_SOURCE, STATUS], "(phased 20%)"),
+                ("0.9-1", False, [FLAT_SOURCE]),
+            ),
+            "ubuntu",
+            "installed version",
+            id="phased-installed",
+        ),
+        pytest.param(
+            _version_table(
+                ("1.0-1", True, [NVIDIA_SOURCE, STATUS]),
+                ("0.9-1", False, [UBUNTU_SOURCE], "(phased 20%)"),
+            ),
+            "nvidia",
+            "installed version",
+            id="phased-after-installed",
+        ),
+        pytest.param(
+            _version_table(
+                ("1.0-1", True, [NVIDIA_SOURCE, STATUS]),
+                ("0.9-1", False, [UBUNTU_SOURCE], "(gestaffelt 20%)"),
+            ),
+            "nvidia",
+            "installed version",
+            id="phased-german",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [UBUNTU_SOURCE, MIRROR_SOURCE, STATUS])),
+            "ubuntu",
+            "installed version",
+            id="origins-agree-ignoring-case",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [URL_SOURCE, STATUS])),
+            None,
+            "installed version",
+            id="url-origin-is-no-namespace",
+        ),
+        pytest.param(
+            _version_table(("1.0-1", True, [HOST_SOURCE, STATUS])),
+            None,
+            "installed version",
+            id="host-origin-is-no-namespace",
+        ),
+    ],
+)
+def test_a_packages_namespace_is_the_archive_that_publishes_it(
+    monkeypatch, policy, namespace, decided
+):
+    origin, _ = _host_package(monkeypatch, policy)
+
+    purl = discovery.system_component("libsquash.a", origin).purl
+
+    # pkg:deb requires its vendor namespace; without one, nothing is claimed.
+    expected = f"pkg:deb/{namespace}/" if namespace else "pkg:generic/"
+    assert purl == f"{expected}libsquash-dev@1.0-1"
+    parsed = PackageURL.from_string(purl)
+    assert (parsed.type, parsed.namespace, parsed.name, parsed.version) == (
+        "deb" if namespace else "generic",
+        namespace,
+        "libsquash-dev",
+        "1.0-1",
+    )
+    assert origin["apt_origin_from"] == decided
+
+
+@pytest.mark.parametrize(
+    ("owned", "qualified"),
+    [
+        pytest.param(
+            f"libsquash-dev, libsquash-extra:amd64: {LIBRARY}\n",
+            "libsquash-dev",
+            id="several-owners-the-first-as-printed",
+        ),
+        pytest.param(
+            f"libsquash-dev:i386: {LIBRARY}\n",
+            "libsquash-dev:i386",
+            id="foreign-architecture",
+        ),
+    ],
+)
+def test_dpkg_and_apt_are_asked_about_the_owner_dpkg_names(
+    monkeypatch, owned, qualified
+):
+    origin, asked = _host_package(
+        monkeypatch,
+        _version_table(("1.0-1", True, [UBUNTU_SOURCE])),
+        owned=owned,
+        qualified=qualified,
+    )
+
+    assert origin["package"] == "libsquash-dev"
+    assert origin["version"] == "1.0-1"
+    assert origin["apt_origin"] == "Ubuntu"
+    assert {
+        ("dpkg-query", "-W", "-f=${Version}", qualified),
+        ("dpkg-query", "-W", "-f=${Maintainer}", qualified),
+        ("apt-cache", "policy", qualified),
+    } <= set(asked)
+
+
+@pytest.mark.parametrize(
+    "owned",
+    [
+        pytest.param(
+            f"diversion by squash-gl from: {LIBRARY}\n"
+            f"diversion by squash-gl to: {LIBRARY}.distrib\n",
+            id="diverted-unowned",
+        ),
+        pytest.param(
+            f"diversion by squash-gl from: {LIBRARY}\n"
+            f"diversion by squash-gl to: {LIBRARY}.distrib\n"
+            f"libsquash-dev:amd64: {LIBRARY}\n",
+            id="diverted-the-file-may-not-be-the-owners",
+        ),
+        pytest.param(
+            f"diversion by squash-gl to: {LIBRARY}\n",
+            id="only-a-diversion-names-the-path",
+        ),
+    ],
+)
+def test_a_diversion_line_names_no_owner(monkeypatch, owned):
+    origin, _ = _host_package(monkeypatch, "", owned=owned)
+
+    assert origin.get("package") is None
+    purl = discovery.system_component("libsquash.a", origin).purl
+    assert purl == "pkg:generic/libsquash.a"
+
+
+def test_apt_sources_are_read_whatever_the_language(monkeypatch):
+    """Headings are translated; a pinned package may be named `release`."""
+    sources = (
+        APT_SOURCES.replace("Package files:", "Fichiers du paquet :").replace(
+            "Pinned packages:", "Paquets épinglés :"
+        )
+        + "     release -> 2.0-1 avec la priorité 990\n"
+        + "     123 -> 1.0 avec la priorité 1001\n"
+    )
+    _host_package(monkeypatch, "", sources=sources)
+
+    releases = discovery._apt_releases()
+
+    assert set(releases) == {
+        STATUS,
+        NVIDIA_SOURCE,
+        UBUNTU_SOURCE,
+        FLAT_SOURCE,
+        SECURITY_SOURCE,
+        BARE_SOURCE,
+        URL_SOURCE,
+        MIRROR_SOURCE,
+        HOST_SOURCE,
+    }
+    assert releases[BARE_SOURCE] == {}
+    assert releases[NVIDIA_SOURCE]["o"] == "NVIDIA"
+    assert releases[URL_SOURCE]["o"] == URL_ORIGIN
 
 
 # A machine-readable copyright file whose licence paragraph quotes a notice.

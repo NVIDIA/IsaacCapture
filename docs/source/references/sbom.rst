@@ -349,12 +349,21 @@ last thing asked is the build machine itself: resolve the library's SONAME, and 
 license from the supplying package's copyright file, or from a license file beside the
 library for toolchains that install outside the package manager. Resolving the SONAME is
 what licenses the claim — a library the machine cannot find is reported as unexplained,
-not attributed to something nobody located. No repair tool's directory name is consulted,
-so a library the build produced is attributed to the build wherever it ends up. Its
-copyright notice is read only from the ``Copyright:`` fields of a machine-readable Debian
-copyright file, leaving out stanzas that cover only the Debian packaging; any other
-text — an EULA, a free-form copyright file — quotes the notices of what it bundles, so
-none is asserted, and the packaged text still carries them all.
+not attributed to something nobody located. The package's ``pkg:deb`` purl is namespaced
+by the archive that publishes the installed version — the ``Origin`` apt records for it,
+``ubuntu`` for Ubuntu's, ``nvidia`` for NVIDIA's CUDA repository. Where no archive lists
+the installed version — superseded, typically, but equally a local rebuild — the archives
+listing its other versions decide, and the build evidence says so. ``pkg:deb`` requires
+that vendor, so where none can be named — no archive lists the package, as for a local
+``.deb``; the deciding archives disagree, ignoring case, or name no ``Origin``; or the
+``Origin`` is a URL or a host name, which a purl namespace cannot be — the package is
+``pkg:generic/<package>@<version>`` instead. The build machine's own distribution is not
+consulted. No repair tool's directory name is consulted, so a library the build produced
+is attributed to the build wherever it ends up. Its copyright notice is read only from
+the ``Copyright:`` fields of a machine-readable Debian copyright file, leaving out
+stanzas that cover only the Debian packaging; any other text — an EULA, a free-form
+copyright file — quotes the notices of what it bundles, so none is asserted, and the
+packaged text still carries them all.
 
 Static code leaves no ``DT_NEEDED`` entry behind, so the link line is where it is read —
 every fragment CMake records for it, ``-Wl,`` and ``-Xlinker`` words included, with the
