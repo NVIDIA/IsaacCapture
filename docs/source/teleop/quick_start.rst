@@ -203,9 +203,10 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    .. note::
 
       The default client shows an in-XR control panel with connection information and controls
-      useful during development. To hide it, select one of the **Real Robot** teleop applications
-      under **Change teleop application** before connecting. These start with the panel hidden
-      by default; use the small **Show** control to reopen it. See :ref:`camera-streaming-web-client`.
+      useful during development. To hide it, open **Advanced settings → In-XR comfort** before
+      connecting and set **Control panel when entering XR (saved per teleop application)** to
+      **Hide control panel**. Use the small **Show** control to reopen it in XR. See
+      :ref:`camera-streaming-web-client`.
 
    .. important::
 
