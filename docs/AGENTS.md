@@ -15,6 +15,10 @@ the CSS — where it moves when the code moves.
 is what CI runs, so a new warning fails the build. Check a docs change with that target
 rather than a bare `sphinx-build`.
 
+During a merge, `check-merge-conflict` can mistake seven-character RST heading
+underlines for conflict markers. Verify that no unmerged paths remain, finish
+the merge commit, then rerun all hooks; preserve valid headings.
+
 `make multi-docs` is the other half, and it constrains how extensions are written:
 sphinx-multiversion builds every whitelisted ref with `-c` pointing at the checkout that
 invoked it, so `app.confdir` is that checkout while `app.srcdir` is the ref being built.
