@@ -111,3 +111,11 @@ python_accessor = "get_spacemouse_data"
 name = "gamepad"
 table = "GamepadSnapshot"
 python_accessor = "get_gamepad_data"
+
+# About 1300 three-axis taxels fit in the default data collection. Geometry, binding,
+# and calibration are immutable tracker metadata and must fit TRACKER_METADATA_MAX_SIZE.
+[[tracker]]
+name = "tactile"
+table = "TactileData"
+metadata = "TactileMetadata"
+max_flatbuffer_size = 16384

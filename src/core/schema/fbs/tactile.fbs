@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Per-taxel quality. An absent status vector means every taxel is VALID.
+enum TaxelStatus : ubyte {
+  VALID = 0,
+  INVALID = 1,
+  SATURATED = 2,
+  UNAVAILABLE = 3,
+}
+
+// One frame of tactile measurements. Values are taxel-major in the order declared by
+// TactileMetadata. Each taxel contributes measurement.component_count consecutive floats.
+table TactileData {
+  values: [float] (id: 0);
+  status: [TaxelStatus] (id: 1);
+}
+
+// MCAP supplies the timestamp envelope; it is not duplicated in TactileData.
+table TactileDataRecord {
+  data: TactileData (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type TactileDataRecord;

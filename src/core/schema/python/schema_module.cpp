@@ -30,6 +30,9 @@
 #include "soma_hand_joint_rotations_bindings.h"
 #include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
+#include "tactile_binding_profile_bindings.h"
+#include "tactile_bindings.h"
+#include "tactile_metadata_bindings.h"
 #include "timestamp_bindings.h"
 #include "tracker_metadata_bindings.h"
 
@@ -47,6 +50,11 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind generic typed profiles before schemas that compose them.
     core::bind_profile(m);
+
+    // Bind tactile profile payloads and metadata before per-frame tactile data.
+    core::bind_tactile_binding_profile(m);
+    core::bind_tactile_metadata(m);
+    core::bind_tactile(m);
 
     // Bind head types (HeadPose table).
     core::bind_head(m);

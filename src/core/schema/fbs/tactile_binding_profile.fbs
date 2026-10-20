@@ -1,0 +1,63 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace core;
+
+enum TactileHandedness : ubyte {
+  UNSPECIFIED = 0,
+  LEFT = 1,
+  RIGHT = 2,
+}
+
+// Maps every TactileMetadata node to an XrHandJointEXT ordinal.
+table OpenXRHandTactileBinding {
+  handedness: TactileHandedness (id: 0);
+  node_joint_indices: [ubyte] (id: 1);
+}
+
+enum UrdfEntityKind : ubyte {
+  LINK = 0,
+  JOINT = 1,
+}
+
+table UrdfNodeBinding {
+  node_index: uint32 (id: 0);
+  entity_kind: UrdfEntityKind (id: 1);
+  entity_name: string (id: 2);
+}
+
+// resource_id selects a ContentDescriptor in the enclosing SemanticProfile.
+table UrdfTactileBinding {
+  resource_id: string (id: 0);
+  nodes: [UrdfNodeBinding] (id: 1);
+}
+
+// IsaacCapture session association. node_pose_indices maps tactile nodes to elements of
+// pose_schema; the identifiers distinguish concurrent subjects, devices, and skeletons.
+table IsaacCapturePoseTactileBinding {
+  pose_schema: string (id: 0);
+  tracker_name: string (id: 1);
+  collection_id: string (id: 2);
+  channel: string (id: 3);
+  subject_id: string (id: 4);
+  device_instance_id: string (id: 5);
+  skeleton_instance_id: string (id: 6);
+  node_pose_indices: [uint32] (id: 7);
+}
+
+enum TactileBindingKind : ubyte {
+  NONE = 0,
+  OPENXR_HAND = 1,
+  URDF = 2,
+  ISAACCAPTURE_POSE = 3,
+}
+
+// Payload of a SemanticProfile. Exactly the field selected by kind is present.
+table TactileBindingProfile {
+  kind: TactileBindingKind (id: 0);
+  openxr_hand: OpenXRHandTactileBinding (id: 1);
+  urdf: UrdfTactileBinding (id: 2);
+  isaaccapture_pose: IsaacCapturePoseTactileBinding (id: 3);
+}
+
+root_type TactileBindingProfile;

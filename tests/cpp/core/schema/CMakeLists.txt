@@ -13,6 +13,7 @@ add_executable(schema_tests
   test_controller.cpp
   test_pedals.cpp
   test_steering_wheel.cpp
+  test_tactile.cpp
   test_spacemouse.cpp
   test_gamepad.cpp
   test_plugin_device_status.cpp

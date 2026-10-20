@@ -1,0 +1,79 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "pose.fbs";
+include "profile.fbs";
+
+namespace core;
+
+// Minimal quantities standardized by tactile schema v1. New modalities are profiles or
+// appended enum values rather than unrelated fields in every sample.
+enum TactileQuantity : ubyte {
+  UNKNOWN = 0,
+  FORCE = 1,
+  PRESSURE = 2,
+  RAW = 3,
+}
+
+enum TactileUnit : ubyte {
+  UNKNOWN = 0,
+  NEWTON = 1,
+  PASCAL = 2,
+  COUNT = 3,
+}
+
+enum TactileValueFrame : ubyte {
+  NONE = 0,
+  TAXEL = 1,
+}
+
+// Semantics shared by every taxel value in one tracker.
+table TactileMeasurement {
+  quantity: TactileQuantity (id: 0);
+  unit: TactileUnit (id: 1);
+
+  // FORCE supports 1 (+Z normal component) or 3 (+X,+Y,+Z). PRESSURE and RAW use 1.
+  component_count: ubyte (id: 2);
+
+  // FORCE is expressed in the taxel frame. Scalar quantities have no vector frame.
+  frame: TactileValueFrame (id: 3);
+}
+
+// One deformation node at the reference state. Its stable node_id is local to this shape;
+// profiles map node indices to OpenXR joints, URDF links/joints, or another pose source.
+table TactileNode {
+  node_id: string (id: 0);
+  bind_pose: Pose (id: 1);
+}
+
+// One non-zero linear-blend-skinning influence.
+struct TactileSkinWeight {
+  node_index: uint32;
+  weight: float;
+}
+
+// Taxel geometry at the reference state. pose maps the right-handed taxel frame into
+// shape_frame_id: +Z is the outward surface normal N, +X is tangent T, and +Y is N x T.
+table TactileTaxel {
+  taxel_id: string (id: 0);
+  pose: Pose (id: 1);
+
+  // Empty means rigid in shape_frame_id. Otherwise weights are non-zero, refer to nodes,
+  // and sum to 1.0. Skinning transforms the position and basis from bind to current pose.
+  skin: [TactileSkinWeight] (id: 2);
+}
+
+// Immutable description published through the tracker's standard metadata channel.
+table TactileMetadata {
+  schema_version: uint16 = 1 (id: 0);
+  shape_frame_id: string (id: 1);
+  measurement: TactileMeasurement (id: 2);
+  nodes: [TactileNode] (id: 3);
+  taxels: [TactileTaxel] (id: 4);
+
+  // Binding, calibration, and application integration live in versioned typed profiles.
+  // Unknown profiles remain byte-preserving and REQUIRED profiles fail closed semantically.
+  profiles: [SemanticProfile] (id: 5);
+}
+
+root_type TactileMetadata;
