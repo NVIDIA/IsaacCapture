@@ -11,8 +11,6 @@ import sys
 import zipfile
 from pathlib import Path
 
-from packaging.utils import canonicalize_name
-
 from . import TOOL_NAME, TOOL_VERSION
 from . import build as build_module
 from . import discovery
@@ -61,11 +59,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
     manifests: list[dict] = []
     wheels = sorted(Path(item) for item in args.wheel)
-    # What every wheel of this run says about itself, before any is described.
-    # A document reference needs the referenced document to exist; these facts
-    # do not, so a requirement on a sibling is never an install-time unknown.
     siblings = build_module.siblings_of(wheels, repo_root)
-    for wheel in build_module.in_dependency_order(wheels):
+    for wheel in wheels:
         manifest = build_module.build(
             repo_root,
             build_dir,
@@ -76,9 +71,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
             siblings=siblings,
         )
         manifests.append(manifest)
-        described = manifest["wheels"][0]["describes"]
-        siblings[canonicalize_name(described["name"])] = described
-        siblings[canonicalize_name(described["name"])]["wheel"] = wheel.name
         print(f"packaged evidence into {wheel.name}")
 
     # Through the same merge as a release: inheriting the first wheel's manifest

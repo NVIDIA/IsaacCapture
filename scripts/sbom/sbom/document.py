@@ -296,7 +296,6 @@ def build_document(
     """
     files: list[dict] = []
     file_ids: dict[str, str] = {}
-    external_documents: list[dict] = []
     sha1_digests: list[str] = []
 
     # What the files themselves state, for the package-level roll-up below.
@@ -602,5 +601,4 @@ def build_document(
         "files": files,
         "relationships": relationships,
         "hasExtractedLicensingInfos": extracted,
-        **({"externalDocumentRefs": external_documents} if external_documents else {}),
     }
