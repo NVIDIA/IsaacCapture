@@ -39,6 +39,22 @@ def component_package_id(key: str) -> str:
     return _spdx_id("Package", key)
 
 
+def file_id(path: str, dist_info: str) -> str:
+    """The member's id: its path, with the versioned `.dist-info/` and `.data/`
+    read as `dist-info/` and `data/`, and a digest of that path, which keeps
+    apart paths that sanitise alike (`a_b.py`, `a-b.py`).
+    """
+    stem = dist_info.removesuffix(".dist-info")
+    hashed = path
+    for directory, token in ((dist_info, "dist-info"), (f"{stem}.data", "data")):
+        if path.startswith(f"{directory}/"):
+            path = token + path.removeprefix(directory)
+            # No member name holds a NUL, so a real top-level `data/` hashes apart.
+            hashed = "\0" + path
+            break
+    return _spdx_id("File", f"{path}-{licensing.sha256_text(hashed)[:8]}")
+
+
 def verification_code(sha1_digests: list[str]) -> str:
     """SPDX package verification code: SHA1 over the sorted file SHA1s."""
     return hashlib.sha1("".join(sorted(sha1_digests)).encode("ascii")).hexdigest()  # noqa: S324
@@ -288,7 +304,8 @@ def build_document(
     excluded_files: list[str],
     siblings: dict[str, dict] | None = None,
 ) -> dict:
-    """Assemble the document. Callers validate it; this only renders.
+    """Assemble the document. Callers validate it; this renders, and refuses
+    two members that would share an SPDXID.
 
     `siblings` are the other distributions of this same run, by canonical name.
     A requirement naming one is not an install-time unknown: the build made it,
@@ -304,16 +321,24 @@ def build_document(
     # file attributed to a component carries that component's notice, which
     # belongs to that component's package and not to this one.
     stated_copyright: set[str] = set()
-    for index, entry in enumerate(sorted(wheel.entries, key=lambda item: item.name)):
+    paths_by_id: dict[str, str] = {}
+    for entry in sorted(wheel.entries, key=lambda item: item.name):
         if entry.name in excluded_files:
             continue
-        file_id = _spdx_id("File", f"{index}-{entry.name.rsplit('/', 1)[-1]}")
-        file_ids[entry.name] = file_id
+        spdx_id = file_id(entry.name, wheel.dist_info)
+        # Paths that sanitise alike and share a 32-bit digest prefix.
+        if spdx_id in paths_by_id:
+            raise ValueError(
+                f"{wheel.path.name}: {paths_by_id[spdx_id]} and {entry.name} "
+                f"would both be {spdx_id}"
+            )
+        paths_by_id[spdx_id] = entry.name
+        file_ids[entry.name] = spdx_id
         sha1_digests.append(entry.sha1)
 
         attribution = inventory.attributions.get(entry.name)
         record = {
-            "SPDXID": file_id,
+            "SPDXID": spdx_id,
             "fileName": f"./{entry.name}",
             "checksums": [
                 {"algorithm": "SHA1", "checksumValue": entry.sha1},

@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import re
 import zipfile
+from pathlib import Path
 
 import pytest
 import synth
 from sbom import build as build_module
+from sbom import document as document_module
+from sbom import inventory as inventory_module
+from sbom import licensing
 from sbom import report as report_module
 from sbom import validate as validate_module
 from sbom import wheelfile
@@ -615,3 +619,125 @@ def test_a_wheel_shipping_no_source_still_names_its_licensor(workspace, license_
     assert "distributed by Organization:" not in notices
     # The only text it ships names no holder, which is why the above matters.
     assert "thin-0.4.0.dist-info/licenses/LICENSES/Apache-2.0.txt" in members
+
+
+_IDSTRING = re.compile(r"SPDXRef-[A-Za-z0-9.-]+")
+
+
+def _file_ids_of(names: list[str], version: str = "0.4.0") -> dict[str, str]:
+    """Each file's id in a document over a wheel holding only these members."""
+    entries = tuple(
+        wheelfile.Entry(name=name, size=0, sha256="0" * 64, sha1="0" * 40)
+        for name in names
+    )
+    spdx = document_module.build_document(
+        {
+            "supplier": "Organization: Example Org",
+            "homepage": "https://example.invalid",
+            "license": "Apache-2.0",
+            "document_namespace": "https://example.invalid/spdx",
+        },
+        {"license_list_version": "3.27"},
+        wheelfile.WheelInfo(
+            path=Path(f"isaaccapture-{version}-py3-none-any.whl"),
+            distribution="isaaccapture",
+            version=version,
+            dist_info=f"isaaccapture-{version}.dist-info",
+            entries=entries,
+        ),
+        inventory_module.Inventory(
+            attributions={},
+            components_present={},
+            component_roles={},
+            external_runtime={},
+            requires_dist=[],
+        ),
+        [],
+    )
+    return {
+        item["fileName"].removeprefix("./"): item["SPDXID"] for item in spdx["files"]
+    }
+
+
+def test_a_file_id_is_its_sanitised_path_and_a_digest_of_it(built):
+    spdx = _embedded(built["wheel"])
+
+    for item in spdx["files"]:
+        assert item["SPDXID"] == document_module.file_id(
+            item["fileName"].removeprefix("./"), DIST_INFO
+        )
+    # Pinned: a change to what is hashed renames every file in every document.
+    assert (
+        document_module.file_id(
+            "isaaccapture/cloudxr/oob_teleop_progress.py", DIST_INFO
+        )
+        == "SPDXRef-File-isaaccapture-cloudxr-oob-teleop-progress.py-f80fee5e"
+    )
+    assert (
+        document_module.file_id(f"{DIST_INFO}/METADATA", DIST_INFO)
+        == "SPDXRef-File-dist-info-METADATA-ad68becb"
+    )
+
+
+def test_adding_a_file_renumbers_no_other_file():
+    before = _file_ids_of(["a/one.py", "b/three.py", "c/four.so"])
+    after = _file_ids_of(["a/one.py", "a/two.py", "b/three.py", "c/four.so"])
+
+    assert {name: after[name] for name in before} == before
+
+
+@pytest.mark.parametrize(("old", "new"), [("1.7+local", "1.8"), ("1!1.7", "1!1.8")])
+def test_a_version_bump_renames_no_file(old, new):
+    def members(version):
+        return [
+            "isaaccapture/cloudxr/oob_teleop_progress.py",
+            f"isaaccapture-{version}.dist-info/METADATA",
+            f"isaaccapture-{version}.dist-info/licenses/third-party/fmt/LICENSE",
+            f"isaaccapture-{version}.data/scripts/isaaccapture-tool",
+        ]
+
+    before = _file_ids_of(members(old), version=old)
+    after = _file_ids_of(members(new), version=new)
+
+    assert list(before.values()) == list(after.values())
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"sub/{DIST_INFO}/METADATA",
+        f"{DIST_INFO}X/f",
+        f"{DIST_INFO.removesuffix('.dist-info')}.dataX/f",
+    ],
+)
+def test_only_the_versioned_directories_are_read_as_fixed(path):
+    assert document_module.file_id(path, DIST_INFO).startswith(
+        f"SPDXRef-File-{licensing.spdx_safe(path)}-"
+    )
+
+
+def test_paths_that_sanitise_alike_get_distinct_ids():
+    ids = _file_ids_of(["pkg/a_b.py", "pkg/a-b.py", "pkg/a b.py", "pkg/a__b.py"])
+
+    assert len(set(ids.values())) == len(ids)
+
+
+def test_a_path_with_no_safe_character_still_gets_a_valid_id():
+    assert _IDSTRING.fullmatch(document_module.file_id("データ/名前", DIST_INFO))
+
+
+def test_a_top_level_dist_info_is_not_the_versioned_one():
+    ids = _file_ids_of(["dist-info/METADATA", "isaaccapture-0.4.0.dist-info/METADATA"])
+
+    assert len(set(ids.values())) == 2
+
+
+def test_two_files_one_id_stops_the_build(monkeypatch):
+    monkeypatch.setattr(document_module, "file_id", lambda path, dist_info: "x")
+
+    with pytest.raises(
+        ValueError,
+        match=r"isaaccapture-0\.4\.0-py3-none-any\.whl: a\.py and b\.py "
+        r"would both be x",
+    ):
+        _file_ids_of(["a.py", "b.py"])

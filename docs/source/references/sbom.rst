@@ -86,6 +86,12 @@ the sidecars beside it. ``check-set`` runs the whole thing over every wheel in a
 To read the inventory directly, unzip ``.dist-info/sboms/*.spdx.json`` and feed it to any
 SPDX 2.3 consumer. CI validates each published document with ``spdx-tools`` before release.
 
+A file's ``SPDXID`` is its path in the distribution, reduced to the characters an SPDX
+identifier allows, plus a short digest of the unreduced path, with the versioned
+``.dist-info`` and ``.data`` directories counted as fixed. A file keeps its
+identifier across releases unless that path changes, so two releases' documents can be
+diffed.
+
 Evidence published beside a wheel
 ---------------------------------
 
