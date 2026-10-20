@@ -38,21 +38,66 @@ def _sidecar(evidence_dir: Path, record: dict, kind: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _record_for(manifest: dict, filename: str) -> dict:
-    """One wheel's record, or a clear error rather than a KeyError traceback."""
+def manifest_records(path: Path) -> list[dict]:
+    """A manifest's wheel records; one listing none checks nothing, so it fails."""
     try:
-        records = manifest["wheels"]
-    except (KeyError, TypeError) as error:
-        raise ManifestError("manifest has no 'wheels' list") from error
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise ManifestError(f"{path}: the manifest is not JSON ({error})") from error
+    if not isinstance(manifest, dict):
+        raise ManifestError(f"{path}: the manifest is not a JSON object")
+    records = manifest.get("wheels")
+    if not isinstance(records, list):
+        raise ManifestError(f"{path}: the manifest has no 'wheels' list")
+    if not records:
+        raise ManifestError(f"{path}: the manifest lists no wheels")
+    for item in records:
+        if not isinstance(item, dict):
+            raise ManifestError(f"{path}: a 'wheels' entry is not an object")
+        if not isinstance(item.get("filename"), str) or not item["filename"]:
+            raise ManifestError(f"{path}: a 'wheels' entry names no wheel")
+        if not _is_bare_name(item["filename"]):
+            raise ManifestError(
+                f"{path}: {item['filename']!r} is not a bare wheel file name"
+            )
+    return records
+
+
+def _is_bare_name(name: str) -> bool:
+    """A file name joined onto a directory must stay inside that directory."""
+    return name not in ("", ".", "..") and not any(sep in name for sep in "/\\:")
+
+
+def _record_for(records: list[dict], filename: str) -> dict:
+    """One wheel's record, or a clear error rather than a KeyError traceback."""
     seen = [item for item in records if item.get("filename") == filename]
     if len(seen) > 1:
         raise ManifestError(f"{filename} is advertised {len(seen)} times")
-    if not seen:
-        return {}
-    record = seen[0]
+    return _checked_record(seen[0]) if seen else {}
+
+
+def _checked_record(record: dict) -> dict:
+    """A record holding every field the checks read, or ManifestError."""
+    filename = record["filename"]
     for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
         if key not in record:
             raise ManifestError(f"{filename}: manifest record has no {key!r}")
+    sidecars = record["sidecars"]
+    if not isinstance(sidecars, dict) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("filename"), str)
+        and isinstance(item.get("sha256"), str)
+        for item in sidecars.values()
+    ):
+        raise ManifestError(
+            f"{filename}: manifest record's sidecars must each name a file and its sha256"
+        )
+    for kind, item in sidecars.items():
+        if not _is_bare_name(item["filename"]):
+            raise ManifestError(
+                f"{filename}: {kind} sidecar {item['filename']!r} is not a bare "
+                "file name"
+            )
     # Every sidecar, not just the ones a record happens to name. An absent entry
     # is not an absent check: omitting `build_evidence` left `check-set` passing
     # a wheel the evidence would have failed.
@@ -534,8 +579,7 @@ def _check_manifest(
 ) -> list[str]:
     """The manifest binds a wheel's digest and names the sidecars beside it."""
     failures: list[str] = []
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    record = _record_for(manifest, wheel.name)
+    record = _record_for(manifest_records(manifest_path), wheel.name)
     if not record:
         return [f"{manifest_path.name} has no entry for {wheel.name}"]
 
@@ -628,15 +672,25 @@ def _cross_document_refs(
 def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[str]:
     """Run :func:`check` over every wheel a merged manifest advertises."""
     failures: list[str] = []
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records = manifest_records(manifest_path)
+    for name, seen in sorted(Counter(item["filename"] for item in records).items()):
+        if seen > 1:
+            raise ManifestError(f"{name} is advertised {seen} times")
+    by_name = {item["filename"]: _checked_record(item) for item in records}
+
+    # Every wheel here is published with the set, so one the manifest omits
+    # would go out unchecked.
+    for stray in sorted({item.name for item in wheel_dir.glob("*.whl")} - set(by_name)):
+        failures.append(
+            f"{stray} is in {wheel_dir}, and {manifest_path.name} does not list it"
+        )
 
     # The whole release is here, which is the only place a reference from one
     # document to another can be resolved rather than merely declared.
     published: dict[str, bytes] = {}
-    for entry in manifest.get("wheels") or []:
-        record = _record_for(manifest, entry.get("filename") or "")
-        sidecar = _sidecar(evidence_dir, record, "spdx") if record else None
-        if sidecar and sidecar.is_file():
+    for record in by_name.values():
+        sidecar = _sidecar(evidence_dir, record, "spdx")
+        if sidecar:
             published[sidecar.name] = sidecar.read_bytes()
 
     for name, body in sorted(published.items()):
@@ -645,11 +699,7 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
         except json.JSONDecodeError as error:
             failures.append(f"{name}: not readable as a document ({error})")
 
-    for entry in manifest.get("wheels") or []:
-        named = entry.get("filename")
-        if not named:
-            raise ManifestError("a manifest record names no wheel")
-        record = _record_for(manifest, named)
+    for record in by_name.values():
         wheel = wheel_dir / record["filename"]
         if not wheel.is_file():
             failures.append(f"{record['filename']} is missing from {wheel_dir}")

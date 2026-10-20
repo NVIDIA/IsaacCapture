@@ -183,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
         "check-set", help="run check over every wheel a merged manifest advertises"
     )
     check_set.add_argument("--manifest", required=True)
-    check_set.add_argument("--wheel-dir", required=True)
+    check_set.add_argument(
+        "--wheel-dir",
+        required=True,
+        help="the release's wheels; one the manifest does not list fails the set",
+    )
     check_set.add_argument("--evidence-dir", required=True)
     check_set.set_defaults(handler=_cmd_check_set)
 

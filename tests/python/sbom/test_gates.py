@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import zipfile
 
 import pytest
 import synth
 from sbom import build as build_module
+from sbom import cli
 from sbom import licensing
 from sbom import wheelfile
 from sbom import validate as validate_module
@@ -254,6 +256,7 @@ def test_a_complete_release_evidence_set_verifies(built, tmp_path):
     merged, wheels, evidence = _release_layout(built, tmp_path)
 
     assert validate_module.check_set(merged, wheels, evidence) == []
+    assert _check_set_cli(merged, wheels, evidence) == 0
 
 
 def test_a_missing_sidecar_fails_the_release_set(built, tmp_path):
@@ -272,6 +275,188 @@ def test_a_missing_wheel_fails_the_release_set(built, tmp_path):
     failures = validate_module.check_set(merged, wheels, evidence)
 
     assert any("is missing from" in failure for failure in failures)
+
+
+def _check_set_cli(merged, wheels, evidence):
+    return cli.main(
+        [
+            "check-set",
+            "--manifest",
+            str(merged),
+            "--wheel-dir",
+            str(wheels),
+            "--evidence-dir",
+            str(evidence),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({}, "no 'wheels' list"),
+        ([], "not a JSON object"),
+        ({"wheels": []}, "lists no wheels"),
+        ({"wheels": "x"}, "no 'wheels' list"),
+        ({"wheels": ["x"]}, "entry is not an object"),
+        ({"wheels": [{}]}, "entry names no wheel"),
+        ({"wheels": [{"filename": 1}]}, "entry names no wheel"),
+        ({"wheels": [{"filename": "../x.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "/tmp/x.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "a\\b.whl"}]}, "not a bare wheel file name"),
+        ({"wheels": [{"filename": "C:x.whl"}]}, "not a bare wheel file name"),
+    ],
+)
+def test_manifest_records_refuses(tmp_path, manifest, message):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=f"{re.escape(str(path))}: .*{message}"
+    ):
+        validate_module.manifest_records(path)
+
+
+def test_manifest_records_names_the_file_it_cannot_parse(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=rf"{re.escape(str(path))}: .*not JSON"
+    ):
+        validate_module.manifest_records(path)
+
+
+def test_check_set_refuses_sidecars_that_are_not_named_files(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    manifest = json.loads(merged.read_text(encoding="utf-8"))
+    manifest["wheels"][0]["sidecars"] = list(manifest["wheels"][0]["sidecars"])
+    merged.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        validate_module.check_set(merged, wheels, evidence)
+
+
+def _manifest_of(tmp_path, records):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"wheels": records}), encoding="utf-8")
+    return path
+
+
+def _record(filename="x-1.0-py3-none-any.whl", sidecar="x.spdx.json"):
+    return {
+        "filename": filename,
+        "sha256": "0" * 64,
+        "size": 0,
+        "sbom_in_wheel": "x-1.0.dist-info/sboms/x.spdx.json",
+        "sidecars": {"spdx": {"filename": sidecar, "sha256": "0" * 64}},
+    }
+
+
+@pytest.mark.parametrize("sidecar", ["../x.spdx.json", "/tmp/x.spdx.json", ".."])
+def test_check_set_refuses_a_sidecar_that_is_not_a_bare_name(tmp_path, sidecar):
+    manifest = _manifest_of(tmp_path, [_record(sidecar=sidecar)])
+
+    with pytest.raises(validate_module.ManifestError, match="not a bare file name"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def test_check_set_refuses_a_sidecar_with_no_digest(tmp_path):
+    record = _record()
+    del record["sidecars"]["spdx"]["sha256"]
+    manifest = _manifest_of(tmp_path, [record])
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def test_check_set_refuses_a_wheel_advertised_twice(tmp_path):
+    manifest = _manifest_of(tmp_path, [_record(), _record()])
+
+    with pytest.raises(validate_module.ManifestError, match="advertised 2 times"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+
+
+def _empty_manifest(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"wheels": []}), encoding="utf-8")
+    return path
+
+
+def test_check_set_refuses_a_manifest_listing_no_wheel(tmp_path, capsys):
+    manifest = _empty_manifest(tmp_path)
+
+    with pytest.raises(validate_module.ManifestError, match="lists no wheels"):
+        validate_module.check_set(manifest, tmp_path, tmp_path)
+    assert _check_set_cli(manifest, tmp_path, tmp_path) == 2
+    assert "lists no wheels" in capsys.readouterr().err
+
+
+def _tiny_wheel(tmp_path):
+    return synth.write_wheel(
+        tmp_path / "x-1.0-py3-none-any.whl",
+        {
+            "x-1.0.dist-info/METADATA": b"Metadata-Version: 2.4\nName: x\nVersion: 1.0\n",
+            "x-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n",
+        },
+    )
+
+
+def test_check_refuses_a_manifest_listing_no_wheel(tmp_path):
+    with pytest.raises(validate_module.ManifestError, match="lists no wheels"):
+        validate_module.check(_tiny_wheel(tmp_path), manifest=_empty_manifest(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("records", "message"),
+    [
+        ([_record(sidecar="../x.spdx.json")], "not a bare file name"),
+        ([_record(), _record()], "advertised 2 times"),
+    ],
+)
+def test_check_refuses_a_malformed_record_for_its_wheel(tmp_path, records, message):
+    manifest = _manifest_of(tmp_path, records)
+
+    with pytest.raises(validate_module.ManifestError, match=message):
+        validate_module.check(_tiny_wheel(tmp_path), manifest=manifest)
+
+
+def test_merge_manifests_refuses_a_manifest_listing_no_wheel(tmp_path):
+    good = tmp_path / "a" / "manifest.json"
+    good.parent.mkdir()
+    good.write_text(
+        json.dumps({"wheels": [{"filename": "x-1.0-py3-none-any.whl"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "b").mkdir()
+    empty = _empty_manifest(tmp_path / "b")
+
+    with pytest.raises(
+        validate_module.ManifestError, match=f"{re.escape(str(empty))}: "
+    ):
+        build_module.merge_manifests([good, empty])
+    output = str(tmp_path / "m.json")
+    assert cli.main(["merge-manifests", "--output", output, str(empty)]) == 2
+
+
+def test_a_wheel_the_manifest_does_not_list_fails_the_release_set(
+    built, tmp_path, capsys
+):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = wheels / "isaacteleop-0.4.0-py3-none-any.whl"
+    stray.write_bytes(built["wheel"].read_bytes())
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert failures == [
+        f"{stray.name} is in {wheels}, and {merged.name} does not list it"
+    ]
+    assert _check_set_cli(merged, wheels, evidence) == 1
+    assert "does not list it" in capsys.readouterr().err
 
 
 def test_missing_spdx_license_data_stops_the_build(workspace):

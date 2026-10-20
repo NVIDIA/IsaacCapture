@@ -109,14 +109,18 @@ CI artifacts it travelled in:
    The wheel digest is bound here, after the last change to the wheel, so a wheel that was
    touched again no longer matches.
 
-Downloading a whole release? Check the wheels and the evidence against the manifest in
-one step:
+Downloading a whole release? Put its wheels and evidence files in a directory of their
+own, then check them against the manifest in one step:
 
 .. code-block:: bash
 
    uv run --project IsaacCapture/scripts/sbom isaaccapture-sbom check-set \
-     --manifest isaaccapture-sbom-manifest.json \
-     --wheel-dir . --evidence-dir .
+     --manifest release/isaaccapture-sbom-manifest.json \
+     --wheel-dir release --evidence-dir release
+
+Any command reading a manifest refuses one that lists no wheel. ``check-set`` also fails a
+wheel in ``--wheel-dir`` that the manifest does not list, which is why the directory holds
+the release and nothing else.
 
 What is in scope
 ----------------

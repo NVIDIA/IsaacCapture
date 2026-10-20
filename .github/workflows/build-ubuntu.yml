@@ -1238,7 +1238,7 @@ jobs:
 
     - name: Ensure clean wheels directory
       run: |
-        rm -rf wheels
+        rm -rf wheels sbom-sidecars
 
     - name: Download wheel artifacts
       uses: actions/download-artifact@v7
@@ -1272,7 +1272,7 @@ jobs:
           exit 1
         fi
 
-        published=()
+        declare -A named=()
         for manifest in "${manifests[@]}"; do
           while IFS=$'\t' read -r filename digest; do
             wheel="wheels/${filename}"
@@ -1287,14 +1287,24 @@ jobs:
               echo "  actual:   ${actual}"
               exit 1
             fi
-            published+=("${filename}")
+            named["${filename}"]=1
           done < <(jq -r '.wheels[] | [.filename, .sha256] | @tsv' "${manifest}")
+        done
+
+        # Every wheel under wheels/ is uploaded below, so one no manifest names
+        # would be published with no evidence checked for it.
+        for wheel in wheels/*.whl; do
+          name="$(basename "${wheel}")"
+          if [[ -z "${named[${name}]:-}" ]]; then
+            echo "${name} is among the downloaded wheels, and no manifest names it"
+            exit 1
+          fi
         done
 
         for platform in "${platforms[@]}"; do
           for abi in "${abis[@]}"; do
             found=0
-            for filename in "${published[@]}"; do
+            for filename in "${!named[@]}"; do
               if [[ "${filename}" == *"-${abi}-${abi}-manylinux"*"_${platform}.whl" ]]; then
                 found=1
                 break
@@ -1302,7 +1312,7 @@ jobs:
             done
             if (( found == 0 )); then
               echo "No wheel was published for ${abi} on ${platform}"
-              printf '  have: %s\n' "${published[@]}"
+              printf '  have: %s\n' "${!named[@]}"
               exit 1
             fi
           done

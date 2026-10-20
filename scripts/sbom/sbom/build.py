@@ -19,6 +19,7 @@ from . import evidence as evidence_module
 from . import licensing
 from . import inventory as inventory_module
 from . import report as report_module
+from . import validate as validate_module
 from . import wheelfile
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -581,7 +582,7 @@ def merge_manifests(paths: list[Path]) -> dict:
         [
             item
             for path in sorted(paths)
-            for item in json.loads(path.read_text(encoding="utf-8"))["wheels"]
+            for item in validate_module.manifest_records(path)
         ]
     )
 
