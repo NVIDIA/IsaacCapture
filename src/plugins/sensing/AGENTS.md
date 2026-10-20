@@ -21,3 +21,5 @@ Container preview must carry the desktop display and authorization into the imag
 
 Support SSH launch with a local DISPLAY: when XAUTHORITY is unset, check the
 current user's GDM authority file as well as ~/.Xauthority.
+
+Include CUDA `.cu` and `.cuh` files in clang-format-14 checks for this plugin.
