@@ -460,7 +460,9 @@ def _ninja(workspace, monkeypatch, log: str) -> None:
     monkeypatch.setattr(
         discovery,
         "_ask",
-        lambda *command: log if command[0] == "ninja" else asked(*command),
+        lambda *command, **options: (
+            log if command[0] == "ninja" else asked(*command, **options)
+        ),
     )
 
 

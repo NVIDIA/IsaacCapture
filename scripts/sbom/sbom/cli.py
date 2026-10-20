@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -31,19 +30,8 @@ def _repo_root(value: str | None) -> Path:
     """
     if value:
         return Path(value).resolve()
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return Path.cwd()
-    return (
-        Path(result.stdout.strip()).resolve() if result.returncode == 0 else Path.cwd()
-    )
+    top = discovery.git(Path.cwd(), "rev-parse", "--show-toplevel")
+    return Path(top).resolve() if top else Path.cwd()
 
 
 def _report(failures: list[str], subject: str) -> int:

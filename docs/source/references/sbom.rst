@@ -143,8 +143,21 @@ There is no checked-in dependency list. Every entry is derived from the build th
 produced the wheel, so a dependency that builds is a dependency that appears:
 
 ``build/_deps/*-src``
-   FetchContent checkouts. ``git`` in each one supplies the commit, the remote, and from
-   the remote the supplier, homepage and purl.
+   FetchContent trees. ``git`` in each checkout supplies the commit, the remote, and from
+   the remote the supplier, homepage and purl. It is asked only of a tree that is a
+   repository of its own: git otherwise answers for whichever checkout encloses the build
+   directory, or for whatever repository ``GIT_DIR`` names, which is therefore cleared. Any
+   other tree is identified by its declaration — ``GIT_REPOSITORY`` and ``GIT_TAG``, or
+   ``URL`` and ``URL_HASH`` — from the stamps ExternalProject writes beside the populate
+   sub-build, or under ``CMakeFiles/fc-stamp`` once policy ``CMP0168`` is ``NEW``, and
+   from the clone script the git stamp names. A stamp outlives a change of method, so where
+   both are present the tree decides: a git clone is a checkout of its own. The version is
+   the declared tag, or the ref a GitHub URL names, verbatim, so a tag gives one version
+   whether declared by tag or as a GitHub archive; any other archive's version is read
+   from its name, and its supplier is not asserted, since the host serving a download is
+   not who supplies it. A download location is stated only for an ``http``, ``https``,
+   ``ftp`` or ``ftps`` archive URL, or a git remote reached over ``http``, ``https``,
+   ``ssh`` or ``git``, and never with its credentials, query or fragment.
 
 vcpkg's install records
    Where the build uses vcpkg, the ``vcpkg/info`` lists under ``VCPKG_INSTALLED_DIR`` (by

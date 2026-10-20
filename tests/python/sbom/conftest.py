@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import synth
-from sbom import licensing
+from sbom import discovery, licensing
 
 
 repo_root = synth.load(
@@ -59,6 +59,12 @@ def _license_data_loaded(license_data):
     """
     licensing.load_corpus(license_data)
     synth.set_license_data(license_data)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_checkout_answers():
+    """Each test builds its own checkouts; a cached answer is a previous test's."""
+    discovery._is_own_checkout.cache_clear()
 
 
 @pytest.fixture(scope="session")

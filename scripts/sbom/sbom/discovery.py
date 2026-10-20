@@ -9,7 +9,7 @@ the link graph or a content hash says so.
 
 Four indexes do the work:
 
-* source trees   ``_deps/*-src`` checkouts -> identity, from git
+* source trees   ``_deps/*-src`` trees -> identity, from git or the declaration
 * build graph    CMake's file API codemodel -> what links and compiles into what
 * archives       members of tarballs in the repo, by content hash
 * files          repo and build-tree files, by content hash
@@ -34,6 +34,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 from packageurl import PackageURL
 
@@ -59,7 +60,29 @@ _ELF_HEAD_BYTES = 1 << 16
 _GITHUB_REMOTE = re.compile(
     r"github\.com[:/](?P<org>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
 )
-_GITCLONE_URL = re.compile(r'clone\b[^\n]*?"(?P<url>[a-z]+[^"\s]*://[^"]+|git@[^"]+)"')
+# A release asset or a source archive on GitHub names its repository and its ref.
+_GITHUB_REPO = r"(?P<org>[^/]+)/(?P<repo>[^/]+)/"
+_GITHUB_DOWNLOADS = (
+    re.compile(
+        rf"^https?://github\.com/{_GITHUB_REPO}releases/download/(?P<ref>[^/]+)/[^/]+$"
+    ),
+    re.compile(
+        rf"^https?://github\.com/{_GITHUB_REPO}archive/(?:refs/(?:tags|heads)/)?"
+        rf"(?P<ref>.+?)(?:{'|'.join(map(re.escape, ARCHIVE_SUFFIXES))})$"
+    ),
+    re.compile(
+        rf"^https?://codeload\.github\.com/{_GITHUB_REPO}(?:legacy\.)?(?:tar\.gz|zip)/"
+        r"(?:refs/(?:tags|heads)/)?(?P<ref>.+)$"
+    ),
+)
+# Schemes this collector states as a downloadLocation; a local path names only the builder.
+_DOWNLOAD_SCHEMES = ("http", "https", "ftp", "ftps")
+# Transports a published git location may name; a local path names only the builder.
+_GIT_TRANSPORTS = ("http", "https", "ssh", "git")
+# git's scp-like `[user@]host:path`, which SPDX knows only as `ssh://`.
+_SCP_REMOTE = re.compile(r"^(?P<user>[^@/:]+@)?(?P<host>[^@/:]{2,}):(?!//)/?")
+_VERSION_IN_NAME = re.compile(r"(\d+\.\d+[\w.+-]*?)(?=-|\.tar|\.tgz|\.zip|$)")
+# The ref ExternalProject's clone script checks out; `clone --no-checkout` is not one.
 _GITCLONE_TAG = re.compile(r'(?<![-\w])checkout\s+"(?P<tag>[^"]+)"')
 _INCLUDE_FLAG = re.compile(r"-(?:I|isystem)\s*(\S+)")
 _DEPS_SOURCE = re.compile(r"_deps/(?P<name>[A-Za-z0-9_.+-]+)-src(?:/|$)")
@@ -139,22 +162,51 @@ class Component:
     unlicensed: tuple[tuple[str, str], ...] = ()
 
 
-def repo_head(directory: Path) -> str | None:
-    """The commit of the checkout rooted at `directory`, if it is one.
+def own_git(directory: Path, *args: str) -> str | None:
+    """A read-only git query about the checkout rooted at `directory`.
 
-    `git -C <dir> rev-parse HEAD` answers for whichever repository encloses the
-    directory, so a dependency whose checkout carries no .git of its own would
-    otherwise be stamped with this project's commit.
+    git answers for whichever repository encloses a directory, and `build/` sits
+    inside this project's checkout, so a tree fetched as an archive would
+    otherwise be identified as this project. None unless git's toplevel is
+    `directory` itself.
     """
-    top = git(directory, "rev-parse", "--show-toplevel")
-    if top is None or Path(top).resolve() != directory.resolve():
+    if not _is_own_checkout(directory.resolve()):
         return None
-    return git(directory, "rev-parse", "HEAD")
+    return git(directory, *args)
+
+
+@functools.cache
+def _is_own_checkout(resolved: Path) -> bool:
+    """Cached per resolved path: one collector run does not create checkouts."""
+    top = git(resolved, "rev-parse", "--show-toplevel")
+    return top is not None and Path(top).resolve() == resolved
 
 
 def git(repo: Path, *args: str) -> str | None:
-    """Run a read-only git query, or return None if git cannot answer."""
-    return _ask("git", "-C", str(repo), *args).strip() or None
+    """Run a read-only git query about `repo`, or return None if git cannot answer.
+
+    git exports GIT_DIR and its kin to the hooks it runs; with them set, git
+    answers for that repository whatever `-C` names, so they are dropped.
+    Configuration passed as GIT_CONFIG_PARAMETERS or GIT_CONFIG_COUNT, such as a
+    container's `safe.directory`, is kept, as git keeps it for a submodule;
+    GIT_CONFIG is not, since it replaces the repository's own configuration.
+    """
+    local = set(_git_local_variables())
+    env = {name: value for name, value in os.environ.items() if name not in local}
+    return _ask("git", "-C", str(repo), *args, env=env).strip() or None
+
+
+@functools.cache
+def _git_local_variables() -> tuple[str, ...]:
+    listed = _ask("git", "rev-parse", "--local-env-vars").split()
+    kept = {"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}
+    return tuple(name for name in listed if name not in kept)
+
+
+def version_in_name(name: str) -> str | None:
+    """The version an archive's file name states, as in `SDL2-2.32.10.tar.gz`."""
+    match = _VERSION_IN_NAME.search(name)
+    return match.group(1) if match else None
 
 
 def notice_from(evidence) -> str:
@@ -180,87 +232,208 @@ def notice_from(evidence) -> str:
     return "\n".join(licensing.fold_notices(notices)) if notices else "NOASSERTION"
 
 
+class _Identity(NamedTuple):
+    name: str
+    supplier: str
+    homepage: str
+    purl: str
+    download_location: str
+    version: str
+
+
+def _github_identity(org: str, repo: str, ref: str | None) -> tuple[str, str, str]:
+    """Supplier, homepage and purl of a GitHub repository at `ref`."""
+    purl = PackageURL(type="github", namespace=org, name=repo, version=ref)
+    return f"Organization: {org}", f"https://github.com/{org}/{repo}", purl.to_string()
+
+
 def _identity(
-    remote: str | None, name: str, commit: str | None
-) -> tuple[str, str, str, str]:
-    """Supplier, homepage, purl and download location, read off the remote URL."""
-    if remote:
-        match = _GITHUB_REMOTE.search(remote)
-        if match:
-            org, repo = match.group("org"), match.group("repo")
-            purl = PackageURL(
-                type="github", namespace=org, name=repo, version=commit
-            ).to_string()
-            download = f"git+https://github.com/{org}/{repo}.git" + (
-                f"@{commit}" if commit else ""
-            )
-            return (
-                f"Organization: {org}",
-                f"https://github.com/{org}/{repo}",
-                purl,
-                download,
-            )
-        purl = f"pkg:generic/{name}" + (f"@{commit}" if commit else "")
-        return (
-            "NOASSERTION",
-            remote,
-            purl,
-            (f"git+{remote}@{commit}" if commit else remote),
+    remote: str | None, name: str, commit: str | None, tag: str | None = None
+) -> _Identity:
+    """A git source's identity, read off its remote URL, at the commit, else at
+    the declared tag."""
+    ref = commit or tag
+    version = ref or "NOASSERTION"
+    match = _GITHUB_REMOTE.search(remote) if remote else None
+    if match:
+        org, repo = match.group("org"), match.group("repo")
+        download = f"git+https://github.com/{org}/{repo}.git" + (
+            f"@{ref}" if ref else ""
         )
-    return "NOASSERTION", "NOASSERTION", f"pkg:generic/{name}", "NOASSERTION"
-
-
-def _declared_constraint(deps_dir: Path, name: str) -> dict[str, str | None]:
-    clone = (
-        deps_dir
-        / f"{name}-subbuild"
-        / f"{name}-populate-prefix"
-        / "tmp"
-        / f"{name}-populate-gitclone.cmake"
+        return _Identity(repo, *_github_identity(org, repo, ref), download, version)
+    if remote:
+        purl = PackageURL(type="generic", name=name, version=ref).to_string()
+        location = _SCP_REMOTE.sub(r"ssh://\g<user>\g<host>/", remote)
+        if urlparse(location).scheme.lower() not in _GIT_TRANSPORTS:
+            download = "NOASSERTION"
+        else:
+            download = f"git+{location}@{ref}" if ref else location
+        return _Identity(name, "NOASSERTION", remote, purl, download, version)
+    return _Identity(
+        name,
+        "NOASSERTION",
+        "NOASSERTION",
+        f"pkg:generic/{name}",
+        "NOASSERTION",
+        version,
     )
-    if not clone.is_file():
-        return {"url": None, "tag": None}
-    text = clone.read_text(encoding="utf-8", errors="replace")
-    url = _GITCLONE_URL.search(text)
-    tag = _GITCLONE_TAG.search(text)
-    return {
-        "url": url.group("url") if url else None,
-        "tag": tag.group("tag") if tag else None,
-    }
+
+
+def _archive_identity(url: str, digest: str | None, name: str) -> tuple[_Identity, str]:
+    """An archive's identity, read off the URL it was declared with, and how the
+    declaration reads in `sourceInfo`."""
+    parsed = urlparse(url)
+    file_name = PurePosixPath(parsed.path).name
+    downloadable = parsed.scheme.lower() in _DOWNLOAD_SCHEMES
+    download = url if downloadable else "NOASSERTION"
+    detail = f"Declared archive: {url if downloadable else f'local file {file_name}'}"
+    detail += f" ({digest})." if digest else "."
+
+    match = next(filter(None, (form.match(url) for form in _GITHUB_DOWNLOADS)), None)
+    if match:
+        org, repo, ref = match.group("org", "repo", "ref")
+        github = _github_identity(org, repo, ref)
+        return _Identity(repo, *github, download, ref), detail
+
+    qualifiers = {"download_url": url} if downloadable else {}
+    if digest and "=" in digest:
+        algorithm, value = digest.split("=", 1)
+        algorithm = algorithm.lower().replace("_", "-")
+        qualifiers["checksum"] = f"{algorithm}:{value.lower()}"
+    version = version_in_name(file_name)
+    purl = PackageURL(
+        type="generic", name=name, version=version, qualifiers=qualifiers or None
+    )
+    identity = _Identity(
+        name,
+        "NOASSERTION",
+        "NOASSERTION",
+        purl.to_string(),
+        download,
+        version or "NOASSERTION",
+    )
+    return identity, detail
+
+
+@dataclass(frozen=True)
+class _Declaration:
+    """What a FetchContent declaration asked for."""
+
+    repository: str | None = None
+    tag: str | None = None
+    url: str | None = None
+    hash: str | None = None
+
+
+def _stamps(deps_dir: Path) -> dict[str, dict[str, dict[str, str]]]:
+    """Each tree's FetchContent stamps, by method; sbom.rst says where from."""
+    # Under the populate sub-build, or, with CMP0168 NEW, the build's own CMakeFiles.
+    roots = (
+        (deps_dir, "*-subbuild/*-populate-prefix/src/*-populate-stamp"),
+        (deps_dir.parent / "CMakeFiles" / "fc-stamp", "*"),
+    )
+    newest: dict[tuple[str, str], tuple[int, dict[str, str]]] = {}
+    for base, pattern in roots:
+        for method in ("url", "git"):
+            for stamp in base.glob(f"{pattern}/*-{method}info.txt"):
+                fields = {}
+                text = stamp.read_text(encoding="utf-8", errors="replace")
+                for line in text.splitlines():
+                    key, separator, value = line.partition("=")
+                    if separator and not line.startswith("#"):
+                        fields[key.strip()] = value.strip()
+                if not fields.get("source_dir"):
+                    continue
+                # Both layouts can hold one after a policy change; the newer wins.
+                slot = (Path(fields["source_dir"]).name, method)
+                written = stamp.stat().st_mtime_ns
+                if slot not in newest or written > newest[slot][0]:
+                    newest[slot] = (written, fields)
+    by_tree: dict[str, dict[str, dict[str, str]]] = {}
+    for (tree, method), (_, fields) in newest.items():
+        by_tree.setdefault(tree, {})[method] = fields
+    return by_tree
+
+
+def _declaration(deps_dir: Path, fields: dict[str, str]) -> _Declaration:
+    tag = None
+    # The git stamp's command runs the clone script, which names the ref; the
+    # stamp's paths are absolute, so a moved build tree is rebased onto this one.
+    built_in = Path(fields["source_dir"]).parent.parent
+    for word in fields.get("command", "").split(";"):
+        if not word.endswith("-gitclone.cmake"):
+            continue
+        script = Path(word)
+        if not script.is_file() and script.is_relative_to(built_in):
+            script = deps_dir.parent / script.relative_to(built_in)
+        if script.is_file():
+            text = script.read_text(encoding="utf-8", errors="replace")
+            match = _GITCLONE_TAG.search(text)
+            tag = match.group("tag") if match else None
+    return _Declaration(
+        repository=fields.get("repository") or None,
+        tag=tag,
+        # A CMake list of mirrors, tried in order.
+        url=fields.get("url(s)", "").split(";")[0] or None,
+        hash=fields.get("hash") or None,
+    )
+
+
+def _public_url(url: str) -> str:
+    """`url` without credentials in its authority, and without the query and
+    fragment, where a signed download carries its token."""
+    parsed = urlparse(url)
+    if "@" not in parsed.netloc and not parsed.query and not parsed.fragment:
+        return url
+    netloc = parsed.netloc.rpartition("@")[2]
+    return parsed._replace(netloc=netloc, query="", fragment="").geturl()
 
 
 def discover_source_trees(deps_dir: Path) -> dict[str, Component]:
-    """Every FetchContent checkout under the build's ``_deps``."""
+    """Every FetchContent tree under the build's ``_deps``."""
     components: dict[str, Component] = {}
+    stamps = _stamps(deps_dir)
     for root in sorted(deps_dir.glob("*-src")):
         if not root.is_dir():
             continue
         key = root.name.removesuffix("-src")
-        declared = _declared_constraint(deps_dir, key)
-        commit = repo_head(root)
-        remote = git(root, "config", "--get", "remote.origin.url") or declared["url"]
-        describe = git(root, "describe", "--tags", "--always")
-
-        supplier, homepage, purl, download = _identity(remote, key, commit)
-        evidence = licensing.discover_in_tree(key, root, root.name)
-        concluded, declared_expression = licensing.expression(evidence, key)
+        # A stamp outlives a switch of method, and an unchanged one keeps its old
+        # mtime, so the tree decides: a git clone is a checkout of its own.
+        methods = stamps.get(root.name, {})
+        method = "git" if _is_own_checkout(root.resolve()) else "url"
+        fields = methods.get(method) or next(iter(methods.values()), None)
+        declared = _declaration(deps_dir, fields) if fields else _Declaration()
+        commit = own_git(root, "rev-parse", "HEAD")
+        remote = (
+            own_git(root, "config", "--get", "remote.origin.url") or declared.repository
+        )
+        remote = _public_url(remote) if remote else None
+        describe = own_git(root, "describe", "--tags", "--always")
 
         details = [f"Fetched into {root.name}."]
-        if declared["tag"]:
-            details.append(f"Declared constraint: {declared['tag']}.")
+        if remote or not declared.url:
+            identity = _identity(remote, key, commit, declared.tag)
+            if declared.tag:
+                details.append(f"Declared constraint: {declared.tag}.")
+        else:
+            identity, detail = _archive_identity(
+                _public_url(declared.url), declared.hash, key
+            )
+            details.append(detail)
         if describe:
             details.append(f"git describe: {describe}.")
 
-        name_match = _GITHUB_REMOTE.search(remote) if remote else None
+        evidence = licensing.discover_in_tree(key, root, root.name)
+        concluded, declared_expression = licensing.expression(evidence, key)
         components[key] = Component(
             key=key,
-            name=name_match.group("repo") if name_match else key,
+            name=identity.name,
             kind="source-tree",
-            supplier=supplier,
-            homepage=homepage,
-            purl=purl,
-            version=commit or declared["tag"] or "NOASSERTION",
-            download_location=download,
+            supplier=identity.supplier,
+            homepage=identity.homepage,
+            purl=identity.purl,
+            version=identity.version,
+            download_location=identity.download_location,
             source_info=" ".join(details),
             root=root,
             copyright_text=notice_from(evidence),
@@ -700,11 +873,16 @@ def _search_directories(toolchains: Path | None, build_dir: Path) -> dict[str, _
     return found
 
 
-def _ask(*command: str) -> str:
+def _ask(*command: str, env: dict[str, str] | None = None) -> str:
     """A command's standard output, or empty where it cannot run or fails."""
     try:
         result = subprocess.run(
-            list(command), capture_output=True, text=True, check=False, timeout=60
+            list(command),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -1735,7 +1913,9 @@ def _vcpkg_component(
         else (location, "", "")
     )
     if remote and _GITHUB_REMOTE.search(remote):
-        supplier, homepage, purl, download = _identity(remote, port, ref or None)
+        identity = _identity(remote, port, ref or None)
+        supplier, homepage, purl = identity.supplier, identity.homepage, identity.purl
+        download = identity.download_location
     else:
         supplier, homepage, download = "NOASSERTION", "NOASSERTION", upstream
         purl = PackageURL(type="generic", name=port, version=version).to_string()

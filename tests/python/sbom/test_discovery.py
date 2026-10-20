@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import zlib
 from pathlib import Path
@@ -36,15 +37,379 @@ def test_identity_comes_off_the_remote_url(workspace):
 
     assert alpha.supplier == "Organization: example-org"
     assert alpha.homepage == "https://github.com/example-org/alpha"
-    assert alpha.purl.startswith("pkg:github/example-org/alpha")
-    assert alpha.version == "v1.2.3", "the declared constraint stands in for a commit"
+    # With no checkout, the declared tag stands in for a commit throughout.
+    assert alpha.purl == "pkg:github/example-org/alpha@v1.2.3"
+    assert (
+        alpha.download_location == "git+https://github.com/example-org/alpha.git@v1.2.3"
+    )
+    assert alpha.version == "v1.2.3"
 
 
-def test_no_checkout_on_the_clone_line_is_not_a_checkout(workspace):
-    """`git clone --no-checkout <url>` must not be read as `git checkout <url>`."""
-    beta = discovery.discover_source_trees(workspace.build / "_deps")["beta"]
+SDL_RELEASE = (
+    "https://github.com/libsdl-org/SDL/releases/download/"
+    "release-2.32.10/SDL2-2.32.10.tar.gz"
+)
+SDL_HASH = "SHA256=" + "5f" * 32
 
-    assert not beta.version.startswith("http")
+
+@pytest.mark.parametrize("hook", [False, True], ids=["shell", "under-a-hook"])
+def test_an_archive_fetched_inside_a_checkout_is_not_that_checkout(
+    workspace, monkeypatch, hook
+):
+    """git answers for the repository enclosing `build/`; the declaration does not.
+
+    A hook runs with GIT_DIR exported, which makes every directory look like
+    the root of that repository.
+    """
+    deps = workspace.build / "_deps"
+    synth.write(deps / "sdl2-src/LICENSE.txt", synth.spdx_text("Zlib"))
+    synth.declare(deps, "sdl2", urls=(SDL_RELEASE,), digest=SDL_HASH)
+    synth.git(
+        workspace.root,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/example/enclosing-project.git",
+    )
+    if hook:
+        monkeypatch.setenv("GIT_DIR", str(workspace.root / ".git"))
+
+    components = discovery.discover_source_trees(deps)
+    sdl2 = components["sdl2"]
+
+    assert (sdl2.name, sdl2.supplier, sdl2.homepage, sdl2.purl, sdl2.version) == (
+        "SDL",
+        "Organization: libsdl-org",
+        "https://github.com/libsdl-org/SDL",
+        "pkg:github/libsdl-org/sdl@release-2.32.10",
+        "release-2.32.10",
+    )
+    assert sdl2.download_location == SDL_RELEASE
+    assert f"Declared archive: {SDL_RELEASE} ({SDL_HASH})." in sdl2.source_info
+    # A tree declared by GIT_REPOSITORY with no .git left takes no describe either.
+    for component in components.values():
+        assert "enclosing-project" not in repr(component)
+        assert "git describe" not in component.source_info
+
+
+def test_the_checkout_itself_is_read_whatever_git_dir_says(
+    workspace, tmp_path, monkeypatch
+):
+    head = discovery.git(workspace.root, "rev-parse", "HEAD")
+    synth.clone_of(tmp_path / "other", "https://example.invalid/other.git", "v0")
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "other" / ".git"))
+
+    assert discovery.git(workspace.root, "rev-parse", "HEAD") == head
+    assert "VERSION" in discovery.tracked_files(workspace.root)
+
+
+DIRECT = pytest.mark.parametrize("direct", [False, True], ids=["sub-build", "direct"])
+
+
+@DIRECT
+@pytest.mark.parametrize(
+    ("urls", "digest", "purl", "version", "downloadable"),
+    [
+        (
+            ("https://downloads.example.org/foo-1.4.2.tar.gz",),
+            "SHA256=AB12",
+            "pkg:generic/foo@1.4.2?checksum=sha256:ab12"
+            "&download_url=https://downloads.example.org/foo-1.4.2.tar.gz",
+            "1.4.2",
+            True,
+        ),
+        (
+            (
+                "https://mirror-a.example.org/foo-1.4.2.tar.gz",
+                "https://mirror-b.example.org/foo-1.4.3.tar.gz",
+            ),
+            "SHA3_256=CD34",
+            "pkg:generic/foo@1.4.2?checksum=sha3-256:cd34"
+            "&download_url=https://mirror-a.example.org/foo-1.4.2.tar.gz",
+            "1.4.2",
+            True,
+        ),
+        (
+            ("https://gitlab.com/example-org/foo/-/archive/v1.5.0/foo-v1.5.0.tar.gz",),
+            None,
+            "pkg:generic/foo@1.5.0?download_url="
+            "https://gitlab.com/example-org/foo/-/archive/v1.5.0/foo-v1.5.0.tar.gz",
+            "1.5.0",
+            True,
+        ),
+        (
+            ("https://downloads.sourceforge.net/project/foo/foo-2.3.tar.bz2",),
+            None,
+            "pkg:generic/foo@2.3"
+            "?download_url=https://downloads.sourceforge.net/project/foo/foo-2.3.tar.bz2",
+            "2.3",
+            True,
+        ),
+        (
+            ("/home/builder/archives/foo-1.4.2.tar.gz",),
+            None,
+            "pkg:generic/foo@1.4.2",
+            "1.4.2",
+            False,
+        ),
+        (
+            ("file:///home/builder/archives/foo.zip",),
+            None,
+            "pkg:generic/foo",
+            "NOASSERTION",
+            False,
+        ),
+        (
+            ("https://github.com/example-org/foo/archive/refs/tags/v3.0.tar.gz",),
+            None,
+            "pkg:github/example-org/foo@v3.0",
+            "v3.0",
+            True,
+        ),
+        (
+            ("https://github.com/example-org/foo/archive/0a1b2c3d.zip",),
+            None,
+            "pkg:github/example-org/foo@0a1b2c3d",
+            "0a1b2c3d",
+            True,
+        ),
+        (
+            (
+                "https://github.com/example-org/foo/releases/download/v1.0/foo-linux.zip",
+            ),
+            None,
+            "pkg:github/example-org/foo@v1.0",
+            "v1.0",
+            True,
+        ),
+        (
+            (
+                "https://github.com/example-org/foo/archive/refs/tags/"
+                "releases/cpp/v2.1.1.tar.gz",
+            ),
+            None,
+            "pkg:github/example-org/foo@releases/cpp/v2.1.1",
+            "releases/cpp/v2.1.1",
+            True,
+        ),
+        (
+            ("https://codeload.github.com/example-org/foo/tar.gz/refs/tags/v4.2",),
+            None,
+            "pkg:github/example-org/foo@v4.2",
+            "v4.2",
+            True,
+        ),
+    ],
+)
+def test_a_declared_archive_is_named_by_its_url(
+    tmp_path, urls, digest, purl, version, downloadable, direct
+):
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    synth.declare(deps, "foo", urls=urls, digest=digest, direct=direct)
+
+    foo = discovery.discover_source_trees(deps)["foo"]
+
+    download = urls[0] if downloadable else "NOASSERTION"
+    assert (foo.purl, foo.version, foo.download_location) == (purl, version, download)
+    github = purl.startswith("pkg:github/")
+    assert foo.supplier == ("Organization: example-org" if github else "NOASSERTION")
+    assert "/home/builder" not in foo.source_info
+
+
+@DIRECT
+def test_a_declaration_is_matched_to_the_tree_it_names(tmp_path, direct):
+    """`license_list_data` fills `license-list-data-src`: the content name is not the tree."""
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-bar-src").mkdir(parents=True)
+    synth.declare(
+        deps,
+        "foo_bar",
+        repository="https://github.com/example-org/foo-bar.git",
+        tag="v5",
+        source="foo-bar-src",
+        direct=direct,
+    )
+
+    foo_bar = discovery.discover_source_trees(deps)["foo-bar"]
+
+    assert (foo_bar.purl, foo_bar.version) == (
+        "pkg:github/example-org/foo-bar@v5",
+        "v5",
+    )
+    assert "Declared constraint: v5." in foo_bar.source_info
+
+
+@pytest.mark.parametrize("stale_is_newer", [False, True], ids=["older", "newer"])
+def test_a_stamp_left_by_an_earlier_declaration_does_not_count(
+    tmp_path, stale_is_newer
+):
+    """Switching method leaves the other stamp behind, and CMake rewrites a
+    stamp only when its contents change, so its mtime cannot decide."""
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    synth.declare(deps, "foo", repository="https://example.invalid/foo.git", tag="v1")
+    synth.declare(deps, "foo", urls=("https://downloads.example.org/foo-2.0.tar.gz",))
+    git_stamp = next(deps.glob("foo-subbuild/**/*-gitinfo.txt"))
+    url_stamp = next(deps.glob("foo-subbuild/**/*-urlinfo.txt"))
+    stale, current = (git_stamp, url_stamp)
+    os.utime(stale, ns=(2, 2) if stale_is_newer else (0, 0))
+    os.utime(current, ns=(1, 1))
+
+    foo = discovery.discover_source_trees(deps)["foo"]
+
+    assert (foo.version, foo.purl.split("?")[0]) == ("2.0", "pkg:generic/foo@2.0")
+    assert "example.invalid" not in repr(foo)
+
+
+def test_after_a_policy_change_the_newer_layout_is_the_declaration(tmp_path):
+    """Sub-build stamps stay behind when CMP0168 turns NEW, and the reverse."""
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    synth.declare(deps, "foo", urls=("https://downloads.example.org/foo-1.0.tar.gz",))
+    synth.declare(
+        deps, "foo", urls=("https://downloads.example.org/foo-2.0.tar.gz",), direct=True
+    )
+    os.utime(next(deps.glob("foo-subbuild/**/*-urlinfo.txt")), ns=(0, 0))
+
+    assert discovery.discover_source_trees(deps)["foo"].version == "2.0"
+
+
+def test_a_checkout_takes_its_git_stamp_over_a_newer_url_stamp(tmp_path):
+    deps = tmp_path / "build" / "_deps"
+    commit = synth.clone_of(deps / "foo-src", "https://git.example.org/foo.git", "v3")
+    synth.declare(deps, "foo", repository="https://git.example.org/foo.git", tag="v3")
+    synth.declare(deps, "foo", urls=("https://downloads.example.org/foo-2.0.tar.gz",))
+    os.utime(next(deps.glob("foo-subbuild/**/*-gitinfo.txt")), ns=(0, 0))
+
+    foo = discovery.discover_source_trees(deps)["foo"]
+
+    assert foo.version == commit
+    assert "Declared constraint: v3." in foo.source_info
+    assert "downloads.example.org" not in repr(foo)
+
+
+def test_git_config_in_the_environment_does_not_choose_the_remote(
+    tmp_path, monkeypatch
+):
+    deps = tmp_path / "build" / "_deps"
+    synth.clone_of(deps / "foo-src", "https://git.example.org/foo.git", "v1")
+    synth.clone_of(tmp_path / "other", "https://git.example.org/other.git", "v1")
+    monkeypatch.setenv("GIT_CONFIG", str(tmp_path / "other" / ".git" / "config"))
+
+    foo = discovery.discover_source_trees(deps)["foo"]
+
+    assert foo.homepage == "https://git.example.org/foo.git"
+
+
+@pytest.mark.parametrize(
+    ("repository", "tag", "purl", "download"),
+    [
+        (
+            "https://git.example.org/foo.git",
+            "v1",
+            "pkg:generic/foo@v1",
+            "git+https://git.example.org/foo.git@v1",
+        ),
+        (
+            "https://git.example.org/foo.git",
+            "v1.0+build",
+            "pkg:generic/foo@v1.0%2Bbuild",
+            "git+https://git.example.org/foo.git@v1.0+build",
+        ),
+        (
+            "git@git.example.org:org/foo.git",
+            "v1",
+            "pkg:generic/foo@v1",
+            "git+ssh://git@git.example.org/org/foo.git@v1",
+        ),
+        ("/srv/git/foo.git", "v1", "pkg:generic/foo@v1", "NOASSERTION"),
+    ],
+)
+def test_a_declared_repository_off_github_is_named_by_its_tag(
+    tmp_path, repository, tag, purl, download
+):
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    synth.declare(deps, "foo", repository=repository, tag=tag)
+
+    foo = discovery.discover_source_trees(deps)["foo"]
+
+    assert (foo.purl, foo.download_location, foo.version) == (purl, download, tag)
+
+
+def test_a_moved_build_tree_still_reads_its_clone_script(tmp_path):
+    deps = tmp_path / "old" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    synth.declare(deps, "foo", repository="https://example.invalid/foo.git", tag="v7")
+    (tmp_path / "old").rename(tmp_path / "new")
+
+    foo = discovery.discover_source_trees(tmp_path / "new" / "_deps")["foo"]
+
+    assert foo.version == "v7"
+
+
+def test_credentials_in_a_declared_url_are_not_published(tmp_path):
+    deps = tmp_path / "build" / "_deps"
+    (deps / "foo-src").mkdir(parents=True)
+    (deps / "bar-src").mkdir(parents=True)
+    synth.declare(
+        deps,
+        "foo",
+        urls=("https://u:s3cret@dl.example.org/foo-1.0.tgz?token=t0ken#sig=s1g",),
+    )
+    synth.declare(deps, "bar", repository="https://tok3n@git.example.org/bar.git")
+
+    components = discovery.discover_source_trees(deps)
+
+    for secret in ("s3cret", "t0ken", "s1g"):
+        assert secret not in repr(components["foo"])
+    assert "tok3n" not in repr(components["bar"])
+    assert components["foo"].download_location == "https://dl.example.org/foo-1.0.tgz"
+    assert components["foo"].purl.endswith(
+        "download_url=https://dl.example.org/foo-1.0.tgz"
+    )
+
+
+def test_configuration_from_the_environment_reaches_git(workspace, monkeypatch):
+    """A container's safe.directory arrives this way; it does not pick a repository."""
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "sbom.probe")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "kept")
+
+    assert discovery.git(workspace.root, "config", "--get", "sbom.probe") == "kept"
+
+
+@pytest.mark.parametrize(
+    ("in_another_checkout", "separate_git_dir", "through_symlink"),
+    [(False, False, False), (True, True, False), (False, False, True)],
+    ids=["standalone", "submodule-like", "symlinked"],
+)
+def test_a_checkout_of_its_own_answers_for_itself(
+    workspace, tmp_path, in_another_checkout, separate_git_dir, through_symlink
+):
+    build = workspace.build if in_another_checkout else tmp_path / "build"
+    root = build / "_deps" / "epsilon-src"
+    synth.write(root / "LICENSE", synth.spdx_text("MIT"))
+    commit = synth.clone_of(
+        root,
+        "https://github.com/example-org/epsilon.git",
+        "v2.0.0",
+        git_dir=tmp_path / "modules" / "epsilon" if separate_git_dir else None,
+    )
+    synth.declare(
+        build / "_deps", "epsilon", repository="https://example.invalid/x.git"
+    )
+    if through_symlink:
+        (tmp_path / "link").symlink_to(build, target_is_directory=True)
+        build = tmp_path / "link"
+
+    epsilon = discovery.discover_source_trees(build / "_deps")["epsilon"]
+
+    assert epsilon.version == commit
+    assert epsilon.purl == f"pkg:github/example-org/epsilon@{commit}"
+    assert epsilon.download_location.endswith(f"/epsilon.git@{commit}")
+    assert "git describe: v2.0.0." in epsilon.source_info
 
 
 def test_licenses_come_from_the_trees_own_files(workspace):

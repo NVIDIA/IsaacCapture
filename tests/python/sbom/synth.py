@@ -306,15 +306,8 @@ class Workspace:
         self.wheel = root / "dist" / WHEEL_NAME
 
 
-def _git_checkout(root: Path, initialise: bool = True) -> None:
-    """Make the generated project a real checkout.
-
-    The collector separates repository source from build output by what git
-    tracks, because an install prefix carries no marker saying it is output.
-    `build/` and `dist/` are ignored here for the same reason they are in the
-    real repository.
-    """
-    write(root / ".gitignore", "build/\ndist/\n")
+def git(root: Path, *args: str) -> str:
+    """Run git in `root` and return its output."""
     # Fixed identity *and* clock: a commit hashes its timestamp, the collector
     # records the commit, and the wheel carries that record -- so a drifting
     # clock makes two builds of the same project differ.
@@ -327,13 +320,50 @@ def _git_checkout(root: Path, initialise: bool = True) -> None:
         "GIT_COMMITTER_EMAIL": "synth@example.invalid",
         "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
     }
-    run = lambda *args: subprocess.run(  # noqa: E731 - local shorthand
-        ["git", "-C", str(root), *args], check=True, capture_output=True, env=env
-    )
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit_all(root: Path, message: str) -> None:
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "--allow-empty", "-m", message)
+
+
+def clone_of(root: Path, remote: str, tag: str, git_dir: Path | None = None) -> str:
+    """Make `root` a checkout of its own, as FetchContent's clone leaves it.
+
+    `git_dir` puts the repository elsewhere behind a `.git` file, the way a
+    submodule's is. Returns the commit.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    separate = []
+    if git_dir:
+        git_dir.parent.mkdir(parents=True, exist_ok=True)
+        separate = ["--separate-git-dir", str(git_dir)]
+    git(root, "init", "-q", "-b", "main", *separate)
+    _commit_all(root, "upstream")
+    git(root, "tag", tag)
+    git(root, "remote", "add", "origin", remote)
+    return git(root, "rev-parse", "HEAD")
+
+
+def _git_checkout(root: Path, initialise: bool = True) -> None:
+    """Make the generated project a real checkout.
+
+    The collector separates repository source from build output by what git
+    tracks, because an install prefix carries no marker saying it is output.
+    `build/` and `dist/` are ignored here for the same reason they are in the
+    real repository.
+    """
+    write(root / ".gitignore", "build/\ndist/\n")
     if initialise:
-        run("init", "-q", "-b", "main")
-    run("add", "-A")
-    run("commit", "-q", "--allow-empty", "-m", "synthetic project")
+        git(root, "init", "-q", "-b", "main")
+    _commit_all(root, "synthetic project")
 
 
 def annotation(
@@ -384,15 +414,60 @@ def _stage_license_data(target: Path) -> None:
         write(target / "exceptions" / detail.name, detail.read_text(encoding="utf-8"))
 
 
-def _gitclone_stub(deps: Path, key: str, remote: str) -> None:
-    tmp = deps / f"{key}-subbuild" / f"{key}-populate-prefix" / "tmp"
-    tmp.mkdir(parents=True, exist_ok=True)
-    write(
-        tmp / f"{key}-populate-gitclone.cmake",
-        "  clone --no-checkout --depth 1 --no-single-branch "
-        f'--config "advice.detachedHead=false" "{remote}" "{key}-src"\n'
-        '  checkout "v1.2.3" --\n',
-    )
+def declare(
+    deps: Path,
+    key: str,
+    *,
+    urls: tuple[str, ...] = (),
+    digest: str | None = None,
+    repository: str | None = None,
+    tag: str | None = None,
+    direct: bool = False,
+    source: str | None = None,
+) -> None:
+    """Write the stamps a FetchContent declaration leaves in the build tree.
+
+    Laid out as the populate sub-build does, or, with `direct`, as CMP0168 NEW
+    does. `source` names the tree, `<key>-src` by default.
+    """
+    source_dir = deps / (source or f"{key}-src")
+    if direct:
+        files = deps.parent / "CMakeFiles"
+        stamps, scripts, prefix = files / "fc-stamp" / key, files / "fc-tmp" / key, key
+    else:
+        prefix = f"{key}-populate"
+        scripts = deps / f"{key}-subbuild" / f"{prefix}-prefix" / "tmp"
+        stamps = scripts.parent / "src" / f"{prefix}-stamp"
+
+    def stamp(kind: str, **fields: str) -> None:
+        body = "".join(f"{name}={value}\n" for name, value in fields.items())
+        write(
+            stamps / f"{prefix}-{kind}info.txt",
+            "# This is a generated file and its contents are an internal "
+            f"implementation detail.\n\nmethod={kind}\n{body}",
+        )
+
+    if urls:
+        stamp(
+            "url",
+            source_dir=str(source_dir),
+            **{"url(s)": ";".join(urls)},
+            hash=digest or "",
+        )
+    if repository:
+        clone = scripts / f"{prefix}-gitclone.cmake"
+        write(
+            clone,
+            # The URL straight after `--no-checkout`, which is not a checkout.
+            f'  clone --no-checkout "{repository}" "{source_dir.name}"\n'
+            + (f'  checkout "{tag}" --\n' if tag else ""),
+        )
+        stamp(
+            "git",
+            command=f"/usr/bin/cmake;-P;{clone}",
+            source_dir=str(source_dir),
+            repository=repository,
+        )
 
 
 def _sdk_tarball(path: Path) -> dict[str, bytes]:
@@ -444,7 +519,7 @@ def create(root: Path) -> Workspace:
         source = deps / f"{key}-src"
         write(source / license_name, spdx_text(license_id))
         write(source / f"{key}.cpp", f"// {key}\n")
-        _gitclone_stub(deps, key, remote)
+        declare(deps, key, repository=remote, tag="v1.2.3")
 
     # vendorpy ships Python that the build stages into the wheel.
     write(deps / "vendorpy-src/pkg/mod.py", _VENDOR_MODULE)

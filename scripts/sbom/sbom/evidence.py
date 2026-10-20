@@ -32,6 +32,7 @@ from .discovery import (
     discover_vcpkg,
     notice_from,
     tracked_files,
+    version_in_name,
     EMPTY_SHA256,
 )
 
@@ -170,10 +171,7 @@ def _archive_version(archives: ArchiveIndex, display: str) -> str | None:
     stated = archives.archives.get(display, {}).get("version_text")
     if stated:
         return stated
-    match = re.search(
-        r"(\d+\.\d+[\w.+-]*?)(?=-|\.tar|\.tgz|\.zip|$)", Path(display).name
-    )
-    return match.group(1) if match else None
+    return version_in_name(Path(display).name)
 
 
 def discover(repo_root: Path, build_dir: Path) -> Discovery:
