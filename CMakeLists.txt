@@ -64,7 +64,7 @@ option(BUILD_PLUGIN_NOITOM_MOCAP "Build Noitom mocap plugin (downloads MocapApi 
 option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetches SimpleBLE + nlohmann/json)" OFF)
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
 option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
-option(BUILD_PLUGIN_SENSING "Build SENSING GMSL camera plugin (Jetson only)" OFF)
+option(BUILD_PLUGIN_SENSING "Build SENSING GMSL camera plugin (Jetson only; requires SIPL + NVENC)" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)

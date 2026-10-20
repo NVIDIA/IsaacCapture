@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: sensing_camera
+description: "SENSING GMSL camera plugin (SIPL capture, NVENC H.264, MCAP metadata)"
+command: "./camera_plugin_sensing"
+version: "1.0.0"
+devices:
+  - path: "/camera"
+    type: "camera"
+    description: "Camera video stream"

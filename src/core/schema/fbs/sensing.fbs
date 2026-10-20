@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Per-frame metadata pushed by the SENSING camera plugin (one per stream).
+// Streams are keyed by SIPL pipeline index rather than an enum: the populated
+// set varies with the platform config the rig is running.
+// All fields are always present when the parent Tracked/Record wrapper's data is non-null.
+table FrameMetadataSensing {
+  // SIPL pipeline index, as INvSIPLCameraQuery reports it for the active
+  // platform config. This is NOT the GMSL link index, the CSI virtual channel,
+  // or the JSON sensorInfo.id -- for SHW5G_2 those are 2 and 3 while this is
+  // 0 and 1.
+  sensor_id: uint32 (id: 0);
+
+  // Per-stream counter of records emitted for this sensor. Not a SIPL capture
+  // index: a stream with an encoder counts bitstream units, one per captured
+  // frame, and an ipc-only stream counts published frames.
+  sequence_number: uint64 (id: 1);
+
+  // SIPL frameCaptureTSC: capture time on the Tegra TSC timebase, which every
+  // sensor on the rig shares because the deserializer drives them from one
+  // fsync generator. This is the field that lets a consumer pair the two eyes
+  // of a stereo rig; the wrapper timestamps cannot, since they are stamped
+  // after per-sensor conversion. Zero when the encoder dropped the frame this
+  // record's stamp came from.
+  capture_tsc_ns: uint64 (id: 2);
+}
+
+// MCAP recording wrapper for FrameMetadataSensing.
+table FrameMetadataSensingRecord {
+    data: FrameMetadataSensing (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type FrameMetadataSensingRecord;
