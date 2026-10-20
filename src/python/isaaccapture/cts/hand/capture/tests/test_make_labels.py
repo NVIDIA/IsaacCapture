@@ -70,6 +70,19 @@ def test_a_mislabelled_window_is_reported(golden):
     assert "segmentation.labelled_step_actually_performed" in bad
 
 
+def test_a_take_whose_audit_fails_keeps_its_labels(golden):
+    recording, windows = golden
+    recording.write_bytes(recording.read_bytes()[:100])
+    sidecar, checks = make_labels.write(recording, windows)
+    assert sidecar is not None
+    loaded = StepTimeline.beside(recording)
+    assert [(s.label, s.start_ns, s.end_ns) for s in loaded.steps] == [
+        (w.label, w.start_ns, w.end_ns) for w in windows
+    ]
+    [(name, ok, detail)] = checks
+    assert (name, ok) == ("recording", False) and "truncated" in detail, checks
+
+
 def test_no_windows_writes_no_sidecar(golden):
     recording, _ = golden
     sidecar, _ = make_labels.write(recording, [])

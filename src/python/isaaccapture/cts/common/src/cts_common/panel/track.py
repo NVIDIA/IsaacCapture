@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
@@ -61,12 +62,12 @@ class Track:
         else:
             start = bisect_left(self.times_s, self.times_s[end] - span_s)
             chosen = self.samples[start : end + 1]
-        drawable = [s for s in chosen if s.rate_hz == s.rate_hz]
+        drawable = [s for s in chosen if not math.isnan(s.rate_hz)]
         return ([s.t_s for s in drawable], [s.rate_hz for s in drawable])
 
     def rate_extent(self) -> tuple[float, float] | None:
         """Lowest and highest instantaneous rate in the take, or None if it has none."""
-        finite = [s.rate_hz for s in self.samples if s.rate_hz == s.rate_hz]
+        finite = [s.rate_hz for s in self.samples if not math.isnan(s.rate_hz)]
         return (min(finite), max(finite)) if finite else None
 
     def validity_series(self) -> tuple[list[float], list[float]]:

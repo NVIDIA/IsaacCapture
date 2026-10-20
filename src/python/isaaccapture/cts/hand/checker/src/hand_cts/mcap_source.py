@@ -92,10 +92,17 @@ class McapFrameSource:
         if not self._metadata.channel_found:
             return
         for topic, record in mcap_reader.messages(self._path, self._schema_name):
-            yield decode_record(
-                record.data,
-                record.sequence,
-                record.log_time,
-                record.publish_time,
-                side_of(topic),
-            )
+            try:
+                frame = decode_record(
+                    record.data,
+                    record.sequence,
+                    record.log_time,
+                    record.publish_time,
+                    side_of(topic),
+                )
+            except (struct.error, IndexError) as error:
+                raise mcap_reader.UnreadableRecording(
+                    f"{self._path}: message {record.sequence} on {topic} is not a "
+                    f"decodable {self._schema_name}: {error}"
+                ) from error
+            yield frame

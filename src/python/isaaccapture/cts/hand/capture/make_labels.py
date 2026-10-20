@@ -13,6 +13,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from cts_common.mcap_reader import UnreadableRecording
 from hand_cts.checks import Status, build
 from hand_cts.labels import SIDECAR_SUFFIX, Step, StepTimeline
 from hand_cts.mcap_source import McapFrameSource
@@ -74,30 +75,25 @@ def audit(recording: Path, windows: Sequence[Window]) -> tuple[list[Check], dict
     return checks, info
 
 
-def write(
-    recording: Path, windows: Sequence[Window]
-) -> tuple[Path | None, list[Check]]:
-    """Writes the sidecar beside the take; returns it and the audit rows.
+def _payload(recording: Path, windows: Sequence[Window], info: dict) -> dict:
+    first = info.get("first_ns")
 
-    No sidecar is written without windows.
-    """
-    checks, info = audit(recording, windows)
-    if not windows or "first_ns" not in info:
-        return None, checks
-    first = info["first_ns"]
-    payload = {
+    def since_first(ns: int) -> float | None:
+        return None if first is None else round((ns - first) / 1e9, 6)
+
+    return {
         "note": NOTE,
         "clock_domain": CLOCK_DOMAIN,
         "nominal_rate_hz": info.get("rate_hz"),
-        "records": info["records"],
+        "records": info.get("records"),
         "steps": [
             {
                 "index": w.index,
                 "label": w.label,
                 "start_ns": w.start_ns,
                 "end_ns": w.end_ns,
-                "start_s_from_first_sample": round((w.start_ns - first) / 1e9, 6),
-                "end_s_from_first_sample": round((w.end_ns - first) / 1e9, 6),
+                "start_s_from_first_sample": since_first(w.start_ns),
+                "end_s_from_first_sample": since_first(w.end_ns),
                 "is_still_window": w.is_still_window,
                 "boundary_source": w.source,
             }
@@ -105,8 +101,29 @@ def write(
         ],
         "mcap": recording.name,
     }
-    sidecar = recording.with_name(recording.stem + SIDECAR_SUFFIX)
-    sidecar.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def write(
+    recording: Path, windows: Sequence[Window]
+) -> tuple[Path | None, list[Check]]:
+    """Writes the sidecar beside the take; returns it and the audit rows.
+
+    No sidecar is written without windows. The windows reach disk before the audit
+    reads the take, because the recording cannot regenerate them.
+    """
+    sidecar = recording.with_name(recording.stem + SIDECAR_SUFFIX) if windows else None
+    if sidecar is not None:
+        sidecar.write_text(
+            json.dumps(_payload(recording, windows, {}), indent=2) + "\n"
+        )
+    try:
+        checks, info = audit(recording, windows)
+    except UnreadableRecording as unreadable:
+        return sidecar, [("recording", False, str(unreadable))]
+    if sidecar is not None:
+        sidecar.write_text(
+            json.dumps(_payload(recording, windows, info), indent=2) + "\n"
+        )
     return sidecar, checks
 
 

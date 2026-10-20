@@ -30,6 +30,13 @@ MALFORMED_LABELS = {
     ),
 }
 
+# Payloads ``decode_record`` cannot unpack, made from a valid encoded record.
+MALFORMED_PAYLOADS = {
+    "empty": lambda valid: b"",
+    "short": lambda valid: valid[:3],
+    "joints_past_the_end": lambda valid: valid[: len(valid) // 2],
+}
+
 
 def _cannot_run(argv: list[str], capsys) -> str:
     """Runs the CLI expecting exit status 4, the check could not run; returns its one stderr line."""
@@ -92,6 +99,14 @@ def test_a_truncated_recording_cannot_run(keep, tmp_path, capsys):
     truncated.write_bytes(data[: keep(len(data))])
     capsys.readouterr()
     assert "ends part way through a record" in _cannot_run([str(truncated)], capsys)
+
+
+@pytest.mark.parametrize("cut", MALFORMED_PAYLOADS.values(), ids=MALFORMED_PAYLOADS)
+def test_an_undecodable_payload_cannot_run(cut, tmp_path, monkeypatch, capsys):
+    encode = synth.encode
+    monkeypatch.setattr(synth, "encode", lambda frame: cut(encode(frame)))
+    recording = synth.write_recording(tmp_path / "take-hand.mcap", synth.both_hands(2))
+    assert "is not a decodable" in _cannot_run([str(recording)], capsys)
 
 
 def test_a_missing_labels_file_cannot_run(tmp_path, capsys):

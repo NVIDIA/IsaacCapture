@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import subprocess
 import zipfile
 from pathlib import Path
@@ -124,7 +125,7 @@ def series(samples: Sequence[Sample]) -> dict[str, list[Any]]:
     return {
         "t_ms": [round(sample.t_s * 1000.0, 1) for sample in samples],
         "rate_hz": [
-            None if sample.rate_hz != sample.rate_hz else round(sample.rate_hz, 2)
+            None if math.isnan(sample.rate_hz) else round(sample.rate_hz, 2)
             for sample in samples
         ],
         "valid": [sample.valid_count for sample in samples],
