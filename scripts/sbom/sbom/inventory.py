@@ -696,8 +696,8 @@ class Resolver:
 
         # This repository first. A member matching a file this project tracks is
         # this project's copy; a dependency whose tree happens to end in the same
-        # two path segments is a coincidence -- our own BSL-1.0 pool text was
-        # being credited to an SDK that ships one under the same relative path.
+        # two path segments is a coincidence, as when an SDK ships a BSL-1.0
+        # text under the same relative path as our pool's.
         # A third-party file checked in here still carries its component, because
         # the repository branch looks its holder up.
         repo_file = self.repo_files.path_suffix_match(wheel_path)

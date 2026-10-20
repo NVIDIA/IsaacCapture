@@ -73,9 +73,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
         manifests.append(manifest)
         print(f"packaged evidence into {wheel.name}")
 
-    # Through the same merge as a release: inheriting the first wheel's manifest
-    # dated the set before the last wheel it binds existed, and skipped the
-    # duplicate-filename check.
+    # The merge a release uses: the set is stamped after its last wheel, and one
+    # filename cannot stand for two wheels.
     merged = build_module.merge_records(
         [item for manifest in manifests for item in manifest["wheels"]]
     )

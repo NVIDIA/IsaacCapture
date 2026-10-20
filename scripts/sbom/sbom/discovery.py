@@ -212,8 +212,8 @@ def notice_from(evidence) -> str:
     """The copyright a component's own licence text states, where it states one.
 
     Permissive licences generally require the notice to travel with the terms,
-    and for MIT and the BSDs it is a line of the same file -- shipped in the
-    wheel but, until now, named nowhere a reader could act on.
+    and for MIT and the BSDs it is a line of the same file; this states it
+    where a reader can act on it.
     """
     # Grants only, though a pool counts as licence evidence everywhere else: a
     # pool is a directory of reference texts, and the notice in one is the

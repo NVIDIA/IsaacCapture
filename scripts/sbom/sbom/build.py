@@ -333,8 +333,8 @@ def build(
 
     # The distribution's own declared licence is an obligation like any other.
     # Apache-2.0 asks that recipients get a copy, and the gate above covers only
-    # what the build redistributes -- so a wheel could declare a licence whose
-    # text it does not carry, and the transition wheel did.
+    # what the build redistributes -- so a wheel can declare a licence whose
+    # text it does not carry, as a metadata-only wheel does.
     declared = _project_facts(repo_root, wheel_metadata)["license"]
     shipped = {
         report_module.declared_license_path(wheel.dist_info, item.name)
@@ -393,15 +393,15 @@ def build(
     projected_wheel = replace(wheel, entries=tuple(projected))
     for name in [*additions, *replacements]:
         # Only the third-party texts: the notices file and the document below
-        # are this collector's own output, and reading them back found the first
-        # `- Copyright:` bullet of the summary it had just generated.
+        # are this collector's own output, and reading them back would take a
+        # `- Copyright:` bullet of its own summary for a notice.
         packaged_text = name in additions and report_module.is_third_party_license(
             wheel.dist_info, name
         )
         body = additions.get(name, b"").decode("utf-8", "replace")
-        # A licence text can state its own terms and carry a notice, and these
-        # were the only members never read for either -- the collector packaged
-        # them, so nothing scanned them the way it scans what it is describing.
+        # A licence text can state its own terms and carry a notice. The
+        # collector packages these itself, so it reads them here, the way it
+        # reads every member it describes.
         inventory.attributions[name] = Attribution(
             path=name,
             origin="metadata",

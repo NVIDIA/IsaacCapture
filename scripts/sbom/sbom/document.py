@@ -130,8 +130,8 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
                     f"{ref} was minted for two components with different terms; "
                     "a LicenseRef identifies one text"
                 )
-            # Accumulated, not replaced: three components sharing one text left
-            # the entry naming the last two and citing only the last one's files.
+            # Accumulated, not replaced: the entry names every component sharing
+            # the text and cites all of their files.
             covers = set(entries.get(ref, {}).get("_for", ())) | {component.name}
             cited = sorted(
                 set(entries.get(ref, {}).get("_from", ()))
@@ -518,12 +518,10 @@ def build_document(
             )
         else:
             # Built by this same run: not an install-time unknown, so the facts
-            # its own metadata states are recorded here. Deliberately not a
-            # digest-bound reference to that wheel's document -- a `py3-none-any`
-            # wheel is built by every matrix entry, and pinning one entry's
-            # sibling made the universal wheel differ by who built it. It also
-            # kept the two documents asymmetric, since a requirement cycle means
-            # only one of them could ever carry the reference.
+            # its own metadata states are recorded here. Not a digest-bound
+            # reference to that wheel's document: a `py3-none-any` wheel is built
+            # by every matrix entry and must not differ by which one built it,
+            # and in a requirement cycle only one document could carry it.
             element = package_id
             comment = (
                 f"{declared} Built by this same build; its own document "
