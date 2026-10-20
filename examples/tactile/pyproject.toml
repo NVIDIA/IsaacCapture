@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-tactile"
+version = "0.0.0"
+description = "IsaacCapture tactile feeder and printer"
+requires-python = ">=3.11,<3.14"
+dependencies = ["isaaccapture[cloudxr]"]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/tactile"]
+sources = ["python"]
+
+[tool.uv.sources]
+isaaccapture = { path = "../..", editable = true }
