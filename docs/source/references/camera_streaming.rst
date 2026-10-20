@@ -150,6 +150,23 @@ provides them. With the matching NVIDIA repositories configured:
 Use the CUDA toolkit matching your JetPack. ``--jetson`` configures library discovery. A separate ``nvcc`` compiler is needed for CUDA source builds, such as the native
 RTP codec, rather than ordinary CuPy kernel execution.
 
+.. _camera-streaming-web-client:
+
+Web client for camera visualization
+-----------------------------------
+
+The default `Isaac Teleop Web Client`_ shows an in-XR control panel with connection information
+and controls that are useful during development. To hide this panel for camera viewing, open
+**Advanced settings → In-XR comfort** before connecting and set **Control panel when entering XR
+(saved per teleop application)** to **Hide control panel**.
+
+This preference is saved for the selected teleop application and takes effect when entering XR.
+If already connected, leave and re-enter XR to apply it. Use the small **Show** control to reopen
+the panel and **Hide** to dismiss it while the camera stream continues.
+
+Follow the :ref:`headset connection steps <connect-quest-pico>` for the server address,
+certificate acceptance, and connection.
+
 .. _recorded-camera-streaming:
 
 First run — a recording, no camera required
