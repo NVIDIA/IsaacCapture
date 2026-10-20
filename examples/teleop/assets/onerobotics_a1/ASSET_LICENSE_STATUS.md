@@ -25,18 +25,26 @@ The complete legal code is included at [`LICENSES/CC-BY-4.0.txt`](LICENSES/CC-BY
 
 The CC BY 4.0 asset license applies to:
 
-- all 66 binary STL mesh files: 33 under
-  `source/h1_reach/h1_reach/assets/meshes/`, 16 under
-  `source/h1_reach/h1_reach/assets/urdf/A1_2026/meshes/`, and 17 under
-  `source/h1_reach/h1_reach/assets/urdf/A1_2026/bimanual_stand/meshes/`;
-- all six URDF robot-model files under
-  `source/h1_reach/h1_reach/assets/urdf/`, including the A1 2026 right- and
+- all 66 binary STL mesh files packaged under
+  `examples/teleop/assets/onerobotics_a1/meshes/` and
+  `examples/teleop/assets/onerobotics_a1/urdf/A1_2026/meshes/`, and
+  `examples/teleop/assets/onerobotics_a1/urdf/A1_2026/bimanual_stand/meshes/`
+  (upstream source paths: `source/h1_reach/h1_reach/assets/meshes/`,
+  `source/h1_reach/h1_reach/assets/urdf/A1_2026/meshes/`, and
+  `source/h1_reach/h1_reach/assets/urdf/A1_2026/bimanual_stand/meshes/`);
+- all six URDF robot-model files packaged under
+  `examples/teleop/assets/onerobotics_a1/urdf/` (upstream source path:
+  `source/h1_reach/h1_reach/assets/urdf/`), including the A1 2026 right- and
   left-arm source models `A1_2026/a1_r.urdf` and `A1_2026/a1_l.urdf`, and the
   whole-robot source model
   `A1_2026/bimanual_stand/a1_bimanual_stand.urdf`;
-- all five MuJoCo/MJCF XML robot-model files under `source/h1_reach/h1_reach/assets/mjcf/`;
-- the A1 2026 model and control metadata in
-  `source/h1_reach/h1_reach/assets/urdf/A1_2026/model_parameters.yaml`;
+- all five MuJoCo/MJCF XML robot-model files packaged under
+  `examples/teleop/assets/onerobotics_a1/mjcf/` (upstream source path:
+  `source/h1_reach/h1_reach/assets/mjcf/`);
+- the A1 2026 model and control metadata packaged at
+  `examples/teleop/assets/onerobotics_a1/urdf/A1_2026/model_parameters.yaml`
+  (upstream source path:
+  `source/h1_reach/h1_reach/assets/urdf/A1_2026/model_parameters.yaml`);
 - USD, USDA, USDC, or USDZ conversions that OneRobotics publishes from the covered model files and explicitly identifies as covered by this declaration, excluding incorporated third-party material that OneRobotics is not authorized to license.
 
 The current source tree contains 77 covered robot-model files: 66 STL files,
@@ -47,8 +55,10 @@ distinct whole-robot bimanual stand URDF with 17 meshes, for 36 A1 2026
 robot-model files. The revisions are separate CAD sources and do not include a
 gripper. No USD-format asset is currently tracked.
 
-In built wheel and source-distribution artifacts, these files appear under
-`h1_reach/assets/`; that packaging-path change does not alter the license scope.
+In this repository, these files are distributed under
+`examples/teleop/assets/onerobotics_a1/`; the upstream source distribution
+uses `h1_reach/assets/`. This packaging-path change does not alter the license
+scope or the upstream source attribution.
 
 ## Required attribution
 

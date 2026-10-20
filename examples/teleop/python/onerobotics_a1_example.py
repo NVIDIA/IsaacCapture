@@ -64,7 +64,12 @@ def build_pipeline(source: JointStateSource):
     mapped = retargeter.connect(
         {JointStateRetargeter.JOINTS: source.output(JointStateSource.JOINTS)}
     )
-    return OutputCombiner({"action": mapped.output("joint_targets")})
+    return OutputCombiner(
+        {
+            "action": mapped.output("joint_targets"),
+            "sample": source.output(JointStateSource.JOINTS),
+        }
+    )
 
 
 def run_demo(duration: float) -> None:
@@ -114,8 +119,11 @@ def run_live(frames: int, timeout: float, args: argparse.Namespace) -> None:
         while received < frames and time.monotonic() < deadline:
             result = session.step()
             action = result.get("action")
-            if action is not None:
-                values = np.asarray(action[0], dtype=float)
+            sample = result.get("sample")
+            if sample is not None and not sample.is_none and action is not None:
+                values = np.asarray(
+                    [action[i] for i in range(len(A1_RIGHT_JOINTS))], dtype=float
+                )
                 print(
                     f"frame {received:04d} | "
                     + " ".join(
