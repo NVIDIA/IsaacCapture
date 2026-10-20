@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="1280" viewBox="0 0 940 1280" role="img" aria-labelledby="title desc">
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<title id="title">Human and synthetic XR input share the same Franka control path</title>
+<desc id="desc">Two input lanes converge at WebXR and CloudXR. Native retargeting maps controller poses to gripper targets, Lab IK calculates joint commands, and the simulated robot moves. Images return to the browser. Additional numerical pose feedback returns to the automation script.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#536773"/></marker></defs>
+<rect width="940" height="1280" rx="20" fill="#f5f8fa"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="250" y="44" text-anchor="middle" font-size="24" font-weight="bold" fill="#226087">HUMAN WITH PICO</text>
+<text x="690" y="44" text-anchor="middle" font-size="24" font-weight="bold" fill="#467000">AUTOMATION</text>
+<rect x="40" y="68" width="420" height="91" rx="12" fill="#ecf5fb" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="250.0" y="98" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">See the scene</text>
+<text x="250.0" y="126" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Lab streams images to the headset</text>
+<rect x="480" y="68" width="420" height="91" rx="12" fill="#f0f7e7" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="690.0" y="98" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Read scene feedback</text>
+<text x="690.0" y="126" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Lab observer exposes numerical poses</text>
+<rect x="40" y="183" width="420" height="116" rx="12" fill="#ecf5fb" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="250.0" y="213" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Human decides</text>
+<text x="250.0" y="241" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">“Move the gripper above the cube.”</text>
+<text x="250.0" y="266" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Estimate position and orientation.</text>
+<rect x="480" y="183" width="420" height="116" rx="12" fill="#f0f7e7" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="690.0" y="213" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Your task logic decides</text>
+<text x="690.0" y="241" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">stack_logic.py reads cube/gripper poses</text>
+<text x="690.0" y="266" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">and calculates a gripper target.</text>
+<rect x="40" y="323" width="420" height="141" rx="12" fill="#ecf5fb" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="250.0" y="353" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Move the physical controller</text>
+<text x="250.0" y="381" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Move the hand through 3D space.</text>
+<text x="250.0" y="406" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Squeeze engages teleoperation;</text>
+<text x="250.0" y="431" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">trigger closes or opens the gripper.</text>
+<rect x="480" y="323" width="420" height="141" rx="12" fill="#f0f7e7" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="690.0" y="353" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Pose bridge converts targets</text>
+<text x="690.0" y="381" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">xr_controller_bridge.py generates</text>
+<text x="690.0" y="406" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">intermediate poses and converts robot</text>
+<text x="690.0" y="431" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">coordinates / offsets into XR poses.</text>
+<rect x="40" y="488" width="420" height="116" rx="12" fill="#ecf5fb" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="250.0" y="518" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Pico tracking supplies input</text>
+<text x="250.0" y="546" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Successive controller poses</text>
+<text x="250.0" y="571" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">and button values</text>
+<rect x="480" y="488" width="420" height="116" rx="12" fill="#f0f7e7" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="690.0" y="518" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Browser API + IWER supplies input</text>
+<text x="690.0" y="546" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Successive synthetic controller poses</text>
+<text x="690.0" y="571" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">and button values</text>
+<path d="M 250 159 V 180" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 250 299 V 320" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 250 464 V 485" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 690 159 V 180" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 690 299 V 320" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 690 464 V 485" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 250 604 V 630 H 690 V 604 M 470 630 V 642" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="470" y="660" text-anchor="middle" font-size="17" font-weight="bold" fill="#467000">SHARED NATIVE PATH</text>
+<rect x="170" y="682" width="600" height="75" rx="12" fill="#eaf3df" stroke="#8aa764" stroke-width="1.5"/>
+<text x="470.0" y="712" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">WebXR → CloudXR</text>
+<text x="470.0" y="740" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Controller poses and buttons</text>
+<rect x="170" y="780" width="600" height="90" rx="12" fill="#fff" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="470.0" y="810" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Native retargeting</text>
+<text x="470.0" y="838" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Controller pose → robot gripper target</text>
+<text x="470.0" y="863" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Buttons → clutch / gripper commands</text>
+<rect x="170" y="893" width="600" height="90" rx="12" fill="#fff" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="470.0" y="923" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Lab IK</text>
+<text x="470.0" y="951" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Gripper target + current robot configuration</text>
+<text x="470.0" y="976" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">→ joint commands</text>
+<rect x="170" y="1006" width="600" height="75" rx="12" fill="#fff" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="470.0" y="1036" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Simulated Franka moves</text>
+<text x="470.0" y="1064" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">The browser shows this streamed robot motion.</text>
+<path d="M 470 757 V 777" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 470 870 V 890" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 470 983 V 1003" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<path d="M 470 1081 V 1110 H 250 V 1132 M 470 1110 H 690 V 1132" fill="none" stroke="#536773" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="1138" width="420" height="91" rx="12" fill="#ecf5fb" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="250.0" y="1168" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Rendered scene → human</text>
+<text x="250.0" y="1196" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Look again and adjust hand movement.</text>
+<rect x="480" y="1138" width="420" height="91" rx="12" fill="#f0f7e7" stroke="#bdcbd3" stroke-width="1.5"/>
+<text x="690.0" y="1168" text-anchor="middle" font-size="21" font-weight="bold" fill="#243843">Numerical feedback → script</text>
+<text x="690.0" y="1196" text-anchor="middle" font-size="18" font-weight="normal" fill="#243843">Check progress and adjust targets.</text>
+<text x="470" y="1262" text-anchor="middle" font-size="17" font-weight="normal" fill="#243843">Extra numerical feedback serves automation; both use the same robot-control path.</text>
+</g></svg>
