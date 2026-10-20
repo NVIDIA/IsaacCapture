@@ -1,0 +1,77 @@
+<mujoco model="a1_r_urdf">
+  <compiler angle="radian" meshdir="../../meshes/A1/A1_r/" />
+  <option timestep="0.016666667" integrator="implicitfast" />
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="base_link.STL" />
+    <mesh name="Link_R1" content_type="model/stl" file="Link_R1.STL" />
+    <mesh name="Link_R2" content_type="model/stl" file="Link_R2.STL" />
+    <mesh name="Link_R3" content_type="model/stl" file="Link_R3.STL" />
+    <mesh name="Link_R4" content_type="model/stl" file="Link_R4.STL" />
+    <mesh name="Link_R5" content_type="model/stl" file="Link_R5.STL" />
+    <mesh name="Link_R6" content_type="model/stl" file="Link_R6.STL" />
+    <mesh name="Link_R7" content_type="model/stl" file="Link_R7.STL" />
+  </asset>
+  <worldbody>
+    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="base_link" />
+    <geom type="mesh" rgba="1 1 1 1" mesh="base_link" contype="0" conaffinity="0" />
+    <body name="Link1" pos="0 0 0.0315">
+      <inertial pos="0.000547282 0.00180863 0.0918047" quat="0.997556 -0.0698652 -0.000221154 -0.000956872" mass="0.430012" diaginertia="0.000618953 0.000517931 0.000250973" />
+      <joint name="joint1-a1_r" pos="0 0 0" axis="0 0 1" range="-1.04 3.14" />
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R1" />
+      <geom type="mesh" rgba="1 1 1 1" mesh="Link_R1" />
+      <body name="Link2" pos="0 0 0.12745" quat="0.5 0.5 0.5 -0.5">
+        <inertial pos="-4.61277e-05 -0.0587841 0.00589447" quat="0.55176 0.834001 -0.00159031 -0.000694798" mass="0.402916" diaginertia="0.000598516 0.000418705 0.000337119" />
+        <joint name="joint2-a1_r" pos="0 0 0" axis="0 0 1" range="-3.14 0.26" />
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R2" />
+        <geom type="mesh" rgba="1 1 1 1" mesh="Link_R2" />
+        <body name="Link3" pos="0 -0.09325 0" quat="0.5 0.5 -0.5 0.5">
+          <inertial pos="-1.47257e-05 -0.00309076 0.108491" quat="0.994019 0.109209 0.000492873 -0.000191081" mass="0.392014" diaginertia="0.000445204 0.000343393 0.000281994" />
+          <joint name="joint3-a1_r" pos="0 0 0" axis="0 0 1" range="-2.75 2.75" />
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R3" />
+          <geom type="mesh" rgba="1 1 1 1" mesh="Link_R3" />
+          <body name="Link4" pos="0 0.001 0.14025" quat="0.707107 -0.707107 0 0">
+            <inertial pos="4.77747e-07 -0.0625047 0.00555704" quat="0.316773 0.632348 -0.632112 0.316584" mass="0.252143" diaginertia="0.000190285 0.000178779 0.000121447" />
+            <joint name="joint4-a1_r" pos="0 0 0" axis="0 0 1" range="-1.92 1.92" />
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R4" />
+            <geom type="mesh" rgba="1 1 1 1" mesh="Link_R4" />
+            <body name="Link5" pos="0 -0.088 -0.001" quat="0.707107 0.707107 0 0">
+              <inertial pos="-2.25312e-06 0.000264774 0.0966634" quat="0.999776 -0.0211478 -0.000222158 -7.60084e-05" mass="0.318842" diaginertia="0.000322904 0.000296778 0.00015968" />
+              <joint name="joint5-a1_r" pos="0 0 0" axis="0 0 1" range="-2.75 2.75" />
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R5" />
+              <geom type="mesh" rgba="1 1 1 1" mesh="Link_R5" />
+              <body name="Link6" pos="0 -0.0005 0.133" quat="0.707107 0.707107 0 0">
+                <inertial pos="1.41062e-05 0.06165 0.00517126" quat="0.812566 0.582864 0.000531969 -0.00219186" mass="0.289939" diaginertia="0.00034658 0.000279376 0.000172136" />
+                <joint name="joint6-a1_r" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" />
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="Link_R6" />
+                <geom type="mesh" rgba="1 1 1 1" mesh="Link_R6" />
+                <body name="Link7" pos="0 0.112 -0.0005" quat="0 0 0.707107 0.707107">
+                  <inertial pos="5.62946e-10 -0.00220209 0.00293052" quat="0.500205 0.499795 -0.499795 0.500205" mass="0.0177506" diaginertia="4.60994e-06 2.81906e-06 1.89453e-06" />
+                  <joint name="joint7-a1_r" pos="0 0 0" axis="0 0 1" range="-2.75 2.75" />
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.898039 0.917647 0.929412 1" mesh="Link_R7" />
+                  <geom type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="Link_R7" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <light pos="0 0 2" dir="0 0 -1" diffuse="0.8 0.8 0.8" />
+    <geom name="floor" type="plane" size="2 2 0.05" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.3 0.35 1" />
+    <body name="goal" mocap="true" pos="0.3 0 0.3">
+      <geom type="sphere" size="0.015" rgba="1 0.2 0.2 0.5" contype="0" conaffinity="0" />
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="joint1-a1_r" joint="joint1-a1_r" ctrlrange="-30 30" />
+    <motor name="joint2-a1_r" joint="joint2-a1_r" ctrlrange="-30 30" />
+    <motor name="joint3-a1_r" joint="joint3-a1_r" ctrlrange="-30 30" />
+    <motor name="joint4-a1_r" joint="joint4-a1_r" ctrlrange="-30 30" />
+    <motor name="joint5-a1_r" joint="joint5-a1_r" ctrlrange="-12 12" />
+    <motor name="joint6-a1_r" joint="joint6-a1_r" ctrlrange="-12 12" />
+    <motor name="joint7-a1_r" joint="joint7-a1_r" ctrlrange="-12 12" />
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="0.0 -0.6 0.0 1.0 0.0 0.5 0.0" />
+  </keyframe>
+</mujoco>
