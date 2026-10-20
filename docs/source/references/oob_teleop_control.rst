@@ -50,7 +50,7 @@ At INFO, OOB progress reports headset waiting and connection, browser readiness,
 and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
 USB-health blocks remain visible with operator action. An unchanged wait for
 an absent headset is announced once; routine setup steps are DEBUG messages.
-Progress uses the ``isaaccapture.cloudxr.oob_teleop_env.progress`` logger.
+Progress uses the ``isaaccapture.cloudxr.oob_teleop_env.oob-progress`` logger.
 It remains visible through filters selecting its parent logger, while embedded
 applications can also select progress alone.
 

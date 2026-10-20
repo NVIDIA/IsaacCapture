@@ -22,7 +22,7 @@ from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
-progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.progress")
+progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.oob-progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
 

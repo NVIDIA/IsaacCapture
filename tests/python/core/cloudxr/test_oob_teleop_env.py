@@ -618,11 +618,11 @@ def test_oob_progress_logs_at_info(
     """With logging on, progress uses the dedicated status logger, not a print."""
     monkeypatch.delenv("ISAACCAPTURE_LOGGING", raising=False)
     with caplog.at_level(
-        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.progress"
+        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
     ):
         oob_teleop_env_under_test.oob_progress("setup-oob", "teleop tab found")
     [record] = caplog.records
-    assert record.name == "isaaccapture.cloudxr.oob_teleop_env.progress"
+    assert record.name == "isaaccapture.cloudxr.oob_teleop_env.oob-progress"
     assert record.levelno == logging.INFO
     assert record.getMessage() == "[setup-oob] teleop tab found"
     assert capsys.readouterr().err == ""
@@ -634,7 +634,7 @@ def test_oob_progress_prints_when_logging_is_off(
     """``ISAACCAPTURE_LOGGING=off`` keeps the cyan stderr line and logs nothing."""
     monkeypatch.setenv("ISAACCAPTURE_LOGGING", "off")
     with caplog.at_level(
-        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.progress"
+        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
     ):
         oob_teleop_env_under_test.oob_progress("setup-oob", "teleop tab found")
     assert capsys.readouterr().err == "\033[36m[setup-oob]\033[0m teleop tab found\n"
@@ -646,7 +646,7 @@ def test_oob_progress_debug_is_quiet_when_logging_is_off(
 ) -> None:
     monkeypatch.delenv("ISAACCAPTURE_LOGGING", raising=False)
     with caplog.at_level(
-        logging.DEBUG, logger="isaaccapture.cloudxr.oob_teleop_env.progress"
+        logging.DEBUG, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
     ):
         oob_teleop_env_under_test.oob_progress(
             "setup-oob", "browser launched", level=logging.DEBUG

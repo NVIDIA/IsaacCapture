@@ -63,7 +63,7 @@ class TestLoggerNameFilter:
     def test_oob_progress_keeps_parent_filter_compatibility(self):
         handler = _console.ensure_handler()
         parent = "isaaccapture.cloudxr.oob_teleop_env"
-        progress = parent + ".progress"
+        progress = parent + ".oob-progress"
         logging_config.set_console_logger_name_filter({parent})
         assert handler.filter(record(name=progress))
 
@@ -234,8 +234,11 @@ class TestColourFormatter:
         assert "isaaccapture.core.Probe" not in _console._logger_colors
 
     def test_oob_progress_logger_is_cyan_by_default(self):
-        name = "isaaccapture.cloudxr.oob_teleop_env.progress"
+        name = "isaaccapture.cloudxr.oob_teleop_env.oob-progress"
         assert f"[\033[36m{name}{_RESET}]" in render(_Tty(), name=name)
+        assert f"[\033[36moob-progress{_RESET}]" in render(
+            _Tty(), name=name, use_short_name=True
+        )
 
     def test_the_last_segment_keeps_the_full_names_colour(self):
         logging_config.set_logger_colors({"isaaccapture.core.Probe": "\033[36m"})
