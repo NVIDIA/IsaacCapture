@@ -1,0 +1,746 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>SENSING GMSL Camera &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/camera/sensing';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Generic Joint-Space Device" href="../joint_space/index.html" />
+    <link rel="prev" title="OAK Camera Plugin" href="../cameras/oak.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.7.x" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../cameras/index.html">Cameras</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../cameras/oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">SENSING GMSL Camera</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../cameras/index.html" class="nav-link">Cameras</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">SENSING GMSL Camera</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="sensing-gmsl-camera">
+<h1>SENSING GMSL Camera<a class="headerlink" href="#sensing-gmsl-camera" title="Link to this heading">#</a></h1>
+<p>SENSING GMSL2 cameras connect to a Jetson through the SG8A carrier and stream
+through NVIDIA SIPL. Choose either setup below to preview both cameras with
+<code class="docutils literal notranslate"><span class="pre">nvsipl_camera</span></code>, the vendor reference application. Run commands from a
+terminal on the Jetson desktop, at the Isaac Capture repository root. The
+preview appears on the Jetson monitor.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
+<p>This setup targets a Jetson AGX Orin 64 GB with JetPack 7.2.1 / L4T R39.2.1,
+a SENSING <strong>SG8A-AGON-G2Y-A1</strong> carrier, and two Astra <strong>SHW5G</strong> cameras on
+<strong>CN1 CAM2/CAM3</strong>. The <code class="docutils literal notranslate"><span class="pre">SHW5G_2</span></code> configuration captures 2560×1984 at 60 fps
+per sensor through the ISP. Other camera populations are not tested.</p>
+<p>Host setup needs network access, Git, and sudo. Container setup additionally
+needs Docker with the NVIDIA container runtime configured on the Jetson.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>SIPL has exclusive access to the cameras. Stop any other camera client
+before running the check.</p>
+</div>
+</section>
+<section id="host-setup-and-preview">
+<h2>Host: setup and preview<a class="headerlink" href="#host-setup-and-preview" title="Link to this heading">#</a></h2>
+<p><strong>1. Install the host drivers.</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/setup.sh
+</pre></div>
+</div>
+<p>Accept the installation and group-membership prompts. On first install,
+setup opens Jetson-IO: choose <strong>Configure Jetson AGX CSI Connector → Configure
+for compatible hardware → Jetson Sensing SG8A-AGON-G2Y-A1 SIPL GMSL2x8</strong>, then
+save and reboot. Return to the repository root after reboot. If only group
+membership changed, log out and back in before continuing.</p>
+<p><strong>2. Preview both cameras.</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nvsipl_camera<span class="w"> </span>-t<span class="w"> </span>src/plugins/sensing/configs/shw5g.json<span class="w"> </span>-c<span class="w"> </span>SHW5G_2<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-m<span class="w"> </span><span class="s2">"0x0000 0x1100"</span><span class="w"> </span>--enable-camera-hal<span class="w"> </span>-s<span class="w"> </span>-Z<span class="w"> </span>--egl-display
+</pre></div>
+</div>
+<p>A live camera grid opens on the monitor. The terminal also reports FPS for
+both sensors, approximately 60 fps each. Enter <code class="docutils literal notranslate"><span class="pre">q</span></code> in the terminal to stop.</p>
+</section>
+<section id="container-setup-and-preview">
+<h2>Container: setup and preview<a class="headerlink" href="#container-setup-and-preview" title="Link to this heading">#</a></h2>
+<p>Complete host setup above first, including the overlay reboot and group
+activation. Both setup scripts run <strong>on the host</strong>.</p>
+<p><strong>1. Build and enter the camera container.</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/docker/setup_container.sh
+</pre></div>
+</div>
+<p>This builds the runtime image and opens a shell at the repository root inside
+it. Host camera tools, drivers, ISP tuning, device nodes, and the SENSING
+source directory are mounted automatically. The desktop X11 socket and
+authorization file are passed through for the preview. No SDK downloads or
+manual Docker flags are needed. The container runs as root with privileged
+device access;
+the SENSING source and vendor files are mounted read-only.</p>
+<p><strong>2. Run the same preview command inside that shell.</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nvsipl_camera<span class="w"> </span>-t<span class="w"> </span>src/plugins/sensing/configs/shw5g.json<span class="w"> </span>-c<span class="w"> </span>SHW5G_2<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-m<span class="w"> </span><span class="s2">"0x0000 0x1100"</span><span class="w"> </span>--enable-camera-hal<span class="w"> </span>-s<span class="w"> </span>-Z<span class="w"> </span>--egl-display
+</pre></div>
+</div>
+<p>The live camera grid appears on the same monitor as the host preview. Enter
+<code class="docutils literal notranslate"><span class="pre">q</span></code> to stop, then type <code class="docutils literal notranslate"><span class="pre">exit</span></code> to leave the container;
+it is removed when you exit. Subsequent launches can use
+<code class="docutils literal notranslate"><span class="pre">setup_container.sh</span> <span class="pre">--no-build</span></code> to reuse the image.</p>
+</section>
+<section id="setup-details">
+<h2>Setup details<a class="headerlink" href="#setup-details" title="Link to this heading">#</a></h2>
+<p>Host setup fetches the <a class="reference external" href="https://github.com/SENSING-Technology/nvidia-jetson-camera-drivers" rel="noopener noreferrer" target="_blank">SENSING driver package</a> and
+installs the SHW5G userspace drivers, camera HAL, ISP tuning, device-tree
+overlay, and reference tools. It compares file contents before installing
+updates and records the installed vendor commit in
+<code class="docutils literal notranslate"><span class="pre">/var/lib/sensing/installed.json</span></code>. A userspace-only update needs no reboot.
+There are no sensor kernel modules to load or per-boot setup commands.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">setup.sh</span> <span class="pre">--pkg</span> <span class="pre">DIR</span></code> for a local vendor package, <code class="docutils literal notranslate"><span class="pre">--no-fetch</span></code> to use
+the cached package, or <code class="docutils literal notranslate"><span class="pre">--yes</span></code> to accept prompts unattended. Setup returns
+a nonzero status if installation fails or a reboot/new login is still needed.
+The scripts’ <code class="docutils literal notranslate"><span class="pre">--help</span></code> output lists their options.</p>
+<p>The tracked <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/sensing/configs/shw5g.json" rel="noopener noreferrer" target="_blank">configs/shw5g.json</a> supplies the two-camera configuration.
+The camera command uses <code class="docutils literal notranslate"><span class="pre">--enable-camera-hal</span></code> for this carrier, <code class="docutils literal notranslate"><span class="pre">-Z</span></code> to
+skip unsupported sensor authentication, <code class="docutils literal notranslate"><span class="pre">-s</span></code> to report FPS, and
+<code class="docutils literal notranslate"><span class="pre">--egl-display</span></code> to open the live preview. Add
+<code class="docutils literal notranslate"><span class="pre">-r</span> <span class="pre">10</span></code> for a ten-second run, or omit <code class="docutils literal notranslate"><span class="pre">--egl-display</span></code> for a terminal-only
+capture check.</p>
+<p>For custom images, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/sensing/docker/Dockerfile.example" rel="noopener noreferrer" target="_blank">docker/Dockerfile.example</a> shows the runtime dependencies.
+<code class="docutils literal notranslate"><span class="pre">setup_container.sh</span> <span class="pre">--print-args</span></code> prints shell-quoted Docker flags;
+<code class="docutils literal notranslate"><span class="pre">--json</span></code> emits the same flags as a JSON array. These runtime helpers do not
+install the SDK headers needed to compile SIPL applications.</p>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<p>Run <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/sensing/scripts/verify.sh" rel="noopener noreferrer" target="_blank">scripts/verify.sh</a>
+on the side that fails for a read-only runtime report:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/plugins/sensing/scripts/verify.sh
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Action</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SetPlatformConfig</span> <span class="pre">(Camera</span> <span class="pre">HAL)</span> <span class="pre">failed.</span> <span class="pre">status:</span> <span class="pre">10</span></code></p></td>
+<td><p>Check device permissions, the selected overlay, and vendor mounts with
+<code class="docutils literal notranslate"><span class="pre">verify.sh</span></code>. Activate new host groups by logging in again.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">nvsipl_camera:</span> <span class="pre">command</span> <span class="pre">not</span> <span class="pre">found</span></code></p></td>
+<td><p>Complete host setup. It installs the tool in <code class="docutils literal notranslate"><span class="pre">/usr/sbin</span></code>; ensure that
+directory is on your host’s <code class="docutils literal notranslate"><span class="pre">PATH</span></code>. Recreate containers through
+<code class="docutils literal notranslate"><span class="pre">setup_container.sh</span></code> to mount the installed tool.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">open</span> <span class="pre">file</span> <span class="pre">.../shw5g.json</span></code></p></td>
+<td><p>Run the command from the repository root.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cannot</span> <span class="pre">open</span> <span class="pre">NITO</span> <span class="pre">file</span> <span class="pre">.../SHW5G.nito</span></code></p></td>
+<td><p>Rerun host setup to install ISP tuning, then recreate the container.</p></td>
+</tr>
+<tr class="row-even"><td><p>No frames, or no modules after applying link masks</p></td>
+<td><p>Check the cameras are on CN1 CAM2/CAM3 and use the masks shown above.
+Stop other SIPL clients before retrying.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">create</span> <span class="pre">EGLImage</span></code></p></td>
+<td><p>Check that <code class="docutils literal notranslate"><span class="pre">DISPLAY</span></code> does not point at Xvfb or another server that
+cannot use Tegra EGL. Use the physical desktop display.</p></td>
+</tr>
+<tr class="row-even"><td><p>Missing <code class="docutils literal notranslate"><span class="pre">DISPLAY</span></code> or Xauthority</p></td>
+<td><p>Over SSH, set <code class="docutils literal notranslate"><span class="pre">DISPLAY</span></code> to the Jetson desktop (<code class="docutils literal notranslate"><span class="pre">:1</span></code> on the test rig).
+Container setup finds the current user’s GDM authority file automatically
+if <code class="docutils literal notranslate"><span class="pre">XAUTHORITY</span></code> is unset and <code class="docutils literal notranslate"><span class="pre">~/.Xauthority</span></code> is absent. For other
+desktop managers, set <code class="docutils literal notranslate"><span class="pre">XAUTHORITY</span></code> explicitly. SSH X11 forwarding does
+not target the Jetson monitor.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Low FPS or dropped frames</p></td>
+<td><p>Check the Jetson power mode. Maximum performance can be selected with
+<code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">nvpmodel</span> <span class="pre">-m</span> <span class="pre">0</span> <span class="pre">&amp;&amp;</span> <span class="pre">sudo</span> <span class="pre">jetson_clocks</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../cameras/oak.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">OAK Camera Plugin</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../joint_space/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Generic Joint-Space Device</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-setup-and-preview">Host: setup and preview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#container-setup-and-preview">Container: setup and preview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-details">Setup details</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
