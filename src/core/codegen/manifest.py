@@ -172,6 +172,17 @@ def resolve_tracker_entry(
             f"tracker '{raw['name']}': record must be a boolean, got {type(record).__name__}"
         )
 
+    metadata = resolved.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, str) or not metadata:
+            raise ValueError(
+                f"tracker '{raw['name']}': metadata must name a table, got {metadata!r}"
+            )
+        if resolved["direction"] != "pull":
+            raise ValueError(
+                f"tracker '{raw['name']}': metadata requires direction=pull"
+            )
+
     if resolved["direction"] == "pull" and record:
         for key in ("mcap_channels", "replay_channels"):
             if key not in resolved:

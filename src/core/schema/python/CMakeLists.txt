@@ -28,6 +28,7 @@ pybind11_add_module(schema_py
     schema_module.cpp
     spacemouse_bindings.h
     steering_wheel_bindings.h
+    tracker_metadata_bindings.h
 )
 
 target_link_libraries(schema_py

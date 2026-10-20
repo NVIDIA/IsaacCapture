@@ -10,8 +10,9 @@ poses from hand tracking data.
 
 import argparse
 import sys
-import time
 import numpy as np
+
+from _example_loop import add_duration_argument, run_example_loop
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
@@ -29,7 +30,7 @@ from isaaccapture.teleop_session_manager import (
 )
 
 
-def run_abs_example(use_controller=False):
+def run_abs_example(use_controller=False, duration=0.0):
     print("\n" + "=" * 80)
     source_type = "Controller" if use_controller else "Hand"
     print(f"  SE3 Absolute Retargeting (Right {source_type})")
@@ -65,8 +66,7 @@ def run_abs_example(use_controller=False):
     with TeleopSession(session_config) as session:
         # No session injection needed
 
-        start_time = time.time()
-        while time.time() - start_time < 20.0:
+        def step():
             result = session.step()
 
             # Output: [x, y, z, qx, qy, qz, qw]
@@ -80,10 +80,10 @@ def run_abs_example(use_controller=False):
                     f"[{elapsed:5.1f}s] Pos: ({pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f})  Rot: ({rot[0]:.2f}, {rot[1]:.2f}, {rot[2]:.2f}, {rot[3]:.2f})"
                 )
 
-            time.sleep(0.016)
+        run_example_loop(step, duration)
 
 
-def run_rel_example(use_controller=False):
+def run_rel_example(use_controller=False, duration=0.0):
     print("\n" + "=" * 80)
     source_type = "Controller" if use_controller else "Hand"
     print(f"  SE3 Relative Retargeting (Right {source_type})")
@@ -121,8 +121,7 @@ def run_rel_example(use_controller=False):
     with TeleopSession(session_config) as session:
         # No session injection needed
 
-        start_time = time.time()
-        while time.time() - start_time < 20.0:
+        def step():
             result = session.step()
 
             # Output: [dx, dy, dz, drx, dry, drz]
@@ -139,12 +138,13 @@ def run_rel_example(use_controller=False):
                     f"[{elapsed:5.1f}s] Vel Mag: {vel_mag:.4f}  Rot Mag: {rot_mag:.4f} | dPos: ({dpos[0]:.3f}, ...)"
                 )
 
-            time.sleep(0.016)
+        run_example_loop(step, duration)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     CloudXRLauncher.add_launcher_arguments(parser)
+    add_duration_argument(parser)
     args = parser.parse_args()
 
     with CloudXRLauncher.launch_context(args):
@@ -159,16 +159,17 @@ def main():
         choice = input("\nEnter choice (1-4): ").strip()
 
         if choice == "1":
-            run_abs_example(use_controller=False)
+            run_abs_example(use_controller=False, duration=args.duration)
         elif choice == "2":
-            run_abs_example(use_controller=True)
+            run_abs_example(use_controller=True, duration=args.duration)
         elif choice == "3":
-            run_rel_example(use_controller=False)
+            run_rel_example(use_controller=False, duration=args.duration)
         elif choice == "4":
-            run_rel_example(use_controller=True)
+            run_rel_example(use_controller=True, duration=args.duration)
         else:
             print("Invalid choice")
             return 1
+    print("Session closed.")
     return 0
 
 

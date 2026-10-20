@@ -311,8 +311,12 @@ pipeline: reading XR controller input via CloudXR, retargeting it through the
 
    python examples/teleop/python/gripper_retargeting_example_simple.py
 
-Once running, squeeze the controller triggers on your XR headset to control
-the gripper. You should see periodic status output:
+Once running, squeeze the **right controller trigger** to control the gripper.
+``GripperRetargeter`` emits binary commands: ``+1.00`` means open and ``-1.00``
+means closed. With the default configuration, trigger values above ``0.5``
+close the gripper; values at or below ``0.5`` open it. The analog trigger value
+is thresholded by the retargeter, so intermediate output values are not expected.
+You should see periodic status output:
 
 .. code-block:: text
 
@@ -320,16 +324,34 @@ the gripper. You should see periodic status output:
    Gripper Retargeting - Squeeze triggers to control grippers
    ============================================================
 
-   [  0.5s] Right: 0.00
-   [  1.0s] Right: 0.73
+   Gripper command: +1.00 = open, -1.00 = closed (trigger > 0.5).
+   Running until Ctrl+C.
+   [  0.5s] Right: 1.00
+   [  1.0s] Right: -1.00
    [  1.5s] Right: 1.00
    ...
 
-The example runs for 20 seconds and then exits. To try other examples, see
-``examples/teleop/python/`` — for instance:
+The example runs until you press **Ctrl+C**. To stop automatically after a
+chosen duration, measured after session startup, pass ``--duration``:
+
+.. code-block:: bash
+
+   python examples/teleop/python/gripper_retargeting_example_simple.py --duration 20
+
+``--duration 0`` also runs until Ctrl+C. Both a timed run and Ctrl+C announce
+that the session is closing, then print ``Session closed.`` after cleanup.
+Stream or cleanup errors still propagate; a browser stream error is not the
+expected completion message. For troubleshooting, retain the Python traceback,
+CloudXR runtime logs, and browser error and stop-reason codes.
+
+For proportional controller input, read ``ControllerInputIndex.TRIGGER_VALUE``
+or use ``SO101GripperRetargeter`` for SO-101 jaw closedness in ``[0, 1]``
+(``0`` open, ``1`` closed); see :doc:`../references/retargeting/so101`.
+
+To try other examples, see ``examples/teleop/python/`` — for instance:
 
 - ``se3_retargeting_example.py`` — maps hand or controller poses to
-  end-effector poses (absolute or relative)
+  end-effector poses (absolute or relative), with the same ``--duration`` and Ctrl+C behavior
 - ``dex_bimanual_example.py`` — bimanual dexterous hand retargeting
 - ``gripper_retargeting_example.py`` — full gripper example with more
   configuration options
