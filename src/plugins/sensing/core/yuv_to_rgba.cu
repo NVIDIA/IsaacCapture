@@ -20,14 +20,8 @@ __device__ __forceinline__ unsigned char clamp_u8(float v)
     return static_cast<unsigned char>(v < 0.f ? 0.f : (v > 255.f ? 255.f : v));
 }
 
-__device__ __forceinline__ void yuv_to_rgb(int Y,
-                                           int Cb,
-                                           int Cr,
-                                           bool full_range,
-                                           bool bt709,
-                                           unsigned char& r,
-                                           unsigned char& g,
-                                           unsigned char& b)
+__device__ __forceinline__ void yuv_to_rgb(
+    int Y, int Cb, int Cr, bool full_range, bool bt709, unsigned char& r, unsigned char& g, unsigned char& b)
 {
     // Full range uses Y as-is; limited range expands 16..235 first.
     const float yf = full_range ? static_cast<float>(Y) : (static_cast<float>(Y) - 16.f) * 1.16438f;
@@ -39,13 +33,37 @@ __device__ __forceinline__ void yuv_to_rgb(int Y,
     float kr, kgu, kgv, kb;
     if (bt709)
     {
-        if (full_range) { kr = 1.5748f;  kgu = 0.18733f; kgv = 0.46813f; kb = 1.8556f; }
-        else            { kr = 1.79274f; kgu = 0.21325f; kgv = 0.53291f; kb = 2.11240f; }
+        if (full_range)
+        {
+            kr = 1.5748f;
+            kgu = 0.18733f;
+            kgv = 0.46813f;
+            kb = 1.8556f;
+        }
+        else
+        {
+            kr = 1.79274f;
+            kgu = 0.21325f;
+            kgv = 0.53291f;
+            kb = 2.11240f;
+        }
     }
     else
     {
-        if (full_range) { kr = 1.402f; kgu = 0.344136f; kgv = 0.714136f; kb = 1.772f; }
-        else            { kr = 1.596f; kgu = 0.391f;    kgv = 0.813f;    kb = 2.018f; }
+        if (full_range)
+        {
+            kr = 1.402f;
+            kgu = 0.344136f;
+            kgv = 0.714136f;
+            kb = 1.772f;
+        }
+        else
+        {
+            kr = 1.596f;
+            kgu = 0.391f;
+            kgv = 0.813f;
+            kb = 2.018f;
+        }
     }
 
     r = clamp_u8(yf + kr * v);
@@ -115,8 +133,8 @@ __global__ void yuv420_pitch_to_rgba_kernel(const uint8_t* __restrict__ y_plane,
     }
 
     const int idx = y * rgba_row_bytes + x * 4;
-    yuv_to_rgb(Y, Cb, Cr, full_range_value != 0, bt709_value != 0, rgba_out[idx + 0], rgba_out[idx + 1],
-               rgba_out[idx + 2]);
+    yuv_to_rgb(
+        Y, Cb, Cr, full_range_value != 0, bt709_value != 0, rgba_out[idx + 0], rgba_out[idx + 1], rgba_out[idx + 2]);
     rgba_out[idx + 3] = 255;
 }
 
@@ -178,8 +196,8 @@ __global__ void yuv420_array_to_rgba_kernel(cudaTextureObject_t y_tex,
     }
 
     const int idx = y * rgba_row_bytes + x * 4;
-    yuv_to_rgb(Y, Cb, Cr, full_range_value != 0, bt709_value != 0, rgba_out[idx + 0], rgba_out[idx + 1],
-               rgba_out[idx + 2]);
+    yuv_to_rgb(
+        Y, Cb, Cr, full_range_value != 0, bt709_value != 0, rgba_out[idx + 0], rgba_out[idx + 1], rgba_out[idx + 2]);
     rgba_out[idx + 3] = 255;
 }
 
@@ -226,8 +244,9 @@ void launch_yuv420_array_to_rgba(cudaTextureObject_t y_tex,
 {
     const dim3 block(16, 16, 1);
     const dim3 grid((width + 15) / 16, (height + 15) / 16, 1);
-    yuv420_array_to_rgba_kernel<<<grid, block, 0, stream>>>(
-        y_tex, uv_or_u_tex, v_tex, width, height, rgba_out, rgba_row_bytes, static_cast<int>(layout), full_range ? 1 : 0, bt709 ? 1 : 0);
+    yuv420_array_to_rgba_kernel<<<grid, block, 0, stream>>>(y_tex, uv_or_u_tex, v_tex, width, height, rgba_out,
+                                                            rgba_row_bytes, static_cast<int>(layout),
+                                                            full_range ? 1 : 0, bt709 ? 1 : 0);
 }
 
 } // namespace sensing
