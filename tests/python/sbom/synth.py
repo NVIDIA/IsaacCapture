@@ -1005,6 +1005,58 @@ def collect(workspace: Workspace, **options) -> dict:
     }
 
 
+def collect_and_bind(workspace: Workspace, **options) -> dict:
+    """`collect`, with the manifest written beside it and the paths tests read."""
+    collected = collect(workspace, **options)
+    out_dir = collected["out_dir"]
+    manifest_path = out_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(collected["manifest"], indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        **collected,
+        "workspace": workspace,
+        "root": workspace.root,
+        "wheel": workspace.wheel,
+        "manifest_path": manifest_path,
+        "evidence_path": out_dir / f"{STEM}.build-evidence.json",
+        "spdx_path": out_dir / f"{STEM}.spdx.json",
+        "report_path": out_dir / f"{STEM}.licenses.json",
+    }
+
+
+def members(wheel: Path) -> dict[str, bytes]:
+    """A wheel's members, RECORD left out so `write_wheel` can restate it."""
+    with zipfile.ZipFile(wheel) as archive:
+        return {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if not name.endswith(".dist-info/RECORD")
+        }
+
+
+def drop_member(wheel: Path, name: str) -> None:
+    """Remove one member after the fact, leaving RECORD as it was."""
+    with zipfile.ZipFile(wheel) as archive:
+        payload = {
+            item: archive.read(item) for item in archive.namelist() if item != name
+        }
+    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in sorted(payload):
+            archive.writestr(item, payload[item])
+
+
+def replace_member(wheel: Path, name: str, data: bytes) -> None:
+    """Change one member after the fact, leaving RECORD as it was."""
+    with zipfile.ZipFile(wheel) as archive:
+        payload = {item: archive.read(item) for item in archive.namelist()}
+    payload[name] = data
+    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in sorted(payload):
+            archive.writestr(item, payload[item])
+
+
 def _record_hash(data: bytes) -> str:
     digest = hashlib.sha256(data).digest()
     return "sha256=" + base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")

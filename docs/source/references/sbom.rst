@@ -213,9 +213,10 @@ against, so a dependency arriving under any of them is identified. Naming it in 
 document is a second question: a document states the licence list it was built against, and
 ``license-expression`` — which a consumer validates with, and which
 :code-file:`scripts/sbom/pyproject.toml` pins — ships its own, older copy. An id the fetched
-list knows and that grammar does not cannot be published as an id, so it travels as a
-``LicenseRef-`` carrying the text, and the component is listed under *License evidence gaps*
-with that as the stated reason.
+list knows and that grammar does not cannot be published as an id, so the text it was read
+from travels as a ``LicenseRef-`` — a REUSE declaration naming one travels whole, since an
+``OR`` or a ``WITH`` cannot be kept in part — and the component is listed under *License
+evidence gaps* with that as the stated reason.
 
 What the wheel carries for a third-party component is that component's own license file,
 verbatim, copyright holders and all. Substituting a reference text would convey the terms
@@ -282,10 +283,19 @@ text, not on a document that is mostly one. A file that genuinely carries two *d
 licenses is reported as carrying both; where one is a near-duplicate of the other, only the
 match survives, and a disjunctive grant is not expressible here at all.
 
-A text that matches nothing is not guessed at. It becomes a ``LicenseRef-`` whose full text
-travels in the document, which says "these are the terms that shipped" without claiming to
-know which license they are. Those components are listed in the report under *License
-evidence gaps*.
+Every grant a component ships is accounted for in its conclusion. A text that matches
+nothing is not guessed at: it travels in the document as the component's ``LicenseRef-``,
+which says "these are the terms that shipped" without claiming to know which license they
+are, AND-ed with what its other texts are identified as — an MIT ``LICENSE`` beside an
+unmatched EULA concludes ``LicenseRef-<component> AND MIT``. A text matching identifiers
+that share one reference text names the one the others extend by a suffix — ``MPL-2.0``
+beside ``MPL-2.0-no-copyleft-exception``, ``OFL-1.1`` beside its ``-RFN`` variants — since
+that is SPDX's name for the unmodified text. Where there is none, as for ``GPL-3.0-only``
+and ``GPL-3.0-or-later``, the choice is the licensor's, stated in a notice and not in the
+text, so the text is carried too. So is a text its identifiers account for less than four
+fifths of, its copyright notices aside, beside the identifiers it names: the rest may be
+terms no identifier names, as in fmt's MIT with its exception paragraph. The ``LicenseRef-`` carries exactly the texts
+carried. Those components are listed in the report under *License evidence gaps*.
 
 A component that states a licence nowhere at all blocks publication, because packaging the
 text is the obligation the wheel has to meet. For material checked in here that is any one

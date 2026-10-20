@@ -1622,21 +1622,8 @@ def discover_vendored(
 
     components: dict[str, Component] = {}
     for key, paths in grouped.items():
-        evidence = licensing.canonical_evidence(key, licences.get(key, set()))
-        concluded, declared = licensing.expression(evidence, key)
-        if licences.get(key):
-            # The declared expressions, structure and all. Rebuilding this
-            # from the reference texts the identifiers name turns `A OR B` into
-            # `A AND B` -- a choice restated as both obligations at once.
-            declared = licensing.combine(sorted(licences[key]))
-            # An id the pinned list knows and the grammar does not travels as a
-            # LicenseRef carrying the texts, as `licensing.expression` does.
-            if declared != "NOASSERTION" and not licensing.grammar_names(
-                licensing.identifiers_in(declared)
-            ):
-                evidence += licensing.exception_evidence(key, declared)
-                declared = licensing.license_ref(key)
-            concluded = declared
+        concluded, evidence = licensing.declared_terms(key, licences.get(key, set()))
+        declared = concluded
         # What the build read first, so a shortened list names what ships; say
         # when it is shortened, or it reads as the whole set.
         named = [

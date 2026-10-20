@@ -148,27 +148,8 @@ def test_a_vendored_library_is_attributed_to_the_package_that_supplied_it(
     )
 
 
-def _replace_member(wheel, name, data):
-    with zipfile.ZipFile(wheel) as archive:
-        payload = {item: archive.read(item) for item in archive.namelist()}
-    payload[name] = data
-    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
-        for item in sorted(payload):
-            archive.writestr(item, payload[item])
-
-
-def _drop_member(wheel, name):
-    with zipfile.ZipFile(wheel) as archive:
-        payload = {
-            item: archive.read(item) for item in archive.namelist() if item != name
-        }
-    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as archive:
-        for item in sorted(payload):
-            archive.writestr(item, payload[item])
-
-
 def test_editing_a_file_after_the_fact_fails_verification(built):
-    _replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
+    synth.replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
 
     failures = validate_module.check(built["wheel"])
 
@@ -177,7 +158,7 @@ def test_editing_a_file_after_the_fact_fails_verification(built):
 
 
 def test_adding_a_file_after_the_fact_fails_verification(built):
-    _replace_member(built["wheel"], "isaaccapture/surprise.py", b"# added later\n")
+    synth.replace_member(built["wheel"], "isaaccapture/surprise.py", b"# added later\n")
 
     failures = validate_module.check(built["wheel"])
 
@@ -185,7 +166,7 @@ def test_adding_a_file_after_the_fact_fails_verification(built):
 
 
 def test_mutating_the_wheel_breaks_its_manifest_binding(built):
-    _replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
+    synth.replace_member(built["wheel"], "isaaccapture/__init__.py", b"# tampered\n")
 
     failures = validate_module.check(
         built["wheel"],
@@ -215,7 +196,7 @@ def test_another_tools_document_beside_ours_is_kept(built):
 
 
 def test_our_own_document_going_missing_is_rejected(built):
-    _drop_member(built["wheel"], f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json")
+    synth.drop_member(built["wheel"], f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json")
 
     failures = validate_module.check(built["wheel"])
 

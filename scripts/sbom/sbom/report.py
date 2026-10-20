@@ -190,9 +190,29 @@ def notices_markdown(
     return "\n".join(lines)
 
 
-def _lowercase_first(text: str) -> str:
-    """Run a sentence on; its ids keep their case."""
-    return text[:1].lower() + text[1:]
+def _carried_subject(carried: int, total: int) -> str:
+    """How many of a component's grants travel verbatim, as a sentence subject."""
+    if carried == total == 1:
+        return "the shipped grant is"
+    if carried == total:
+        return f"its {total} shipped grants are"
+    return f"{carried} of its {total} shipped grants {'is' if carried == 1 else 'are'}"
+
+
+def _carried_reason(evidence) -> str:
+    """Which of a component's grants travel verbatim, whether their ids are
+    named too, and why they travel."""
+    carried = licensing.carried_texts(evidence)
+    named = len(licensing.carried_and_named(evidence))
+    subject = _carried_subject(len(carried), len(licensing.grant_texts(evidence)))
+    manner = (
+        " rather than named"
+        if not named
+        else " as well as named"
+        if named == len(carried)
+        else f", {named} of them as well as named"
+    )
+    return f"{subject} carried verbatim{manner}: {licensing.why_unnamed(evidence)}"
 
 
 def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
@@ -202,7 +222,8 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
     unidentified = []
 
     for key, component in inventory.components_present.items():
-        grants = licensing.obligation_texts(component.evidence)
+        obligations = licensing.obligation_texts(component.evidence)
+        carried = licensing.carried_texts(component.evidence)
         components.append(
             {
                 "component": key,
@@ -225,26 +246,23 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
         # Same test as the build gate and the verifier: a REUSE pool is a real
         # text. Requiring a grant here advertised "no licence evidence" for a
         # component the gates deliberately accepted on the pool they packaged.
-        if not grants:
+        if not obligations:
             no_evidence.append(
                 {
                     "component": key,
                     "reason": "no license grant found in the component's own files",
                 }
             )
-        elif "LicenseRef-" in component.license_concluded:
-            # Keyed on the conclusion, not on whether anything matched: a text
-            # can match and still be unusable, when the id it matched is newer
-            # than the expression grammar a consumer validates with. Either way
-            # the terms are only readable as the text this wheel carries.
+        elif carried:
+            # Not whether anything matched: a text can match and still be
+            # carried (`licensing.carried_texts`), and one beside it can match
+            # and be named. Either way these terms are only readable as the
+            # text this wheel carries.
             unidentified.append(
                 {
                     "component": key,
-                    "reason": (
-                        "the shipped grant is carried verbatim rather than named: "
-                        + _lowercase_first(licensing.why_unnamed(grants))
-                    ),
-                    "evidence": [item.path for item in grants],
+                    "reason": _carried_reason(component.evidence),
+                    "evidence": [item.path for item in carried],
                 }
             )
 
@@ -376,7 +394,7 @@ def report_markdown(payload: dict) -> str:
         lines += [f"- `{item['component']}` — {item['reason']}" for item in gaps]
         lines.append("")
     if unidentified:
-        lines += ["License text shipped but not identified:", ""]
+        lines += ["License text carried verbatim:", ""]
         lines += [
             f"- `{item['component']}` — {item['reason']}" for item in unidentified
         ]

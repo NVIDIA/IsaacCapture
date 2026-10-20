@@ -64,6 +64,7 @@ def _record_for(manifest: dict, filename: str) -> dict:
     return record
 
 
+_SHARED_ID = re.compile(re.escape(licensing.SHARED_REF) + "[0-9a-f]{12}")
 _EVIDENCE_DIGEST = re.compile(
     r"\(sha256:(?P<digest>[0-9a-f]{64})[^)]*\) packaged at (?P<where>\S+)"
 )
@@ -408,12 +409,11 @@ def _document_agrees_with_evidence(
         ):
             expected = component.get(stated)
             actual = package.get(field)
+            # Exactly, LicenseRef ids included: the build settles shared ids
+            # before it renders either side, and the text check below ties a
+            # shared id to the text it names and a minted one to its owner,
+            # never either to the package naming it.
             if not expected or actual == expected:
-                continue
-            # Both unnameable is agreement: components sharing one text share one
-            # LicenseRef, so the document's id is not the evidence's. The text
-            # behind it is checked below, which is what the id stands for.
-            if "LicenseRef-" in str(actual) and "LicenseRef-" in expected:
                 continue
             failures.append(
                 f"{key}: the document says {field} {actual!r}, "
@@ -432,18 +432,21 @@ def _document_agrees_with_evidence(
     }
     any_stated = {digest for digest in stated.values() if digest}
     for extracted in spdx.get("hasExtractedLicensingInfos", []):
+        ref, text = extracted["licenseId"], extracted.get("extractedText", "")
+        # A shared id names its text, so it is held to that text, not just to
+        # the terms some component has.
+        if _SHARED_ID.fullmatch(ref) and ref != licensing.shared_ref(text):
+            failures.append(f"{ref}: the text it carries is not the one its id names")
+            continue
         if not any_stated:
             # Evidence written before this digest existed cannot answer.
-            break
-        digest = hashlib.sha256(
-            extracted.get("extractedText", "").encode("utf-8")
-        ).hexdigest()
-        owner = by_ref.get(extracted["licenseId"])
+            continue
+        owner = by_ref.get(ref)
         expected = {stated[owner]} if owner and stated.get(owner) else any_stated
-        if digest not in expected:
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() not in expected:
             failures.append(
-                f"{extracted['licenseId']}: the text it carries is not the terms "
-                "the build read" + (f" for {owner}" if owner else "")
+                f"{ref}: the text it carries is not the terms the build read"
+                + (f" for {owner}" if owner else "")
             )
     return failures
 

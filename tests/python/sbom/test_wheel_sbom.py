@@ -9,6 +9,7 @@ import json
 import re
 import zipfile
 
+import pytest
 import synth
 from sbom import build as build_module
 from sbom import validate as validate_module
@@ -152,6 +153,95 @@ def test_an_unidentified_grant_travels_verbatim_in_the_document(built):
     assert "DEMO CORP" in extracted[ref]["extractedText"]
 
 
+@pytest.fixture
+def eula_beside_mit(workspace):
+    """alpha ships its MIT LICENSE and an EULA that matches nothing."""
+    eula = synth.PROPRIETARY_LICENSE.replace("Demo SDK", "Alpha runtime")
+    (workspace.build / "_deps" / "alpha-src" / "LICENSE-EULA.txt").write_text(
+        eula, encoding="utf-8"
+    )
+    synth.track(workspace.root)
+    return {**synth.collect_and_bind(workspace), "eula": eula}
+
+
+def test_an_unmatched_grant_beside_a_matched_one_is_carried_and_reported(
+    eula_beside_mit,
+):
+    built = eula_beside_mit
+    package = next(
+        item for item in built["spdx"]["packages"] if item["name"] == "alpha"
+    )
+    assert package["licenseConcluded"] == "LicenseRef-alpha AND MIT"
+    extracted = {
+        item["licenseId"]: item for item in built["spdx"]["hasExtractedLicensingInfos"]
+    }
+    assert extracted["LicenseRef-alpha"]["extractedText"] == built["eula"]
+    assert extracted["LicenseRef-alpha"]["comment"] == (
+        "Matched no text in the SPDX reference corpus; reproduced here verbatim "
+        "from alpha-src/LICENSE-EULA.txt."
+    )
+    unidentified = {
+        item["component"]: item
+        for item in built["licenses"]["components_with_unidentified_license"]
+    }
+    assert unidentified["alpha"] == {
+        "component": "alpha",
+        "reason": "1 of its 2 shipped grants is carried verbatim rather than "
+        "named: matched no text in the SPDX reference corpus",
+        "evidence": ["alpha-src/LICENSE-EULA.txt"],
+    }
+    assert (
+        validate_module.check(
+            built["wheel"],
+            build_evidence=built["evidence_path"],
+            manifest=built["manifest_path"],
+        )
+        == []
+    )
+
+
+def _rewrite_alpha(built, expression: str) -> list[str]:
+    """Rewrite alpha's expressions in the embedded document; what check says."""
+    member = f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"
+    payload = synth.members(built["wheel"])
+    spdx = json.loads(payload[member])
+    for package in spdx["packages"]:
+        if package["name"] == "alpha":
+            package["licenseConcluded"] = package["licenseDeclared"] = expression
+    payload[member] = json.dumps(spdx).encode()
+    synth.write_wheel(built["wheel"], payload)
+    return validate_module.check(built["wheel"], build_evidence=built["evidence_path"])
+
+
+def _disagreement(expression: str) -> list[str]:
+    recorded = "LicenseRef-alpha AND MIT"
+    return [
+        f"alpha: the document says {field} {expression!r}, the build recorded "
+        f"{recorded!r}"
+        for field in ("licenseConcluded", "licenseDeclared")
+    ]
+
+
+@pytest.mark.parametrize(
+    "rewritten", ["LicenseRef-alpha", "Apache-2.0 AND LicenseRef-alpha"]
+)
+def test_the_named_half_of_a_mixed_conclusion_is_checked(eula_beside_mit, rewritten):
+    assert _rewrite_alpha(eula_beside_mit, rewritten) == _disagreement(rewritten)
+
+
+def test_another_component_s_licence_ref_is_not_accepted(eula_beside_mit):
+    """Swapped, alpha's EULA would be published as the SDK's terms; every
+    extracted text would still belong to some component."""
+    other = next(
+        item["licenseId"]
+        for item in eula_beside_mit["spdx"]["hasExtractedLicensingInfos"]
+        if "demosdk" in item["licenseId"]
+    )
+    rewritten = f"{other} AND MIT"
+
+    assert _rewrite_alpha(eula_beside_mit, rewritten) == _disagreement(rewritten)
+
+
 def test_reuse_tags_on_shipped_files_are_reported_per_file(built):
     spdx = _embedded(built["wheel"])
     tagged = {
@@ -256,32 +346,33 @@ def test_source_date_epoch_normalizes_timestamps_the_input_wheel_carried(
     assert len(stamps) == 1, f"members carry differing timestamps: {stamps}"
 
 
-def test_components_sharing_a_licence_text_share_one_entry(workspace, license_data):
-    """A LicenseRef identifies a text, so one text is one entry.
-
-    Two components can carry byte-identical terms -- two builds of one SDK, a
-    vendor licence applied across products -- and minting an id each duplicates
-    the whole text in the document.
-    """
+@pytest.fixture
+def shared_text(workspace, license_data):
+    """alpha and beta ship the demo SDK's proprietary terms byte for byte."""
     from sbom import licensing
 
     licensing.load_corpus(license_data)
     for key in ("alpha", "beta"):
         root = workspace.build / "_deps" / f"{key}-src"
         root.mkdir(parents=True, exist_ok=True)
-        (root / "LICENSE").write_text(synth.PROPRIETARY_LICENSE)
+        (root / "LICENSE").write_text(synth.PROPRIETARY_LICENSE, encoding="utf-8")
     synth.track(workspace.root)
 
     payload = synth.wheel_payload(workspace)
     for key in ("alpha", "beta"):
         payload[f"isaaccapture/{key}_notice.txt"] = synth.PROPRIETARY_LICENSE.encode()
     synth.write_wheel(workspace.wheel, payload)
-    build_module.build(
-        workspace.root, workspace.build, workspace.wheel, workspace.root / "sbom"
-    )
+    return synth.collect_and_bind(workspace)
 
-    with zipfile.ZipFile(workspace.wheel) as archive:
-        spdx = json.loads(archive.read(f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"))
+
+def test_components_sharing_a_licence_text_share_one_entry(shared_text):
+    """A LicenseRef identifies a text, so one text is one entry.
+
+    Two components can carry byte-identical terms -- two builds of one SDK, a
+    vendor licence applied across products -- and minting an id each duplicates
+    the whole text in the document.
+    """
+    spdx = _embedded(shared_text["wheel"])
     bodies = [item["extractedText"] for item in spdx["hasExtractedLicensingInfos"]]
 
     assert len(bodies) == len(set(bodies)), "a text is carried more than once"
@@ -293,6 +384,29 @@ def test_components_sharing_a_licence_text_share_one_entry(workspace, license_da
     }
     defined = {item["licenseId"] for item in spdx["hasExtractedLicensingInfos"]}
     assert used <= defined, f"undefined after sharing: {sorted(used - defined)}"
+
+
+def test_a_shared_id_is_held_to_the_text_it_names(shared_text):
+    """gamma's Zlib text is some component's terms, so only the id catches it."""
+    member = f"{DIST_INFO}/sboms/{WHEEL_NAME}.spdx.json"
+    payload = synth.members(shared_text["wheel"])
+    spdx = json.loads(payload[member])
+    entry = next(
+        item
+        for item in spdx["hasExtractedLicensingInfos"]
+        if item["licenseId"].startswith("LicenseRef-shared-text-")
+    )
+    entry["extractedText"] = synth.spdx_text("Zlib")
+    payload[member] = json.dumps(spdx).encode()
+    synth.write_wheel(shared_text["wheel"], payload)
+
+    failures = validate_module.check(
+        shared_text["wheel"], build_evidence=shared_text["evidence_path"]
+    )
+
+    assert failures == [
+        f"{entry['licenseId']}: the text it carries is not the one its id names"
+    ]
 
 
 def test_a_requirement_this_run_also_built_is_not_an_unknown(

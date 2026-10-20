@@ -71,7 +71,7 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
         + (f" — {report.NESTED_ROLE}" if item.kind == "nested" else "")
         for item in component.evidence
     ]
-    if not any(item.kind == "grant" for item in component.evidence):
+    if not licensing.grant_texts(component.evidence):
         texts.append(
             "No license grant was found in this component's own files; see the "
             "component-to-license report."
@@ -117,14 +117,14 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
     """One entry per distinct text, named by the id the components now share."""
     entries: dict[str, dict] = {}
     for component in components:
-        refs = licensing.license_refs(
-            component.license_concluded, component.license_declared
-        )
-        grants = licensing.obligation_texts(component.evidence)
-        if not refs or not grants:
+        carried = licensing.carried_texts(component.evidence)
+        if not carried:
             continue
         body = licensing.verbatim_terms(component.evidence)
-        for ref in refs:
+        reason = licensing.why_unnamed(component.evidence)
+        for ref in licensing.license_refs(
+            component.license_concluded, component.license_declared
+        ):
             if ref in entries and entries[ref]["extractedText"] != body:
                 raise ValueError(
                     f"{ref} was minted for two components with different terms; "
@@ -135,7 +135,7 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
             covers = set(entries.get(ref, {}).get("_for", ())) | {component.name}
             cited = sorted(
                 set(entries.get(ref, {}).get("_from", ()))
-                | {item.path for item in grants}
+                | {item.path for item in carried}
             )
             entries[ref] = {
                 "licenseId": ref,
@@ -144,7 +144,8 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
                 "_from": cited,
                 "extractedText": body,
                 "comment": (
-                    licensing.why_unnamed(grants)
+                    reason[:1].upper()
+                    + reason[1:]
                     + "; reproduced here verbatim from "
                     + ", ".join(cited)
                     + "."

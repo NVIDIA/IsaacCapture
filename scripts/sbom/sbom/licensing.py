@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from functools import lru_cache
 from dataclasses import dataclass, replace
@@ -51,12 +52,11 @@ _CONTAINMENT_THRESHOLD = 0.90
 # genuine match sits well above it -- a Debian copyright file naming several
 # licenses around the one matched is the low end, at a quarter.
 _COVERAGE_THRESHOLD = 0.20
-# ...and the matches together have to account for most of the file before the
-# set of them is called an identification. A Debian copyright file aggregates
-# many stanzas, and generic BSD boilerplate clears containment against variants
-# the file never mentions; two such matches covering half the text name the file
-# no better than its own words do.
-_EXPLAINED_THRESHOLD = 0.75
+# A grant whose matches account for less of it than this, its copyright notices
+# aside, is carried as well as named: the rest may be terms no id names -- fmt's
+# MIT carries an exception paragraph. A holder list is not terms, so it does not
+# count against the match. Not a gate on naming.
+_EXPLAINED_THRESHOLD = 0.80
 # Two licenses are one family when either text is nearly inside the other.
 _FAMILY_THRESHOLD = 0.90
 # REUSE-IgnoreStart
@@ -125,8 +125,8 @@ class LicenseEvidence:
 
 # What counts as a text that discharges the packaging obligation. A REUSE pool
 # names no single expression for the component and is still a real text, so it
-# counts. The build gate, the document, the report and the verifier all ask this
-# question; they ask it here.
+# counts. The build gate, the report and the verifier all ask this question;
+# they ask it here.
 OBLIGATION_KINDS = frozenset({"grant", "pool"})
 
 
@@ -139,15 +139,31 @@ def obligation_texts(evidence) -> list[LicenseEvidence]:
     return [item for item in evidence if satisfies_obligation(item.kind)]
 
 
+def grant_texts(evidence) -> list[LicenseEvidence]:
+    """The texts a component's own licence is read from."""
+    return [item for item in evidence if item.kind == "grant"]
+
+
+def carried_texts(evidence) -> list[LicenseEvidence]:
+    """The grants a component's LicenseRef stands for."""
+    return [item.text for item in _reading(evidence).carried]
+
+
+def carried_and_named(evidence) -> list[LicenseEvidence]:
+    """Carried grants whose ids the conclusion names as well."""
+    return _reading(evidence).also_named
+
+
 def verbatim_terms(evidence) -> str:
-    """The body a LicenseRef carries for a component: every text it read.
+    """The body a LicenseRef carries for a component, from `carried_texts`.
 
     One component can state its terms across several files, so this is a join
     and not a file. The build records its digest and the verifier compares
     against that, which only works while both sides join the same way -- so they
-    both call this.
+    both call this. A component with nothing carried states every grant.
     """
-    return "\n\n".join(item.text for item in obligation_texts(evidence))
+    texts = carried_texts(evidence) or grant_texts(evidence)
+    return "\n\n".join(item.text for item in texts)
 
 
 _DIGITS = re.compile(r"\d+")
@@ -398,8 +414,8 @@ def alternatives(matches) -> list[tuple[str, ...]]:
     """Matched ids, grouped where one text cannot tell them apart.
 
     Family members that tie survive `_dominated` together: GPL-3.0-only and
-    GPL-3.0-or-later share one reference text, and which applies is a notice's
-    choice, not the text's.
+    GPL-3.0-or-later share one reference text. `_name_for` says which id, if
+    any, such a group names.
     """
     entries = corpus()[1]
     groups: list[list[str]] = []
@@ -419,6 +435,27 @@ def alternatives(matches) -> list[tuple[str, ...]]:
     return [tuple(group) for group in groups]
 
 
+def _name_for(group: tuple[str, ...]) -> str | None:
+    """The id a text matching this group of `alternatives` names, if any.
+
+    Where every other id extends one by a suffix -- MPL-2.0 and its
+    no-copyleft-exception variant, OFL-1.1 and its -RFN and -no-RFN -- that one
+    is SPDX's id for the unmodified text, and a notice selects the variant.
+    -only and -or-later have no such id: naming either asserts a choice.
+    """
+    plain = [
+        base
+        for base in group
+        if all(other == base or other.startswith(f"{base}-") for other in group)
+    ]
+    return plain[0] if len(plain) == 1 else None
+
+
+def _either(names) -> str:
+    """One text matching references it cannot choose between, for a reader."""
+    return "matches the reference text of " + " or ".join(names)
+
+
 def matched_prose(matches, name=lambda match: match[0], join=" AND ", lead=""):
     """What a text matched, for a reader: a tie is one text matching either
     reference, never both licences at once. `name` renders one match, and
@@ -427,13 +464,12 @@ def matched_prose(matches, name=lambda match: match[0], join=" AND ", lead=""):
     if not matches:
         return None
     by_id = {match[0]: match for match in matches}
-    groups = alternatives(matches)
-    single = [name(by_id[group[0]]) for group in groups if len(group) == 1]
+    groups = [(group, _name_for(group)) for group in alternatives(matches)]
+    single = [name(by_id[plain]) for _, plain in groups if plain]
     prose = [
-        "matches the reference text of "
-        + " or ".join(name(by_id[item]) for item in group)
-        for group in groups
-        if len(group) > 1
+        _either(name(by_id[item]) for item in group)
+        for group, plain in groups
+        if not plain
     ]
     parts = ([lead + join.join(single)] if single else []) + prose
     return ("; " if prose else join).join(parts)
@@ -535,7 +571,7 @@ def discover_in_tree(
         found.append(item)
     # "nested" never satisfies the grant test below; that is the point.
 
-    if not any(item.kind == "grant" for item in found):
+    if not grant_texts(found):
         found.extend(_readme_fallback(component, root, display_prefix))
     return found
 
@@ -604,44 +640,67 @@ def grammar_names(identifiers) -> bool:
     return all(expressible(item) or is_exception(item) for item in identifiers)
 
 
-def explains_the_text(matches) -> bool:
-    """Whether the matched licences account for most of what the file says.
+def _explained(text: str, groups) -> float:
+    """How much of a text its matched `alternatives` groups account for, each
+    counted once and the text's copyright notices left out."""
+    candidate = _ngrams(_normalize(_without_notices(text)))
+    if not candidate:
+        return 1.0
+    entries = corpus()[1]
+    return sum(
+        max(len(entries[key].grams & candidate) for key in group) / len(candidate)
+        for group in groups
+    )
 
-    Not a test of whether an identification is right -- a dual-licence file
-    matches correctly and scores low -- only of whether it explains the file,
-    which is what the document has to say when it cannot name one.
-    """
-    return sum(coverage for _, _, coverage in matches) >= _EXPLAINED_THRESHOLD
+
+def _without_notices(text: str) -> str:
+    """The text without the lines `read_notices` takes its notices from."""
+    notices = [_normalize(notice) for notice in read_notices(text)]
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not (words := _normalize(line))
+        or not any(
+            notice[index : index + len(words)] == words
+            for notice in notices
+            for index in range(len(notice) - len(words) + 1)
+        )
+    )
 
 
-def why_unnamed(grants: list[LicenseEvidence]) -> str:
-    """Why terms travel verbatim rather than under an SPDX identifier."""
-    if grants and all(item.origin == SPDX_REFERENCE for item in grants):
-        # Declared, not matched: the declaration names an id the grammar lacks.
-        newer = sorted(
-            item.identified
-            for item in grants
-            if item.identified and not grammar_names([item.identified])
-        )
-        return (
-            f"Declares {', '.join(newer) or 'an identifier'}, newer than the SPDX "
-            "grammar this document ships with"
-        )
-    if not any(item.matches for item in grants):
-        return "Matched no text in the SPDX reference corpus"
-    partial = [item for item in grants if not explains_the_text(item.matches)]
-    if partial:
-        share = max(
-            sum(coverage for _, _, coverage in item.matches) for item in partial
-        )
-        return (
-            "What matched in the SPDX reference corpus accounts for only "
-            f"{share:.0%} of this text, so the matches name part of it and not "
-            "the whole"
-        )
-    # Matched, but under an id the grammar shipped with this document cannot
-    # validate, so it cannot be named here.
-    return "Matched an identifier newer than the SPDX grammar this document ships with"
+_NEWER = "newer than the SPDX grammar this document ships with"
+
+
+def why_unnamed(evidence) -> str:
+    """Why a component's carried grants travel verbatim, as lower-case clauses."""
+    carried = _reading(evidence).carried
+    reasons = []
+    if any(grant.unmatched for grant in carried):
+        reasons.append("matched no text in the SPDX reference corpus")
+    reasons += [
+        f"{_either(group)}, and the text alone does not say which applies"
+        for group in sorted({group for grant in carried for group in grant.tied})
+    ]
+    reasons += [
+        # Rounded down: "only 75%" beside a 75% threshold reads as a contradiction.
+        "what matched in the SPDX reference corpus accounts for only "
+        f"{math.floor(grant.explained * 100)}% of {grant.text.path}, its "
+        "copyright notices aside"
+        for grant in carried
+        if grant.partial
+    ]
+    declared = sorted(
+        {key for grant in carried if grant.declared for key in grant.newer}
+    )
+    matched = sorted(
+        {key for grant in carried if not grant.declared for key in grant.newer}
+        - set(declared)
+    )
+    if declared:
+        reasons.append(f"declares {', '.join(declared)}, {_NEWER}")
+    if matched:
+        reasons.append(f"matched {', '.join(matched)}, {_NEWER}")
+    return "; ".join(reasons)
 
 
 def _listed() -> _Listed:
@@ -739,48 +798,133 @@ def why_unlicensed(expressions) -> str | None:
     return None
 
 
-def expression(
-    evidence: list[LicenseEvidence], component_key: str | None = None
-) -> tuple[str, str]:
+@dataclass(frozen=True)
+class _Grant:
+    """One grant as read: the ids it names, split by whether the grammar can
+    express them, the tied groups it names none for, and how much of it its
+    matches account for, a tie counted once."""
+
+    text: LicenseEvidence
+    named: tuple[str, ...] = ()
+    newer: tuple[str, ...] = ()
+    tied: tuple[tuple[str, ...], ...] = ()
+    explained: float = 0.0
+
+    @property
+    def declared(self) -> bool:
+        """A reference text for an id REUSE declares, not the component's own."""
+        return self.text.origin == SPDX_REFERENCE
+
+    @property
+    def unmatched(self) -> bool:
+        return not self.declared and not self.text.matches
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.text.matches) and self.explained < _EXPLAINED_THRESHOLD
+
+
+@dataclass(frozen=True)
+class _Reading:
+    named: list[str]
+    carried: list[_Grant]
+    # Carried grants whose ids the conclusion names too.
+    also_named: list[LicenseEvidence]
+
+
+def _read_grant(item: LicenseEvidence) -> _Grant:
+    if item.origin == SPDX_REFERENCE:
+        # Named by the identifier it was fetched for; matching it against the
+        # corpus it came from would be circular.
+        ids, tied, explained = [item.identified] if item.identified else [], (), 1.0
+    else:
+        groups = alternatives(item.matches)
+        names = {group: _name_for(group) for group in groups}
+        ids = [plain for plain in names.values() if plain]
+        tied = tuple(group for group, plain in names.items() if not plain)
+        explained = _explained(item.text, groups)
+    return _Grant(
+        item,
+        tuple(key for key in ids if grammar_names([key])),
+        tuple(key for key in ids if not grammar_names([key])),
+        tied,
+        explained,
+    )
+
+
+def _reading(evidence) -> _Reading:
+    """Every grant names the ids it can and is carried verbatim where its ids
+    do not say everything: it matches nothing, ties without a plain id, is
+    mostly unmatched, or needs an id the grammar cannot express. A REUSE
+    declaration keeps its structure, an OR or a WITH, so one such id carries
+    every text it declares."""
+    read = [_read_grant(item) for item in grant_texts(evidence)]
+    whole = any(grant.declared and grant.newer for grant in read)
+    carried = [
+        grant
+        for grant in read
+        if (whole and grant.declared)
+        or (
+            not grant.declared
+            and (grant.newer or grant.tied or grant.unmatched or grant.partial)
+        )
+    ]
+
+    def names(grant: _Grant) -> tuple[str, ...]:
+        return () if whole and grant.declared else grant.named
+
+    return _Reading(
+        sorted({key for grant in read for key in names(grant)}),
+        carried,
+        [grant.text for grant in carried if names(grant)],
+    )
+
+
+def declared_terms(
+    component_key: str, expressions
+) -> tuple[str, list[LicenseEvidence]]:
+    """A vendored component's terms as its REUSE info declares them, and the
+    reference texts that convey them.
+
+    The expressions keep their structure -- rebuilding them from the texts
+    turns `A OR B` into `A AND B`. Where `_reading` carries a text, the whole
+    declaration travels as the component's LicenseRef, its exceptions' texts
+    with it.
+    """
+    declared = combine(sorted(expressions))
+    evidence = canonical_evidence(component_key, set(expressions))
+    if declared == NOASSERTION:
+        return declared, evidence
+    exceptions = exception_evidence(component_key, declared)
+    if _reading(evidence + exceptions).carried:
+        return license_ref(component_key), evidence + exceptions
+    return declared, evidence
+
+
+def expression(evidence: list[LicenseEvidence], component_key: str) -> tuple[str, str]:
     """Concluded and declared expressions for one component.
 
     Concluded names what was matched in a text that ships with the artifact. A
-    grant that matches nothing is not dropped and not guessed at: it becomes a
-    LicenseRef whose text travels in the document, which says "these are the
-    terms we shipped" without claiming to know which license they are.
-
-    An ID the shipped grammar cannot express is treated the same way, and the
-    whole expression falls back rather than just the offending term: dropping
-    one ID from `A AND B` would understate the terms.
+    grant `_reading` carries is not dropped and not guessed at: it adds the
+    component's LicenseRef, whose text travels in the document, which says
+    "these are the terms we shipped" without claiming to know which license
+    they are.
     """
-    grants = [item for item in evidence if item.kind == "grant"]
-    identified = sorted(
-        {license_id for item in grants for license_id, _, _ in item.matches}
-        # A reference text is named by the identifier it was fetched for; there
-        # is no match to read, because matching it would be circular.
-        | {
-            item.identified
-            for item in grants
-            if item.origin == SPDX_REFERENCE and item.identified
-        }
+    reading = _reading(evidence)
+    identified = reading.named + (
+        [license_ref(component_key)] if reading.carried else []
     )
-    if identified and component_key and not grammar_names(identified):
-        identified = [license_ref(component_key)]
-    if not identified and grants and component_key:
-        identified = [license_ref(component_key)]
-    concluded = _combine(identified) if identified else "NOASSERTION"
+    concluded = _combine(identified) if identified else NOASSERTION
 
     # Declared is the same expression, because the text it was read from is the
     # component's own LICENSE -- shipping that file is how authors declare a
-    # licence, so one artifact answers both questions. It is not an echo: a
-    # component that ships no grant declares nothing and gets NOASSERTION.
+    # licence, so one artifact answers both questions.
     #
     # Never from a REUSE tag on a grant file. OpenXR's COPYING.adoc is prose
     # about which licences the project uses, tagged CC-BY-4.0 for the prose, and
     # promoting that declared a linked Apache-2.0 SDK under a documentation
     # licence.
-    declared = concluded if grants else NOASSERTION
-    return concluded, declared
+    return concluded, concluded
 
 
 def _combine(expressions: list[str]) -> str:
@@ -1226,10 +1370,18 @@ def shared_refs(components) -> dict[str, str]:
     for text, keys in by_text.items():
         if len(keys) < 2:
             continue
-        canonical = f"LicenseRef-shared-text-{sha256_text(text)[:12]}"
+        canonical = shared_ref(text)
         for key in keys:
             renamed[license_ref(key)] = canonical
     return renamed
+
+
+SHARED_REF = "LicenseRef-shared-text-"
+
+
+def shared_ref(text: str) -> str:
+    """The id components carrying byte-identical terms share, named by them."""
+    return SHARED_REF + sha256_text(text)[:12]
 
 
 def sha256_text(text: str) -> str:

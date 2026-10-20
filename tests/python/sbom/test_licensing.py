@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import synth
-from sbom import discovery, document
+from sbom import discovery, document, report
 from sbom import licensing
 
 
@@ -120,16 +122,268 @@ def test_a_real_license_survives_surrounding_packaging_boilerplate():
     assert [license_id for license_id, _, _ in licensing.identify(wrapped)] == ["Zlib"]
 
 
+def _grant(key: str, name: str, text: str) -> licensing.LicenseEvidence:
+    return licensing.evidence_for(key, "component-file", f"{key}/{name}", text, "grant")
+
+
 def test_unmatched_grant_becomes_a_license_ref_not_a_guess():
-    evidence = [
-        licensing.evidence_for(
-            "demo", "component-file", "demo/LICENSE", synth.PROPRIETARY_LICENSE, "grant"
-        )
-    ]
+    evidence = [_grant("demo", "LICENSE", synth.PROPRIETARY_LICENSE)]
 
     concluded, _ = licensing.expression(evidence, "demo")
 
     assert concluded == "LicenseRef-demo"
+
+
+def test_a_matched_grant_does_not_hide_an_unmatched_one():
+    mit = _grant("demo", "LICENSE", synth.spdx_text("MIT"))
+    eula = _grant("demo", "LICENSE-EULA.txt", synth.PROPRIETARY_LICENSE)
+
+    assert licensing.expression([mit, eula], "demo") == (
+        "LicenseRef-demo AND MIT",
+        "LicenseRef-demo AND MIT",
+    )
+    assert licensing.carried_texts([mit, eula]) == [eula]
+    assert licensing.verbatim_terms([mit, eula]) == synth.PROPRIETARY_LICENSE
+    assert licensing.why_unnamed([mit, eula]) == (
+        "matched no text in the SPDX reference corpus"
+    )
+
+
+_GPL_TIE = (
+    "matches the reference text of GPL-3.0-only or GPL-3.0-or-later, and the "
+    "text alone does not say which applies"
+)
+_NEWER = "newer than the SPDX grammar this document ships with"
+
+
+def test_a_text_two_ids_share_is_carried_rather_than_named_as_both():
+    gpl = _grant("gpl", "COPYING", synth.spdx_text("GPL-3.0-only"))
+    mit = _grant("gpl", "LICENSE-MIT", synth.spdx_text("MIT"))
+    eula = _grant("gpl", "EULA", synth.PROPRIETARY_LICENSE)
+
+    assert licensing.expression([gpl], "gpl")[0] == "LicenseRef-gpl"
+    assert licensing.expression([gpl, mit], "gpl")[0] == "LicenseRef-gpl AND MIT"
+    assert licensing.carried_texts([gpl, mit]) == [gpl]
+    assert licensing.why_unnamed([gpl, mit]) == _GPL_TIE
+    assert licensing.why_unnamed([eula, gpl]) == (
+        f"matched no text in the SPDX reference corpus; {_GPL_TIE}"
+    )
+
+
+@pytest.mark.parametrize("license_id", ["MPL-2.0", "OFL-1.1"])
+def test_a_tie_with_a_plain_id_names_the_plain_id(license_id):
+    text = _grant("font", "LICENSE", synth.spdx_text(license_id))
+    assert len(licensing.alternatives(text.matches)[0]) > 1, "not a tie any more"
+
+    assert licensing.expression([text], "font")[0] == license_id
+    assert text.identified == license_id
+
+
+def test_a_tie_the_plain_id_names_is_not_given_as_a_reason():
+    both = _grant(
+        "c",
+        "COPYING",
+        synth.spdx_text("MPL-2.0") + "\n\n" + synth.spdx_text("LGPL-2.1-only"),
+    )
+
+    assert licensing.expression([both], "c")[0] == "LicenseRef-c AND MPL-2.0"
+    assert licensing.why_unnamed([both]) == (
+        "matches the reference text of LGPL-2.1-only or LGPL-2.1-or-later, and "
+        "the text alone does not say which applies"
+    )
+
+
+def test_a_tied_text_says_how_little_of_it_the_reference_text_is():
+    padded = _grant(
+        "c", "COPYING", synth.spdx_text("LGPL-2.1-only") + _varied_prose(3000)
+    )
+    share = licensing._read_grant(padded).explained
+    # Counted once it explains too little; counted per id it would not.
+    assert licensing._EXPLAINED_THRESHOLD / 2 < share < licensing._EXPLAINED_THRESHOLD
+
+    assert licensing.why_unnamed([padded]) == (
+        "matches the reference text of LGPL-2.1-only or LGPL-2.1-or-later, and "
+        "the text alone does not say which applies; what matched in the SPDX "
+        f"reference corpus accounts for only {math.floor(share * 100)}% of c/COPYING, "
+        "its copyright notices aside"
+    )
+
+
+def _share(text: licensing.LicenseEvidence) -> str:
+    return f"{math.floor(licensing._read_grant(text).explained * 100)}%"
+
+
+def test_a_mostly_unmatched_grant_is_named_and_carried():
+    """The rest of the text may be terms no id names."""
+    whole = _grant("demo", "LICENSE", synth.spdx_text("MIT"))
+    padded = _grant("demo", "COPYING", synth.spdx_text("MIT") + _varied_prose(300))
+    zlib = _grant("demo", "COPYING.zlib", synth.spdx_text("Zlib") + _varied_prose(250))
+
+    assert licensing.expression([whole], "demo")[0] == "MIT"
+    assert licensing.expression([padded, whole], "demo")[0] == (
+        "LicenseRef-demo AND MIT"
+    )
+    assert licensing.carried_texts([padded, whole]) == [padded]
+    assert licensing.why_unnamed([padded, zlib]) == (
+        "what matched in the SPDX reference corpus accounts for only "
+        f"{_share(padded)} of demo/COPYING, its copyright notices aside; what matched "
+        f"in the SPDX reference corpus accounts for only {_share(zlib)} of "
+        "demo/COPYING.zlib, its copyright notices aside"
+    )
+
+
+_FMT_EXCEPTION = (
+    "As an exception, if, as a result of your compiling your source code, portions "
+    "of this Software are embedded into a machine-executable object form of such "
+    "source code, you may redistribute such embedded portions in such object form "
+    "without including the above copyright and permission notices."
+)
+
+
+@pytest.mark.parametrize(
+    "shape, share, concluded",
+    [
+        # fmt's own shape: named at 0.75, carried at 0.80.
+        ("exception", (0.75, 0.80), "LicenseRef-demo AND MIT"),
+        # Two thirds of it: carried at 0.85, named at 0.80.
+        ("part-exception", (0.80, 0.85), "MIT"),
+        # A holder list is not terms, however long.
+        ("holders", (0.99, 1.01), "MIT"),
+    ],
+)
+def test_how_much_of_a_grant_must_match_for_its_ids_to_say_it_all(
+    shape, share, concluded
+):
+    mit = synth.spdx_text("MIT")
+    text = {
+        "exception": f"{mit}\n\n--- Optional exception to the license ---\n\n"
+        + _FMT_EXCEPTION,
+        "part-exception": mit + "\n\n" + " ".join(_FMT_EXCEPTION.split()[:34]),
+        "holders": "\n".join(
+            f"Copyright (c) 2015 Holder Number{index} <h{index}@example.org>"
+            for index in range(8)
+        )
+        + "\n\n"
+        + mit,
+    }[shape]
+    grant = _grant("demo", "LICENSE", text)
+    assert share[0] < licensing._read_grant(grant).explained < share[1]
+
+    assert licensing.expression([grant], "demo")[0] == concluded
+
+
+@pytest.fixture
+def mit_is_newer(monkeypatch):
+    """MIT as an id the grammar this document ships with cannot express."""
+    expressible = licensing.expressible
+    monkeypatch.setattr(
+        licensing, "expressible", lambda key: key != "MIT" and expressible(key)
+    )
+
+
+def _reference(key: str, license_id: str) -> licensing.LicenseEvidence:
+    return licensing.evidence_for(
+        key,
+        licensing.SPDX_REFERENCE,
+        f"{license_id}.txt",
+        synth.spdx_text(license_id),
+        "grant",
+    )
+
+
+@pytest.mark.parametrize(
+    "texts, concluded, carried, reason",
+    [
+        (
+            ["MIT", "Zlib"],
+            "LicenseRef-demo AND Zlib",
+            [0],
+            f"matched MIT, {_NEWER}",
+        ),
+        (
+            ["MIT", None],
+            "LicenseRef-demo",
+            [0, 1],
+            f"matched no text in the SPDX reference corpus; matched MIT, {_NEWER}",
+        ),
+        (
+            ["MIT", "GPL-3.0-only"],
+            "LicenseRef-demo",
+            [0, 1],
+            f"{_GPL_TIE}; matched MIT, {_NEWER}",
+        ),
+        # A reference text is declared, not unmatched, and its id is not
+        # restated as matched.
+        (
+            ["reference", "MIT", "Zlib"],
+            "LicenseRef-demo AND Zlib",
+            [0, 1],
+            f"declares MIT, {_NEWER}",
+        ),
+    ],
+    ids=["beside-named", "beside-unmatched", "beside-tie", "declared"],
+)
+def test_an_id_the_grammar_cannot_name_carries_only_its_texts(
+    mit_is_newer, texts, concluded, carried, reason
+):
+    evidence = [
+        _reference("demo", "MIT")
+        if source == "reference"
+        else _grant("demo", f"LICENSE-{index}", synth.PROPRIETARY_LICENSE)
+        if source is None
+        else _grant("demo", f"LICENSE-{index}", synth.spdx_text(source))
+        for index, source in enumerate(texts)
+    ]
+
+    assert licensing.expression(evidence, "demo")[0] == concluded
+    assert licensing.carried_texts(evidence) == [evidence[i] for i in carried]
+    assert licensing.why_unnamed(evidence) == reason
+
+
+def test_a_declaration_the_grammar_cannot_name_travels_whole(mit_is_newer):
+    """An OR cannot be kept in part, so every text it declares is carried."""
+    declared, evidence = licensing.declared_terms("vendored:x", {"MIT OR Zlib"})
+    assert declared == "LicenseRef-vendored-x"
+    assert [item.identified for item in licensing.carried_texts(evidence)] == [
+        "MIT",
+        "Zlib",
+    ]
+    declared, evidence = licensing.declared_terms("vendored:y", {"Zlib OR BSL-1.0"})
+    assert declared == "Zlib OR BSL-1.0"
+    assert licensing.carried_texts(evidence) == []
+
+
+@pytest.mark.parametrize(
+    "carried, total, subject",
+    [
+        (1, 1, "the shipped grant is"),
+        (2, 2, "its 2 shipped grants are"),
+        (1, 2, "1 of its 2 shipped grants is"),
+        (2, 3, "2 of its 3 shipped grants are"),
+    ],
+)
+def test_the_report_says_how_many_grants_are_carried(carried, total, subject):
+    assert report._carried_subject(carried, total) == subject
+
+
+def test_the_report_says_whether_a_carried_grant_is_named_too(mit_is_newer):
+    padded = _grant("demo", "COPYING", synth.spdx_text("Zlib") + _varied_prose(250))
+    eula = _grant("demo", "EULA", synth.PROPRIETARY_LICENSE)
+    _, evidence = licensing.declared_terms("vendored:x", {"MIT OR Zlib"})
+
+    assert report._carried_reason([padded]) == (
+        "the shipped grant is carried verbatim as well as named: what matched in "
+        f"the SPDX reference corpus accounts for only {_share(padded)} of "
+        "demo/COPYING, its copyright notices aside"
+    )
+    assert report._carried_reason([padded, eula]).startswith(
+        "its 2 shipped grants are carried verbatim, 1 of them as well as named: "
+    )
+    # A declaration carried whole names none of its ids.
+    assert report._carried_reason(evidence) == (
+        "its 2 shipped grants are carried verbatim rather than named: declares "
+        f"MIT, {_NEWER}"
+    )
 
 
 def test_no_grant_at_all_is_noassertion():
@@ -208,7 +462,8 @@ def test_a_component_with_no_grant_declares_nothing(tmp_path):
 def test_a_tag_on_a_documentation_file_is_not_the_package_declaration(tmp_path):
     """OpenXR's COPYING.adoc is prose about which licences the project uses,
     tagged CC-BY-4.0 for the prose. Promoting it declared an Apache-2.0 SDK
-    under a documentation licence."""
+    under a documentation licence. The prose matches nothing, so it is carried
+    as the component's LicenseRef."""
     (tmp_path / "LICENSE").write_text(synth.spdx_text("Apache-2.0"), encoding="utf-8")
     # REUSE-IgnoreStart
     (tmp_path / "COPYING").write_text(
@@ -221,30 +476,37 @@ def test_a_tag_on_a_documentation_file_is_not_the_package_declaration(tmp_path):
         licensing.discover_in_tree("thing", tmp_path, "thing-src"), "thing"
     )
 
-    assert concluded == "Apache-2.0"
+    assert concluded == "Apache-2.0 AND LicenseRef-thing"
     assert "CC-BY-4.0" not in declared
 
 
-def test_a_component_carrying_two_licenses_combines_them():
-    """Two identified grants must AND together, not collapse to NOASSERTION.
+@pytest.mark.parametrize(
+    "files, concluded",
+    [
+        ({"LICENSE": ("Apache-2.0", "CC-BY-4.0")}, "Apache-2.0 AND CC-BY-4.0"),
+        (
+            {"LICENSE-MIT": ("MIT",), "LICENSE-APACHE": ("Apache-2.0",)},
+            "Apache-2.0 AND MIT",
+        ),
+    ],
+)
+def test_two_identified_licenses_combine(files, concluded):
+    """Two identified licences must AND together, not collapse to NOASSERTION.
 
     The combiner returns a parsed expression object, and asking such an object
     for its truth value raises rather than answering -- so this path has to be
     exercised with more than one licence.
     """
     evidence = [
-        licensing.evidence_for(
-            "dual",
-            "component-file",
-            "dual/LICENSE",
-            synth.spdx_text("Apache-2.0") + "\n\n" + synth.spdx_text("CC-BY-4.0"),
-            "grant",
-        )
+        _grant("dual", name, "\n\n".join(map(synth.spdx_text, ids)))
+        for name, ids in files.items()
     ]
 
-    concluded, _ = licensing.expression(evidence, "dual")
-
-    assert concluded == "Apache-2.0 AND CC-BY-4.0"
+    assert licensing.expression(evidence, "dual")[0] == concluded
+    # Nothing carried, so every grant is the terms the build evidence states.
+    assert licensing.verbatim_terms(evidence) == "\n\n".join(
+        item.text for item in evidence
+    )
 
 
 def test_a_bare_license_file_covers_its_directory(tmp_path):
@@ -266,12 +528,10 @@ def test_a_bare_license_file_covers_its_directory(tmp_path):
 
 
 def test_a_text_carrying_two_licences_lists_both_not_a_choice():
-    dual = licensing.evidence_for(
+    dual = _grant(
         "dual",
-        "component-file",
-        "dual/LICENSE",
+        "LICENSE",
         synth.spdx_text("Apache-2.0") + "\n\n" + synth.spdx_text("CC-BY-4.0"),
-        "grant",
     )
 
     assert dual.identified == "Apache-2.0 AND CC-BY-4.0"
