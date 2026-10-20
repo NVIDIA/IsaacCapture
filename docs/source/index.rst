@@ -93,6 +93,7 @@ Table of Contents
    references/build
    references/generated_trackers
    references/skeleton_binding
+   references/tactile_schema
    references/retargeting/index
    references/device_provider_monitoring
    references/camera_streaming

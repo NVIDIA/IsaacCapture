@@ -5,7 +5,8 @@ Tactile devices
 ===============
 
 Tactile devices capture contact measurements. For actuator output, see
-:doc:`/references/haptic_feedback`.
+:doc:`/references/haptic_feedback`. A device can publish through the vendor-neutral
+:doc:`/references/tactile_schema`.
 
 .. toctree::
    :maxdepth: 1

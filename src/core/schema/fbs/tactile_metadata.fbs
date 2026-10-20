@@ -1,0 +1,88 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// What a tactile device is and where its taxels sit, published once per session as the
+// metadata of the tactile tracker. The rules a valid TactileMetadata follows are in
+// docs/source/references/tactile_schema.rst.
+
+include "pose.fbs";
+include "skeleton_binding.fbs";
+
+namespace core;
+
+// One rigid segment of the device, e.g. a finger link the taxels on it move with.
+struct TactileSegment {
+  // Segment frame in the device frame at the reference configuration.
+  bind_pose: Pose;
+}
+
+// One taxel at the reference configuration, in the device frame.
+struct TactileTaxel {
+  // Taxel frame: +Z is the outward surface normal, +X the shear x axis, +Y = Z x X.
+  pose: Pose;
+
+  // Linear blend skinning over four slots: segment segments[k] with weight weights[k].
+  // Weights are finite, nonnegative and sum to 1; a zero-weight slot holds segment 0.
+  //   p = sum_k weights[k] * T_current[segments[k]] * inverse(T_bind[segments[k]]) * p_bind
+  // moves the taxel position; its axes blend the same way and are renormalized. p comes out
+  // in the frame the binding's skeleton poses T_current in.
+  segments: [ushort:4];
+  weights: [float:4];
+}
+
+// Segments and taxels of the device. Taxel i is entry i of every TactileData vector.
+table TactileShape {
+  segments: [TactileSegment] (id: 0);
+  taxels: [TactileTaxel] (id: 1);
+
+  // Sensing area of each taxel in square meters; empty when unknown.
+  taxel_areas: [float] (id: 2);
+}
+
+// Identity of the device that produced the data.
+table TactileDevice {
+  vendor: string (id: 0);
+  model: string (id: 1);
+  serial_number: string (id: 2);
+  firmware_version: string (id: 3);
+  side: BodySide (id: 4);
+
+  // Rate the device samples at, in hertz; null when it is not fixed.
+  nominal_rate_hz: float = null (id: 5);
+
+  // Identifies the calibration that turned raw readings into forces.
+  calibration_id: string (id: 6);
+}
+
+// Which TactileData vectors the device fills.
+table TactileChannels {
+  normal_force: bool (id: 0);
+  shear_force: bool (id: 1);
+
+  // Raw readings per taxel in TactileData.raw; 0 when the device sends none.
+  raw_values_per_taxel: ubyte (id: 2);
+
+  taxel_state: bool (id: 3);
+}
+
+// Vendor data no core field covers, named by a registry id such as "com.example.glove".
+table TactileExtension {
+  id: string (id: 0);
+  version: uint (id: 1);
+  data: [ubyte] (id: 2);
+}
+
+// Published as the metadata of the tactile tracker (`metadata` in trackers.toml), not as
+// samples: it carries no timestamp, and the tracker holds one for the whole session.
+table TactileMetadata {
+  device: TactileDevice (id: 0);
+  shape: TactileShape (id: 1);
+
+  // Names shape.segments in the skeleton that poses them.
+  binding: SkeletonBinding (id: 2);
+
+  channels: TactileChannels (id: 3);
+  extensions: [TactileExtension] (id: 4);
+}
+
+root_type TactileMetadata;

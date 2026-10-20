@@ -30,6 +30,7 @@
 #include "soma_hand_joint_rotations_bindings.h"
 #include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
+#include "tactile_bindings.h"
 #include "timestamp_bindings.h"
 #include "tracker_metadata_bindings.h"
 
@@ -102,6 +103,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind skeleton binding types (BodySide enum, SkeletonBinding table) and the profile registry.
     core::bind_skeleton_binding(m);
+
+    // Bind tactile types (TactileMetadata, TactileData tables); after the skeleton binding they use.
+    core::bind_tactile(m);
 
     // Bind shared SOMA primitives, then the body and hand pose contracts.
     core::bind_soma_common(m);

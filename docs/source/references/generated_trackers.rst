@@ -86,10 +86,10 @@ example) declares that description as the tracker's ``metadata`` table:
    [[tracker]]
    name = "tactile"
    table = "TactileData"
-   metadata = "TactileShape"
+   metadata = "TactileMetadata"
 
 The metadata table is the ``root_type`` of a schema of its own, named after the table in snake case
-(``tactile_shape.fbs``), with no Record wrapper: MCAP records the table itself. Like the data table,
+(``tactile_metadata.fbs``), with no Record wrapper: MCAP records the table itself. Like the data table,
 it needs a hand-written ``schema/python/*_bindings.h`` before ``get_metadata()`` can return it to
 Python. Only ``direction = "pull"`` supports ``metadata``.
 
@@ -154,6 +154,9 @@ Generated today
    * - ``gamepad``
      - ``GamepadTracker``
      - Gamepad state pushed by the gamepad plugin (SDL3); only ``python_accessor`` is overridden
+   * - ``tactile``
+     - ``TactileTracker``
+     - Taxel readings with a ``TactileMetadata`` device description; see :doc:`tactile_schema`
 
 Still hand-written
 ------------------

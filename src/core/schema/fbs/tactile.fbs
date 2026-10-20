@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// One frame of a tactile device. Entry i of each vector is taxel i of the TactileShape in
+// the tracker's TactileMetadata, and a vector is filled exactly when its TactileChannels
+// flag is set. Forces are what the contacted surface exerts on the taxel, in newtons.
+
+include "timestamp.fbs";
+
+namespace core;
+
+enum TaxelState : ubyte {
+  VALID = 0,
+  // At the top of the sensing range: the true force is at least the reported one.
+  SATURATED = 1,
+  // Read, but known to be wrong, e.g. a damaged taxel.
+  INVALID = 2,
+  // Not read this frame.
+  UNAVAILABLE = 3,
+}
+
+// Tangential force along the taxel frame's +X and +Y.
+struct TactileShear {
+  x: float;
+  y: float;
+}
+
+table TactileData {
+  // Force along the taxel normal; positive presses into the surface.
+  normal_force: [float] (id: 0);
+
+  shear_force: [TactileShear] (id: 1);
+
+  // Uncalibrated readings, TactileChannels.raw_values_per_taxel consecutive values per taxel.
+  raw: [int] (id: 2);
+
+  // When absent, every taxel is VALID.
+  taxel_state: [TaxelState] (id: 3);
+
+  // Device frame counter; gaps mean dropped frames. Null when the device has none.
+  sequence: uint = null (id: 4);
+}
+
+table TactileDataRecord {
+  data: TactileData (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type TactileDataRecord;

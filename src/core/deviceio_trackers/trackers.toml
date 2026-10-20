@@ -111,3 +111,10 @@ python_accessor = "get_spacemouse_data"
 name = "gamepad"
 table = "GamepadSnapshot"
 python_accessor = "get_gamepad_data"
+
+[[tracker]]
+name = "tactile"
+table = "TactileData"
+metadata = "TactileMetadata"
+# 1000 taxels with normal force, shear, state and two raw values encode to about 21 KB.
+max_flatbuffer_size = 32768

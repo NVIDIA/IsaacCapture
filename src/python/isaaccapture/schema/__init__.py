@@ -107,6 +107,17 @@ from ._schema import (
     skeleton_profiles,
     find_skeleton_profile,
     validate_skeleton_binding,
+    # Tactile types (device description as tracker metadata, per-frame taxel readings).
+    TaxelState,
+    TactileDevice,
+    TactileChannels,
+    TactileExtension,
+    TactileShape,
+    TactileMetadata,
+    TactileData,
+    TactileDataRecord,
+    validate_tactile_metadata,
+    validate_tactile_data,
     # Shared SOMA types.
     SomaHandSide,
     # SOMA body joint-rotation types.
@@ -258,6 +269,17 @@ __all__ = [
     "validate_skeleton_binding",
     "asset_digest",
     "check_skeleton_asset",
+    # Tactile types.
+    "TaxelState",
+    "TactileDevice",
+    "TactileChannels",
+    "TactileExtension",
+    "TactileShape",
+    "TactileMetadata",
+    "TactileData",
+    "TactileDataRecord",
+    "validate_tactile_metadata",
+    "validate_tactile_data",
     # Shared SOMA types.
     "SomaHandSide",
     # SOMA body joint-rotation types.
