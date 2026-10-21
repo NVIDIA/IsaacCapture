@@ -10,9 +10,8 @@ from pathlib import Path
 
 import pytest
 import synth
-from isaaccapture_sbom import discovery, licensing
+from isaaccapture_sbom import build, discovery, licensing
 
-LICENSE_DATA_ENV = "ISAACCAPTURE_SBOM_LICENSE_DATA"
 BUILD_DIR_ENV = "ISAACCAPTURE_SBOM_BUILD_DIR"
 
 
@@ -24,21 +23,21 @@ def repo_root() -> Path | None:
     return None
 
 
-def _located(env: str, usable, missing: str, *in_checkout: str) -> Path:
-    """The path `env` names, else the checkout's default, if `usable` accepts it.
+def _located(usable, missing: str, within=lambda build_dir: build_dir) -> Path:
+    """`within` the build tree BUILD_DIR_ENV names, else the checkout's `build/`, if `usable`.
 
-    A path the environment names is one CTest promised, so its absence fails
-    every test; without one, the tests skip, since nothing was promised.
+    A build the environment names is one the caller promised, so its absence
+    fails every test; without one, the tests skip, since nothing was promised.
     """
-    if os.environ.get(env):
-        named = Path(os.environ[env])
+    if os.environ.get(BUILD_DIR_ENV):
+        named = within(Path(os.environ[BUILD_DIR_ENV]).resolve())
         if usable(named):
             return named
-        pytest.fail(f"{env}={named}: {missing}")
+        pytest.fail(f"{BUILD_DIR_ENV}: {missing} at {named}")
     root = repo_root()
-    if root is not None and usable(root.joinpath(*in_checkout)):
-        return root.joinpath(*in_checkout)
-    pytest.skip(f"{missing}; configure this project, or set {env}")
+    if root is not None and usable(found := within(root / "build")):
+        return found
+    pytest.skip(f"{missing}; configure this project, or set {BUILD_DIR_ENV}")
 
 
 def _corpus_loads(path: Path) -> bool:
@@ -57,13 +56,7 @@ def _has_codemodel(path: Path) -> bool:
 def license_data():
     """The SPDX license list deps/third_party fetched into this build's _deps."""
     return _located(
-        LICENSE_DATA_ENV,
-        _corpus_loads,
-        "no SPDX license list data there",
-        "build",
-        "_deps",
-        "license-list-data-src",
-        "json",
+        _corpus_loads, "no SPDX license list data", build.default_license_data
     )
 
 
@@ -105,9 +98,7 @@ def live_build_dir():
     the anchor to what it actually emits, so a change to the codemodel's shape
     fails here instead of passing everywhere.
     """
-    return _located(
-        BUILD_DIR_ENV, _has_codemodel, "no CMake file API codemodel there", "build"
-    )
+    return _located(_has_codemodel, "no CMake file API codemodel")
 
 
 @pytest.fixture

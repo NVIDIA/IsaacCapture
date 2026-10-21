@@ -292,6 +292,8 @@ build').
 The collector is a project of its own: `uv run --project scripts/sbom
 isaaccapture-sbom ...`. Its dependency pins live in `scripts/sbom/pyproject.toml`
 and nowhere else — never restate them as `--with` flags in a workflow or a doc.
+Its tests run the same way, through uv; do not register them with the product's
+CMake or CTest.
 
 **Read [`scripts/sbom/README.md`](scripts/sbom/README.md) first** if you are
 changing anything under `scripts/sbom/`, changing how a dependency reaches a

@@ -309,11 +309,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(license_list_data)
 
-# What the SBOM collector reads, and what the sbom tests run against.
-set(SPDX_LICENSE_DATA_JSON_DIR "${SPDX_LICENSE_DATA_SOURCE_DIR}/json"
-    CACHE INTERNAL "SPDX reference license texts for the SBOM collector")
 foreach(_spdx_index licenses.json exceptions.json)
-    if(NOT EXISTS "${SPDX_LICENSE_DATA_JSON_DIR}/${_spdx_index}")
+    if(NOT EXISTS "${SPDX_LICENSE_DATA_SOURCE_DIR}/json/${_spdx_index}")
         message(FATAL_ERROR "SPDX license list data is missing json/${_spdx_index} after fetch")
     endif()
 endforeach()
