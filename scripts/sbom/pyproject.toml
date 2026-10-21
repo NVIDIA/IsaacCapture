@@ -7,7 +7,7 @@
 #   uv run --project scripts/sbom isaaccapture-sbom --help
 #   uv run --project scripts/sbom --extra dev pytest scripts/sbom/tests
 #
-# See docs: references/sbom.
+# How it works: README.md here. What a wheel carries: docs/source/references/sbom.rst.
 
 [project]
 name = "isaaccapture-sbom"

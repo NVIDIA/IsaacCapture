@@ -324,7 +324,10 @@ class _Declaration:
 
 
 def _stamps(deps_dir: Path) -> dict[str, dict[str, dict[str, str]]]:
-    """Each tree's FetchContent stamps, by method; sbom.rst says where from."""
+    """Each tree's FetchContent stamps, by method.
+
+    scripts/sbom/README.md says where from.
+    """
     # Under the populate sub-build, or, with CMP0168 NEW, the build's own CMakeFiles.
     roots = (
         (deps_dir, "*-subbuild/*-populate-prefix/src/*-populate-stamp"),

@@ -78,6 +78,10 @@ class BuildError(Exception):
     """The wheel cannot be published with the evidence available."""
 
 
+# Each evidence-gap error ends with this; the README section holds the remedies.
+_REMEDIES = "\nSee 'What stops the Release build' in scripts/sbom/README.md."
+
+
 def _entry(name: str, data: bytes) -> Entry:
     return Entry(
         name=name,
@@ -275,7 +279,8 @@ def build(
             "these wheel members could not be traced to anything this build "
             "produced or fetched:\n  "
             + "\n  ".join(inventory.unattributed)
-            + "\nThey reached the wheel by a route the collector cannot see."
+            + "\nThey reached the wheel by a route the collector cannot see; teach "
+            "the collector that route rather than excluding the file." + _REMEDIES
         )
 
     if inventory.untraced:
@@ -286,7 +291,7 @@ def build(
             + "\nLink only what the collector can trace -- a target of this build, a "
             "fetched dependency's tree, a system package or a known toolkit -- or "
             "teach it the route this input took. ExternalProject installs into the "
-            "build tree by a route it does not know."
+            "build tree by a route it does not know." + _REMEDIES
         )
 
     unlicensed = sorted(
@@ -300,8 +305,8 @@ def build(
             "the per-file gate:\n  "
             + "\n  ".join(unlicensed)
             + "\nRecord upstream's terms as REUSE info: a header tag, a .license "
-            "sidecar or a REUSE.toml annotation. For a stray tag, see 'How licenses "
-            "are determined' in docs/source/references/sbom.rst."
+            "sidecar or a REUSE.toml annotation. A stray tag is set aside instead."
+            + _REMEDIES
         )
 
     missing = [
@@ -314,7 +319,7 @@ def build(
             "no license text was found in the files of redistributed component(s): "
             + ", ".join(missing)
             + "\nThe component ships no LICENSE/COPYING file and states no grant in "
-            "its README; obtain the terms before publishing it."
+            "its README; obtain the terms before publishing it." + _REMEDIES
         )
 
     # Everything the wheel gains, computed before a byte is written so the
@@ -373,7 +378,8 @@ def build(
             f"{wheel_path.name} declares {declared} and packages no text for "
             + ", ".join(unmet)
             + ".\nA distribution has to ship the terms it declares, the same as "
-            "anything it redistributes; obtain the text before publishing it."
+            "anything it redistributes: add the text to license-files in "
+            "pyproject.toml as <identifier>.txt, or drop the declaration." + _REMEDIES
         )
 
     patched_metadata = wheelfile.add_license_files(metadata_raw, sorted(packaged_paths))

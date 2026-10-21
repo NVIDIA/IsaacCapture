@@ -285,26 +285,17 @@ build itself. There is **no checked-in dependency registry** and adding one woul
 be a second source of truth — declare a dependency the way you already would and
 it appears in the next wheel's inventory.
 
-These fail the Release build rather than shipping a gap, and none is fixed by
-excluding a file or writing down an assumption:
-
-- **a wheel member the build cannot explain** — teach the collector that route;
-- **static code on a link line the collector cannot trace** — from the build
-  machine, or installed into the build tree by ExternalProject; link a
-  traceable copy, or teach the collector that route;
-- **a redistributed component with no license text** — obtain the terms;
-- **a checked-in third-party file that fails the per-file REUSE gate** — record
-  upstream's terms in its REUSE info (sbom.rst says how).
+When the SBOM step stops the Release build, fix the cause; never exclude a file or
+record an assumed license. Remedies: `scripts/sbom/README.md` ('What stops the Release
+build').
 
 The collector is a project of its own: `uv run --project scripts/sbom
 isaaccapture-sbom ...`. Its dependency pins live in `scripts/sbom/pyproject.toml`
 and nowhere else — never restate them as `--with` flags in a workflow or a doc.
 
-**Read [`docs/source/references/sbom.rst`](docs/source/references/sbom.rst)
-first** if you are changing anything under `scripts/sbom/`, changing how a
-dependency reaches a wheel, or touching the wheel-packaging steps in
-`build-ubuntu.yml`. It covers discovery, license matching and the maintenance
-rules; nothing here repeats them.
+**Read [`scripts/sbom/README.md`](scripts/sbom/README.md) first** if you are
+changing anything under `scripts/sbom/`, changing how a dependency reaches a
+wheel, or touching the wheel-packaging steps in `build-ubuntu.yml`.
 
 ## A rule changed in one place is changed in none
 

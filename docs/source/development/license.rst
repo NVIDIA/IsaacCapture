@@ -25,7 +25,10 @@ We use `REUSE <https://reuse.software/>`_ to enforce SPDX license headers on sou
 ``reuse lint-file`` on changed files (e.g. ``.py``, ``.cpp``, ``.md``, ``.yaml``):
 
 1. **Required fields**: Each file must have ``SPDX-FileCopyrightText`` and ``SPDX-License-Identifier``.
-2. **License**: ``SPDX-License-Identifier`` must be ``Apache-2.0`` (full text in ``LICENSES/Apache-2.0.txt``).
+2. **License**: first-party files use ``Apache-2.0`` (full text in ``LICENSES/Apache-2.0.txt``),
+   except EgoPost (``src/python/isaaccapture_egopost/``), which uses ``LicenseRef-OpenMDW-1.1``.
+   Checked-in third-party files record upstream's terms instead; see *What stops the Release
+   build* in :code-file:`scripts/sbom/README.md`.
 
 Example header (for Python files):
 
