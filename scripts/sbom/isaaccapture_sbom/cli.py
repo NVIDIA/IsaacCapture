@@ -115,7 +115,10 @@ def _cmd_check_set(args: argparse.Namespace) -> int:
 
 
 def _cmd_merge_manifests(args: argparse.Namespace) -> int:
-    merged = build_module.merge_manifests([Path(item) for item in args.manifest])
+    merged = build_module.merge_manifests(
+        [Path(item) for item in args.manifest],
+        Path(args.evidence_out) if args.evidence_out else None,
+    )
     Path(args.output).write_text(
         json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -187,7 +190,9 @@ def main(argv: list[str] | None = None) -> int:
         help="the release's wheels; one the manifest does not list fails the set",
     )
     check_set.add_argument(
-        "--evidence-dir", required=True, help="where the release's sidecars live"
+        "--evidence-dir",
+        required=True,
+        help="the release's sidecars; a file the manifest does not bind fails the set",
     )
     check_set.set_defaults(handler=_cmd_check_set)
 
@@ -195,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         "merge-manifests", help="fold per-variant manifests into one"
     )
     merge.add_argument("--output", required=True, help="merged manifest to write")
+    merge.add_argument(
+        "--evidence-out", help="copy the sidecars the merged manifest binds here"
+    )
     merge.add_argument("manifest", nargs="+", help="per-variant manifests")
     merge.set_defaults(handler=_cmd_merge_manifests)
 

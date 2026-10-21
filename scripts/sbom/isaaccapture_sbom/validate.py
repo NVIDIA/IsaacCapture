@@ -22,7 +22,9 @@ from . import document as document_module
 from . import wheelfile
 
 
-_SIDECAR_KINDS = ("spdx", "build_evidence", "license_report_json", "license_report_md")
+# Derived from the wheel alone, so every build of one wheel writes the same bytes.
+CONTENT_SIDECARS = ("spdx", "license_report_json", "license_report_md")
+_SIDECAR_KINDS = (*CONTENT_SIDECARS, "build_evidence")
 
 
 class ManifestError(Exception):
@@ -63,6 +65,18 @@ def manifest_records(path: Path) -> list[dict]:
     return records
 
 
+def sidecar_failures(beside: Path, record: dict) -> list[str]:
+    """Each sidecar a checked record binds that is not beside it as bound."""
+    failures = []
+    for kind, sidecar in record["sidecars"].items():
+        path = beside / sidecar["filename"]
+        if not path.is_file():
+            failures.append(f"sidecar {kind} is missing: {sidecar['filename']}")
+        elif sha256_file(path) != sidecar["sha256"]:
+            failures.append(f"sidecar {kind} does not match its recorded digest")
+    return failures
+
+
 def _is_bare_name(name: str) -> bool:
     """A file name joined onto a directory must stay inside that directory."""
     return name not in ("", ".", "..") and not any(sep in name for sep in "/\\:")
@@ -73,10 +87,10 @@ def _record_for(records: list[dict], filename: str) -> dict:
     seen = [item for item in records if item.get("filename") == filename]
     if len(seen) > 1:
         raise ManifestError(f"{filename} is advertised {len(seen)} times")
-    return _checked_record(seen[0]) if seen else {}
+    return checked_record(seen[0]) if seen else {}
 
 
-def _checked_record(record: dict) -> dict:
+def checked_record(record: dict) -> dict:
     """A record holding every field the checks read, or ManifestError."""
     filename = record["filename"]
     for key in ("sha256", "size", "sbom_in_wheel", "sidecars"):
@@ -591,12 +605,7 @@ def _check_manifest(
         )
 
     beside = evidence_dir if evidence_dir is not None else manifest_path.parent
-    for kind, sidecar in record["sidecars"].items():
-        path = beside / sidecar["filename"]
-        if not path.is_file():
-            failures.append(f"sidecar {kind} is missing: {sidecar['filename']}")
-        elif sha256_file(path) != sidecar["sha256"]:
-            failures.append(f"sidecar {kind} does not match its recorded digest")
+    failures.extend(sidecar_failures(beside, record))
 
     published = beside / record["sidecars"]["spdx"]["filename"]
     if published.is_file():
@@ -670,19 +679,36 @@ def _cross_document_refs(
 
 
 def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[str]:
-    """Run :func:`check` over every wheel a merged manifest advertises."""
+    """Run :func:`check` over every wheel a merged manifest advertises, and fail
+    any wheel or evidence file here that it does not name."""
     failures: list[str] = []
     records = manifest_records(manifest_path)
     for name, seen in sorted(Counter(item["filename"] for item in records).items()):
         if seen > 1:
             raise ManifestError(f"{name} is advertised {seen} times")
-    by_name = {item["filename"]: _checked_record(item) for item in records}
+    by_name = {item["filename"]: checked_record(item) for item in records}
 
     # Every wheel here is published with the set, so one the manifest omits
     # would go out unchecked.
     for stray in sorted({item.name for item in wheel_dir.glob("*.whl")} - set(by_name)):
         failures.append(
             f"{stray} is in {wheel_dir}, and {manifest_path.name} does not list it"
+        )
+    # The same holds for evidence: a file no record binds is never verified.
+    # Wheels sharing the directory are the check above's to judge.
+    expected = {
+        sidecar["filename"]
+        for record in by_name.values()
+        for sidecar in record["sidecars"].values()
+    }
+    if manifest_path.parent.resolve() == evidence_dir.resolve():
+        expected.add(manifest_path.name)
+    if evidence_dir.resolve() == wheel_dir.resolve():
+        expected |= {item.name for item in wheel_dir.glob("*.whl")}
+    present = {item.name for item in evidence_dir.glob("*") if item.is_file()}
+    for stray in sorted(present - expected):
+        failures.append(
+            f"{stray} is in {evidence_dir}, and {manifest_path.name} does not bind it"
         )
 
     # The whole release is here, which is the only place a reference from one

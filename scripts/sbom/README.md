@@ -61,9 +61,12 @@ lists every member except `RECORD` and itself, since neither can carry its own d
 `--build-evidence` also checks that the build accounts for every member; `--manifest`
 checks the wheel against the digest bound at publication and the sidecars beside it.
 `check-set` runs the whole thing over every wheel in a release, and fails a wheel in
-`--wheel-dir` that the manifest does not list. Any command reading a manifest refuses
-one that lists no wheel. CI validates each published document with `spdx-tools` before
-release.
+`--wheel-dir`, or a file in `--evidence-dir`, that the manifest does not name.
+`merge-manifests` refuses a wheel name whose builds produced different bytes, SBOMs or
+license reports. Only build evidence may differ; the first manifest's in path order (in
+CI, artifact-name order) is bound, and `--evidence-out` copies exactly the bound files.
+Any command reading a manifest refuses one that lists no wheel. CI validates each
+published document with `spdx-tools` before release.
 
 ### Tests
 

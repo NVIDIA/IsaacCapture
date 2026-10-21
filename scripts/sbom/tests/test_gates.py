@@ -723,28 +723,142 @@ def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_d
     ) == ["Apache-2.0"]
 
 
-def test_one_wheel_with_differing_evidence_merges(tmp_path, built):
-    """Six builds of a universal wheel produce six build-evidence sidecars.
-
-    The wheel is the same artifact; the evidence describes the build that made
-    it, and those differ. A release names one evidence set, and refusing the
-    whole release over that would block every build of a `py3-none-any` wheel.
-    """
+@pytest.mark.parametrize("kind", [*validate_module.CONTENT_SIDECARS, "build_evidence"])
+def test_builds_of_one_wheel_may_differ_only_in_build_evidence(tmp_path, built, kind):
+    """Every entry builds a `py3-none-any` wheel. Its evidence describes each
+    build, so it may differ and the first entry's is bound; what is derived
+    from the wheel alone may not."""
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
     other = json.loads(json.dumps(built["manifest"]))
-    other["wheels"][0]["sidecars"]["build_evidence"]["sha256"] = "1" * 64
+    other["wheels"][0]["sidecars"][kind]["sha256"] = "1" * 64
     second.write_text(json.dumps(other), encoding="utf-8")
 
-    merged = build_module.merge_manifests([first, second])
+    if kind == "build_evidence":
+        merged = build_module.merge_manifests([first, second])
+        assert merged["wheels"] == built["manifest"]["wheels"]
+    else:
+        with pytest.raises(
+            build_module.BuildError, match=rf"described it .*\({kind}\)"
+        ):
+            build_module.merge_manifests([first, second])
 
-    assert len(merged["wheels"]) == 1
-    # The first entry's evidence, matching the set assembled alongside it.
-    assert (
-        merged["wheels"][0]["sidecars"]["build_evidence"]["sha256"]
-        == (built["manifest"]["wheels"][0]["sidecars"]["build_evidence"]["sha256"])
+
+def _two_builds_of_one_wheel(built, tmp_path):
+    """Two entries' sidecar directories whose build evidence differs."""
+    entries = []
+    for name, note in (("a", ""), ("b", "\n")):
+        entry = tmp_path / "sidecars" / name
+        shutil.copytree(built["out_dir"], entry)
+        evidence = entry / built["evidence_path"].name
+        evidence.write_bytes(evidence.read_bytes() + note.encode())
+        manifest = json.loads((entry / "manifest.json").read_text(encoding="utf-8"))
+        manifest["wheels"][0]["sidecars"]["build_evidence"]["sha256"] = (
+            build_module.sha256_file(evidence)
+        )
+        (entry / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        entries.append(entry)
+    return entries
+
+
+def test_a_merged_release_holds_the_evidence_it_binds_and_verifies(built, tmp_path):
+    first, second = _two_builds_of_one_wheel(built, tmp_path)
+    release = tmp_path / "release"
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    shutil.copy(built["wheel"], wheels)
+
+    # Named out of order: the first in path order is bound, and copied.
+    assert _merge_cli([second, first], release) == 0
+
+    manifest = release / "isaaccapture-sbom-manifest.json"
+    bound = json.loads(manifest.read_text(encoding="utf-8"))["wheels"][0]["sidecars"]
+    assert {item.name for item in release.iterdir()} == {
+        manifest.name,
+        *(item["filename"] for item in bound.values()),
+    }
+    evidence = release / bound["build_evidence"]["filename"]
+    assert evidence.read_bytes() == (first / evidence.name).read_bytes()
+    assert validate_module.check_set(manifest, wheels, release) == []
+
+
+def test_evidence_the_manifest_does_not_bind_fails_the_release_set(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = evidence / f"b.{built['evidence_path'].name}"
+    stray.write_bytes(built["evidence_path"].read_bytes())
+
+    failures = validate_module.check_set(merged, wheels, evidence)
+
+    assert failures == [
+        f"{stray.name} is in {evidence}, and {merged.name} does not bind it"
+    ]
+
+
+def test_a_file_named_like_a_manifest_kept_elsewhere_is_stray(built, tmp_path):
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    stray = evidence / merged.name
+    stray.write_text("{}", encoding="utf-8")
+
+    assert validate_module.check_set(merged, wheels, evidence) == [
+        f"{stray.name} is in {evidence}, and {merged.name} does not bind it"
+    ]
+
+
+def test_merging_into_the_directory_holding_the_evidence(built, tmp_path):
+    entry = tmp_path / "entry"
+    shutil.copytree(built["out_dir"], entry)
+
+    assert _merge_cli([entry], entry) == 0
+
+
+def test_a_release_checked_from_one_directory_verifies(built, tmp_path):
+    """The documented recipe: wheels, evidence and manifest side by side."""
+    merged, wheels, evidence = _release_layout(built, tmp_path)
+    shutil.copy(next(wheels.iterdir()), evidence)
+    shutil.copy(merged, evidence)
+
+    manifest = evidence / merged.name
+    assert validate_module.check_set(manifest, evidence, evidence) == []
+
+    stray = evidence / "isaacteleop-0.4.0-py3-none-any.whl"
+    shutil.copy(built["wheel"], stray)
+    assert validate_module.check_set(manifest, evidence, evidence) == [
+        f"{stray.name} is in {evidence}, and {manifest.name} does not list it"
+    ]
+
+
+def _merge_cli(entries, release):
+    return cli.main(
+        [
+            "merge-manifests",
+            "--output",
+            str(release / "isaaccapture-sbom-manifest.json"),
+            "--evidence-out",
+            str(release),
+            *(str(entry / "manifest.json") for entry in entries),
+        ]
     )
+
+
+def test_a_missing_bound_sidecar_copies_nothing(built, tmp_path, capsys):
+    first, second = _two_builds_of_one_wheel(built, tmp_path)
+    (first / built["spdx_path"].name).unlink()
+    release = tmp_path / "release"
+
+    assert _merge_cli([first, second], release) == 2
+    assert "sidecar spdx is missing" in capsys.readouterr().err
+    assert not release.exists()
+
+
+def test_merge_manifests_refuses_malformed_sidecars(tmp_path):
+    record = _record()
+    record["sidecars"] = list(record["sidecars"])
+
+    with pytest.raises(
+        validate_module.ManifestError, match="sidecars must each name a file"
+    ):
+        build_module.merge_manifests([_manifest_of(tmp_path, [record])])
 
 
 def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):

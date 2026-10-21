@@ -511,43 +511,77 @@ def build(
     }
 
 
-def merge_manifests(paths: list[Path]) -> dict:
-    """Fold per-variant manifests into the one a release advertises."""
-    return merge_records(
-        [
-            item
-            for path in sorted(paths)
-            for item in validate_module.manifest_records(path)
-        ]
-    )
+def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict:
+    """Fold per-variant manifests into the one a release advertises.
+
+    With `evidence_out`, copy there the sidecars it binds, from beside the
+    manifest that named them, and nothing else.
+    """
+    found = [
+        (path.parent, item)
+        for path in sorted(paths)
+        for item in validate_module.manifest_records(path)
+    ]
+    merged = merge_records([item for _, item in found])
+    if evidence_out is None:
+        return merged
+
+    # From beside the very record the merge bound, so the copy cannot follow a
+    # different "first" than the binding did.
+    beside = {id(item): parent for parent, item in found}
+    bound = [(beside[id(record)], record) for record in merged["wheels"]]
+    # Checked before anything is written, so a refused set copies nothing.
+    failures = [
+        f"{record['filename']}: {failure}"
+        for parent, record in bound
+        for failure in validate_module.sidecar_failures(parent, record)
+    ]
+    if failures:
+        raise BuildError("; ".join(failures))
+    evidence_out.mkdir(parents=True, exist_ok=True)
+    for parent, record in bound:
+        # Already in place, and verified above; copying onto itself would raise.
+        if parent.resolve() == evidence_out.resolve():
+            continue
+        for sidecar in record["sidecars"].values():
+            shutil.copyfile(
+                parent / sidecar["filename"], evidence_out / sidecar["filename"]
+            )
+    return merged
 
 
 def merge_records(wheels: list[dict]) -> dict:
     """The manifest for a set of wheels, stamped when the set was complete."""
     # A `py3-none-any` wheel is built by every matrix entry, so a release set
-    # names it once per entry. What must agree is the wheel: one filename
-    # standing for two different artifacts is the thing a consumer cannot tell
-    # apart. The sidecars may legitimately differ -- build evidence describes
-    # the build, and six builds produced this wheel -- so the first entry's
-    # evidence is the one the manifest binds, matching the set assembled beside
-    # it.
+    # names it once per entry. The wheel, and whatever is derived from it alone,
+    # must agree, or one filename stands for things a consumer cannot tell apart.
+    # Build evidence describes the build, and every entry built this wheel, so
+    # the first entry's is the one the manifest binds.
     identity = ("filename", "sha256", "size", "sbom_in_wheel")
     unique: dict[str, dict] = {}
     conflicting: set[str] = set()
+    disagreeing: set[str] = set()
     for item in wheels:
-        name = item["filename"]
-        seen = unique.get(name)
-        if seen is not None:
-            if [seen.get(key) for key in identity] != [
-                item.get(key) for key in identity
-            ]:
-                conflicting.add(name)
+        validate_module.checked_record(item)
+        seen = unique.setdefault(item["filename"], item)
+        if seen is item:
             continue
-        unique[name] = item
+        if [seen.get(key) for key in identity] != [item.get(key) for key in identity]:
+            conflicting.add(item["filename"])
+        disagreeing.update(
+            f"{item['filename']} ({kind})"
+            for kind in validate_module.CONTENT_SIDECARS
+            if seen["sidecars"][kind]["sha256"] != item["sidecars"][kind]["sha256"]
+        )
     if conflicting:
         raise BuildError(
             "the same wheel filename was published with different contents: "
             + ", ".join(sorted(conflicting))
+        )
+    if disagreeing:
+        raise BuildError(
+            "builds of one wheel described it differently: "
+            + ", ".join(sorted(disagreeing))
         )
     return {
         "schema": "isaaccapture-sbom-manifest/1",

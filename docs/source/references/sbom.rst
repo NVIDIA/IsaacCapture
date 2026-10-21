@@ -75,8 +75,8 @@ You need ``uv`` and a clone of this repository:
    uv run --project IsaacCapture/scripts/sbom isaaccapture-sbom check \
      --wheel isaaccapture-<version>-<abi>-<platform>.whl
 
-To check a whole release, put its wheels and evidence files in a directory of their own,
-and keep other wheels out of it:
+To check a whole release, put its wheels and evidence files in a directory of their own;
+any other file there fails the check:
 
 .. code-block:: bash
 

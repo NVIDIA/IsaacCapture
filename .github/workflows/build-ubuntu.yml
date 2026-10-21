@@ -1200,32 +1200,14 @@ jobs:
     - name: Assemble and verify the release evidence set
       run: |
         set -euo pipefail
-        shopt -s nullglob
 
-        mkdir -p release-evidence
-        # A `py3-none-any` wheel is built by every matrix entry, so its sidecars
-        # arrive once per entry under the same name. Identical copies are one
-        # file; differing ones are kept apart under the entry that produced
-        # them, because dropping one would publish evidence for a wheel nobody
-        # can tell apart from the five it is not.
-        for sidecar in sbom-sidecars/*/*.spdx.json \
-                       sbom-sidecars/*/*.licenses.json \
-                       sbom-sidecars/*/*.licenses.md \
-                       sbom-sidecars/*/*.build-evidence.json; do
-          name="$(basename "${sidecar}")"
-          entry="$(basename "$(dirname "${sidecar}")")"
-          if [[ ! -e "release-evidence/${name}" ]]; then
-            cp "${sidecar}" "release-evidence/${name}"
-          elif cmp -s "${sidecar}" "release-evidence/${name}"; then
-            continue
-          else
-            cp "${sidecar}" "release-evidence/${entry}.${name}"
-          fi
-        done
-
+        # A `py3-none-any` wheel arrives from every matrix entry; the merge
+        # refuses one whose copies disagree, and copies only the evidence the
+        # merged manifest binds.
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom merge-manifests \
           --output release-evidence/isaaccapture-sbom-manifest.json \
+          --evidence-out release-evidence \
           sbom-sidecars/*/manifest.json
 
         # Rehearses the published verification instructions against the exact
