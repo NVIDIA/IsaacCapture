@@ -5,15 +5,16 @@
 
 from __future__ import annotations
 
-import ast
-import inspect
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
 import isaaccapture.teleop_session_manager.desktop_mirror as desktop_mirror
 
 
-def test_config_is_bounded_and_ovui_import_stays_lazy():
+def test_config_rejects_invalid_window_and_cadence():
     assert desktop_mirror.DesktopMirrorConfig().max_fps == 30.0
     for fps in (0.0, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="max_fps"):
@@ -23,20 +24,38 @@ def test_config_is_bounded_and_ovui_import_stays_lazy():
     with pytest.raises(ValueError, match="title"):
         desktop_mirror.DesktopMirrorConfig(title="")
 
-    module = ast.parse(inspect.getsource(desktop_mirror))
-    top_level_imports = [
-        node for node in module.body if isinstance(node, (ast.Import, ast.ImportFrom))
-    ]
-    assert all(
-        not (
-            (isinstance(node, ast.ImportFrom) and node.module == "omni")
-            or (
-                isinstance(node, ast.Import)
-                and any(alias.name == "omni.ui" for alias in node.names)
-            )
-        )
-        for node in top_level_imports
+
+def test_session_import_and_mirror_config_do_not_request_optional_ovui():
+    script = textwrap.dedent(
+        """
+        import importlib.abc
+        import sys
+
+        requests = []
+
+        class UnavailableOVUI(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "omni.ui" or fullname.startswith("omni.ui."):
+                    requests.append(fullname)
+                    raise ModuleNotFoundError(fullname)
+
+        sys.meta_path.insert(0, UnavailableOVUI())
+        from isaaccapture.teleop_session_manager import DesktopMirrorConfig
+
+        DesktopMirrorConfig()
+        assert not requests, requests
+        assert "omni.ui" not in sys.modules
+        """
     )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        capture_output=True,
+        text=True,
+        # Keep child diagnostics in the assertion output on failure.
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("fail_wait", [False, True])
