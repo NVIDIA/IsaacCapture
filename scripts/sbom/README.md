@@ -74,10 +74,11 @@ uv run --project scripts/sbom --extra dev pytest scripts/sbom/tests
 ```
 
 Every test reads the SPDX list from `ISAACCAPTURE_SBOM_LICENSE_DATA`, else
-`build/_deps/license-list-data-src/json`, and skips when neither holds it. The file API
-tests also read `ISAACCAPTURE_SBOM_BUILD_DIR`, else `build/`, and skip without a
-configured tree. With `BUILD_TESTING`, [`CMakeLists.txt`](CMakeLists.txt) registers each
-test file with CTest as `sbom_<file>`, pointing both variables at the current build.
+`build/_deps/license-list-data-src/json`; the file API tests also read
+`ISAACCAPTURE_SBOM_BUILD_DIR`, else `build/`. A default that holds nothing skips them; a
+variable that names a path holding nothing fails them. With `BUILD_TESTING`, [`CMakeLists.txt`](CMakeLists.txt) registers each
+test file with CTest as `sbom_<file>` under the label `sbom`, pointing both variables at
+the current build.
 
 ## How the inventory is worked out
 

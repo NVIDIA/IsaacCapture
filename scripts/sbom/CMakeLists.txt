@@ -24,5 +24,6 @@ foreach(test_file ${TEST_FILES})
     # a codemodel CMake actually wrote.
     set_tests_properties("sbom_${test_name}" PROPERTIES
         ENVIRONMENT "ISAACCAPTURE_SBOM_LICENSE_DATA=${SPDX_LICENSE_DATA_JSON_DIR};ISAACCAPTURE_SBOM_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        LABELS "sbom"
     )
 endforeach()

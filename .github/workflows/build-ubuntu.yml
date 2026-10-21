@@ -174,7 +174,12 @@ jobs:
       run: ccache --show-stats
 
     - name: Run All Tests
-      run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
+      run: ctest --test-dir "${BUILD_DIR}" -LE '^sbom$' --output-on-failure --parallel
+
+    # The collector's own tests gate SBOM generation, which only Release legs do.
+    - name: Test the SBOM collector (Release only)
+      if: matrix.build_type == 'Release'
+      run: ctest --test-dir "${BUILD_DIR}" -L '^sbom$' --no-tests=error --output-on-failure --parallel
 
     - name: Generate coverage report
       if: ${{ matrix.build_type == 'Debug' && matrix.python_version == '3.11' && matrix.arch == 'x64' }}
