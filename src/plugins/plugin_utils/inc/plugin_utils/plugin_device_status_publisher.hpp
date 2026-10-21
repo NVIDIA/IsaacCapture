@@ -4,6 +4,7 @@
 #pragma once
 
 #include <deviceio_trackers/plugin_device_status_tracker.hpp>
+#include <pusherio/plugin_session.hpp>
 #include <pusherio/schema_pusher.hpp>
 
 #include <cstddef>
@@ -36,6 +37,9 @@ public:
     using PushBufferFunction = std::function<void(const uint8_t*, size_t, int64_t, int64_t)>;
 
     PluginDeviceStatusPublisher(const core::OpenXRSessionHandles& handles, const std::string& plugin_root_id);
+
+    // The session must have been created with PluginSessionRequirements::schema_push.
+    PluginDeviceStatusPublisher(core::IPluginSession& session, const std::string& plugin_root_id);
 
     // An injected transport keeps scheduling and encoding testable without an OpenXR runtime.
     PluginDeviceStatusPublisher(const std::string& plugin_root_id, PushBufferFunction push_buffer);

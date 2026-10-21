@@ -1,158 +1,69 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "inc/pusherio/schema_pusher.hpp"
 
-#include <oxr_utils/oxr_funcs.hpp>
+#include "inc/pusherio/openxr_schema_push_channel.hpp"
 
-#include <cassert>
-#include <cstring>
 #include <stdexcept>
-#include <vector>
+#include <utility>
 
 namespace core
 {
 
-// DLPack dtype code for uint8: code=1 (unsigned int), bits=8
-// Formula: (code << 8) | bits
-static constexpr uint32_t DLPACK_DTYPE_UINT8 = (1 << 8) | 8;
+namespace
+{
+
+const SchemaPusherConfig& require_channel_config(const std::unique_ptr<ISchemaPushChannel>& channel)
+{
+    if (!channel)
+    {
+        throw std::invalid_argument("SchemaPusher requires a schema push channel");
+    }
+    return channel->config();
+}
+
+} // namespace
 
 SchemaPusher::SchemaPusher(const OpenXRSessionHandles& handles, SchemaPusherConfig config)
-    : m_config(std::move(config)), m_time_converter(handles)
+    : SchemaPusher(make_openxr_schema_push_channel(handles, std::move(config)))
 {
-    // Validate handles
-    assert(handles.instance != XR_NULL_HANDLE && "OpenXR instance handle cannot be null");
-    assert(handles.session != XR_NULL_HANDLE && "OpenXR session handle cannot be null");
-    assert(handles.xrGetInstanceProcAddr && "xrGetInstanceProcAddr cannot be null");
-
-    // Initialize extension functions using the provided xrGetInstanceProcAddr
-    initialize_push_tensor_functions(handles);
-
-    // Create the tensor collection
-    create_tensor_collection(handles);
-
-    m_logger->info("SchemaPusher initialized for collection: {}", m_config.collection_id);
 }
 
-SchemaPusher::~SchemaPusher()
+SchemaPusher::SchemaPusher(std::unique_ptr<ISchemaPushChannel> channel)
+    : m_config(require_channel_config(channel)), m_channel(std::move(channel))
 {
-    // m_push_tensor is guaranteed to be non-null by create_tensor_collection(), or the constructor would have thrown.
-    assert(m_push_tensor != XR_NULL_HANDLE && m_destroy_fn != nullptr);
-
-    // Destroy the push tensor collection
-    XrResult result = m_destroy_fn(m_push_tensor);
-    if (result != XR_SUCCESS)
-    {
-        m_logger->warn("Failed to destroy push tensor collection, result={}", static_cast<int>(result));
-    }
 }
+
+SchemaPusher::~SchemaPusher() = default;
 
 void SchemaPusher::push_buffer(const uint8_t* buffer,
                                size_t size,
                                int64_t sample_time_local_common_clock_ns,
                                int64_t sample_time_raw_device_clock_ns)
 {
-    // Validate that the serialized size fits within our declared buffer
     if (size > m_config.max_flatbuffer_size)
     {
         throw std::runtime_error("Serialized data size (" + std::to_string(size) +
                                  " bytes) exceeds max_flatbuffer_size (" +
                                  std::to_string(m_config.max_flatbuffer_size) + " bytes)");
     }
-
-    // Create padded buffer to match declared tensor size
-    // The DLPack tensor is declared as uint8[max_flatbuffer_size], so we need to pad
-    std::vector<uint8_t> padded_buffer(m_config.max_flatbuffer_size, 0);
-    std::memcpy(padded_buffer.data(), buffer, size);
-
-    // Convert monotonic nanoseconds to XrTime for the tensor header
-    XrTime xr_time = m_time_converter.convert_monotonic_ns_to_xrtime(sample_time_local_common_clock_ns);
-
-    // Prepare push data structure
-    XrPushTensorCollectionDataNV tensorData{};
-    tensorData.type = XR_TYPE_PUSH_TENSOR_COLLECTION_DATA_NV;
-    tensorData.next = nullptr;
-    tensorData.timestamp = xr_time;
     if (sample_time_raw_device_clock_ns < 0)
     {
         throw std::runtime_error("push_buffer: sample_time_raw_device_clock_ns is negative (" +
                                  std::to_string(sample_time_raw_device_clock_ns) + ")");
     }
-    tensorData.rawDeviceTimestamp = static_cast<uint64_t>(sample_time_raw_device_clock_ns);
-    tensorData.buffer = padded_buffer.data();
-    tensorData.bufferSize = static_cast<uint32_t>(m_config.max_flatbuffer_size);
-
-    // Push the data
-    XrResult result = m_push_fn(m_push_tensor, &tensorData);
-    if (result != XR_SUCCESS)
+    if (buffer == nullptr && size != 0)
     {
-        throw std::runtime_error("Failed to push tensor data, result=" + std::to_string(result));
+        throw std::invalid_argument("push_buffer: buffer is null for a non-empty sample");
     }
+
+    m_channel->push_buffer(buffer, size, sample_time_local_common_clock_ns, sample_time_raw_device_clock_ns);
 }
 
 const SchemaPusherConfig& SchemaPusher::config() const
 {
     return m_config;
-}
-
-void SchemaPusher::initialize_push_tensor_functions(const OpenXRSessionHandles& handles)
-{
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrCreatePushTensorCollectionNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&m_create_fn));
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrPushTensorCollectionDataNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&m_push_fn));
-    loadExtensionFunction(handles.instance, handles.xrGetInstanceProcAddr, "xrDestroyPushTensorCollectionNV",
-                          reinterpret_cast<PFN_xrVoidFunction*>(&m_destroy_fn));
-}
-
-void SchemaPusher::create_tensor_collection(const OpenXRSessionHandles& handles)
-{
-    // Set up DLPack tensor properties for a 1D uint8 array (byte buffer for FlatBuffer)
-    XrPushTensorDlpackCreateInfoNV dlpackInfo{};
-    dlpackInfo.type = XR_TYPE_PUSH_TENSOR_DLPACK_CREATE_INFO_NV;
-    dlpackInfo.next = nullptr;
-    dlpackInfo.data.versionMajor = 1;
-    dlpackInfo.data.versionMinor = 0;
-    dlpackInfo.data.dtype = DLPACK_DTYPE_UINT8;
-    dlpackInfo.data.ndim = 1;
-    dlpackInfo.data.shape[0] = static_cast<int64_t>(m_config.max_flatbuffer_size);
-    dlpackInfo.data.strides[0] = sizeof(uint8_t);
-    dlpackInfo.data.byte_offset = 0;
-
-    // Create tensor info with DLPack properties chained
-    XrPushTensorCreateInfoNV tensorInfo{};
-    tensorInfo.type = XR_TYPE_PUSH_TENSOR_CREATE_INFO_NV;
-    tensorInfo.next = &dlpackInfo;
-    tensorInfo.properties.dataType = XR_TENSOR_DATA_TYPE_DLPACK_NV;
-    tensorInfo.properties.dataTypeSize = m_config.max_flatbuffer_size;
-    tensorInfo.properties.offset = 0;
-    std::strncpy(tensorInfo.properties.identifier, m_config.tensor_identifier.c_str(), XR_MAX_TENSOR_IDENTIFIER_SIZE - 1);
-    tensorInfo.properties.identifier[XR_MAX_TENSOR_IDENTIFIER_SIZE - 1] = '\0';
-
-    // Create tensor collection with one tensor
-    XrPushTensorCollectionCreateInfoNV createInfo{};
-    createInfo.type = XR_TYPE_PUSH_TENSOR_COLLECTION_CREATE_INFO_NV;
-    createInfo.next = nullptr;
-    createInfo.tensors = &tensorInfo;
-    createInfo.data.tensorCount = 1;
-    createInfo.data.totalSampleSize = m_config.max_flatbuffer_size;
-    std::strncpy(createInfo.data.identifier, m_config.collection_id.c_str(), XR_MAX_TENSOR_IDENTIFIER_SIZE - 1);
-    createInfo.data.identifier[XR_MAX_TENSOR_IDENTIFIER_SIZE - 1] = '\0';
-    std::strncpy(createInfo.data.localizedName, m_config.localized_name.c_str(), XR_MAX_TENSOR_LOCALIZED_NAME_SIZE - 1);
-    createInfo.data.localizedName[XR_MAX_TENSOR_LOCALIZED_NAME_SIZE - 1] = '\0';
-    // Zero out UUID (optional, runtime may assign)
-    std::memset(&createInfo.data.uuid, 0, sizeof(createInfo.data.uuid));
-
-    // Create the tensor collection
-    XrPushTensorCollectionCreateResultNV createResult{};
-    createResult.type = XR_TYPE_PUSH_TENSOR_COLLECTION_CREATE_RESULT_NV;
-    createResult.next = nullptr;
-
-    XrResult result = m_create_fn(handles.session, &createInfo, &createResult, &m_push_tensor);
-    if (result != XR_SUCCESS)
-    {
-        throw std::runtime_error("Failed to create push tensor collection, result=" + std::to_string(result));
-    }
 }
 
 } // namespace core
