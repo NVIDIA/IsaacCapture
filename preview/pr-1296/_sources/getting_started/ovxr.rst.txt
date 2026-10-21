@@ -153,3 +153,11 @@ To add a desktop mirror, select both extras with
 ``isaaccapture[ovxr,desktop-mirror]`` in that optional requirement. Use a
 CPython 3.12 environment and a usable desktop display. The mirror extra does
 not enable the native camera helper build flag.
+
+The optional GPU mirror defaults ``OMNIUI_BACKEND`` to ``opengl`` on demand,
+before importing and initializing OVUI. Existing process settings are preserved;
+an explicit Vulkan choice cannot supply this OpenGL/CUDA copy path and reports
+an error. The default remains in the process environment after mirror shutdown
+and does not reconfigure an already initialized OVUI backend. Embedding callers
+should select their backend before first OVUI initialization. The display must
+have an associated CUDA device. This choice does not change headset rendering.

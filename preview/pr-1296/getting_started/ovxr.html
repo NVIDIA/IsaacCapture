@@ -572,6 +572,13 @@ the <code class="docutils literal notranslate"><span class="pre">ovxr</span></co
 <code class="docutils literal notranslate"><span class="pre">isaaccapture[ovxr,desktop-mirror]</span></code> in that optional requirement. Use a
 CPython 3.12 environment and a usable desktop display. The mirror extra does
 not enable the native camera helper build flag.</p>
+<p>The optional GPU mirror defaults <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND</span></code> to <code class="docutils literal notranslate"><span class="pre">opengl</span></code> on demand,
+before importing and initializing OVUI. Existing process settings are preserved;
+an explicit Vulkan choice cannot supply this OpenGL/CUDA copy path and reports
+an error. The default remains in the process environment after mirror shutdown
+and does not reconfigure an already initialized OVUI backend. Embedding callers
+should select their backend before first OVUI initialization. The display must
+have an associated CUDA device. This choice does not change headset rendering.</p>
 </section>
 </section>
 
@@ -710,7 +717,7 @@ not enable the native camera helper build flag.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 21, 2026.
       <br/>
     
   </p>
