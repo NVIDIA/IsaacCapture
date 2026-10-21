@@ -11,6 +11,7 @@ dependency on Isaac Lab or on any simulation type.
 """
 
 from __future__ import annotations
+
 import logging
 import math
 import threading
@@ -19,9 +20,21 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
+
+from .desktop_mirror import (
+    DesktopMirrorConfig,
+    DesktopMirrorStatus,
+)
 from .camera_mailbox import CompletedCameraMailbox, CameraImage
 from .openxr_quad import OpenXRCameraQuad
-from .gpu_output import completed_outputs, map_cuda_array_rgba, native_renderer_handle
+from .owned_mirror import MirrorProduct, OwnedDesktopMirrorWorker, OwnedMirrorMailbox
+from .gpu_output import (
+    OwnedCudaImagePool,
+    completed_outputs,
+    map_cuda_array_rgba,
+    native_renderer_handle,
+)
+
 
 _REQUIRED_OPENXR_EXTENSIONS = (
     "XR_KHR_convert_timespec_time",
@@ -89,7 +102,7 @@ class ExternalPresentBinding:
         if (
             len(paths) > 3
             or len(paths) != len(set(paths))
-            or any((not path.startswith("/") for path in paths))
+            or any(not path.startswith("/") for path in paths)
         ):
             raise ValueError(
                 "auxiliary RenderProduct paths must be absolute, unique, and at most three"
@@ -131,24 +144,24 @@ class AuxiliaryRasterConfig:
                 "auxiliary raster panel_width_m must be finite and positive"
             )
         if len(self.position) != 3 or not all(
-            (math.isfinite(value) for value in self.position)
+            math.isfinite(value) for value in self.position
         ):
             raise ValueError(
                 "auxiliary raster position must contain three finite values"
             )
         if len(self.orientation_xyzw) != 4 or not all(
-            (math.isfinite(value) for value in self.orientation_xyzw)
+            math.isfinite(value) for value in self.orientation_xyzw
         ):
             raise ValueError(
                 "auxiliary raster orientation must contain four finite values"
             )
-        norm = math.sqrt(sum((value * value for value in self.orientation_xyzw)))
+        norm = math.sqrt(sum(value * value for value in self.orientation_xyzw))
         if norm <= 0.0:
             raise ValueError("auxiliary raster orientation must have non-zero norm")
         object.__setattr__(
             self,
             "orientation_xyzw",
-            tuple((value / norm for value in self.orientation_xyzw)),
+            tuple(value / norm for value in self.orientation_xyzw),
         )
         if self.space != "head_locked":
             raise ValueError("auxiliary raster space must be 'head_locked'")
@@ -156,7 +169,11 @@ class AuxiliaryRasterConfig:
 
 @dataclass
 class ExternalPresentConfig:
-    """Configure XR presentation with optional completed-camera panels."""
+    """Application-neutral OVXR and CloudXR configuration.
+
+    The supported OVXR package supplies bound-frame outputs. Optional PiP and
+    mirror consumers copy those outputs on the sole frame owner before retirement.
+    """
 
     application_name: str = "isaacteleop-external-present"
     session_mode: Literal["ar", "vr"] = "vr"
@@ -172,6 +189,7 @@ class ExternalPresentConfig:
     tracking_anchor_path: str = ""
     floor_aligned_anchor: bool | None = None
     host_wait_render_output: bool = False
+    desktop_mirror: DesktopMirrorConfig | None = None
     auxiliary_raster: AuxiliaryRasterConfig | None = None
     auxiliary_rasters: tuple[AuxiliaryRasterConfig, ...] = ()
     extra_openxr_extensions: tuple[str, ...] = field(
@@ -206,12 +224,12 @@ class ExternalPresentConfig:
             not math.isfinite(self.depth_near_z)
             or not math.isfinite(self.depth_far_z)
             or self.depth_near_z <= 0.0
-            or (self.depth_far_z <= self.depth_near_z)
+            or self.depth_far_z <= self.depth_near_z
         ):
             raise ValueError(
                 "depth_near_z and depth_far_z must both be zero or finite with 0 < near < far"
             )
-        if len(self.camera_paths) != 2 or any((not path for path in self.camera_paths)):
+        if len(self.camera_paths) != 2 or any(not path for path in self.camera_paths):
             raise ValueError(
                 "external-present stereo requires exactly two non-empty camera paths"
             )
@@ -255,10 +273,14 @@ class OvxrExternalPresentOwner:
         self._pending_plan = None
         self._binding: ExternalPresentBinding | None = None
         self._cloudxr_launcher = None
-        self._camera_mailbox: CompletedCameraMailbox | None = None
+        self._desktop_mirror: OwnedDesktopMirrorWorker | None = None
+        self._desktop_mirror_start_attempted = False
+        self._desktop_mirror_started = False
+        self._mirror_mailbox: OwnedMirrorMailbox | None = None
         self._camera_quad_attached = False
         self._camera_mailboxes: list[CompletedCameraMailbox] = []
         self._camera_quads: list[OpenXRCameraQuad] = []
+        self._desktop_mirror_last_status: DesktopMirrorStatus | None = None
         self._worker: threading.Thread | None = None
         self._worker_native_thread_id: int | None = None
         self._worker_condition = threading.Condition()
@@ -314,6 +336,10 @@ class OvxrExternalPresentOwner:
         if missing:
             raise RuntimeError(
                 f"OVXR external present is missing required Context methods: {', '.join(missing)}"
+            )
+        if self._config.desktop_mirror is not None:
+            self._mirror_mailbox = OwnedMirrorMailbox(
+                self._config.desktop_mirror.max_fps, gpu_mapper=OwnedCudaImagePool()
             )
         capability = self._host.offer_render_owner_transfer()
 
@@ -452,6 +478,8 @@ class OvxrExternalPresentOwner:
         with self._worker_condition:
             self._raise_worker_error()
             self._require_open()
+            # UI/signal shutdown can arrive during the current application step.
+            # Decline its late publication, but never hide a latched worker error.
             if self._shutdown_requested.is_set():
                 return None
             if self._worker is None or self._worker_closing:
@@ -461,10 +489,11 @@ class OvxrExternalPresentOwner:
             if (
                 not force
                 and self._worker_last_published_ordinal is not None
-                and (not self._worker_publication_requested)
+                and not self._worker_publication_requested
             ):
                 return None
             self._worker_publication_requested = False
+
         try:
             with self._host.publication_guard():
                 ordinal = self._host.publish_complete_scene(publication_id)
@@ -487,6 +516,16 @@ class OvxrExternalPresentOwner:
                     self._worker_publication_requested = True
                 self._worker_condition.notify_all()
             raise
+
+    def report_host_timing(self) -> None:
+        """Report one host-loop sample for optional desktop-mirror telemetry."""
+        if self._desktop_mirror is not None:
+            self._desktop_mirror.record_host_frame()
+
+    def set_desktop_mirror_status_text(self, text: str) -> None:
+        """Set opaque desktop-mirror text owned and formatted by the application."""
+        if self._desktop_mirror is not None:
+            self._desktop_mirror.set_status_text(text)
 
     def external_oxr_handles(self):
         """Return typed handles after peer-gated context startup, otherwise ``None``."""
@@ -528,7 +567,8 @@ class OvxrExternalPresentOwner:
         with self._teardown_state_lock:
             if not self._ovxr_teardown_complete.is_set() and self._worker.is_alive():
                 _LOGGER.warning(
-                    "OVXR teardown did not complete within %.3f seconds; interrupting the owned OpenXR runtime",
+                    "OVXR teardown did not complete within %.3f seconds; "
+                    "interrupting the owned OpenXR runtime",
                     _WORKER_SHUTDOWN_GRACE_SECONDS,
                 )
                 try:
@@ -537,8 +577,9 @@ class OvxrExternalPresentOwner:
                     fallback_error = exc
         self._worker.join(timeout=30.0)
         if self._worker.is_alive():
-            if self._cloudxr_stop_started.is_set() and (
-                not self._cloudxr_stop_complete.is_set()
+            if (
+                self._cloudxr_stop_started.is_set()
+                and not self._cloudxr_stop_complete.is_set()
             ):
                 raise TimeoutError("CloudXR launcher did not stop") from wake_error
             raise TimeoutError(
@@ -600,6 +641,13 @@ class OvxrExternalPresentOwner:
         """Native ID of the sole OVXR owner thread, when started."""
         return self._worker_native_thread_id
 
+    @property
+    def desktop_mirror_status(self) -> DesktopMirrorStatus | None:
+        """Return the optional mirror's current best-effort status."""
+        if self._desktop_mirror is not None:
+            return self._desktop_mirror.status
+        return self._desktop_mirror_last_status
+
     def _create_context_on_render_thread(self) -> None:
         assert self._binding is not None
         if self._config.cloudxr_env_file and self._config.auto_launch_cloudxr:
@@ -631,14 +679,23 @@ class OvxrExternalPresentOwner:
             )
         )
         with self._host.publication_guard():
+            eye_paths = self._config.render_products or (
+                "/OVXR/Render/Products/Left",
+                "/OVXR/Render/Products/Right",
+            )
             desc = ovxr.ContextDesc(
                 ovrtx_renderer=self._binding.renderer,
                 ovstage=self._binding.stage,
                 application_name=self._config.application_name,
                 display_mode=ovxr.DisplayMode.STEREO,
+                # The server mode must reach OVXR; the browser AR preference cannot
+                # enable transparent rendering in an opaque server projection.
                 session_mode={"ar": ovxr.SessionMode.AR, "vr": ovxr.SessionMode.VR}[
                     self._config.session_mode
                 ],
+                # Empty means OVXR creates its default eye products. Supplying
+                # those names explicitly instead means existing products and
+                # changes the production/authoring contract.
                 render_products=list(self._config.render_products),
                 camera_paths=list(self._config.camera_paths),
                 create_render_products=self._config.create_render_products,
@@ -665,11 +722,29 @@ class OvxrExternalPresentOwner:
                         auxiliary_paths, auxiliaries, self._camera_quads, strict=True
                     )
                 ]
-                self._camera_mailbox = (
-                    self._camera_mailboxes[0] if self._camera_mailboxes else None
-                )
-                if auxiliaries:
+                if self._mirror_mailbox is not None:
+                    products = [MirrorProduct(eye_paths[0], "Left eye")]
+                    products.append(MirrorProduct(eye_paths[1], "Right eye"))
+                    products.extend(
+                        MirrorProduct(path, policy.label or path.rsplit("/", 1)[-1])
+                        for path, policy in zip(
+                            auxiliary_paths, auxiliaries, strict=True
+                        )
+                    )
+                    self._mirror_mailbox.set_products(tuple(products))
+                    self._mirror_mailbox.reset()
+                if auxiliaries or self._mirror_mailbox is not None:
                     self._context.set_frame_render_products(list(auxiliary_paths))
+        # Construct the optional mirror only after OVXR context creation. Its
+        # desktop graphics context starts after a successful primary submit,
+        # outside the client's short signaling/first-image admission window.
+        if self._mirror_mailbox is not None:
+            self._desktop_mirror = OwnedDesktopMirrorWorker(
+                self._acquire_desktop_mirror_frame,
+                self._config.desktop_mirror,
+                self._request_close_from_desktop_mirror,
+                products=self._mirror_mailbox,
+            )
 
     def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
         """Frame-owner copies before result retirement; PiP owns its independent copy."""
@@ -679,6 +754,10 @@ class OvxrExternalPresentOwner:
             image = mailbox.snapshot()
             if mailbox.error() is not None or (image is not None and image.gpu is None):
                 shared[mailbox.product_path] = image
+            # GPU camera maps remain on the frame owner. A mirror uses its own
+            # selected owned copy, never borrowing a quad's short-lived array.
+        if self._mirror_mailbox is not None:
+            self._mirror_mailbox.on_outputs(renderer, outputs, shared)
 
     def camera_image_snapshot(self, index: int = 0) -> CameraImage | None:
         """Return the latest camera image on the render-owner lane.
@@ -690,6 +769,14 @@ class OvxrExternalPresentOwner:
         if not self._camera_mailboxes:
             return None
         return self._camera_mailboxes[index].snapshot()
+
+    def _acquire_desktop_mirror_frame(self) -> object | None:
+        mailbox = self._mirror_mailbox
+        return None if mailbox is None else mailbox.snapshot()
+
+    def _request_close_from_desktop_mirror(self) -> None:
+        """Ask the application-neutral owner to drain after a user closes OVUI."""
+        self.request_shutdown()
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -706,6 +793,8 @@ class OvxrExternalPresentOwner:
 
     def _request_context_exit(self) -> None:
         """Wake an in-flight OpenXR frame wait without stopping CloudXR."""
+        # A startup failure may already be destroying under this lock. Never
+        # wait here and prevent close() from reaching its runtime fallback.
         if not self._context_lifecycle_lock.acquire(blocking=False):
             return
         try:
@@ -806,7 +895,9 @@ class OvxrExternalPresentOwner:
             if result != ovxr.Result.SUCCESS:
                 return True
             layers = []
-            if (self._camera_mailboxes) and active_plan.step_result:
+            if (
+                self._camera_mailboxes or self._mirror_mailbox is not None
+            ) and active_plan.step_result:
                 try:
                     renderer = native_renderer_handle(self._binding.renderer)
                     outputs = completed_outputs(renderer, active_plan.step_result)
@@ -848,6 +939,24 @@ class OvxrExternalPresentOwner:
                 raise RuntimeError(
                     f"OVXR submit_frame failed: {ovxr.result_name(result)}: {self._context.last_error}"
                 )
+            if (
+                result == ovxr.Result.SUCCESS
+                and _frame.submitted
+                and self._desktop_mirror is not None
+            ):
+                # submit has consumed the plan. A failed optional source-copy
+                # must not try to cancel that already retired native plan.
+                active_plan = None
+                self._pending_plan = None
+                try:
+                    if not self._desktop_mirror_start_attempted:
+                        self._desktop_mirror_start_attempted = True
+                        self._desktop_mirror.start()
+                        self._desktop_mirror_started = True
+                    if self._desktop_mirror_started:
+                        self._desktop_mirror.record_render_frame()
+                except Exception:
+                    _LOGGER.exception("OVUI owned mirror snapshot failed")
             active_plan = None
             self._pending_plan = None
         except BaseException as error:
@@ -870,6 +979,8 @@ class OvxrExternalPresentOwner:
     def _finish_frame_outputs(self) -> None:
         for mailbox in self._camera_mailboxes:
             mailbox.close()
+        if self._mirror_mailbox is not None:
+            self._mirror_mailbox.finish_frame()
 
     def _render_reused_scene(self) -> bool:
         if self._worker_last_ordinal is None:
@@ -883,18 +994,48 @@ class OvxrExternalPresentOwner:
                 self._host.close_publication()
         except BaseException as exc:
             first_error = exc
+        if self._desktop_mirror is not None:
+            mirror = self._desktop_mirror
+            mirror_stopped = False
+            try:
+                mirror.close()
+                mirror_stopped = True
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+            finally:
+                self._desktop_mirror_last_status = mirror.status
+                _LOGGER.info(
+                    "OVUI desktop mirror stopped: %s", self._desktop_mirror_last_status
+                )
+            if not mirror_stopped:
+                # The worker owns its image bytes, but an undrained UI thread
+                # still prevents orderly OVUI/session shutdown.
+                with self._worker_condition:
+                    if first_error is not None and self._worker_error is None:
+                        self._worker_error = first_error
+                    self._closed = True
+                    self._worker_condition.notify_all()
+                return
+            self._desktop_mirror = None
         try:
+            if self._mirror_mailbox is not None:
+                # A failed completion/unmap must keep the renderer alive: never
+                # destroy storage that an optional consumer might still access.
+                self._mirror_mailbox.close()
             for mailbox in self._camera_mailboxes:
                 mailbox.close()
             if self._pending_plan is not None:
                 self._finish_frame_outputs()
                 self._context.cancel_frame(self._pending_plan)
                 self._pending_plan = None
+            # The helper borrows the session/device, so its resources retire first.
             for quad in reversed(self._camera_quads):
                 quad.close()
         except BaseException as retirement_error:
             if first_error is not None:
                 first_error.add_note(f"Consumer retirement failed: {retirement_error}")
+                # Keep the primary error and the failed retirement cause visible.
                 raise first_error from retirement_error
             raise
         context_retired = self._context is None
@@ -902,6 +1043,9 @@ class OvxrExternalPresentOwner:
             try:
                 assert self._binding is not None
                 with self._context_lifecycle_lock:
+                    # The close caller normally requested this already to wake
+                    # xrWaitFrame. Repeat idempotently on the owner thread so
+                    # worker-failure teardown follows the same graceful path.
                     try:
                         self._context.request_exit()
                     except BaseException as exc:
@@ -941,6 +1085,9 @@ class OvxrExternalPresentOwner:
                 if context_retired:
                     self._context = None
         if not context_retired:
+            # A returned worker does not prove a failed destroy retired its
+            # borrowed Stage/renderer. Keep the context, binding, host and
+            # runtime alive; the terminal owner must never retry or reuse them.
             with self._teardown_state_lock:
                 self._ovxr_teardown_complete.set()
             with self._worker_condition:
@@ -951,7 +1098,9 @@ class OvxrExternalPresentOwner:
             return
         self._camera_quads.clear()
         self._camera_mailboxes.clear()
-        self._camera_mailbox = None
+        # This is a terminal teardown milestone, including a failed destroy
+        # call.  Once the owner thread has left OVXR teardown, interrupting the
+        # runtime can only race the later, already-running CloudXR stop.
         with self._teardown_state_lock:
             self._ovxr_teardown_complete.set()
         if self._cloudxr_launcher is not None:

@@ -32,6 +32,11 @@ Isaac Capture wheel, and retain their own licenses.
   `OVStage <https://pypi.org/project/ovstage/0.3.0.1791986420/>`__.
   OVXR and OVStage come from PyPI; OVRTX's PyPI installer retrieves its native
   wheel from `NVIDIA's public Python index <https://pypi.nvidia.com>`__.
+* **OVUI 0.3.0:** Apache-2.0, available from
+  `PyPI <https://pypi.org/project/ovui/0.3.0/>`__. Select the independent
+  ``isaaccapture[desktop-mirror]`` extra only for the optional desktop view.
+  Published 0.3.0 wheels require CPython 3.12; base installation does not request
+  or load OVUI.
 
 The README's **Separately retrieved optional materials** section contains the
 external-materials notice. Existing CloudXR native libraries are bundled in
@@ -109,6 +114,11 @@ need validation on each destination.
 
 The ``ovxr`` extra supplies OVXR and CUDA Python bindings for GPU camera output;
 it does not enable the native helper build flag or install the desktop mirror.
+Normal OVXR applications initialize the rendering pipeline before starting the
+optional desktop mirror. Select Capture's ``desktop-mirror`` extra and a usable
+desktop display; the normal application path needs no ``LD_LIBRARY_PATH``
+override. A standalone OVUI import before renderer startup is not a substitute
+for checking the application's mirror startup.
 Plain ``uv pip install build/wheels/<local-wheel>.whl`` does not request OVXR or
 its providers. Default source builds leave ``BUILD_OVXR_CAMERA_QUADS=OFF`` and
 do not require OVXR to be installed. Importing base Capture does not load OVXR.
@@ -141,3 +151,16 @@ other optional dependencies. OVXR's exact OVRTX/OVStage pins must agree with the
 application; regenerate its lock and use ordinary ``uv run`` with its OVXR extra
 selected. Base Isaac Capture and other teleoperation paths should not request
 the ``ovxr`` extra.
+
+To add a desktop mirror, select both extras with
+``isaaccapture[ovxr,desktop-mirror]`` in that optional requirement. Use a
+CPython 3.12 environment and a usable desktop display. The mirror extra does
+not enable the native camera helper build flag.
+
+The optional GPU mirror defaults ``OMNIUI_BACKEND`` to ``opengl`` on demand,
+before importing and initializing OVUI. Existing process settings are preserved;
+an explicit Vulkan choice cannot supply this OpenGL/CUDA copy path and reports
+an error. The default remains in the process environment after mirror shutdown
+and does not reconfigure an already initialized OVUI backend. Embedding callers
+should select their backend before first OVUI initialization. The display must
+have an associated CUDA device. This choice does not change headset rendering.

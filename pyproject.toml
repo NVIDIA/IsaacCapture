@@ -43,6 +43,10 @@ ovxr = [
     "ovxr==0.1.0.5842",
     "cuda-bindings>=12.9,<14",
 ]
+desktop-mirror = [
+    "ovui==0.3.0",
+    "cuda-bindings>=12.9,<14",
+]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
     "scipy>=1.15.0",

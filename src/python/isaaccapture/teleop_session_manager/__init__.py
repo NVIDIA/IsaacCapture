@@ -50,6 +50,7 @@ from .external_present import (
     OvxrExternalPresentOwner,
     StageOrdinalLedger,
 )
+from .desktop_mirror import DesktopMirrorConfig, DesktopMirrorStatus
 
 __all__ = [
     "AsyncRetargetRunnerStopped",
@@ -88,4 +89,6 @@ __all__ = [
     "ExternalPresentHost",
     "OvxrExternalPresentOwner",
     "StageOrdinalLedger",
+    "DesktopMirrorConfig",
+    "DesktopMirrorStatus",
 ]
