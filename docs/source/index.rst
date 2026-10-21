@@ -66,7 +66,6 @@ Table of Contents
    references/camera_streaming
    references/mcap_record_replay
    references/oob_teleop_control
-   references/egocentric_hand_reconstruction
    references/license
 
 Indices and tables
