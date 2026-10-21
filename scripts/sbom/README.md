@@ -75,8 +75,9 @@ uv run --project scripts/sbom --extra dev pytest scripts/sbom/tests
 
 They read the file API codemodel, and the SPDX list where `build` finds it without
 `--license-data`, from the build tree `ISAACCAPTURE_SBOM_BUILD_DIR` names, else `build/`.
-An unnamed `build/` that lacks them skips the tests; a named one fails them. CI runs this
-command, naming its build, before generating any SBOM.
+An unnamed `build/` that lacks them skips the tests; a named one fails them. A configured
+tree is enough, so CI runs this command in a job of its own, beside the product build, and
+publishes nothing unless it passes.
 
 ## How the inventory is worked out
 

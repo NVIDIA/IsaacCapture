@@ -176,16 +176,6 @@ jobs:
     - name: Run All Tests
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
 
-    # The collector's own tests gate SBOM generation, which only Release legs do.
-    # Naming the build makes a missing input fail the tests, not skip them.
-    - name: Test the SBOM collector (Release only)
-      if: matrix.build_type == 'Release'
-      env:
-        ISAACCAPTURE_SBOM_BUILD_DIR: ${{ env.BUILD_DIR }}
-      run: |
-        uv run --project scripts/sbom --python ${{ matrix.python_version }} \
-          --extra dev pytest scripts/sbom/tests
-
     - name: Generate coverage report
       if: ${{ matrix.build_type == 'Debug' && matrix.python_version == '3.11' && matrix.arch == 'x64' }}
       run: |
@@ -379,6 +369,65 @@ jobs:
         path: sbom/
         if-no-files-found: error
         retention-days: 7
+
+  # The SBOM collector's tests need only a configured tree, so they run beside
+  # the product build; wheel-gate waits on them.
+  test-sbom-collector:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        arch: ['x64', 'arm64']
+    env:
+      BUILD_DIR: build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0  # configure derives the version from history
+        persist-credentials: false
+
+    - name: Install uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Install Apt dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $CORE_APT_DEPS
+
+    # BUILD_TESTING=ON: a test target links a static library the project builds,
+    # which the codemodel test looks for.
+    - name: Configure CMake
+      run: |
+        cmake -B "${BUILD_DIR}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_PLUGINS=OFF \
+          -DBUILD_EXAMPLES=OFF \
+          -DBUILD_VIZ=OFF \
+          -DBUILD_PYTHON_BINDINGS=OFF \
+          -DENABLE_CLANG_FORMAT_CHECK=OFF \
+          -DBUILD_TESTING=ON
+
+    # Pythons: build-ubuntu's python_version matrix; keep the two lists in step.
+    # The named build makes missing inputs fail the tests rather than skip them.
+    - name: Test the SBOM collector
+      env:
+        ISAACCAPTURE_SBOM_BUILD_DIR: ${{ env.BUILD_DIR }}
+      run: |
+        set -uo pipefail
+        failed=()
+        for python in 3.11 3.12 3.13; do
+          uv run --project scripts/sbom --python "${python}" \
+            --extra dev pytest scripts/sbom/tests || failed+=("${python}")
+        done
+        if (( ${#failed[@]} )); then
+          echo "::error::SBOM collector tests failed under Python ${failed[*]}"
+          exit 1
+        fi
 
   pip-editable-install:
     # Validates the scikit-build-core (PEP 517/660) from-source install path added
@@ -1076,6 +1125,7 @@ jobs:
     permissions: {}
     needs:
       - build-ubuntu
+      - test-sbom-collector
       - test-viz-gpu
       - test-viz-sanitizers
       - test-cloudxr
