@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 add_executable(remote_plugin_session_tests
+    test_websocket_transport.cpp
     test_wire_codec.cpp
 )
 
