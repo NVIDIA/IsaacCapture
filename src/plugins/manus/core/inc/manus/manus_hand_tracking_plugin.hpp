@@ -119,6 +119,8 @@ private:
     // Hand-publishing methods
     void inject_hand_data();
 
+    void log_status();
+
     // -- Member Variables --
 
     ManusPluginConfig m_config;
@@ -138,6 +140,10 @@ private:
     std::vector<unsigned char> m_right_calibration_file;
     std::array<bool, 2> m_calibration_failed{ { false, false } };
     bool is_connected = false;
+    // Last landscape as the SDK reported it (before the one-left/one-right filter); for log_status().
+    uint32_t m_sdk_glove_count = 0;
+    std::optional<bool> m_license_ok;
+    std::chrono::steady_clock::time_point m_next_status{};
 
     // Haptic state — the per-side log-once flags use std::atomic to stay
     // quiet when many frames in a row fail (e.g. the glove was disconnected

@@ -193,6 +193,15 @@ haptic read. Restrict datasets with ``--datasets=`` (comma-separated):
    ./install/plugins/manus/manus_hand_plugin --datasets=human          # skeleton only
    ./install/plugins/manus/manus_hand_plugin --datasets=sensors        # flex sensors only
 
+To run the plugin on a machine without an OpenXR runtime, point it at a
+``remote_device_bridge`` running next to the runtime with ``--remote=``
+(``haptic`` is not available over the remote session):
+
+.. code-block:: bash
+
+   ./install/plugins/manus/manus_hand_plugin --remote=<host:port>  # human,sensors only
+   ./install/plugins/manus/manus_hand_plugin --remote=ws://<host:port>  # bridge started with --ws-listen
+
 Data paths
 ----------
 

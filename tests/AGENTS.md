@@ -24,7 +24,7 @@ Organize by **product area**, mirroring `src/` and `examples/`:
 |------|----------|-------------|
 | core | `tests/cpp/core/<module>/` | `tests/python/core/<module>/` |
 | viz | `tests/cpp/viz/<module>/` | `tests/python/viz/` |
-| plugins | `tests/cpp/plugins/<plugin>/` | — |
+| plugins | `tests/cpp/plugins/<plugin>/` | `tests/python/plugins/<plugin>/` (plugin `tools/` scripts) |
 | examples | — | `tests/python/examples/<example>/` |
 
 Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`

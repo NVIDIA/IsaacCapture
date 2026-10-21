@@ -11,6 +11,7 @@ endif()
 add_subdirectory(session)
 add_subdirectory(server)
 add_subdirectory(app)
+add_subdirectory(tools)
 
 install(FILES plugin.yaml
     DESTINATION plugins/remote_device_bridge
