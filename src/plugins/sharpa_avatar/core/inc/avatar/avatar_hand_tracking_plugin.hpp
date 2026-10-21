@@ -14,6 +14,7 @@
 #include <pusherio/schema_pusher.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -98,10 +99,9 @@ struct GloveState
     std::vector<::avatar::Pose> landmarks;
     ::avatar::AvatarDataFrame raw_frame;
     ::avatar::AvatarDataFrame robot_frame;
-    // Empty until start() or a successful fetch; drives the data-timeout window.
-    std::optional<std::chrono::steady_clock::time_point> last_successful_fetch;
-    // Newest sample stamp seen; a fetch only counts as data when it advances this.
-    ::avatar::Stamp last_sample_stamp;
+    std::atomic<bool> fresh_sample_seen{ false };
+    bool started = false;
+    bool ready = false;
 };
 
 class __attribute__((visibility("default"))) AvatarTracker
@@ -117,6 +117,9 @@ private:
     void initialize_openxr();
     void try_connect_missing_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
+    void refresh_glove_readiness();
+    void create_output_resources(::avatar::DeviceSide side);
+    void destroy_output_resources(::avatar::DeviceSide side) noexcept;
     void refresh_data();
     void inject_hand_data();
     void push_joint_frames();

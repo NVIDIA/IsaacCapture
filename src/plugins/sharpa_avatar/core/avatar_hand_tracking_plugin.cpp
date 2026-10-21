@@ -23,7 +23,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -36,10 +35,25 @@ namespace
 {
 
 constexpr size_t kJointFlatbufferSize = 4096;
-constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
 constexpr auto kGloveWaitLogInterval = std::chrono::seconds(10);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
+
+// Copied from avatar-sdk 1.7.3-17 share/sdk_config.json. RAW and ROBOT use
+// different orders, while the SDK frame currently carries positional names.
+constexpr std::array<std::string_view, 22> kRawJointNames = {
+    "thumb_CMC_FE", "thumb_CMC_AA", "thumb_MCP_FE", "thumb_MCP_AA",  "thumb_IP",      "index_MCP_AA",
+    "index_MCP_FE", "index_PIP",    "index_DIP",    "middle_MCP_AA", "middle_MCP_FE", "middle_PIP",
+    "middle_DIP",   "ring_MCP_AA",  "ring_MCP_FE",  "ring_PIP",      "ring_DIP",      "pinky_MCP_AA",
+    "pinky_MCP_FE", "pinky_DIP1",   "pinky_DIP2",   "pinky_DIP3",
+};
+
+constexpr std::array<std::string_view, 22> kRobotJointNames = {
+    "thumb_CMC_FE", "thumb_CMC_AA", "thumb_MCP_FE", "thumb_MCP_AA",  "thumb_IP",      "index_MCP_FE",
+    "index_MCP_AA", "index_PIP",    "index_DIP",    "middle_MCP_FE", "middle_MCP_AA", "middle_PIP",
+    "middle_DIP",   "ring_MCP_FE",  "ring_MCP_AA",  "ring_PIP",      "ring_DIP",      "pinky_CMC",
+    "pinky_MCP_FE", "pinky_MCP_AA", "pinky_PIP",    "pinky_DIP",
+};
 
 size_t side_index(::avatar::DeviceSide side)
 {
@@ -144,6 +158,20 @@ const ::avatar::Hand& hand_payload(const ::avatar::AvatarDataFrame& frame, ::ava
     throw std::invalid_argument("HUMAN data has no joint payload");
 }
 
+const std::array<std::string_view, 22>& joint_names(::avatar::DeviceDataCategory category)
+{
+    switch (category)
+    {
+    case ::avatar::DeviceDataCategory::RAW:
+        return kRawJointNames;
+    case ::avatar::DeviceDataCategory::ROBOT:
+        return kRobotJointNames;
+    case ::avatar::DeviceDataCategory::HUMAN:
+        break;
+    }
+    throw std::invalid_argument("HUMAN data has no joint names");
+}
+
 constexpr std::string_view error_name(::avatar::ErrorCode error)
 {
     using ErrorCode = ::avatar::ErrorCode;
@@ -244,6 +272,7 @@ void GloveState::reset() noexcept
     {
         if (device)
         {
+            device->set_raw_human_frame_callback({});
             device->stop();
         }
     }
@@ -256,8 +285,9 @@ void GloveState::reset() noexcept
     raw_frame = {};
     robot_frame = {};
     device.reset();
-    last_successful_fetch.reset();
-    last_sample_stamp = {};
+    fresh_sample_seen.store(false, std::memory_order_release);
+    started = false;
+    ready = false;
 }
 
 AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(config)), m_sdk(m_config.sdk_config_path)
@@ -316,37 +346,6 @@ void AvatarTracker::initialize_openxr()
 
     m_time_converter.emplace(m_handles);
 
-    if (m_config.human)
-    {
-        for (const ::avatar::DeviceSide side : kDeviceSides)
-        {
-            m_injectors[side_index(side)] = std::make_unique<plugin_utils::HandInjector>(
-                m_handles.instance, m_handles.session, xr_hand(side), m_handles.space);
-        }
-    }
-
-    auto make_joint_pusher = [this](::avatar::DeviceSide side, ::avatar::DeviceDataCategory category)
-    {
-        const std::string localized_name =
-            "Avatar " + std::string(to_string(category)) + " " + std::string(to_string(side));
-        return std::make_unique<core::SchemaPusher>(
-            m_handles, core::SchemaPusherConfig{ .collection_id = collection_id(side, category),
-                                                 .max_flatbuffer_size = kJointFlatbufferSize,
-                                                 .tensor_identifier = "joint_state",
-                                                 .localized_name = localized_name });
-    };
-    for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
-    {
-        if (!dataset_enabled(category))
-        {
-            continue;
-        }
-        for (const ::avatar::DeviceSide side : kDeviceSides)
-        {
-            m_joint_pushers[side_index(side)][joint_category_index(category)] = make_joint_pusher(side, category);
-        }
-    }
-
     m_deviceio_session = core::DeviceIOSession::run(trackers, m_handles);
     m_wrist_source = std::make_unique<plugin_utils::WristPoseSource>(
         wrist_config, m_handles, m_deviceio_session.get(), std::move(wrist_requirements.controller_tracker));
@@ -374,6 +373,10 @@ void AvatarTracker::start_glove_if_present(GloveState& glove, ::avatar::DeviceSi
         return;
     }
     glove.device->set_human_frame_build_enabled(m_config.human);
+    glove.fresh_sample_seen.store(false, std::memory_order_release);
+    GloveState* const state = &glove;
+    glove.device->set_raw_human_frame_callback([state](const ::avatar::AvatarDataFrame&, const ::avatar::AvatarDataFrame&)
+                                               { state->fresh_sample_seen.store(true, std::memory_order_release); });
 
     const auto start_error = glove.device->start();
     if (start_error != ::avatar::ErrorCode::SUCCESS)
@@ -383,18 +386,11 @@ void AvatarTracker::start_glove_if_present(GloveState& glove, ::avatar::DeviceSi
         glove.reset();
         return;
     }
-    glove.last_successful_fetch = std::chrono::steady_clock::now();
-    std::cout << "[Avatar] " << to_string(side) << " glove connected and streaming." << std::endl;
+    glove.started = true;
 }
 
 void AvatarTracker::try_connect_missing_gloves()
 {
-    const auto has_device = [](const GloveState& state) { return state.device != nullptr; };
-    if (std::all_of(m_gloves.begin(), m_gloves.end(), has_device))
-    {
-        return;
-    }
-
     const auto now = std::chrono::steady_clock::now();
     if (m_last_glove_retry && now - *m_last_glove_retry < kGloveRetryInterval)
     {
@@ -402,10 +398,27 @@ void AvatarTracker::try_connect_missing_gloves()
     }
     m_last_glove_retry = now;
 
+    const auto infos = m_sdk.get().list_device_info(::avatar::DeviceType::GLOVE);
+    const auto is_online = [&infos](::avatar::DeviceSide side)
+    {
+        return std::any_of(infos.begin(), infos.end(),
+                           [side](const ::avatar::DeviceInfo& info) { return info.device_side == side && info.online; });
+    };
     for (const ::avatar::DeviceSide side : kDeviceSides)
     {
-        start_glove_if_present(glove(side), side);
+        GloveState& state = glove(side);
+        if (state.device && !is_online(side))
+        {
+            std::cout << "[Avatar] " << to_string(side) << " glove disconnected." << std::endl;
+            destroy_output_resources(side);
+            state.reset();
+        }
+        if (!state.device && is_online(side))
+        {
+            start_glove_if_present(state, side);
+        }
     }
+    const auto has_device = [](const GloveState& state) { return state.device != nullptr; };
     if (std::none_of(m_gloves.begin(), m_gloves.end(), has_device) &&
         (!m_last_glove_wait_log || now - *m_last_glove_wait_log >= kGloveWaitLogInterval))
     {
@@ -414,32 +427,71 @@ void AvatarTracker::try_connect_missing_gloves()
     }
 }
 
+void AvatarTracker::refresh_glove_readiness()
+{
+    for (const ::avatar::DeviceSide side : kDeviceSides)
+    {
+        GloveState& state = glove(side);
+        if (!state.started || state.ready || !state.fresh_sample_seen.load(std::memory_order_acquire))
+        {
+            continue;
+        }
+        create_output_resources(side);
+        state.ready = true;
+        state.device->set_raw_human_frame_callback({});
+        std::cout << "[Avatar] " << to_string(side) << " glove connected and streaming." << std::endl;
+    }
+}
+
+void AvatarTracker::create_output_resources(::avatar::DeviceSide side)
+{
+    const size_t index = side_index(side);
+    std::unique_ptr<plugin_utils::HandInjector> injector;
+    std::array<std::unique_ptr<core::SchemaPusher>, 2> joint_pushers;
+
+    if (m_config.human)
+    {
+        injector = std::make_unique<plugin_utils::HandInjector>(
+            m_handles.instance, m_handles.session, xr_hand(side), m_handles.space);
+    }
+    for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
+    {
+        if (!dataset_enabled(category))
+        {
+            continue;
+        }
+        const std::string localized_name =
+            "Avatar " + std::string(to_string(category)) + " " + std::string(to_string(side));
+        joint_pushers[joint_category_index(category)] = std::make_unique<core::SchemaPusher>(
+            m_handles, core::SchemaPusherConfig{ .collection_id = collection_id(side, category),
+                                                 .max_flatbuffer_size = kJointFlatbufferSize,
+                                                 .tensor_identifier = "joint_state",
+                                                 .localized_name = localized_name });
+    }
+
+    m_injectors[index] = std::move(injector);
+    m_joint_pushers[index] = std::move(joint_pushers);
+}
+
+void AvatarTracker::destroy_output_resources(::avatar::DeviceSide side) noexcept
+{
+    const size_t index = side_index(side);
+    m_injectors[index].reset();
+    for (auto& pusher : m_joint_pushers[index])
+    {
+        pusher.reset();
+    }
+}
+
 void AvatarTracker::refresh_data()
 {
     for (const ::avatar::DeviceSide side : kDeviceSides)
     {
         GloveState& state = glove(side);
-        if (!state.device)
+        if (!state.ready)
         {
             continue;
         }
-        // Liveness comes from fetched data, not get_device_info().online: the SDK
-        // leaves that flag false on a glove first discovered offline and powered on later.
-        // A haptic-only glove still fetches RAW so the data timeout below can drop a dead handle.
-        const bool probe_raw = !m_config.human && !m_config.raw && !m_config.robot;
-
-        // fetch_data() keeps returning a silent glove's last sample, so only a newer
-        // sample stamp counts as data for the timeout below.
-        bool fetched_any = false;
-        const auto note_stamp = [&state, &fetched_any](const ::avatar::Stamp& stamp)
-        {
-            if (std::tie(stamp.sec, stamp.nanosec) >
-                std::tie(state.last_sample_stamp.sec, state.last_sample_stamp.nanosec))
-            {
-                state.last_sample_stamp = stamp;
-                fetched_any = true;
-            }
-        };
         if (m_config.human)
         {
             ::avatar::AvatarDataFrame frame;
@@ -447,7 +499,6 @@ void AvatarTracker::refresh_data()
                 state.device->fetch_data(frame, ::avatar::DeviceDataCategory::HUMAN) == ::avatar::ErrorCode::SUCCESS;
             if (fetched)
             {
-                note_stamp(frame.skeleton.header.stamp);
                 state.landmarks = std::move(frame.skeleton.landmark);
             }
             else
@@ -457,7 +508,7 @@ void AvatarTracker::refresh_data()
         }
         for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
         {
-            if (!dataset_enabled(category) && !(probe_raw && category == ::avatar::DeviceDataCategory::RAW))
+            if (!dataset_enabled(category))
             {
                 continue;
             }
@@ -466,22 +517,12 @@ void AvatarTracker::refresh_data()
             ::avatar::AvatarDataFrame& cached = cached_joint_frame(state, category);
             if (fetched)
             {
-                note_stamp(hand_payload(frame, category).header.stamp);
                 cached = std::move(frame);
             }
             else
             {
                 cached = {};
             }
-        }
-        const auto now = std::chrono::steady_clock::now();
-        if (fetched_any)
-        {
-            state.last_successful_fetch = now;
-        }
-        else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
-        {
-            state.reset();
         }
     }
 }
@@ -499,6 +540,7 @@ GloveState& AvatarTracker::glove(::avatar::DeviceSide side)
 void AvatarTracker::update()
 {
     try_connect_missing_gloves();
+    refresh_glove_readiness();
     m_deviceio_session->update();
     refresh_data();
     if (m_haptic_reader)
@@ -594,11 +636,12 @@ void AvatarTracker::push_joint_frame(const GloveState& glove,
     output.has_effort = false;
     output.ee_pose_valid = false;
     output.joints.reserve(hand.joint.position.size());
+    const auto& names = joint_names(category);
 
     for (size_t i = 0; i < hand.joint.position.size(); ++i)
     {
         auto joint = std::make_shared<core::JointStateT>();
-        joint->name = i < hand.joint.name.size() ? hand.joint.name[i] : std::string{};
+        joint->name = i < names.size() ? std::string(names[i]) : std::string{};
         joint->position = hand.joint.position[i];
         joint->valid = std::isfinite(joint->position);
         output.joints.push_back(std::move(joint));
@@ -614,7 +657,7 @@ void AvatarTracker::push_joint_frame(const GloveState& glove,
 void AvatarTracker::apply_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers)
 {
     GloveState& state = glove(side);
-    if (!state.device)
+    if (!state.ready)
     {
         return;
     }

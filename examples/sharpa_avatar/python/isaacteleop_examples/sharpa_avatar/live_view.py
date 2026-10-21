@@ -157,8 +157,8 @@ HAND_BONES = (
         HandJointIndex.WRIST,
         HandJointIndex.LITTLE_METACARPAL,
         HandJointIndex.LITTLE_PROXIMAL,
-        HandJointIndex.LITTLE_INTERMEDIATE,
-        HandJointIndex.LITTLE_DISTAL,
+        # Avatar HUMAN has no little intermediate/distal landmarks; connect
+        # the real proximal and tip poses directly for display.
         HandJointIndex.LITTLE_TIP,
     )
 )

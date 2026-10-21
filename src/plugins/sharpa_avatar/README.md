@@ -22,7 +22,7 @@ The visualization example is separate:
 
 - Linux x86_64 (Ubuntu 22.04)
 - A built Isaac Teleop checkout
-- Sharpa AvatarExo Gloves connected through a USB dongle or USB cable
+- Sharpa AvatarExo Gloves connected wirelessly through the USB dongle
 
 `install_avatar_sdk.sh` retrieves a pinned production `avatar-sdk` version from Sharpa's
 signed production APT repository, without selecting the `avatar-sdk-dev` or
@@ -72,8 +72,10 @@ or dongle:
 udev does not run inside containers, so this command must run on the host.
 The plugin follows the Sharpa host application layout and uses the SDK,
 configuration, and runtime assets directly from the selected SDK root
-(`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). Transport selection, including
-wired Ethernet, is controlled by `<sdk-root>/share/sdk_config.json`.
+(`AVATAR_SDK_ROOT`, default `/opt/avatar-sdk`). The supported workflow uses the
+USB dongle for a wireless glove connection. This plugin does not accept a
+`--transport` option and must not run concurrently with `avatar-backend` or
+Avatar Desktop.
 
 ## Run
 
