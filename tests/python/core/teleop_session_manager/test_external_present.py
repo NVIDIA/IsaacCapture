@@ -885,7 +885,7 @@ def test_auxiliary_raster_rejects_unsupported_panel_space(space):
         )
 
 
-def test_auxiliary_raster_defaults_are_valid_and_match_the_native_capacity():
+def test_auxiliary_raster_has_bounded_public_defaults():
     config = external_present.AuxiliaryRasterConfig()
     assert config.max_fps == 30.0
     assert config.max_image_bytes == 64 * 1024 * 1024

@@ -5,7 +5,6 @@
 // against mocked OpenXR dispatch without a GPU or a second XR session.
 // The package is built in Release; its contract checks must still execute.
 #undef NDEBUG
-#define ISAAC_TELEOP_PIP_TEST
 #include "pip_layer.cpp"
 
 #include <cassert>
