@@ -97,7 +97,6 @@ Table of Contents
    references/cloudxr
    references/oob_teleop_control
    references/haptic_feedback
-   references/egocentric_hand_reconstruction
 
 Indices and tables
 ------------------

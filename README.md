@@ -56,8 +56,6 @@ functionality preserved.
 ### Ego Pipeline
 
 - Capture egocentric data without a robot in the loop.
-- Reconstruct hand and camera poses from egocentric video with the
-  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/references/egocentric_hand_reconstruction.html).
 
 ## Quick Start
 
