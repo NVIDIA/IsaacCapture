@@ -731,9 +731,10 @@ export default function CloudXRComponent({
             referenceSpace = referenceSpace.getOffsetReferenceSpace(offsetTransform);
           }
 
-          // Published only now: this is the space the session is about to stream in,
-          // after both the fallback chain and the offset.
-          onReferenceSpace?.(referenceSpace);
+          // Resolved only now: this is the space the session streams in, after both
+          // the fallback chain and the offset. Published per CloudXR session rather
+          // than here, so a reconnect does not leave the parent without one.
+          const streamingReferenceSpace = referenceSpace;
 
           // Fill in CloudXR session options.
           const cloudXROptions: CloudXR.SessionOptions = {
@@ -1100,6 +1101,9 @@ export default function CloudXRComponent({
 
             // Notify parent that session is ready
             onSessionReady?.(cxrSession);
+            // Republished on every attempt, reconnects included: the parent drops its
+            // copy whenever onSessionReady(null) fires, so the two have to stay paired.
+            onReferenceSpace?.(streamingReferenceSpace);
 
             // Start session (synchronous call that initiates connection)
             try {
