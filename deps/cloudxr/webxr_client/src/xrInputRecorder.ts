@@ -132,8 +132,8 @@ function makePose(pose: PoseData): XRPose {
       { x: pose.ox, y: pose.oy, z: pose.oz, w: pose.ow }
     ),
     emulatedPosition: true,
-    linearVelocity: null,
-    angularVelocity: null,
+    linearVelocity: undefined,
+    angularVelocity: undefined,
   } as XRPose;
 }
 
@@ -622,7 +622,7 @@ export class XRInputRecorder {
         return transformed ? makeJointPose(transformed) : undefined;
       }
     }
-    return frame.getJointPose(joint, baseSpace) ?? undefined;
+    return frame.getJointPose?.(joint, baseSpace) ?? undefined;
   }
 
   private _poseInBase(
