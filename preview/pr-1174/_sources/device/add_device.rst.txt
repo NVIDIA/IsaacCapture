@@ -3,11 +3,11 @@
 Add a New Device
 ================
 
-For new hardware that requires a custom driver or SDK, create an Isaac Teleop device plugin
+For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
 (C++ level). Plugins push data via OpenXR tensor collections. Existing plugins include Manus
 gloves, OAK-D camera, Haptikos exoskeletons, controller synthetic hands, and foot pedals. After
 creating the plugin, update the retargeting pipeline config to consume data from the new plugin's
-source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/>`_
+source node. See the `Plugins directory <https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/>`_
 for examples.
 
 To add a new device that streams typed data over the OpenXR runtime, follow these four steps.
@@ -126,6 +126,9 @@ Use ``direction = "push"`` when Teleop **pushes** a typed table to a plugin (e.g
 ``HapticCommandPushTracker``). Cross-process **consumers** that bucket multiple
 ``HapticCommand.endpoint`` samples on one collection (e.g. ``HapticCommandReaderTracker`` for Manus
 haptics) stay hand-written — see :doc:`../references/generated_trackers`.
+
+A device that describes itself once (a layout, a calibration) rather than in every frame declares
+that description as the tracker's ``metadata``; see :ref:`tracker-metadata`.
 
 For what the generator emits, which trackers it covers today, and which shapes are not supported
 yet, see :doc:`../references/generated_trackers`.
@@ -257,7 +260,11 @@ schema is not sent over the wire.
    ./install/examples/schemaio/pedal_pusher
 
 The printer discovers the tensor collection created by the pusher and prints received samples.
-Both exit after 100 samples, or press Ctrl+C to exit early.
+Both exit after 1000 samples, or press Ctrl+C to exit early.
+
+The same build installs ``se3_printer``, ``full_body_printer`` and ``frame_metadata_printer`` next
+to them. Those read other schemas and need their own data source, so they are not part of this
+example; ``full_body_printer`` is covered in :doc:`body_tracking/index`.
 
 **Components**
 
@@ -277,3 +284,6 @@ Both exit after 100 samples, or press Ctrl+C to exit early.
 - **DeviceIOSession** — Session manager: collects required OpenXR extensions from registered
   trackers, creates tracker implementations with session handles, and calls ``update()`` on all
   trackers during the update loop.
+
+For the shared library build and contribution workflow, see
+:doc:`/development/build_from_source/index` and :doc:`/development/contributing`.

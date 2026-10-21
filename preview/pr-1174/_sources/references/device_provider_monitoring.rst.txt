@@ -45,7 +45,8 @@ Identity and inventory
 - A monitored plugin device ID is
   ``<plugin_root_id><manifest device path>``.
 - The live OpenXR provider is ``openxr/runtime`` and owns
-  ``openxr/headset``.
+  ``openxr/headset``. When a controller input source is configured, it also
+  owns ``openxr/controller/left`` and ``openxr/controller/right``.
 - Replay sessions expose neither a live OpenXR provider nor configured plugin
   providers.
 
@@ -147,8 +148,8 @@ OpenXR ownership
 ----------------
 
 For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-availability. Runtime or session loss fails the provider; form-factor
-unavailability disconnects the headset while leaving the runtime provider
+tracking. Runtime or session loss fails the provider; sustained loss of active
+head tracking disconnects the headset while leaving the runtime provider
 available.
 
 For externally supplied ``oxr_handles``, Isaac Teleop does not consume the
