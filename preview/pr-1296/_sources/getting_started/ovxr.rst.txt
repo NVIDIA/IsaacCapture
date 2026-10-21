@@ -97,12 +97,15 @@ Reuse a compatible existing build directory:
      ovxr_pip_layer_contract_test --parallel 2
    ctest --test-dir build -C Release -R '^ovxr_pip_layer_contract_test$' \
      --output-on-failure
-   python scripts/check_camera_quad_wheel.py build/wheels/<local-wheel>.whl --camera-quads
+   uv run --no-project --python 3.12 python scripts/check_camera_quad_wheel.py \
+     build/wheels/<local-wheel>.whl --camera-quads
    uv pip install 'build/wheels/<local-wheel>.whl[ovxr]' \
      --index https://pypi.org/simple
    uv pip check
 
-Replace ``<local-wheel>`` with the wheel produced by this build. The helper uses
+Replace ``<local-wheel>`` with the wheel produced by this build.
+The check uses managed Python without requiring a system ``python`` alias;
+``--no-project`` avoids a second source build. The helper uses
 the repository's pinned OpenXR SDK and discovered Vulkan/CUDA inputs, not an OVXR
 SDK archive. It borrows public OVXR native handles at runtime; it does not link
 against a local OVXR or Kit build. CMake packages the helper with its relative

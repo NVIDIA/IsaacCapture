@@ -523,13 +523,16 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 <span class="w">  </span>ovxr_pip_layer_contract_test<span class="w"> </span>--parallel<span class="w"> </span><span class="m">2</span>
 ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>-C<span class="w"> </span>Release<span class="w"> </span>-R<span class="w"> </span><span class="s1">'^ovxr_pip_layer_contract_test$'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--output-on-failure
-python<span class="w"> </span>scripts/check_camera_quad_wheel.py<span class="w"> </span>build/wheels/&lt;local-wheel&gt;.whl<span class="w"> </span>--camera-quads
+uv<span class="w"> </span>run<span class="w"> </span>--no-project<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12<span class="w"> </span>python<span class="w"> </span>scripts/check_camera_quad_wheel.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>build/wheels/&lt;local-wheel&gt;.whl<span class="w"> </span>--camera-quads
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'build/wheels/&lt;local-wheel&gt;.whl[ovxr]'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--index<span class="w"> </span>https://pypi.org/simple
 uv<span class="w"> </span>pip<span class="w"> </span>check
 </pre></div>
 </div>
-<p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;local-wheel&gt;</span></code> with the wheel produced by this build. The helper uses
+<p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;local-wheel&gt;</span></code> with the wheel produced by this build.
+The check uses managed Python without requiring a system <code class="docutils literal notranslate"><span class="pre">python</span></code> alias;
+<code class="docutils literal notranslate"><span class="pre">--no-project</span></code> avoids a second source build. The helper uses
 the repository’s pinned OpenXR SDK and discovered Vulkan/CUDA inputs, not an OVXR
 SDK archive. It borrows public OVXR native handles at runtime; it does not link
 against a local OVXR or Kit build. CMake packages the helper with its relative
