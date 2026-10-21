@@ -5,9 +5,11 @@
 #include <flatbuffers/flatbuffers.h>
 #include <schema/serialized.hpp>
 #include <schema/tactile_metadata_generated.h>
+#include <schema/tactile_metadata_validation.hpp>
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -75,4 +77,103 @@ TEST_CASE("TactileMetadata verifies and retains nested union views", "[unit][tac
     metadata.reset();
     REQUIRE(lbs);
     CHECK(lbs->taxel_segment_weights()->Get(0)->values()->Get(0) == 0.75f);
+}
+
+TEST_CASE("TactileMetadata semantic verification accepts valid metadata", "[unit][tactile_metadata]")
+{
+    const auto metadata = core::pack<core::TactileMetadata>(make_metadata());
+    CHECK(core::verify_tactile_metadata(*metadata));
+}
+
+TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", "[unit][tactile_metadata]")
+{
+    auto native = make_metadata();
+    auto& lbs = *native.geometry_mapping.AsLBS();
+    SECTION("taxel bind poses")
+    {
+        lbs.taxel_bind_poses.push_back(lbs.taxel_bind_poses.front());
+    }
+    SECTION("taxel segment indices")
+    {
+        lbs.taxel_segment_indices.clear();
+    }
+    SECTION("taxel segment weights")
+    {
+        lbs.taxel_segment_weights.clear();
+    }
+    SECTION("joint identifiers and segment bind poses")
+    {
+        native.segment_source.AsHandSkeletonRef()->joint_ids.pop_back();
+    }
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+}
+
+TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joints", "[unit][tactile_metadata]")
+{
+    auto native = make_metadata();
+    auto& joint_ids = native.segment_source.AsHandSkeletonRef()->joint_ids;
+    SECTION("sentinel")
+    {
+        joint_ids[1] = core::HandJoint_NUM_JOINTS;
+    }
+    SECTION("unknown enum value")
+    {
+        joint_ids[1] = static_cast<core::HandJoint>(255);
+    }
+    SECTION("duplicate identifier")
+    {
+        joint_ids[1] = joint_ids[0];
+    }
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+}
+
+TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "[unit][tactile_metadata]")
+{
+    auto native = make_metadata();
+    auto& lbs = *native.geometry_mapping.AsLBS();
+    std::array<float, 4> weights = { 0.75f, 0.25f, 0.0f, 0.0f };
+    bool valid = false;
+    SECTION("negative weight with sum one")
+    {
+        weights = { 1.25f, -0.25f, 0.0f, 0.0f };
+    }
+    SECTION("sum below one")
+    {
+        weights = { 0.25f, 0.25f, 0.0f, 0.0f };
+    }
+    SECTION("sum above one")
+    {
+        weights = { 0.75f, 0.75f, 0.0f, 0.0f };
+    }
+    SECTION("NaN")
+    {
+        weights[3] = std::numeric_limits<float>::quiet_NaN();
+    }
+    SECTION("infinity")
+    {
+        weights[3] = std::numeric_limits<float>::infinity();
+    }
+    SECTION("rounding within tolerance")
+    {
+        weights = { 0.75f, 0.250005f, 0.0f, 0.0f };
+        valid = true;
+    }
+    SECTION("rounding outside tolerance")
+    {
+        weights = { 0.75f, 0.25002f, 0.0f, 0.0f };
+    }
+    // Place the changed weights after a valid taxel to exercise the whole vector.
+    lbs.taxel_bind_poses.push_back(lbs.taxel_bind_poses.front());
+    lbs.taxel_segment_indices.push_back(lbs.taxel_segment_indices.front());
+    lbs.taxel_segment_weights.emplace_back(flatbuffers::span<const float, 4>(weights.data(), 4));
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    CHECK(core::verify_tactile_metadata(*metadata) == valid);
 }

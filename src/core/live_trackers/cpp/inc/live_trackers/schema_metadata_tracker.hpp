@@ -10,12 +10,14 @@
 #include <mcap/tracker_channels.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
 #include <schema/serialized.hpp>
+#include <schema/tactile_metadata_validation.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace core
@@ -98,6 +100,14 @@ private:
         {
             throw std::runtime_error(collection_id + ": metadata sample is not a valid " +
                                      MetadataT::GetFullyQualifiedName());
+        }
+
+        if constexpr (std::is_same_v<MetadataT, TactileMetadata>)
+        {
+            if (!verify_tactile_metadata(*flatbuffers::GetRoot<TactileMetadata>(sample.buffer.data())))
+            {
+                throw std::runtime_error(collection_id + ": tactile metadata failed semantic verification");
+            }
         }
 
         if (!metadata_)
