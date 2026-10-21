@@ -464,7 +464,8 @@ a build stopped, see the collector’s developer README, <a class="reference ext
 <ul class="simple">
 <li><p><strong>The SBOM</strong> lists every file in the wheel but <code class="docutils literal notranslate"><span class="pre">RECORD</span></code> and itself: where it came from,
 under what license, and its digest. It describes the wheel’s own contents only. Build
-tools (listed in the report under <em>Present in this build but not in this wheel</em>),
+tools, dependencies this wheel does not carry (the build evidence records them with
+<code class="docutils literal notranslate"><span class="pre">&quot;in_this_wheel&quot;:</span> <span class="pre">false</span></code>),
 install-time dependencies (<code class="docutils literal notranslate"><span class="pre">Requires-Dist</span></code> stays authoritative; the SBOM records the
 requirement, never a license for it), source distributions and <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">.</span></code>,
 containers and the web client are not covered.</p></li>
@@ -482,11 +483,12 @@ bundled.</p></li>
 <dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.spdx.json</span></code></dt><dd><p>An exact copy of the document embedded in the wheel.</p>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.md</span></code> / <code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.licenses.json</span></code></dt><dd><p>Each redistributed component, the license concluded for it and the file it was read
-from, how it reaches the wheel, what the installation environment supplies instead, and
-what was excluded and why.</p>
+from, how it reaches the wheel, and what the installation environment supplies instead.
+It covers this wheel only; what the build used but did not ship is in the build evidence.</p>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.build-evidence.json</span></code></dt><dd><p>Resolved commits, declared constraints, archive digests and build options, from the
-build machine.</p>
+build machine, and every component the build resolved, whether or not it reached the
+wheel.</p>
 </dd>
 </dl>
 <p>and, once per release:</p>
@@ -504,8 +506,8 @@ uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> <
 <span class="w">  </span>--wheel<span class="w"> </span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
 </pre></div>
 </div>
-<p>To check a whole release, put its wheels and evidence files in a directory of their own,
-and keep other wheels out of it:</p>
+<p>To check a whole release, put its wheels and evidence files in a directory of their own;
+any other file there fails the check:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check-set<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--manifest<span class="w"> </span>release/isaaccapture-sbom-manifest.json<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--wheel-dir<span class="w"> </span>release<span class="w"> </span>--evidence-dir<span class="w"> </span>release

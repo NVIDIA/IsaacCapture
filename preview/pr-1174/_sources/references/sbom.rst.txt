@@ -29,7 +29,8 @@ What a wheel carries
 
 - **The SBOM** lists every file in the wheel but ``RECORD`` and itself: where it came from,
   under what license, and its digest. It describes the wheel's own contents only. Build
-  tools (listed in the report under *Present in this build but not in this wheel*),
+  tools, dependencies this wheel does not carry (the build evidence records them with
+  ``"in_this_wheel": false``),
   install-time dependencies (``Requires-Dist`` stays authoritative; the SBOM records the
   requirement, never a license for it), source distributions and ``pip install .``,
   containers and the web client are not covered.
@@ -49,12 +50,13 @@ Each tagged GitHub release carries, for every wheel:
 
 ``<wheel>.licenses.md`` / ``<wheel>.licenses.json``
    Each redistributed component, the license concluded for it and the file it was read
-   from, how it reaches the wheel, what the installation environment supplies instead, and
-   what was excluded and why.
+   from, how it reaches the wheel, and what the installation environment supplies instead.
+   It covers this wheel only; what the build used but did not ship is in the build evidence.
 
 ``<wheel>.build-evidence.json``
    Resolved commits, declared constraints, archive digests and build options, from the
-   build machine.
+   build machine, and every component the build resolved, whether or not it reached the
+   wheel.
 
 and, once per release:
 
@@ -73,8 +75,8 @@ You need ``uv`` and a clone of this repository:
    uv run --project IsaacCapture/scripts/sbom isaaccapture-sbom check \
      --wheel isaaccapture-<version>-<abi>-<platform>.whl
 
-To check a whole release, put its wheels and evidence files in a directory of their own,
-and keep other wheels out of it:
+To check a whole release, put its wheels and evidence files in a directory of their own;
+any other file there fails the check:
 
 .. code-block:: bash
 
