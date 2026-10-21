@@ -4,6 +4,8 @@
 cmake_minimum_required(VERSION 3.20)
 
 add_library(remote_plugin_session STATIC
+    clock_offset_estimator.cpp
+    inc/remote_plugin_session/clock_offset_estimator.hpp
     protocol_frame.cpp
     protocol_payloads.cpp
     protocol_io.hpp
@@ -11,6 +13,8 @@ add_library(remote_plugin_session STATIC
     inc/remote_plugin_session/protocol_payloads.hpp
     remote_address.cpp
     inc/remote_plugin_session/remote_address.hpp
+    remote_plugin_session.cpp
+    inc/remote_plugin_session/remote_plugin_session.hpp
     tcp_socket.cpp
     inc/remote_plugin_session/tcp_socket.hpp
     tcp_transport.cpp
