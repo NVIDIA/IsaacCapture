@@ -149,9 +149,9 @@ Use the retargeters from Python
 
    import numpy as np
 
-   from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-   from isaacteleop.retargeting_engine.interface import OutputCombiner
-   from isaacteleop.retargeters import (
+   from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource
+   from isaaccapture.retargeting_engine.interface import OutputCombiner
+   from isaaccapture.retargeters import (
        DVRKPSMClutchConfig,
        DVRKPSMClutchRetargeter,
        DVRKPSMGripperConfig,

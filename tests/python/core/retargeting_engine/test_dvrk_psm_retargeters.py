@@ -7,32 +7,32 @@ import math
 
 import numpy as np
 import pytest
-import isaacteleop.retargeters as retargeters
+import isaaccapture.retargeters as retargeters
 from scipy.spatial.transform import Rotation
 
-from isaacteleop.retargeting_engine.deviceio_source_nodes import ControllersSource
-from isaacteleop.retargeting_engine.interface import (
+from isaaccapture.retargeting_engine.deviceio_source_nodes import ControllersSource
+from isaaccapture.retargeting_engine.interface import (
     ComputeContext,
     ExecutionEvents,
     ExecutionState,
     OptionalTensorGroup,
     TensorGroup,
 )
-from isaacteleop.retargeting_engine.interface.retargeter_core_types import GraphTime
-from isaacteleop.retargeting_engine.interface.tensor_group_type import (
+from isaaccapture.retargeting_engine.interface.retargeter_core_types import GraphTime
+from isaaccapture.retargeting_engine.interface.tensor_group_type import (
     OptionalTensorGroupType,
 )
-from isaacteleop.retargeting_engine.tensor_types import (
+from isaaccapture.retargeting_engine.tensor_types import (
     ControllerInput,
     ControllerInputIndex,
 )
-from isaacteleop.retargeters import (
+from isaaccapture.retargeters import (
     DVRKPSMClutchConfig,
     DVRKPSMClutchRetargeter,
     DVRKPSMGripperConfig,
     DVRKPSMGripperRetargeter,
 )
-from isaacteleop.retargeters.DVRK.control import (
+from isaaccapture.retargeters.DVRK.control import (
     DVRKPSMCartesianClutchConfig,
     DVRKPSMCartesianClutchStateMachine,
     DVRKPSMJawIntentConfig,
