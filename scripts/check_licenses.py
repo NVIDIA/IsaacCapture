@@ -21,15 +21,23 @@ SOURCE_FILES = re.compile(
     r"\.(py|js|ts|cpp|c|h|hpp|cxx|hxx|cmake|md|yaml|yml|sh|fbs|toml|html)$"
     r"|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$"
 )
+# Media files and .gitignore carry no header; like elsewhere in the repo they are not checked.
+EGOPOST_UNCHECKED_SUFFIXES = {".gif", ".jpeg", ".jpg", ".mp4", ".pdf", ".png", ".svg"}
+EGOPOST_UNCHECKED_NAMES = {".gitignore"}
 
 
 def covered_paths(project: Project) -> list[Path]:
-    # Check source files repository-wide; EgoPost additionally includes all assets.
+    # Check source files repository-wide; EgoPost additionally includes non-media files.
     paths = (path.relative_to(project.root) for path in project.all_files())
     return sorted(
         path
         for path in paths
-        if path.is_relative_to(EGOPOST_SUBTREE) or SOURCE_FILES.search(str(path))
+        if SOURCE_FILES.search(str(path))
+        or (
+            path.is_relative_to(EGOPOST_SUBTREE)
+            and path.suffix.lower() not in EGOPOST_UNCHECKED_SUFFIXES
+            and path.name not in EGOPOST_UNCHECKED_NAMES
+        )
     )
 
 
