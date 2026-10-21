@@ -64,7 +64,7 @@ import {
 import arrowLeftStartOnRectangleSvg from './icons/arrow-left-start-on-rectangle.svg';
 import arrowUturnLeftSvg from './icons/arrow-uturn-left.svg';
 import playCircleSvg from './icons/play-circle.svg';
-import { useRecorder } from './RecorderContext';
+import { useRecorder, useTeleopKeyboardShortcuts } from './RecorderContext';
 
 // Face-camera rotation constants
 const FACE_CAMERA_DAMPING = 10; // Higher = faster rotation toward camera
@@ -297,6 +297,15 @@ export default function CloudXR3DUI({
   onDismissSystemNotice,
 }: CloudXRUIProps) {
   const recorder = useRecorder();
+  // T/C/P/S/X. Delivered from a real keyboard, or synthesised over CDP so a host
+  // can drive an unattended run. Record is on C because 'r' is already taken by
+  // the panel reset below.
+  useTeleopKeyboardShortcuts({
+    recordingEnabled: showRecordingControls,
+    startTeleop: onStartTeleop,
+    teleopStartDisabled: playInProgress,
+    resetTeleop: onResetTeleop,
+  });
   const MINIMIZE_ON_PLAY_KEY = 'cxr.isaac.minimizeOnPlay';
 
   const groupRef = useRef<Group>(null);

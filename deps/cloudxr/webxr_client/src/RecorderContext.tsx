@@ -214,3 +214,113 @@ export function useRecorder(): RecorderContextValue {
   if (!ctx) throw new Error('useRecorder must be used inside RecorderProvider');
   return ctx;
 }
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target instanceof HTMLInputElement) return target.type !== 'file';
+  return target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+}
+
+interface TeleopKeyboardShortcutOptions {
+  recordingEnabled: boolean;
+  startTeleop?: () => void;
+  teleopStartDisabled?: boolean;
+  /** Reset Teleop. Only reachable as a key because its button lives in the XR canvas. */
+  resetTeleop?: () => void;
+}
+
+/** Enable keyboard/ADB shortcuts for the Teleop Play and recording controls exposed by the XR UI. */
+export function useTeleopKeyboardShortcuts({
+  recordingEnabled,
+  startTeleop,
+  teleopStartDisabled = false,
+  resetTeleop,
+}: TeleopKeyboardShortcutOptions): void {
+  const {
+    recorder,
+    savedRecording,
+    startRecord,
+    stopRecord,
+    startReplay,
+    stopReplay,
+    onSaveRecording,
+  } = useRecorder();
+
+  useEffect(() => {
+    if (!recordingEnabled && !startTeleop && !resetTeleop) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        isEditableKeyboardTarget(event.target)
+      ) {
+        return;
+      }
+
+      const key =
+        event.code === 'KeyT'
+          ? 't'
+          : event.code === 'KeyC'
+            ? 'c'
+            : event.code === 'KeyP'
+              ? 'p'
+              : event.code === 'KeyS'
+                ? 's'
+                : event.code === 'KeyX'
+                  ? 'x'
+                  : event.key.toLowerCase();
+
+      if (key === 't') {
+        if (!startTeleop || teleopStartDisabled) return;
+        startTeleop();
+      } else if (key === 'c') {
+        if (!recordingEnabled) return;
+        if (recorder.mode === 'recording') {
+          stopRecord();
+        } else if (recorder.mode === 'idle') {
+          startRecord();
+        } else {
+          return;
+        }
+      } else if (key === 'p') {
+        if (!recordingEnabled) return;
+        if (recorder.mode === 'replaying') {
+          stopReplay();
+        } else if (recorder.mode === 'idle' && savedRecording) {
+          startReplay();
+        } else {
+          return;
+        }
+      } else if (key === 's') {
+        if (!recordingEnabled || recorder.mode !== 'idle' || !savedRecording) return;
+        onSaveRecording();
+      } else if (key === 'x') {
+        if (!resetTeleop) return;
+        resetTeleop();
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    recorder,
+    onSaveRecording,
+    recordingEnabled,
+    savedRecording,
+    startRecord,
+    startReplay,
+    startTeleop,
+    stopRecord,
+    stopReplay,
+    teleopStartDisabled,
+    resetTeleop,
+  ]);
+}
