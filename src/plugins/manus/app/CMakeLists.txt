@@ -11,6 +11,13 @@ target_link_libraries(manus_hand_plugin
     Teleop::plugin_utils
 )
 
+# --remote=<host:port> needs the RemotePluginSession library (BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE, non-Windows);
+# without it the flag is rejected at startup.
+if(TARGET Teleop::remote_plugin_session)
+  target_link_libraries(manus_hand_plugin PRIVATE Teleop::remote_plugin_session)
+  target_compile_definitions(manus_hand_plugin PRIVATE MANUS_HAVE_REMOTE_PLUGIN_SESSION)
+endif()
+
 set_target_properties(manus_hand_plugin PROPERTIES
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN YES
