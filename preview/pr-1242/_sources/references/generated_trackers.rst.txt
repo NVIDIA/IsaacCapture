@@ -85,7 +85,8 @@ example) declares that description as the tracker's ``metadata`` table:
 
    [[tracker]]
    name = "tactile"
-   table = "TactileData"
+   table = "TactileDataArray"
+   schema = "tactile_array"
    metadata = "TactileMetadata"
 
 The metadata table is the ``root_type`` of a schema of its own, named after the table in snake case
