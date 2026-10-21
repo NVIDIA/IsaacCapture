@@ -1084,7 +1084,6 @@ def collect_and_bind(workspace: Workspace, **options) -> dict:
         "manifest_path": manifest_path,
         "evidence_path": out_dir / f"{STEM}.build-evidence.json",
         "spdx_path": out_dir / f"{STEM}.spdx.json",
-        "report_path": out_dir / f"{STEM}.licenses.json",
     }
 
 

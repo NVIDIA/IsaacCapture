@@ -37,13 +37,6 @@ from .wheelfile import Entry, WheelInfo
 if TYPE_CHECKING:  # pragma: no cover
     from .evidence import Discovery
 
-# How a component that reached no file got into the build, by kind. Checked-in
-# sources were never fetched, and the collector's own vocabulary says so.
-_ARRIVED = {
-    "vendored-source": "checked into this repository",
-    "vcpkg-port": "installed by vcpkg for this build",
-}
-
 # Text-ish members worth reading a REUSE tag out of.
 _TAGGABLE = {
     ".py",
@@ -107,7 +100,6 @@ class Inventory:
     unattributed: list[str] = field(default_factory=list)
     # Link-line inputs nothing explains, as `<input> (linked by ...): <why>`.
     untraced: list[str] = field(default_factory=list)
-    absent_components: dict[str, str] = field(default_factory=dict)
     _indexed: tuple[dict, dict] | None = field(default=None, repr=False)
 
     def files_of(self, key: str) -> list[str]:
@@ -780,12 +772,6 @@ def build(
         for key in sorted(roles)
         if key in resolver.components
     }
-    absent = {
-        key: _ARRIVED.get(resolver.components[key].kind, "fetched for this build")
-        + "; contributes to no file in this wheel"
-        for key in sorted(resolver.components)
-        if key not in roles
-    }
 
     external: dict[str, list[str]] = {}
     for entry in wheel.entries:
@@ -808,7 +794,6 @@ def build(
             for path, record in resolver.static_inputs.items()
             if not record["explained"]
         ),
-        absent_components=absent,
     )
 
 

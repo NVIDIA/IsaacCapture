@@ -247,8 +247,8 @@ maintained by hand.
 
 [`deps/third_party/CMakeLists.txt`](../../deps/third_party/CMakeLists.txt) fetches
 `spdx/license-list-data` at a pinned commit into `_deps/license-list-data-src`, like any
-other dependency, so the collector reports it as a component fetched but shipping
-nothing. Each report records the commit its identifications were made against.
+other dependency, so the build evidence records it with `"in_this_wheel": false`. Each
+report records the commit its identifications were made against.
 
 Every current identifier is available to match against. Naming one in the document is a
 separate question: the document states the license list it was built against, and

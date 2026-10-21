@@ -422,5 +422,4 @@ def document(
         },
         "link_artifacts": sorted(artifacts, key=lambda item: item["output"]),
         "attributions": [item.as_json() for item in inventory.attributions.values()],
-        "excluded_components": inventory.absent_components,
     }

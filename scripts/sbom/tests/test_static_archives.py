@@ -1179,7 +1179,7 @@ def test_a_file_no_port_lists_is_still_unexplained(workspace, monkeypatch):
         synth.collect(workspace)
 
 
-def test_an_unlinked_port_is_excluded_as_installed_by_vcpkg(workspace):
+def test_an_unlinked_port_is_recorded_as_a_vcpkg_port_not_in_the_wheel(workspace):
     synth.vcpkg_port(
         workspace.build / "vcpkg_installed",
         "zlib",
@@ -1191,12 +1191,8 @@ def test_an_unlinked_port_is_excluded_as_installed_by_vcpkg(workspace):
 
     collected = synth.collect(workspace)
 
-    exclusion = next(
-        item
-        for item in collected["licenses"]["exclusions"]
-        if item["component"] == "vcpkg:zlib"
-    )
-    assert exclusion["reason"].startswith("installed by vcpkg for this build")
+    zlib = collected["build-evidence"]["components"]["vcpkg:zlib"]
+    assert (zlib["kind"], zlib["in_this_wheel"]) == ("vcpkg-port", False)
 
 
 def _eigen_port(installed) -> None:

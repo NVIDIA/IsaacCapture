@@ -116,14 +116,24 @@ def test_components_are_discovered_not_declared(built):
     assert "omega" not in names, "a test-only dependency is not in the wheel"
 
 
-def test_a_dependency_reaching_no_wheel_file_is_recorded_as_excluded(built):
-    report = json.loads(built["report_path"].read_text(encoding="utf-8"))
-    excluded = [item["component"] for item in report["exclusions"]]
+def test_a_dependency_reaching_no_wheel_file_is_recorded_by_the_build(built):
+    components = built["build-evidence"]["components"]
 
-    assert "omega" in excluded, "a test-only dependency ships nothing"
+    assert components["omega"]["in_this_wheel"] is False, "a test-only dependency"
     # The SPDX reference data is fetched like any other dependency, so it is
-    # inventoried like any other dependency -- and excluded for the same reason.
-    assert "license-list-data" in excluded
+    # inventoried like any other dependency -- and ships nothing for the same reason.
+    assert components["license-list-data"]["in_this_wheel"] is False
+    # What ships nothing is the build's to record, not the wheel's.
+    assert "omega" not in json.dumps(built["licenses"])
+    assert "omega" not in built["md"]
+
+
+def test_where_the_license_list_was_read_is_left_to_the_build_evidence(built):
+    evidence = built["build-evidence"]["license_data"]
+    report = built["licenses"]["license_data"]
+
+    assert "source" in evidence and "source" not in report
+    assert report["commit"] == evidence["commit"]
 
 
 def test_licenses_are_packaged_and_declared(built):
@@ -254,7 +264,6 @@ def _report_of(**gaps) -> dict:
         "components": [row],
         "externally_supplied_runtime": [],
         "consumer_requirements": [],
-        "exclusions": [],
         **{key: gaps.get(key, []) for key in report_module.GAP_LISTS},
     }
 

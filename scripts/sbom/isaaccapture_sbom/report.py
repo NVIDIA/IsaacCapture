@@ -291,17 +291,18 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
             evidence_doc.get("project", {}).get("describe") or ""
         ).endswith("-dirty"),
         "spdx_license_list_version": evidence_doc.get("license_list_version"),
-        "license_data": evidence_doc.get("license_data", {}),
+        # Where the build read the list from is the build evidence's to record.
+        "license_data": {
+            key: value
+            for key, value in evidence_doc.get("license_data", {}).items()
+            if key != "source"
+        },
         "components": components,
         "externally_supplied_runtime": [
             {"soname": soname, "required_by": consumers}
             for soname, consumers in inventory.external_runtime.items()
         ],
         "consumer_requirements": inventory.requires_dist,
-        "exclusions": [
-            {"component": key, "reason": reason}
-            for key, reason in sorted(inventory.absent_components.items())
-        ],
         **gaps,
     }
 
@@ -390,15 +391,6 @@ def report_markdown(payload: dict) -> str:
     lines += [f"- `{item}`" for item in payload["consumer_requirements"]] or [
         "None declared."
     ]
-
-    lines += ["", "## Present in this build but not in this wheel", ""]
-    if payload["exclusions"]:
-        lines += [
-            f"- `{item['component']}` — {item['reason']}"
-            for item in payload["exclusions"]
-        ]
-    else:
-        lines.append("None.")
 
     lines += ["", "## License evidence gaps", ""]
     listed = [key for key in GAP_LISTS if payload[key]]
