@@ -229,6 +229,9 @@ function Scene({ streamTestEnabled }: { streamTestEnabled: boolean }) {
             loggedOnce = new Set();
           }
           if (activeSession) {
+            // The real component restores retry budget only after a rendered-video
+            // metric, not stream attachment. Model that public health signal.
+            activeSession.setEmitRenderFramerate(true);
             if (alwaysConnectWaitMs !== null) {
               activeSession.connectWait(alwaysConnectWaitMs);
             } else if (pendingConnectWaitMs !== null) {
@@ -245,9 +248,10 @@ function Scene({ streamTestEnabled }: { streamTestEnabled: boolean }) {
         onLog={entries =>
           appendLog(`[event] onLog ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`)
         }
-        onRenderPerformanceMetrics={() =>
-          logOnce('renderMetrics', '[event] onRenderPerformanceMetrics (first occurrence)')
-        }
+        onRenderPerformanceMetrics={metrics => {
+          if (metrics.framerate !== undefined) loggedOnce.add('healthyRender');
+          logOnce('renderMetrics', '[event] onRenderPerformanceMetrics (first occurrence)');
+        }}
         onStreamingPerformanceMetrics={() =>
           logOnce('streamingMetrics', '[event] onStreamingPerformanceMetrics (first occurrence)')
         }
@@ -330,13 +334,14 @@ async function runStep3(): Promise<void> {
   });
   // Past RECONNECT_DELAY_MS plus MockCloudXR's own default connect delay for the retried session.
   const reconnected = await waitUntil(
-    () => activeSession?.state === CloudXR.SessionState.Connected,
+    () =>
+      activeSession?.state === CloudXR.SessionState.Connected && loggedOnce.has('healthyRender'),
     RECONNECT_DELAY_MS + 3000
   );
   const firstAttemptOk = reconnectingAttempts.length === 1 && reconnectingAttempts[0] === 1;
 
-  // A second, unrelated failure after the successful reconnect: if onStreamStarted actually reset
-  // the attempt counter, this also reports attempt 1 (not 2).
+  // A second, unrelated failure after actual video resumed: the healthy render
+  // metric restores the attempt budget, so this reports attempt 1 (not 2).
   reconnectingAttempts = [];
   activeSession?.triggerFailure({
     name: 'StreamingError',

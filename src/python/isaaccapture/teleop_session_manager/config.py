@@ -263,6 +263,8 @@ class RetargetingExecutionConfig:
     Pipelined mode keeps the public ``TeleopSession.step()`` return type as a
     normal ``RetargeterIO`` dict, but returns the latest completed retarget
     frame while submitting the current step request to a background worker.
+    Undelivered reset edges stay latched until a successful ``step()`` return;
+    other execution state follows the returned completed frame.
     """
 
     mode: RetargetingExecutionMode | str = RetargetingExecutionMode.SYNC

@@ -41,11 +41,12 @@ const sceneSpace = {} as XRReferenceSpace;
 
 function pose(x: number, y = 0, z = 0, orientation: DOMPointInit = { w: 1 }): XRPose {
   return {
-    transform: new FakeRigidTransform({ x, y, z, w: 1 }, orientation),
+    transform: new FakeRigidTransform(
+      { x, y, z, w: 1 },
+      orientation
+    ) as unknown as XRRigidTransform,
     emulatedPosition: false,
-    linearVelocity: null,
-    angularVelocity: null,
-  } as XRPose;
+  };
 }
 
 function jointPose(x: number, radius = 0.01): XRJointPose {
@@ -56,7 +57,7 @@ function gamepad(axis: number): Gamepad {
   return {
     axes: [axis],
     buttons: [{ value: axis, pressed: axis > 0, touched: true }],
-  } as Gamepad;
+  } as unknown as Gamepad;
 }
 
 type PoseResolver = (space: XRSpace, baseSpace: XRSpace) => XRPose | null;
@@ -68,7 +69,7 @@ function makeFrame(
   getJointPose: JointResolver = () => null,
   predictedDisplayTime = 0
 ): XRFrame {
-  const session = { inputSources } as XRSession;
+  const session = { inputSources } as unknown as XRSession;
   return {
     session,
     predictedDisplayTime,
@@ -360,8 +361,8 @@ describe('scoped CloudXR replay frame', () => {
     expect(adapted.session.inputSources).toBe(replaySources);
     expect(replaySources[0].gamepad).toBe(replaySources[0].gamepad);
     expect(replaySources[0].gamepad?.axes).toEqual([3]);
-    expect(adapted.getJointPose(wrist, cloudSpace)?.transform.position.x).toBe(15);
-    expect(adapted.getJointPose(wrist, cloudSpace)?.radius).toBe(0.02);
+    expect(adapted.getJointPose!(wrist, cloudSpace)?.transform.position.x).toBe(15);
+    expect(adapted.getJointPose!(wrist, cloudSpace)?.radius).toBe(0.02);
   });
 
   test('delegates unknown spaces and joints to the real frame', () => {
@@ -378,7 +379,19 @@ describe('scoped CloudXR replay frame', () => {
     const adapted = recorder.adaptTrackingFrame(frame);
 
     expect(adapted.getPose(unknownSpace, sceneSpace)?.transform.position.x).toBe(7);
-    expect(adapted.getJointPose(unknownJoint, sceneSpace)?.transform.position.x).toBe(8);
+    expect(adapted.getJointPose!(unknownJoint, sceneSpace)?.transform.position.x).toBe(8);
+  });
+
+  test('delegates an unknown joint safely when the optional joint API is absent', () => {
+    const frame = makeFrame();
+    delete frame.getJointPose;
+    const recorder = new XRInputRecorder();
+    recorder.startReplay(recording(frameData()));
+    recorder.beginFrame(frame, sceneSpace);
+
+    const adapted = recorder.adaptTrackingFrame(frame);
+    expect(typeof adapted.getJointPose).toBe('function');
+    expect(adapted.getJointPose!({} as XRJointSpace, sceneSpace)).toBeUndefined();
   });
 });
 

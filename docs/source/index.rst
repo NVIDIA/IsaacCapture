@@ -47,6 +47,7 @@ Table of Contents
    :caption: Isaac Teleop
 
    teleop/quick_start
+   getting_started/ovxr
    teleop/teleop_session
    teleop/control_state_machine
 

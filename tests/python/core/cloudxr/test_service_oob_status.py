@@ -22,6 +22,7 @@ from isaaccapture.cloudxr.service import CloudXRService
 
 def _service_for_status(tmp_path):
     service = object.__new__(CloudXRService)
+    service._runtime_stop_lock = threading.Lock()
     service._oob_lock = threading.Lock()
     service._oob_publish_lock = asyncio.Lock()
     service._oob_snapshot = None

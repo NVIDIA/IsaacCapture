@@ -75,7 +75,10 @@ PYBIND11_MODULE(_deviceio_trackers, m)
             "get_right_hand",
             [](const core::HandTracker& self, const core::ITrackerSession& session)
             { return to_python(self.get_right_hand(session)); },
-            py::arg("session"), "Get the right hand tracked state (None if inactive)");
+            py::arg("session"), "Get the right hand tracked state (None if inactive)")
+        .def("get_replay_record_availability", &core::HandTracker::get_replay_record_availability, py::arg("session"),
+             "Left/right record presence at the last replay update. False means channel EOF; "
+             "a present record can have an inactive hand payload. None for live sessions or before replay update.");
 
     py::class_<core::HeadTracker, core::ITracker, std::shared_ptr<core::HeadTracker>>(m, "HeadTracker")
         .def(py::init<>())

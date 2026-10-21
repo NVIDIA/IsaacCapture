@@ -1086,8 +1086,13 @@ class TestSessionLifecycle:
         with mock_session_dependencies():
             session = TeleopSession(config)
             with session:
+                handles = session.oxr_session
+                device = session.deviceio_session
                 with pytest.raises(RuntimeError, match="already active"):
                     session.__enter__()
+                assert session.oxr_session is handles
+                assert session.deviceio_session is device
+                session.step()
 
             with session:
                 pass
@@ -1199,8 +1204,14 @@ class TestSessionLifecycle:
         assert "Failed to roll back TeleopSession setup" in caplog.text
 
         with mock_session_dependencies():
-            with session:
-                pass
+            for operation in (
+                session.__enter__,
+                session.step,
+                lambda: session.__exit__(None, None, None),
+            ):
+                with pytest.raises(ValueError, match="setup failed"):
+                    operation()
+        assert session.cleanup_failed
 
     def test_enter_initializes_runtime_state(self):
         """__enter__ should reset frame count and record start time."""
@@ -1270,6 +1281,9 @@ class TestSessionLifecycle:
                 session.__exit__(None, None, None)
 
             assert session.oxr_session is None
+            with pytest.raises(RuntimeError, match="cleanup boom"):
+                session.__exit__(None, None, None)
+            assert session.cleanup_failed
 
     def test_context_manager_protocol(self):
         """TeleopSession works correctly as a context manager."""
@@ -1982,6 +1996,86 @@ class TestStep:
 
 class TestPipelinedRetargeting:
     """Tests for TeleopSession-owned pipelined async retarget execution."""
+
+    def test_pending_reset_survives_replacement_without_overriding_control_state(self):
+        pipeline = CountingPipeline()
+        control = BlockingControlPipeline()
+        control.execute_pipeline = lambda _inputs: make_control_outputs(
+            ExecutionState.PAUSED, reset=False
+        )
+        config = make_config(pipeline)
+        config.teleop_control_pipeline = control
+        with mock_session_dependencies(), TeleopSession(config) as session:
+            runner = AsyncRetargetRunner(
+                session._execute_step_request,
+                RetargetingExecutionConfig(pacing=ImmediatePacingConfig()),
+            )
+            reset = make_step_request(1)
+            reset.execution_events.reset = True
+            ordinary = StepRequest(2, {}, None, None, time.monotonic())
+            runner.submit(reset)
+            assert runner.submit(ordinary) == 1
+            runner.start()
+            try:
+                frame = runner.wait_for_frame(2, timeout_s=1.0)
+                assert frame is not None
+                assert frame.context.execution_events.reset
+                assert (
+                    frame.context.execution_events.execution_state
+                    == ExecutionState.PAUSED
+                )
+            finally:
+                assert runner.stop(timeout_s=1.0)
+
+    def test_completed_reset_survives_newer_output_until_acknowledged(self):
+        pipeline = CountingPipeline()
+        runner = make_async_runner(pipeline, self._pipelined_config(pipeline))
+        reset = make_step_request(1)
+        reset.execution_events.reset = True
+        runner.submit(reset)
+        runner.start()
+        try:
+            assert runner.wait_for_frame(1, timeout_s=1.0) is not None
+            runner.submit(make_step_request(2))
+            assert runner.wait_for_frame(2, timeout_s=1.0) is not None
+            frame = runner.latest()
+            assert frame.frame_id == 2
+            assert frame.context.execution_events.reset
+            runner.acknowledge_reset(frame.reset_generation)
+            assert not runner.latest().context.execution_events.reset
+
+            reset = make_step_request(3)
+            reset.execution_events.reset = True
+            runner.submit(reset)
+            assert runner.wait_for_frame(3, timeout_s=1.0) is not None
+            runner.acknowledge_reset(frame.reset_generation)
+            newer = runner.latest()
+            assert newer.context.execution_events.reset
+            runner.acknowledge_reset(newer.reset_generation)
+            assert not runner.latest().context.execution_events.reset
+        finally:
+            assert runner.stop(timeout_s=1.0)
+
+    def test_failed_application_copy_does_not_acknowledge_reset(self):
+        config = self._pipelined_config(CountingPipeline())
+        with mock_session_dependencies(), TeleopSession(config) as session:
+            session.step()
+            session.step(execution_events=ExecutionEvents(reset=True))
+            runner = session._async_runner
+            assert runner is not None
+            assert runner.wait_for_frame(1, timeout_s=1.0) is not None
+            with (
+                patch(
+                    "isaaccapture.teleop_session_manager.teleop_session.snapshot_retargeter_io",
+                    side_effect=TypeError("caller copy failed"),
+                ),
+                pytest.raises(TypeError, match="caller copy failed"),
+            ):
+                session.step()
+            assert runner.latest().context.execution_events.reset
+            session.step()
+            assert session.last_context.execution_events.reset
+            assert not runner.latest().context.execution_events.reset
 
     def _pipelined_config(self, pipeline, **execution_kwargs):
         return make_config(
@@ -2906,6 +3000,96 @@ class TestConfiguration:
 
         assert config.enabled is False
         assert config.required is True
+
+
+@pytest.mark.parametrize("boundary", ["deviceio", "plugin"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_failed_session_entry_unwinds_acquired_contexts(
+    tmp_path, boundary, cleanup_fails, caplog
+):
+    """A failed __enter__ has no user-body __exit__ to release earlier contexts."""
+    events = []
+    startup_error = RuntimeError("startup failed")
+    original_cause = ValueError("invalid session input")
+    if hasattr(startup_error, "add_note"):
+        startup_error.add_note("Original startup diagnostic")
+    original_notes = getattr(startup_error, "__notes__", None)
+    # Exercise the supported Python 3.10 boundary even on a newer interpreter.
+    startup_error.add_note = None
+    cleanup_error = RuntimeError("cleanup failed")
+
+    @contextmanager
+    def openxr():
+        events.append("openxr-enter")
+        try:
+            yield MockOpenXRSession()
+        finally:
+            events.append("openxr-exit")
+            if cleanup_fails:
+                raise cleanup_error
+
+    @contextmanager
+    def deviceio_context():
+        if boundary == "deviceio":
+            raise startup_error from original_cause
+        events.append("deviceio-enter")
+        try:
+            yield MockDeviceIOSession()
+        finally:
+            events.append("deviceio-exit")
+
+    manager = MockPluginManager(plugin_names=["test_plugin"])
+
+    def fail_plugin_start(*_args, **_kwargs):
+        raise startup_error from original_cause
+
+    manager.start = MagicMock(side_effect=fail_plugin_start)
+    plugin = PluginConfig(
+        plugin_name="test_plugin", plugin_root_id="/root", search_paths=[tmp_path]
+    )
+    config = make_config(MockPipeline(leaf_nodes=[]), plugins=[plugin])
+    with mock_session_dependencies(
+        mock_oxr=openxr(), mock_dio=deviceio_context(), mock_pm=manager
+    ):
+        session = TeleopSession(config)
+        with pytest.raises(RuntimeError) as caught:
+            session.__enter__()
+
+    assert events == (
+        ["openxr-enter", "openxr-exit"]
+        if boundary == "deviceio"
+        else ["openxr-enter", "deviceio-enter", "deviceio-exit", "openxr-exit"]
+    )
+    assert caught.value is startup_error
+    assert caught.value.__cause__ is original_cause
+    assert getattr(caught.value, "__notes__", None) == original_notes
+    diagnostics = [
+        record
+        for record in caplog.records
+        if record.exc_info is not None and record.exc_info[1] is cleanup_error
+    ]
+    assert [record.exc_info[1] for record in diagnostics] == (
+        [cleanup_error] if cleanup_fails else []
+    )
+    assert session.oxr_session is None
+    assert session.deviceio_session is None
+    assert not session._in_context
+    assert session.plugin_managers == []
+    assert session.plugin_contexts == []
+    with mock_session_dependencies():
+        if cleanup_fails:
+            for operation in (
+                session.__enter__,
+                session.step,
+                lambda: session.__exit__(None, None, None),
+            ):
+                with pytest.raises(RuntimeError) as repeated:
+                    operation()
+                assert repeated.value is startup_error
+            assert session.cleanup_failed
+        else:
+            with session:
+                assert session.deviceio_session is not None
 
 
 class TestSessionReuse:

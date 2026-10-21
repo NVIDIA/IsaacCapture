@@ -24,6 +24,13 @@ manage them directly:
 #. Runs retargeting pipeline with automatic updates
 #. Handles cleanup via RAII
 
+If resource cleanup fails during entry rollback or exit, ``cleanup_failed``
+becomes true. That session is terminal: later entry, stepping and exit raise
+the stored error instead of retrying or treating an exhausted cleanup stack as
+successful drain. Hosts lending OpenXR handles must not release their owning
+renderer/session after this signal. An entry failure with successful rollback
+still permits reuse; the original setup error remains primary in either case.
+
 Quick Start
 -----------
 
@@ -172,8 +179,13 @@ Per application frame in pipelined mode, ``step()`` submits the current request
 and returns the latest completed ``RetargeterIO``. On a normal hit this is often
 the previous application frame's output. If that returned output came from
 request N-1, then ``session.last_context`` also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use ``mode="sync"`` when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful ``step()`` return delivers it through ``last_context``. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use ``mode="sync"`` when the
 application needs exact current-frame sample/compute/return behavior.
 
 The return type is unchanged; inspect ``session.last_step_info`` for age and

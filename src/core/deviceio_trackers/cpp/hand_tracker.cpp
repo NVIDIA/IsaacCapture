@@ -20,4 +20,9 @@ const Serialized<HandPose>& HandTracker::get_right_hand(const ITrackerSession& s
     return static_cast<const IHandTrackerImpl&>(session.get_tracker_impl(*this)).get_right_hand();
 }
 
+std::optional<std::array<bool, 2>> HandTracker::get_replay_record_availability(const ITrackerSession& session) const
+{
+    return static_cast<const IHandTrackerImpl&>(session.get_tracker_impl(*this)).get_replay_record_availability();
+}
+
 } // namespace core

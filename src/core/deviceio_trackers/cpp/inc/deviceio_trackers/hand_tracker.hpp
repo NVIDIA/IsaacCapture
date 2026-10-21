@@ -6,6 +6,9 @@
 #include <deviceio_base/hand_tracker_base.hpp>
 #include <schema/hand_generated.h>
 
+#include <array>
+#include <optional>
+
 namespace core
 {
 
@@ -23,6 +26,7 @@ public:
     // - when it is non-empty, nested fields in HandPose are safe to read.
     const Serialized<HandPose>& get_left_hand(const ITrackerSession& session) const;
     const Serialized<HandPose>& get_right_hand(const ITrackerSession& session) const;
+    std::optional<std::array<bool, 2>> get_replay_record_availability(const ITrackerSession& session) const;
 
 private:
     static constexpr const char* TRACKER_NAME = "HandTracker";

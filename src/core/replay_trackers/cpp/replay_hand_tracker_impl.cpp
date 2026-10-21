@@ -45,6 +45,7 @@ void ReplayHandTrackerImpl::update(int64_t /*monotonic_time_ns*/)
 {
     auto left_record = mcap_viewers_->read(0);
     auto right_record = mcap_viewers_->read(1);
+    record_availability_ = std::array<bool, 2>{ bool(left_record), bool(right_record) };
     if (left_record)
     {
         left_tracked_ = left_record.narrow(left_record->data());
