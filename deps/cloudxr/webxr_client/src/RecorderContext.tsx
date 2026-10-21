@@ -204,7 +204,13 @@ export function useRecorder(): RecorderContextValue {
   return ctx;
 }
 
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+/**
+ * True when a plain letter is being typed rather than used as a shortcut.
+ *
+ * Shared with CloudXRUI's panel-reset key, which runs off the same listener:
+ * one definition means the two cannot disagree about what counts as typing.
+ */
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   if (target instanceof HTMLInputElement) return target.type !== 'file';
@@ -219,13 +225,20 @@ interface TeleopKeyboardShortcutOptions {
   resetTeleop?: () => void;
 }
 
-/** Enable keyboard/ADB shortcuts for the Teleop Play and recording controls exposed by the XR UI. */
-export function useTeleopKeyboardShortcuts({
+/**
+ * Build the keydown handler for the Teleop Play and recording controls exposed by the XR UI.
+ *
+ * Returns a handler rather than registering a listener: CloudXRUI already owns a
+ * window keydown listener for the panel-reset key, and a second one would mean two
+ * places deciding what a letter means. The caller reports whether the key was
+ * consumed, so its own keys can be skipped when this one handles the event.
+ */
+export function useTeleopShortcutHandler({
   recordingEnabled,
   startTeleop,
   teleopStartDisabled = false,
   resetTeleop,
-}: TeleopKeyboardShortcutOptions): void {
+}: TeleopKeyboardShortcutOptions): (event: KeyboardEvent) => boolean {
   const {
     recorder,
     savedRecording,
@@ -236,19 +249,9 @@ export function useTeleopKeyboardShortcuts({
     onSaveRecording,
   } = useRecorder();
 
-  useEffect(() => {
-    if (!recordingEnabled && !startTeleop && !resetTeleop) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.repeat ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
-        isEditableKeyboardTarget(event.target)
-      ) {
-        return;
-      }
+  return useCallback(
+    (event: KeyboardEvent): boolean => {
+      if (!recordingEnabled && !startTeleop && !resetTeleop) return false;
 
       const key =
         event.code === 'KeyT'
@@ -264,52 +267,51 @@ export function useTeleopKeyboardShortcuts({
                   : event.key.toLowerCase();
 
       if (key === 't') {
-        if (!startTeleop || teleopStartDisabled) return;
+        if (!startTeleop || teleopStartDisabled) return false;
         startTeleop();
       } else if (key === 'c') {
-        if (!recordingEnabled) return;
+        if (!recordingEnabled) return false;
         if (recorder.mode === 'recording') {
           stopRecord();
         } else if (recorder.mode === 'idle') {
           startRecord();
         } else {
-          return;
+          return false;
         }
       } else if (key === 'p') {
-        if (!recordingEnabled) return;
+        if (!recordingEnabled) return false;
         if (recorder.mode === 'replaying') {
           stopReplay();
         } else if (recorder.mode === 'idle' && savedRecording) {
           startReplay();
         } else {
-          return;
+          return false;
         }
       } else if (key === 's') {
-        if (!recordingEnabled || recorder.mode !== 'idle' || !savedRecording) return;
+        if (!recordingEnabled || recorder.mode !== 'idle' || !savedRecording) return false;
         onSaveRecording();
       } else if (key === 'x') {
-        if (!resetTeleop) return;
+        if (!resetTeleop) return false;
         resetTeleop();
       } else {
-        return;
+        return false;
       }
 
       event.preventDefault();
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [
-    recorder,
-    onSaveRecording,
-    recordingEnabled,
-    savedRecording,
-    startRecord,
-    startReplay,
-    startTeleop,
-    stopRecord,
-    stopReplay,
-    teleopStartDisabled,
-    resetTeleop,
-  ]);
+      return true;
+    },
+    [
+      recorder,
+      onSaveRecording,
+      recordingEnabled,
+      savedRecording,
+      startRecord,
+      startReplay,
+      startTeleop,
+      stopRecord,
+      stopReplay,
+      teleopStartDisabled,
+      resetTeleop,
+    ]
+  );
 }

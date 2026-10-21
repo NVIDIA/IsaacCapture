@@ -64,7 +64,7 @@ import {
 import arrowLeftStartOnRectangleSvg from './icons/arrow-left-start-on-rectangle.svg';
 import arrowUturnLeftSvg from './icons/arrow-uturn-left.svg';
 import playCircleSvg from './icons/play-circle.svg';
-import { useRecorder, useTeleopKeyboardShortcuts } from './RecorderContext';
+import { isEditableKeyboardTarget, useRecorder, useTeleopShortcutHandler } from './RecorderContext';
 
 // Face-camera rotation constants
 const FACE_CAMERA_DAMPING = 10; // Higher = faster rotation toward camera
@@ -299,8 +299,8 @@ export default function CloudXR3DUI({
   const recorder = useRecorder();
   // T/C/P/S/X. Delivered from a real keyboard, or synthesised over CDP so a host
   // can drive an unattended run. Record is on C because 'r' is already taken by
-  // the panel reset below.
-  useTeleopKeyboardShortcuts({
+  // the panel reset below, which shares this component's one keydown listener.
+  const handleTeleopShortcut = useTeleopShortcutHandler({
     recordingEnabled: showRecordingControls,
     startTeleop: onStartTeleop,
     teleopStartDisabled: playInProgress,
@@ -521,24 +521,31 @@ export default function CloudXR3DUI({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== RESET_PANEL_KEY) {
+      // Unlike a function key, a plain letter can be typed into any of the 2D settings form's
+      // text inputs - don't reset the panel out from under someone typing a server IP. A held
+      // key or a browser chord (Ctrl+R to reload) is not a shortcut press either.
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        isEditableKeyboardTarget(event.target)
+      ) {
         return;
       }
-      // Unlike a function key, a plain letter can be typed into any of the 2D settings form's
-      // text inputs - don't reset the panel out from under someone typing a server IP.
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.isContentEditable
-      ) {
+      // The recorder keys get first refusal, then the panel key; one listener, so the
+      // two sets cannot both fire on the same press.
+      if (handleTeleopShortcut(event)) {
+        return;
+      }
+      if (event.key.toLowerCase() !== RESET_PANEL_KEY) {
         return;
       }
       resetPanelRelativeToHead(camera);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [camera, resetPanelRelativeToHead]);
+  }, [camera, resetPanelRelativeToHead, handleTeleopShortcut]);
 
   const isCompact = minimizeOnPlay && playInProgress;
   const isMinimizedLayout = isCompact || panelHidden;
