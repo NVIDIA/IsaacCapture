@@ -41,6 +41,7 @@ from .geometry import (
 from .tensor_group_helpers import (
     controller_aim_is_valid,
     hand_wrist_is_valid,
+    head_is_tracked,
     head_is_valid,
     joint_names_from_group_type,
 )
@@ -142,7 +143,11 @@ def _finalize_ee_output(
 ) -> tuple[NamedPoseArray, list[TransformStamped]]:
     if ee_poses_frame == EePoseFrame.HEAD:
         frame_id = head_frame
-        head_pose = _compute_head_pose(head, transform_rot, transform_trans)
+        head_pose = (
+            _compute_head_pose(head, transform_rot, transform_trans)
+            if head is not None and head_is_tracked(head)
+            else None
+        )
         if head_pose is None:
             # Tracking loss must not change coordinates or reparent wrist TFs.
             left_pose = right_pose = None
