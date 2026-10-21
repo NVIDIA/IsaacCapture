@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: remote_device_bridge
+description: "Mirrors a remote plugin session (hand tracking, schema push, wrist pull) onto the local OpenXR runtime"
+command: "./remote_device_bridge"
+version: "0.1.0"
+devices:
+  - path: "/hand/left"
+    type: "hand_tracker"
+    description: "Left hand from a remote plugin"
+  - path: "/hand/right"
+    type: "hand_tracker"
+    description: "Right hand from a remote plugin"
