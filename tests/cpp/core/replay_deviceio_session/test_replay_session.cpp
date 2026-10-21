@@ -23,8 +23,8 @@
 #include <schema/keyboard_generated.h>
 #include <schema/message_channel_generated.h>
 #include <schema/se3_tracker_generated.h>
-#include <schema/tactile_generated.h>
-#include <schema/tactile_shape_generated.h>
+#include <schema/tactile_array_generated.h>
+#include <schema/tactile_metadata_generated.h>
 
 #include <array>
 #include <atomic>
@@ -33,6 +33,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -829,7 +830,7 @@ TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider inpu
 }
 
 // =============================================================================
-// Tracker with metadata — TactileTracker (TactileShape on its own channel)
+// Tracker with metadata — TactileTracker (TactileMetadata on its own channel)
 // =============================================================================
 
 namespace
@@ -839,26 +840,34 @@ namespace
 void write_tactile_recording(const std::string& path, const std::string& base_name, bool with_metadata)
 {
     auto writer = open_writer(path);
-    core::McapTrackerChannels<core::TactileDataRecord> data(
+    core::McapTrackerChannels<core::TactileDataArrayRecord> data(
         *writer, base_name, to_string_vec(core::TactileRecordingTraits::recording_channels));
-    core::McapTrackerChannels<core::TactileShape> metadata(
+    core::McapTrackerChannels<core::TactileMetadata> metadata(
         *writer, base_name, to_string_vec(core::TactileRecordingTraits::metadata_channels));
 
     if (with_metadata)
     {
-        core::TactileShapeT shape;
-        shape.joints = { core::TactileJoint(make_pose(0, 0, 0), 0x7FFFFFFF) };
-        shape.taxels = { core::TactileTaxel(), core::TactileTaxel() };
-        metadata.write(0, core::pack<core::TactileShape>(shape), 500);
+        core::HandSkeletonRefT segments;
+        segments.joints = { core::HandJoint_WRIST };
+        core::LBST lbs;
+        lbs.segment_bind_pose = { make_pose(0, 0, 0) };
+        lbs.taxel_bind_pose = { make_pose(0, 0, 0), make_pose(0, 0, 0) };
+        lbs.taxel_segment_indices.resize(2);
+        const std::array<float, 4> weights = { 1, 0, 0, 0 };
+        lbs.taxel_segment_weights.assign(2, core::Float4(flatbuffers::span<const float, 4>(weights.data(), 4)));
+        core::TactileMetadataT shape;
+        shape.algorithm.Set(std::move(lbs));
+        shape.segments.Set(std::move(segments));
+        metadata.write(0, core::pack<core::TactileMetadata>(shape), 500);
     }
 
     for (int i = 0; i < 2; ++i)
     {
-        core::TactileDataT frame;
+        core::TactileDataArrayT frame;
         frame.taxel_force = { core::Point(static_cast<float>(i), 0, 0), core::Point(0, 0, 1) };
         const int64_t time_ns = (i + 1) * 1000;
-        const auto record =
-            core::pack_record<core::TactileDataRecord>(&frame, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
+        const auto record = core::pack_record<core::TactileDataArrayRecord>(
+            &frame, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
         data.write(0, record);
         data.write(1, record);
     }
@@ -870,7 +879,7 @@ void write_tactile_recording(const std::string& path, const std::string& base_na
 TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[replay][session][metadata]")
 {
     // Frozen wire strings, as for the record channels above.
-    CHECK(std::string_view(core::TactileShape::GetFullyQualifiedName()) == "core.TactileShape");
+    CHECK(std::string_view(core::TactileMetadata::GetFullyQualifiedName()) == "core.TactileMetadata");
     REQUIRE(core::TactileRecordingTraits::metadata_channels.size() == 1);
     CHECK(std::string_view(core::TactileRecordingTraits::metadata_channels[0]) == "tactile_metadata");
 
@@ -887,7 +896,8 @@ TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[repla
     // Read when the session opens, so it is there before the first frame.
     const auto& shape = tracker.get_metadata(*session);
     REQUIRE(shape);
-    CHECK(shape->taxels()->size() == 2);
+    REQUIRE(shape->algorithm_as_LBS());
+    CHECK(shape->algorithm_as_LBS()->taxel_bind_pose()->size() == 2);
 
     for (int i = 0; i < 2; ++i)
     {

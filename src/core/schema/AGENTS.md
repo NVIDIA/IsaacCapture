@@ -29,3 +29,6 @@ fails. The short version:
   existing offset survives; `check_schema_compat()` catches it on the struct's size.
 - **Never refresh `golden/` to clear a failing test.** The failure is the signal. Refresh
   only once breaking existing recordings is a decision you have made and stated.
+- For tactile metadata union changes, validate C++ and Python against the same freshly
+  generated schemas. Run validators and hooks through the documented uv-managed Python
+  environment; the macOS system Python may be too old for the hook dependencies.

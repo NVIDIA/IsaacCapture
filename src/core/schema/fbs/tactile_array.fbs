@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "point.fbs";
+include "timestamp.fbs";
+
+namespace core;
+
+// Per-frame tactile forces. TactileMetadata (tactile_metadata.fbs) defines the
+// taxel order and reference geometry for the same tracker.
+table TactileDataArray {
+  // Force vectors in newtons, expressed in taxel-local axes. For LBS, taxel_bind_pose
+  // defines these axes at bind; the vector length equals the metadata taxel count.
+  taxel_force: [Point] (id: 0);
+}
+
+// MCAP recording wrapper for TactileDataArray.
+table TactileDataArrayRecord {
+  data: TactileDataArray (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type TactileDataArrayRecord;

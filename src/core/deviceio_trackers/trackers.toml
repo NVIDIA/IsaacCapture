@@ -113,9 +113,10 @@ table = "GamepadSnapshot"
 python_accessor = "get_gamepad_data"
 
 # Defaults fit about 1300 taxels (12 B each); larger devices pass max_flatbuffer_size. The
-# TactileShape metadata must fit TRACKER_METADATA_MAX_SIZE, which holds 26 joints and 1000 taxels.
+# TactileMetadata must also fit the separate TRACKER_METADATA_MAX_SIZE limit.
 [[tracker]]
 name = "tactile"
-table = "TactileData"
-metadata = "TactileShape"
+table = "TactileDataArray"
+schema = "tactile_array"
+metadata = "TactileMetadata"
 max_flatbuffer_size = 16384

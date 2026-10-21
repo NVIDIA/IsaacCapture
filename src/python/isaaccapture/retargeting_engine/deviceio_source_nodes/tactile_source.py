@@ -3,8 +3,8 @@
 
 """Tactile Source Node - DeviceIO to Retargeting Engine converter.
 
-``TactileSource`` turns per-frame ``TactileData`` into a force array, and the tracker's
-``TactileShape`` metadata into the arrays that lay those forces out. Taxel and joint counts are
+``TactileSource`` turns per-frame ``TactileDataArray`` into a force array, and the tracker's
+``TactileMetadata`` metadata into the arrays that lay those forces out. Taxel and joint counts are
 fixed at construction so the retargeting graph has a static spec.
 """
 
@@ -24,7 +24,7 @@ from .deviceio_tensor_types import DeviceIOTactileTracked
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio_trackers import ITracker
-    from isaaccapture.schema import TactileData, TactileShape
+    from isaaccapture.schema import TactileDataArray, TactileMetadata
 
 
 def _float_array(name: str, rows: int, width: int) -> NDArrayType:
@@ -46,33 +46,27 @@ def TactileForces(num_taxels: int) -> TensorGroupType:
 class TactileShapeIndex(IntEnum):
     """Positions of the arrays in a :func:`TactileShapeLayout` group."""
 
-    JOINT_BIND_POSITIONS = 0
-    JOINT_BIND_ORIENTATIONS = 1
-    JOINT_PARENTS = 2
-    TAXEL_POSITIONS = 3
-    TAXEL_NORMALS = 4
-    TAXEL_TANGENTS = 5
-    TAXEL_JOINT_INDICES = 6
-    TAXEL_JOINT_WEIGHTS = 7
+    SEGMENT_JOINTS = 0
+    SEGMENT_BIND_POSE = 1
+    TAXEL_BIND_POSE = 2
+    TAXEL_SEGMENT_INDICES = 3
+    TAXEL_SEGMENT_WEIGHTS = 4
 
 
 def TactileShapeLayout(num_joints: int, num_taxels: int) -> TensorGroupType:
-    """``TactileShape`` as arrays, ordered by :class:`TactileShapeIndex`.
+    """``TactileMetadata`` as arrays, ordered by :class:`TactileShapeIndex`.
 
-    Each array is named after the ``TactileShape`` property it is read from. Joint parents and
-    joint indices are int32; the root parent stays ``TactileShape.ROOT_PARENT``.
+    HandJoint identifiers and segment indices are int32. Pose rows contain
+    position XYZ followed by quaternion XYZW, all in hand-root space.
     """
     return TensorGroupType(
         f"tactile_shape_{num_joints}x{num_taxels}",
         [
-            _float_array("joint_bind_positions", num_joints, 3),
-            _float_array("joint_bind_orientations", num_joints, 4),
-            _int_array("joint_parents", (num_joints,)),
-            _float_array("taxel_positions", num_taxels, 3),
-            _float_array("taxel_normals", num_taxels, 3),
-            _float_array("taxel_tangents", num_taxels, 3),
-            _int_array("taxel_joint_indices", (num_taxels, 4)),
-            _float_array("taxel_joint_weights", num_taxels, 4),
+            _int_array("segment_joints", (num_joints,)),
+            _float_array("segment_bind_pose", num_joints, 7),
+            _float_array("taxel_bind_pose", num_taxels, 7),
+            _int_array("taxel_segment_indices", (num_taxels, 4)),
+            _float_array("taxel_segment_weights", num_taxels, 4),
         ],
     )
 
@@ -81,7 +75,7 @@ class TactileSource(IDeviceIOSource):
     """Converter: DeviceIO ``TactileTracker`` -> per-taxel forces and the shape that lays them out.
 
     Outputs (Optional):
-        - :data:`FORCES`: :func:`TactileForces` of ``num_taxels``, in ``TactileShape`` taxel
+        - :data:`FORCES`: :func:`TactileForces` of ``num_taxels``, in ``TactileMetadata`` taxel
           order; absent when the device is inactive.
         - :data:`SHAPE`: :func:`TactileShapeLayout` of ``num_joints`` x ``num_taxels``; absent
           until the tracker holds the device's shape. The tracker publishes no forces before then.
@@ -104,7 +98,7 @@ class TactileSource(IDeviceIOSource):
 
         Args:
             name: Unique name for this source node.
-            collection_id: Tensor collection ID of the producer's ``TactileData`` stream.
+            collection_id: Tensor collection ID of the producer's ``TactileDataArray`` stream.
             num_joints: Joint count of the device skeleton; fixes the shape output spec.
             num_taxels: Taxel count of the device; fixes the output specs.
             max_flatbuffer_size: Override for ``TactileTracker``'s default collection size.
@@ -146,8 +140,8 @@ class TactileSource(IDeviceIOSource):
 
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
         """Publish the frame's forces and a copy of the shape; ``set_none()`` whichever is absent."""
-        data: "TactileData | None" = inputs["deviceio_tactile"][0]
-        shape: "TactileShape | None" = inputs["deviceio_tactile"][1]
+        data: "TactileDataArray | None" = inputs["deviceio_tactile"][0]
+        shape: "TactileMetadata | None" = inputs["deviceio_tactile"][1]
 
         forces_out = outputs[self.FORCES]
         if data is None:
@@ -164,14 +158,26 @@ class TactileSource(IDeviceIOSource):
         if shape is None:
             shape_out.set_none()
             return
-        joints, taxels = len(shape.joint_parents), len(shape.taxel_positions)
+        algorithm = shape.algorithm
+        segments = shape.segments
+        if algorithm is None or segments is None:
+            raise ValueError(
+                f"{self.name}: metadata must specify an algorithm and segments"
+            )
+        joints, taxels = len(segments.joints), len(algorithm.taxel_bind_pose)
         if (joints, taxels) != (self._num_joints, self._num_taxels):
             raise ValueError(
                 f"{self.name}: shape has {joints} joints and {taxels} taxels, "
                 f"source expects {self._num_joints} and {self._num_taxels}"
             )
-        for index, tensor_type in enumerate(shape_out.group_type.types):
-            value = getattr(shape, tensor_type.name)
+        values = (
+            np.asarray(segments.joints, dtype=np.int32),
+            algorithm.segment_bind_pose,
+            algorithm.taxel_bind_pose,
+            algorithm.taxel_segment_indices,
+            algorithm.taxel_segment_weights,
+        )
+        for index, value in enumerate(values):
             # Copied: the views alias the metadata the tracker holds and compares later pushes to.
             shape_out[index] = value.astype(
                 np.int32 if value.dtype == np.uint32 else value.dtype

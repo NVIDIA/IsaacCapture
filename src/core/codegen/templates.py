@@ -21,7 +21,7 @@ def _header() -> str:
 
 
 def camel_to_snake(value: str) -> str:
-    """Convert CamelCase to snake_case (TactileShape -> tactile_shape)."""
+    """Convert CamelCase to snake_case (TactileMetadata -> tactile_metadata)."""
     return re.sub(
         r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", value
     ).lower()

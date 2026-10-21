@@ -8,15 +8,15 @@ SPDX-License-Identifier: Apache-2.0
 A mock tactile device and a consumer for exercising the tactile tracker without hardware.
 
 - `feeder` publishes a 26-joint hand with 200 taxels by default. Each frame carries one
-  `TactileData`; the `TactileShape` metadata goes whole when the feeder starts and every second
-  after that. It publishes through `TensorPushTracker` on a `DeviceIOSession`, as a tactile
-  plugin would through `SchemaPusher`.
+  `TactileDataArray`; it publishes `TactileMetadata` when it starts and every second after that.
+  It publishes through `TensorPushTracker` on a `DeviceIOSession`, as a tactile plugin would
+  through `SchemaPusher`.
 - `printer` reads one `TactileTracker` directly. It discovers the joint and taxel counts from
-  `TactileShape`, prints the first and last taxel forces, and records the session to MCAP.
+  `TactileMetadata`, prints the first and last taxel forces, and records the session to MCAP.
 
 ```text
-feeder -> "tactile"          (TactileData, every frame)
-       -> "tactile/metadata" (TactileShape, at start and every --metadata-interval s)
+feeder -> "tactile"          (TactileDataArray, every frame)
+       -> "tactile/metadata" (TactileMetadata, at start and every --metadata-interval s)
             -> TactileTracker -> printer, and tactile/* MCAP channels
 ```
 
@@ -46,5 +46,10 @@ python -m isaaccapture_examples.tactile.printer --replay recordings/tactile_<tim
 ```
 
 Use feeder options `--joints` and `--taxels` to change the shape; the printer discovers both
-counts from metadata. The `TactileShape` must fit `TRACKER_METADATA_MAX_SIZE`, which holds 26
+counts from metadata. The `TactileMetadata` must fit `TRACKER_METADATA_MAX_SIZE`, which holds 26
 joints and 1000 taxels. The two processes need only agree on `--collection-id`.
+
+Metadata contains an ordered `HandSkeletonRef` and an `LBS` binding. Segment indices address
+that joint list, not OpenXR ordinals. Python pose arrays have seven columns: position XYZ in
+meters followed by unit quaternion XYZW; per-frame force components are in taxel-local axes
+and measured in newtons.

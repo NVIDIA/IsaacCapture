@@ -3,7 +3,7 @@
 
 """Print tactile frames from a TactileTracker and record them to MCAP.
 
-The tracker discovers the TactileShape published by
+The tracker discovers the TactileMetadata published by
 ``python -m isaaccapture_examples.tactile.feeder`` and derives the joint and taxel counts from
 it. The session records the "tactile" channels to ``--output``. ``--replay FILE`` prints a
 recording instead, with no OpenXR runtime.
@@ -66,10 +66,15 @@ def run(session, tracker: TactileTracker, args: argparse.Namespace) -> int:
 
         shape = tracker.get_metadata(session)
         if not shape_seen and shape is not None:
-            expected_taxels = len(shape.taxel_positions)
+            algorithm, segments = shape.algorithm, shape.segments
+            if algorithm is None or segments is None:
+                raise ValueError(
+                    "TactileMetadata must specify an algorithm and segments"
+                )
+            expected_taxels = len(algorithm.taxel_bind_pose)
             print(
                 f"{GREEN}[{elapsed:6.2f}s] (shape received) "
-                f"{len(shape.joint_parents)} joints, "
+                f"{len(segments.joints)} joints, "
                 f"{expected_taxels} taxels{RESET}"
             )
             shape_seen = True
@@ -86,7 +91,7 @@ def run(session, tracker: TactileTracker, args: argparse.Namespace) -> int:
             if expected_taxels is not None and len(force_array) != expected_taxels:
                 raise ValueError(
                     f"frame has {len(force_array)} taxels, "
-                    f"TactileShape declares {expected_taxels}"
+                    f"TactileMetadata declares {expected_taxels}"
                 )
             if args.replay:
                 last_replay_forces = force_array.copy()

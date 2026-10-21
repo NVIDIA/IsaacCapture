@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Publish mock tactile frames and their TactileShape metadata, as a tactile device would.
+"""Publish mock tactile frames and their TactileMetadata metadata, as a tactile device would.
 
-Each frame pushes one TactileData sample on the data collection. The encoded TactileShape goes
+Each frame pushes one TactileDataArray sample on the data collection. The encoded TactileMetadata goes
 on "<collection_id>/metadata" when the feeder starts and every ``--metadata-interval`` seconds
 after that. Pair it with ``python -m isaaccapture_examples.tactile.printer``.
 """
@@ -24,8 +24,11 @@ from isaaccapture.oxr import OpenXRSession
 from isaaccapture.schema import (
     TRACKER_METADATA_MAX_SIZE,
     TRACKER_METADATA_TENSOR_IDENTIFIER,
-    TactileData,
-    TactileShape,
+    TactileDataArray,
+    TactileMetadata,
+    HandJoint,
+    HandSkeletonRef,
+    LBS,
     tracker_metadata_collection_id,
 )
 
@@ -46,11 +49,9 @@ FINGER_FIRST_JOINTS = (2, 6, 11, 16, 21)
 FINGER_DISTAL_JOINTS = (4, 9, 14, 19, 24)
 
 
-def mock_shape(num_joints: int, num_taxels: int) -> TactileShape:
+def mock_shape(num_joints: int, num_taxels: int) -> TactileMetadata:
     """Build a flat hand in hand-root space with taxels on its distal segments."""
     positions = np.zeros((num_joints, 3), np.float32)
-    parents = np.full(num_joints, WRIST, np.uint32)
-    parents[WRIST] = TactileShape.ROOT_PARENT
     positions[0] = (0.0, 0.05, 0.0)
 
     taxel_joints = []
@@ -67,8 +68,6 @@ def mock_shape(num_joints: int, num_taxels: int) -> TactileShape:
                 0.02 + 0.025 * (joint - first),
                 0.0,
             )
-            if joint > first:
-                parents[joint] = joint - 1
         taxel_joints.append(min(FINGER_DISTAL_JOINTS[finger], last))
 
     if not taxel_joints:
@@ -89,15 +88,15 @@ def mock_shape(num_joints: int, num_taxels: int) -> TactileShape:
         joint_indices[taxel] = joint
         joint_weights[taxel, 0] = 1.0
 
-    return TactileShape(
-        joint_bind_positions=positions,
-        joint_bind_orientations=np.tile([0.0, 0.0, 0.0, 1.0], (num_joints, 1)),
-        joint_parents=parents,
-        taxel_positions=taxel_positions,
-        taxel_normals=np.tile([0.0, 0.0, -1.0], (num_taxels, 1)),
-        taxel_tangents=np.tile([1.0, 0.0, 0.0], (num_taxels, 1)),
-        taxel_joint_indices=joint_indices,
-        taxel_joint_weights=joint_weights,
+    segment_poses = np.column_stack(
+        (positions, np.tile([0.0, 0.0, 0.0, 1.0], (num_joints, 1)))
+    )
+    taxel_poses = np.column_stack(
+        (taxel_positions, np.tile([1.0, 0.0, 0.0, 0.0], (num_taxels, 1)))
+    )
+    return TactileMetadata(
+        algorithm=LBS(segment_poses, taxel_poses, joint_indices, joint_weights),
+        segments=HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
     )
 
 
@@ -120,7 +119,7 @@ def main(argv: list[str]) -> int:
         "--metadata-interval",
         type=float,
         default=1.0,
-        help="Seconds between pushes of the TactileShape",
+        help="Seconds between pushes of the TactileMetadata",
     )
     parser.add_argument(
         "--duration",
@@ -142,11 +141,11 @@ def main(argv: list[str]) -> int:
     shape = mock_shape(args.joints, args.taxels).to_bytes()
     if len(shape) > TRACKER_METADATA_MAX_SIZE:
         parser.error(
-            f"{args.joints} joints and {args.taxels} taxels make a {len(shape)} B TactileShape; "
+            f"{args.joints} joints and {args.taxels} taxels make a {len(shape)} B TactileMetadata; "
             f"a tracker accepts at most {TRACKER_METADATA_MAX_SIZE} B"
         )
     logger.info(
-        "Publishing %d joints and %d taxels on '%s'; TactileShape is %d B",
+        "Publishing %d joints and %d taxels on '%s'; TactileMetadata is %d B",
         args.joints,
         args.taxels,
         args.collection_id,
@@ -184,7 +183,7 @@ def main(argv: list[str]) -> int:
                 session.update()
                 t = time.monotonic() - start
                 data_tracker.push(
-                    session, TactileData(mock_forces(args.taxels, t)).to_bytes()
+                    session, TactileDataArray(mock_forces(args.taxels, t)).to_bytes()
                 )
                 if t - last_metadata_push >= args.metadata_interval:
                     metadata_tracker.push(session, shape)

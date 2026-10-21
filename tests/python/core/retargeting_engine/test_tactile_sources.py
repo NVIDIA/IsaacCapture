@@ -16,7 +16,13 @@ from isaaccapture.retargeting_engine.deviceio_source_nodes import (
 )
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
 from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
-from isaaccapture.schema import TactileData, TactileShape
+from isaaccapture.schema import (
+    HandJoint,
+    HandSkeletonRef,
+    LBS,
+    TactileDataArray,
+    TactileMetadata,
+)
 
 NUM_JOINTS = 2
 NUM_TAXELS = 3
@@ -41,19 +47,20 @@ def _outputs(source) -> dict:
     return {name: _make_output_group(gt) for name, gt in source.output_spec().items()}
 
 
-def _shape(num_joints: int = NUM_JOINTS, num_taxels: int = NUM_TAXELS) -> TactileShape:
+def _shape(
+    num_joints: int = NUM_JOINTS, num_taxels: int = NUM_TAXELS
+) -> TactileMetadata:
     indices = np.zeros((num_taxels, 4), np.uint32)
     weights = np.zeros((num_taxels, 4), np.float32)
     weights[:, 0] = 1.0
-    return TactileShape(
-        joint_bind_positions=np.zeros((num_joints, 3), np.float32),
-        joint_bind_orientations=np.tile([0.0, 0.0, 0.0, 1.0], (num_joints, 1)),
-        joint_parents=[TactileShape.ROOT_PARENT] + list(range(num_joints - 1)),
-        taxel_positions=np.full((num_taxels, 3), 0.01, np.float32),
-        taxel_normals=np.tile([0.0, 0.0, 1.0], (num_taxels, 1)),
-        taxel_tangents=np.tile([1.0, 0.0, 0.0], (num_taxels, 1)),
-        taxel_joint_indices=indices,
-        taxel_joint_weights=weights,
+    segment_poses = np.zeros((num_joints, 7), np.float32)
+    segment_poses[:, 6] = 1
+    taxel_poses = np.zeros((num_taxels, 7), np.float32)
+    taxel_poses[:, :3] = 0.01
+    taxel_poses[:, 6] = 1
+    return TactileMetadata(
+        LBS(segment_poses, taxel_poses, indices, weights),
+        HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
     )
 
 
@@ -89,7 +96,7 @@ class TestTactileSource:
 
     def test_poll_reads_data_and_metadata_from_one_tracker(self):
         src = _source()
-        data = TactileData(np.zeros((NUM_TAXELS, 3), np.float32))
+        data = TactileDataArray(np.zeros((NUM_TAXELS, 3), np.float32))
         shape = _shape()
         src._tracker = _FakeTracker(data, shape)
 
@@ -102,22 +109,22 @@ class TestTactileSource:
         src = _source()
         forces = np.arange(9, dtype=np.float32).reshape(3, 3)
         outputs = _outputs(src)
-        src.compute(_inputs(src, TactileData(forces), _shape()), outputs)
+        src.compute(_inputs(src, TactileDataArray(forces), _shape()), outputs)
 
         np.testing.assert_array_equal(
             np.asarray(outputs[TactileSource.FORCES][0]), forces
         )
         group = outputs[TactileSource.SHAPE]
         assert not group.is_none
-        parents = np.asarray(group[TactileShapeIndex.JOINT_PARENTS])
-        assert parents.dtype == np.int32
-        assert parents.tolist() == [TactileShape.ROOT_PARENT, 0]
+        joints = np.asarray(group[TactileShapeIndex.SEGMENT_JOINTS])
+        assert joints.dtype == np.int32
+        assert joints.tolist() == [0, 1]
         assert (
-            np.asarray(group[TactileShapeIndex.TAXEL_JOINT_INDICES]).dtype == np.int32
+            np.asarray(group[TactileShapeIndex.TAXEL_SEGMENT_INDICES]).dtype == np.int32
         )
         np.testing.assert_array_equal(
-            np.asarray(group[TactileShapeIndex.TAXEL_NORMALS]),
-            np.tile([0.0, 0.0, 1.0], (NUM_TAXELS, 1)),
+            np.asarray(group[TactileShapeIndex.TAXEL_BIND_POSE])[:, 3:],
+            np.tile([0.0, 0.0, 0.0, 1.0], (NUM_TAXELS, 1)),
         )
 
     def test_shape_outputs_do_not_alias_the_metadata(self):
@@ -149,7 +156,7 @@ class TestTactileSource:
 
     def test_taxel_count_mismatch_raises(self):
         src = _source(num_taxels=4)
-        frame = TactileData(np.zeros((3, 3), np.float32))
+        frame = TactileDataArray(np.zeros((3, 3), np.float32))
         with pytest.raises(ValueError, match="3 taxels"):
             src.compute(_inputs(src, frame, None), _outputs(src))
 

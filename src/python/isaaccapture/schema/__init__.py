@@ -57,9 +57,13 @@ from ._schema import (
     OgloGloveSample,
     OgloGloveSampleRecord,
     # Tactile types.
-    TactileData,
-    TactileDataRecord,
-    TactileShape,
+    TactileDataArray,
+    TactileDataArrayRecord,
+    TactileMetadata,
+    HandSkeletonRef,
+    SegmentSource,
+    AlgorithmSource,
+    LBS,
     # Tracker metadata, for producers of a tracker's metadata.
     TRACKER_METADATA_MAX_SIZE,
     TRACKER_METADATA_TENSOR_IDENTIFIER,
@@ -197,9 +201,13 @@ __all__ = [
     "OgloGloveSample",
     "OgloGloveSampleRecord",
     # Tactile types.
-    "TactileData",
-    "TactileDataRecord",
-    "TactileShape",
+    "TactileDataArray",
+    "TactileDataArrayRecord",
+    "TactileMetadata",
+    "HandSkeletonRef",
+    "SegmentSource",
+    "AlgorithmSource",
+    "LBS",
     # Tracker metadata.
     "TRACKER_METADATA_MAX_SIZE",
     "TRACKER_METADATA_TENSOR_IDENTIFIER",
