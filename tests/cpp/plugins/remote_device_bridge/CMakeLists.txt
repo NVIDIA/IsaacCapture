@@ -4,7 +4,9 @@
 cmake_minimum_required(VERSION 3.20)
 
 add_executable(remote_plugin_session_tests
+    test_bridge_limits.cpp
     test_clock_offset_estimator.cpp
+    test_latency_stats.cpp
     test_remote_plugin_session.cpp
     test_websocket_transport.cpp
     test_wire_codec.cpp
