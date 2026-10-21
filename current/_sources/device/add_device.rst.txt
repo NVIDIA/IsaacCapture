@@ -127,9 +127,6 @@ Use ``direction = "push"`` when Teleop **pushes** a typed table to a plugin (e.g
 ``HapticCommand.endpoint`` samples on one collection (e.g. ``HapticCommandReaderTracker`` for Manus
 haptics) stay hand-written — see :doc:`../references/generated_trackers`.
 
-A device that describes itself once (a layout, a calibration) rather than in every frame declares
-that description as the tracker's ``metadata``; see :ref:`tracker-metadata`.
-
 For what the generator emits, which trackers it covers today, and which shapes are not supported
 yet, see :doc:`../references/generated_trackers`.
 
