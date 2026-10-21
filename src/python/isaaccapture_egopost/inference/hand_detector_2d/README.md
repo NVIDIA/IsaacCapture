@@ -12,7 +12,7 @@ optional source of those boxes.** Use your preferred 2D detector or ground-truth
 annotations by exporting the saved-box format below; no RT-DETR weights or
 RT-DETR model access are needed for that path.
 
-All commands run from `ego-reconstruction/EgoHand/`.
+All commands run from `src/python/isaaccapture_egopost/`.
 
 ## Use your own detector or ground-truth boxes
 

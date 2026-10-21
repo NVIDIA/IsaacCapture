@@ -9,7 +9,7 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
 
 Use quality control to inspect a reconstructed clip, or combine hand results
 with an external camera trajectory for world-coordinate work. All commands run
-from `ego-reconstruction/EgoHand/`.
+from `src/python/isaaccapture_egopost/`.
 
 ## 3D quality control
 

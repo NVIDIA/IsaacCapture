@@ -4,7 +4,7 @@
 """The SOMAHand 25-joint skeleton: one definition, for the whole package.
 
 Matches ``soma.hand.SOMAHandLayer`` from the PyPI distribution ``py-soma-x``
-(version pinned in ``EgoHand/requirements.txt``). The layer exposes the topology
+(version pinned in ``requirements.txt``). The layer exposes the topology
 as ``joint_parent_ids`` and the joint order as ``rig_data["joint_names"]``.
 These constants are a static copy of that 25-joint contract so standalone QC
 can run without importing SOMA/PyTorch or loading the model assets.

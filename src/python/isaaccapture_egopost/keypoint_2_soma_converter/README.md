@@ -33,7 +33,7 @@ The main command uses GrabCut; step 4 also provides the Transformers SAM3 varian
 From the repository root:
 
 ```bash
-cd EgoHand/keypoint_2_soma_converter
+cd src/python/isaaccapture_egopost/keypoint_2_soma_converter
 ```
 
 Run the remaining commands from this directory.
@@ -299,4 +299,4 @@ not copied into the new output directory.
 - `src/`: fitting pipeline, comparison renderer, SOMA adapter and asset manifest.
 - `pyproject.toml`, `requirements.txt`, `environment.yml`: installation metadata and setup.
 - `sample/comparison.jpg`: the last-frame comparison screenshot.
-- [`../../LICENSE.md`](../../LICENSE.md): the EgoHand OpenMDW-1.1 license.
+- [`LICENSES/LicenseRef-OpenMDW-1.1.txt`](../../../../LICENSES/LicenseRef-OpenMDW-1.1.txt): the EgoHand OpenMDW-1.1 license.

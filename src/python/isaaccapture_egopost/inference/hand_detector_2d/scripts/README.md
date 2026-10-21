@@ -24,7 +24,7 @@ folder; see [the Docker guide](../../docker/README.md) for its wrapper (`detecto
 
 ## Usage
 
-Run these commands from `EgoHand/`. This example uses source-frame boxes with
+Run these commands from `src/python/isaaccapture_egopost/`. This example uses source-frame boxes with
 perspective cropping, which supports the distorted-camera calibration supplied
 for the NVIDIA evaluation videos.
 

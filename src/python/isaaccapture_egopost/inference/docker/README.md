@@ -17,7 +17,7 @@ component README:
 Both images bake in the source; checkpoints and input videos are mounted at
 run time unless you bundle them at build time.
 
-DINOv3 is built into the image from `EgoHand/requirements-dinov3.txt`; building
+DINOv3 is built into the image from `src/python/isaaccapture_egopost/requirements-dinov3.txt`; building
 needs GitHub access, inference does not.
 
 ## Prerequisites

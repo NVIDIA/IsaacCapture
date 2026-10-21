@@ -8,8 +8,8 @@ in ``hand_detector_2d.hand_bbox_detector``, so it drops into
 ``EgoHandInferencePipeline`` wherever any other conforming detector goes.
 
 ``onnx_model`` and ``tracking`` are vendored from the standalone
-``hand_detector`` package in the ego-reconstruction repo; see their docstrings
-for the deliberate deviations from upstream.
+``hand_detector`` package; see their docstrings for the deliberate deviations
+from upstream.
 """
 
 from .detector import RTDetrConfig, RTDetrHandBBoxDetector

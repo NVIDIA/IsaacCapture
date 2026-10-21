@@ -3,8 +3,8 @@
 
 """RT-DETRv2 R18 egocentric hand detector, ONNX runtime only.
 
-Vendored from the standalone ``hand_detector`` package in the
-ego-reconstruction repo (``hand_detector/hand_detector.py``). Only the library
+Vendored from the standalone ``hand_detector`` package
+(``hand_detector/hand_detector.py``). Only the library
 surface is kept: the CLI, the video reader, and the PIL drawing helpers are
 dropped because EgoHand feeds already-decoded frames and renders overlays itself.
 

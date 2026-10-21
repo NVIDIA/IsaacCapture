@@ -17,7 +17,7 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
     <img src="https://img.shields.io/badge/Hugging_Face-EgoHand--v1-ffd21e"
          alt="Hugging Face: EgoHand-v1">
   </a>
-  <a href="../LICENSE.md">
+  <a href="../../../LICENSES/LicenseRef-OpenMDW-1.1.txt">
     <img src="https://img.shields.io/badge/License-OpenMDW--1.1-green"
          alt="License: OpenMDW-1.1">
   </a>
@@ -63,8 +63,8 @@ The modular pipeline includes hand detection, adaptive temporal smoothing, and w
 ### Clone and install
 
 ```bash
-git clone -b ego4robo/1.0-ga ssh://git@gitlab-master.nvidia.com:12051/cloudxr/ego-reconstruction.git
-cd ego-reconstruction/EgoHand
+git clone https://github.com/NVIDIA/IsaacCapture.git
+cd IsaacCapture/src/python/isaaccapture_egopost
 
 uv venv .venv --python 3.12
 uv pip install --python .venv/bin/python torch
@@ -260,7 +260,7 @@ image or separate detector and reconstruction images.
 
 ## 📄 License
 
-EgoHand is licensed under [OpenMDW-1.1](../LICENSE.md). See
+EgoHand is licensed under [OpenMDW-1.1](../../../LICENSES/LicenseRef-OpenMDW-1.1.txt). See
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for third-party licenses.
 
 **NOTICE AND DISCLAIMER:** This software automatically retrieves, accesses, or

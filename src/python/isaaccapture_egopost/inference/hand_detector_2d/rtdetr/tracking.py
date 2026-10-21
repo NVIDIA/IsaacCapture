@@ -3,8 +3,8 @@
 
 """Temporal identity assignment + anchor-freeze box rules for RT-DETR hand tracks.
 
-Vendored from the standalone ``hand_detector`` package in the ego-reconstruction
-repo (``hand_detector/hand_tracker.py``). The upstream ``track_video`` helper is
+Vendored from the standalone ``hand_detector`` package
+(``hand_detector/hand_tracker.py``). The upstream ``track_video`` helper is
 dropped -- EgoHand feeds already-decoded frames -- but the algorithm and its tuned
 constants are unchanged.
 
