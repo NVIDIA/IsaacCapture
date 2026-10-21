@@ -52,7 +52,7 @@ jest.mock('react', () => ({
   useEffect: jest.fn(),
 }));
 
-test('places the whole replay trail in calibrated scene space and hides it while paused', () => {
+test('places the whole replay trail in aligned scene space and hides it while paused', () => {
   const tree = TraceVisualization({ showTrace: true });
   const points = (tree.props.children as ReactElement<{ object: Points }>[])[0].props.object;
   const worldPoint = (index: number) => {

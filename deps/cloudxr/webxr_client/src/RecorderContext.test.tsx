@@ -54,30 +54,6 @@ beforeEach(() => {
 
 afterEach(() => act(() => root.unmount()));
 
-test('exposes cross-session calibration and resumes after the operator calibrates', () => {
-  const space = new EventTarget() as XRReferenceSpace;
-  const original = { inputSources: [] } as unknown as XRSession;
-  act(() => current.startRecord());
-  act(() => current.recorder.beginFrame(frame(original), space));
-  act(() => current.stopRecord());
-  expect(current.savedRecording?.frames).toHaveLength(1);
-  act(() => current.startReplay());
-  const next = { inputSources: [] } as unknown as XRSession;
-  act(() => {
-    current.recorder.beginFrame(frame(next), space);
-    current.onFrameState();
-  });
-  expect(current.mode).toBe('replaying');
-  expect(current.replayNeedsCalibration).toBe(true);
-  act(() => current.calibrateReplay());
-  act(() => {
-    current.recorder.beginFrame(frame(next), space);
-    current.onFrameState();
-  });
-  expect(current.replayNeedsCalibration).toBe(false);
-  expect(current.recorder.currentFrame).not.toBeNull();
-});
-
 test('saves interrupted recording and updates the UI when the tracking origin changes', () => {
   const session = { inputSources: [] } as unknown as XRSession;
   const space = new EventTarget() as XRReferenceSpace;

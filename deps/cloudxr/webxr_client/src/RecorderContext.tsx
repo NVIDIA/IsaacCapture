@@ -45,8 +45,6 @@ export interface RecorderContextValue {
   stopRecord: () => void;
   startReplay: () => void;
   stopReplay: () => void;
-  calibrateReplay: () => void;
-  replayNeedsCalibration: boolean;
   recordingInterrupted: boolean;
   onFrameState: () => void;
   setReplayPacing: (pacing: ReplayPacing) => void;
@@ -75,7 +73,6 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<'idle' | 'recording' | 'replaying'>('idle');
   const [savedRecording, setSavedRecordingState] = useState<Recording | null>(null);
   const [recordedFrameCount, setRecordedFrameCount] = useState(0);
-  const [replayNeedsCalibration, setReplayNeedsCalibration] = useState(false);
   const [replayPacing, setReplayPacingState] = useState<ReplayPacing>('time');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -99,7 +96,6 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     if (recorder.mode !== 'idle' || !savedRecording) return;
     recorder.startReplay(savedRecording, true, replayPacing);
     setMode('replaying');
-    setReplayNeedsCalibration(recorder.replayNeedsCalibration);
   }, [recorder, replayPacing, savedRecording]);
 
   const stopReplay = useCallback(() => {
@@ -107,8 +103,6 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     recorder.stopReplay();
     setMode('idle');
   }, [recorder]);
-
-  const calibrateReplay = useCallback(() => recorder.calibrateReplay(), [recorder]);
 
   const onFrameState = useCallback(() => {
     if (mode !== recorder.mode) {
@@ -118,10 +112,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       }
       setMode(recorder.mode);
     }
-    if (replayNeedsCalibration !== recorder.replayNeedsCalibration) {
-      setReplayNeedsCalibration(recorder.replayNeedsCalibration);
-    }
-  }, [mode, recorder, replayNeedsCalibration]);
+  }, [mode, recorder]);
 
   const setReplayPacing = useCallback((pacing: ReplayPacing) => {
     setReplayPacingState(pacing);
@@ -185,8 +176,6 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     stopRecord,
     startReplay,
     stopReplay,
-    calibrateReplay,
-    replayNeedsCalibration,
     recordingInterrupted: recorder.recordingInterrupted,
     onFrameState,
     setReplayPacing,
