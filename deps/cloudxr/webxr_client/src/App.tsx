@@ -212,6 +212,10 @@ function AppContent() {
   const [errorMessage, setErrorMessage] = useState('');
   // CloudXR session reference
   const [cloudXRSession, setCloudXRSession] = useState<CloudXR.Session | null>(null);
+  // The space CloudXR resolved for the current session, so the recorder can express
+  // poses in the same frame the stream uses. Cleared with the session: a space from an
+  // ended session yields no poses.
+  const [streamingSpace, setStreamingSpace] = useState<XRReferenceSpace | null>(null);
   // XR mode state for UI visibility
   const [isXRMode, setIsXRMode] = useState(false);
   // Server address being used for connection
@@ -701,6 +705,7 @@ function AppContent() {
     stopStreamTestCountdown();
     streamTest.value = null;
     setCloudXRSession(session);
+    if (!session) setStreamingSpace(null);
   };
 
   const systemNoticeTimerRef = useRef<number | null>(null);
@@ -1196,13 +1201,14 @@ function AppContent() {
               <RecorderComponent
                 isConnected={isConnected}
                 showTrace={config.showTrace ?? false}
-                referenceSpaceType={config.referenceSpaceType}
+                streamingSpace={streamingSpace}
               />
               <TraceVisualization showTrace={config.showTrace ?? false} />
               <CloudXRComponent
                 config={config}
                 applicationName={`Isaac Teleop Web Client (${config.teleopPath})`}
                 trackingFrameAdapter={recorder.adaptTrackingFrame}
+                onReferenceSpace={setStreamingSpace}
                 iceServers={iceServersConfig}
                 reconnect={
                   config?.reconnectEnabled
