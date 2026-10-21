@@ -9,9 +9,9 @@ namespace core;
 // Per-frame tactile forces. TactileMetadata (tactile_metadata.fbs) defines the
 // taxel order and reference geometry for the same tracker.
 table TactileDataArray {
-  // Force vectors in newtons, expressed in taxel-local axes. For LBS, taxel_bind_pose
-  // defines these axes at bind; the vector length equals the metadata taxel count.
-  taxel_force: [Point] (id: 0);
+  // Force vectors in newtons, expressed in taxel-local axes. For LBS, taxel_bind_poses
+  // define these axes at bind; the vector length equals the metadata taxel count.
+  taxel_forces: [Point] (id: 0);
 }
 
 // MCAP recording wrapper for TactileDataArray.

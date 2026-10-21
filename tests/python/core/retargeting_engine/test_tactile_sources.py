@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
-    TactileShapeIndex,
-    TactileShapeLayout,
+    TactileLBSLayoutIndex,
+    TactileLBSLayout,
     TactileSource,
 )
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
@@ -24,22 +24,22 @@ from isaaccapture.schema import (
     TactileMetadata,
 )
 
-NUM_JOINTS = 2
+NUM_SEGMENTS = 2
 NUM_TAXELS = 3
 
 
 def _source(**kwargs) -> TactileSource:
     args = dict(
-        collection_id="tactile/right", num_joints=NUM_JOINTS, num_taxels=NUM_TAXELS
+        collection_id="tactile/right", num_segments=NUM_SEGMENTS, num_taxels=NUM_TAXELS
     )
     args.update(kwargs)
     return TactileSource("tactile", **args)
 
 
-def _inputs(source, data, shape) -> dict:
+def _inputs(source, data, metadata) -> dict:
     tg = TensorGroup(source.input_spec()["deviceio_tactile"])
     tg[0] = data
-    tg[1] = shape
+    tg[1] = metadata
     return {"deviceio_tactile": tg}
 
 
@@ -47,20 +47,20 @@ def _outputs(source) -> dict:
     return {name: _make_output_group(gt) for name, gt in source.output_spec().items()}
 
 
-def _shape(
-    num_joints: int = NUM_JOINTS, num_taxels: int = NUM_TAXELS
+def _metadata(
+    num_segments: int = NUM_SEGMENTS, num_taxels: int = NUM_TAXELS
 ) -> TactileMetadata:
     indices = np.zeros((num_taxels, 4), np.uint32)
     weights = np.zeros((num_taxels, 4), np.float32)
     weights[:, 0] = 1.0
-    segment_poses = np.zeros((num_joints, 7), np.float32)
+    segment_poses = np.zeros((num_segments, 7), np.float32)
     segment_poses[:, 6] = 1
     taxel_poses = np.zeros((num_taxels, 7), np.float32)
     taxel_poses[:, :3] = 0.01
     taxel_poses[:, 6] = 1
     return TactileMetadata(
         LBS(segment_poses, taxel_poses, indices, weights),
-        HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
+        HandSkeletonRef([HandJoint(i) for i in range(num_segments)]),
     )
 
 
@@ -88,71 +88,72 @@ class TestTactileSource:
         forces = src.output_spec()[TactileSource.FORCES]
         assert forces.is_optional
         assert forces.inner_type.types[0].shape == (NUM_TAXELS, 3)
-        assert src.output_spec()[TactileSource.SHAPE].is_optional
+        assert src.output_spec()[TactileSource.LAYOUT].is_optional
 
     def test_index_matches_layout_order(self):
-        names = [t.name for t in TactileShapeLayout(NUM_JOINTS, NUM_TAXELS).types]
-        assert names == [member.name.lower() for member in TactileShapeIndex]
+        names = [t.name for t in TactileLBSLayout(NUM_SEGMENTS, NUM_TAXELS).types]
+        assert names == [member.name.lower() for member in TactileLBSLayoutIndex]
 
     def test_poll_reads_data_and_metadata_from_one_tracker(self):
         src = _source()
         data = TactileDataArray(np.zeros((NUM_TAXELS, 3), np.float32))
-        shape = _shape()
-        src._tracker = _FakeTracker(data, shape)
+        metadata = _metadata()
+        src._tracker = _FakeTracker(data, metadata)
 
         polled = src.poll_tracker(None)["deviceio_tactile"]
 
         assert polled[0] is data
-        assert polled[1] is shape
+        assert polled[1] is metadata
 
     def test_active_conversion(self):
         src = _source()
         forces = np.arange(9, dtype=np.float32).reshape(3, 3)
         outputs = _outputs(src)
-        src.compute(_inputs(src, TactileDataArray(forces), _shape()), outputs)
+        src.compute(_inputs(src, TactileDataArray(forces), _metadata()), outputs)
 
         np.testing.assert_array_equal(
             np.asarray(outputs[TactileSource.FORCES][0]), forces
         )
-        group = outputs[TactileSource.SHAPE]
+        group = outputs[TactileSource.LAYOUT]
         assert not group.is_none
-        joints = np.asarray(group[TactileShapeIndex.SEGMENT_JOINTS])
+        joints = np.asarray(group[TactileLBSLayoutIndex.SEGMENT_JOINT_IDS])
         assert joints.dtype == np.int32
         assert joints.tolist() == [0, 1]
         assert (
-            np.asarray(group[TactileShapeIndex.TAXEL_SEGMENT_INDICES]).dtype == np.int32
+            np.asarray(group[TactileLBSLayoutIndex.TAXEL_SEGMENT_INDICES]).dtype
+            == np.int32
         )
         np.testing.assert_array_equal(
-            np.asarray(group[TactileShapeIndex.TAXEL_BIND_POSE])[:, 3:],
+            np.asarray(group[TactileLBSLayoutIndex.TAXEL_BIND_POSES])[:, 3:],
             np.tile([0.0, 0.0, 0.0, 1.0], (NUM_TAXELS, 1)),
         )
 
-    def test_shape_outputs_do_not_alias_the_metadata(self):
+    def test_layout_outputs_do_not_alias_the_metadata(self):
         src = _source()
-        shape = _shape()
-        encoded = shape.to_bytes()
+        metadata = _metadata()
+        encoded = metadata.to_bytes()
         outputs = _outputs(src)
-        src.compute(_inputs(src, None, shape), outputs)
+        src.compute(_inputs(src, None, metadata), outputs)
 
-        group = outputs[TactileSource.SHAPE]
-        for index in TactileShapeIndex:
+        group = outputs[TactileSource.LAYOUT]
+        for index in TactileLBSLayoutIndex:
             array = np.asarray(group[index])
             array[...] = 7
-        assert shape.to_bytes() == encoded
+        assert metadata.to_bytes() == encoded
 
-    def test_shape_without_data(self):
+    def test_metadata_without_data(self):
         src = _source()
         outputs = _outputs(src)
-        src.compute(_inputs(src, None, _shape()), outputs)
+        src.compute(_inputs(src, None, _metadata()), outputs)
         assert outputs[TactileSource.FORCES].is_none
-        assert not outputs[TactileSource.SHAPE].is_none
+        assert not outputs[TactileSource.LAYOUT].is_none
 
     def test_inactive_sets_none(self):
         src = _source()
         outputs = _outputs(src)
         src.compute(_inputs(src, None, None), outputs)
         assert outputs[TactileSource.FORCES].is_none
-        assert outputs[TactileSource.SHAPE].is_none
+        assert outputs[TactileSource.LAYOUT].is_none
 
     def test_taxel_count_mismatch_raises(self):
         src = _source(num_taxels=4)
@@ -160,7 +161,7 @@ class TestTactileSource:
         with pytest.raises(ValueError, match="3 taxels"):
             src.compute(_inputs(src, frame, None), _outputs(src))
 
-    def test_shape_count_mismatch_raises(self):
-        src = _source(num_joints=NUM_JOINTS + 1)
-        with pytest.raises(ValueError, match="2 joints"):
-            src.compute(_inputs(src, None, _shape()), _outputs(src))
+    def test_metadata_count_mismatch_raises(self):
+        src = _source(num_segments=NUM_SEGMENTS + 1)
+        with pytest.raises(ValueError, match="2 segments"):
+            src.compute(_inputs(src, None, _metadata()), _outputs(src))

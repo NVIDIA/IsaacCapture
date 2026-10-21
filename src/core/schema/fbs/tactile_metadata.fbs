@@ -10,7 +10,7 @@ table HandSkeletonRef {
   // Ordered, unique HandJoint identifiers; NUM_JOINTS is not a joint.
   // Segment indices address this vector, not HandJoint ordinals. Bind and current
   // segment poses map joint-local coordinates into the same hand-root frame.
-  joints: [HandJoint] (id: 0);
+  joint_ids: [HandJoint] (id: 0);
 }
 
 union SegmentSource {
@@ -28,14 +28,14 @@ struct Float4 {
 table LBS {
   // Segment-to-source-frame bind poses, in SegmentSource order. Positions are in
   // meters and orientations are unit quaternions (x, y, z, w).
-  segment_bind_pose: [Pose] (id: 0);
+  segment_bind_poses: [Pose] (id: 0);
 
-  // Taxel-local-to-source-frame bind poses, in TactileDataArray.taxel_force order.
-  // Uses the same units and quaternion convention as segment_bind_pose.
-  taxel_bind_pose: [Pose] (id: 1);
+  // Taxel-local-to-source-frame bind poses, in TactileDataArray.taxel_forces order.
+  // Uses the same units and quaternion convention as segment_bind_poses.
+  taxel_bind_poses: [Pose] (id: 1);
 
   // One four-slot row per taxel; all taxel_* vectors have the same length.
-  // Every slot indexes segment_bind_pose, including slots whose weight is zero.
+  // Every slot indexes segment_bind_poses, including slots whose weight is zero.
   taxel_segment_indices: [UInt4] (id: 2);
 
   // Finite, nonnegative weights, summing to one per taxel. Bind positions move as
@@ -44,6 +44,7 @@ table LBS {
   taxel_segment_weights: [Float4] (id: 3);
 }
 
+// Static parameters for the selected taxel geometry-mapping method.
 union AlgorithmSource {
   LBS = 1,
 }
@@ -52,11 +53,11 @@ union AlgorithmSource {
 // A usable layout sets both unions; lengths, indices and weights require semantic
 // validation by producers/consumers, beyond FlatBuffers buffer verification.
 table TactileMetadata {
-  // The implicit algorithm_type discriminator occupies id 0.
-  algorithm: AlgorithmSource (id: 1);
+  // The implicit geometry_mapping_type discriminator occupies id 0.
+  geometry_mapping: AlgorithmSource (id: 1);
 
-  // The implicit segments_type discriminator occupies id 2.
-  segments: SegmentSource (id: 3);
+  // The implicit segment_source_type discriminator occupies id 2.
+  segment_source: SegmentSource (id: 3);
 }
 
 root_type TactileMetadata;

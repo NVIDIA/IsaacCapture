@@ -54,7 +54,7 @@ def print_frame(elapsed: float | None, index: int, forces: np.ndarray) -> None:
 
 def run(session, tracker: TactileTracker, args: argparse.Namespace) -> int:
     start = time.monotonic()
-    shape_seen = False
+    metadata_seen = False
     expected_taxels = None
     steps = empty = 0
     last_print = -1.0
@@ -64,20 +64,23 @@ def run(session, tracker: TactileTracker, args: argparse.Namespace) -> int:
         session.update()
         elapsed = time.monotonic() - start
 
-        shape = tracker.get_metadata(session)
-        if not shape_seen and shape is not None:
-            algorithm, segments = shape.algorithm, shape.segments
-            if algorithm is None or segments is None:
+        metadata = tracker.get_metadata(session)
+        if not metadata_seen and metadata is not None:
+            geometry_mapping, segment_source = (
+                metadata.geometry_mapping,
+                metadata.segment_source,
+            )
+            if geometry_mapping is None or segment_source is None:
                 raise ValueError(
-                    "TactileMetadata must specify an algorithm and segments"
+                    "TactileMetadata must specify geometry_mapping and segment_source"
                 )
-            expected_taxels = len(algorithm.taxel_bind_pose)
+            expected_taxels = len(geometry_mapping.taxel_bind_poses)
             print(
-                f"{GREEN}[{elapsed:6.2f}s] (shape received) "
-                f"{len(segments.joints)} joints, "
+                f"{GREEN}[{elapsed:6.2f}s] (metadata received) "
+                f"{len(segment_source.joint_ids)} joints, "
                 f"{expected_taxels} taxels{RESET}"
             )
-            shape_seen = True
+            metadata_seen = True
 
         data = tracker.get_data(session)
         if data is None:
@@ -87,7 +90,7 @@ def run(session, tracker: TactileTracker, args: argparse.Namespace) -> int:
         else:
             empty = 0
             steps += 1
-            force_array = np.asarray(data.taxel_force)
+            force_array = np.asarray(data.taxel_forces)
             if expected_taxels is not None and len(force_array) != expected_taxels:
                 raise ValueError(
                     f"frame has {len(force_array)} taxels, "

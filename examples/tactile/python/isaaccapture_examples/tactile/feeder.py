@@ -38,7 +38,7 @@ from .common import (
     DEFAULT_NUM_TAXELS,
     MAX_NUM_JOINTS,
     MIN_NUM_JOINTS,
-    TACTILE_SAMPLE_SIZE,
+    TACTILE_MAX_FRAME_SIZE,
 )
 
 logger = logging.getLogger("isaaccapture.examples.tactile.feeder")
@@ -49,12 +49,12 @@ FINGER_FIRST_JOINTS = (2, 6, 11, 16, 21)
 FINGER_DISTAL_JOINTS = (4, 9, 14, 19, 24)
 
 
-def mock_shape(num_joints: int, num_taxels: int) -> TactileMetadata:
-    """Build a flat hand in hand-root space with taxels on its distal segments."""
+def mock_metadata(num_joints: int, num_taxels: int) -> TactileMetadata:
+    """Build metadata for a flat hand with taxels on its distal segments."""
     positions = np.zeros((num_joints, 3), np.float32)
     positions[0] = (0.0, 0.05, 0.0)
 
-    taxel_joints = []
+    taxel_joint_ids = []
     for finger, first in enumerate(FINGER_FIRST_JOINTS):
         if first >= num_joints:
             break
@@ -68,25 +68,25 @@ def mock_shape(num_joints: int, num_taxels: int) -> TactileMetadata:
                 0.02 + 0.025 * (joint - first),
                 0.0,
             )
-        taxel_joints.append(min(FINGER_DISTAL_JOINTS[finger], last))
+        taxel_joint_ids.append(min(FINGER_DISTAL_JOINTS[finger], last))
 
-    if not taxel_joints:
-        taxel_joints.append(WRIST)
+    if not taxel_joint_ids:
+        taxel_joint_ids.append(WRIST)
 
     taxel_positions = np.zeros((num_taxels, 3), np.float32)
-    joint_indices = np.zeros((num_taxels, 4), np.uint32)
-    joint_weights = np.zeros((num_taxels, 4), np.float32)
-    per_segment = math.ceil(num_taxels / len(taxel_joints))
+    taxel_segment_indices = np.zeros((num_taxels, 4), np.uint32)
+    taxel_segment_weights = np.zeros((num_taxels, 4), np.float32)
+    per_segment = math.ceil(num_taxels / len(taxel_joint_ids))
     for taxel in range(num_taxels):
-        segment, slot = taxel % len(taxel_joints), taxel // len(taxel_joints)
-        joint = taxel_joints[segment]
+        segment, slot = taxel % len(taxel_joint_ids), taxel // len(taxel_joint_ids)
+        joint = taxel_joint_ids[segment]
         taxel_positions[taxel] = positions[joint] + (
             0.0,
             0.02 * slot / per_segment,
             -0.005,
         )
-        joint_indices[taxel] = joint
-        joint_weights[taxel, 0] = 1.0
+        taxel_segment_indices[taxel] = joint
+        taxel_segment_weights[taxel, 0] = 1.0
 
     segment_poses = np.column_stack(
         (positions, np.tile([0.0, 0.0, 0.0, 1.0], (num_joints, 1)))
@@ -95,8 +95,10 @@ def mock_shape(num_joints: int, num_taxels: int) -> TactileMetadata:
         (taxel_positions, np.tile([1.0, 0.0, 0.0, 0.0], (num_taxels, 1)))
     )
     return TactileMetadata(
-        algorithm=LBS(segment_poses, taxel_poses, joint_indices, joint_weights),
-        segments=HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
+        geometry_mapping=LBS(
+            segment_poses, taxel_poses, taxel_segment_indices, taxel_segment_weights
+        ),
+        segment_source=HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
     )
 
 
@@ -138,10 +140,10 @@ def main(argv: list[str]) -> int:
     if not math.isfinite(args.metadata_interval) or args.metadata_interval <= 0:
         parser.error("--metadata-interval must be finite and positive")
 
-    shape = mock_shape(args.joints, args.taxels).to_bytes()
-    if len(shape) > TRACKER_METADATA_MAX_SIZE:
+    metadata_bytes = mock_metadata(args.joints, args.taxels).to_bytes()
+    if len(metadata_bytes) > TRACKER_METADATA_MAX_SIZE:
         parser.error(
-            f"{args.joints} joints and {args.taxels} taxels make a {len(shape)} B TactileMetadata; "
+            f"{args.joints} joints and {args.taxels} taxels make a {len(metadata_bytes)} B TactileMetadata; "
             f"a tracker accepts at most {TRACKER_METADATA_MAX_SIZE} B"
         )
     logger.info(
@@ -149,7 +151,7 @@ def main(argv: list[str]) -> int:
         args.joints,
         args.taxels,
         args.collection_id,
-        len(shape),
+        len(metadata_bytes),
     )
 
     frames = 0
@@ -157,12 +159,12 @@ def main(argv: list[str]) -> int:
     with ExitStack() as stack:
         stack.enter_context(CloudXRLauncher.launch_context(args))
         data_tracker = TensorPushTracker(
-            args.collection_id, "tactile", TACTILE_SAMPLE_SIZE
+            args.collection_id, "tactile", TACTILE_MAX_FRAME_SIZE
         )
         metadata_tracker = TensorPushTracker(
             tracker_metadata_collection_id(args.collection_id),
             TRACKER_METADATA_TENSOR_IDENTIFIER,
-            len(shape),
+            len(metadata_bytes),
         )
         trackers = [data_tracker, metadata_tracker]
         oxr_session = stack.enter_context(
@@ -186,7 +188,7 @@ def main(argv: list[str]) -> int:
                     session, TactileDataArray(mock_forces(args.taxels, t)).to_bytes()
                 )
                 if t - last_metadata_push >= args.metadata_interval:
-                    metadata_tracker.push(session, shape)
+                    metadata_tracker.push(session, metadata_bytes)
                     last_metadata_push = t
                 frames += 1
                 if frames % max(1, int(args.rate * 5)) == 0:

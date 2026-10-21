@@ -36,25 +36,27 @@ inline void bind_tactile_metadata(py::module& m)
         .value("HandSkeletonRef", SegmentSource_HandSkeletonRef);
     py::enum_<AlgorithmSource>(m, "AlgorithmSource").value("NONE", AlgorithmSource_NONE).value("LBS", AlgorithmSource_LBS);
 
-    serialized_class<HandSkeletonRef>(m, "HandSkeletonRef", "Ordered hand joints referenced by tactile segments.")
+    serialized_class<HandSkeletonRef>(
+        m, "HandSkeletonRef", "Ordered hand joint identifiers referenced by tactile segments.")
         .def(py::init(
-                 [](const std::vector<HandJoint>& joints)
+                 [](const std::vector<HandJoint>& joint_ids)
                  {
                      std::array<bool, HandJoint_NUM_JOINTS> seen{};
-                     for (const auto joint : joints)
+                     for (const auto joint : joint_ids)
                      {
                          if (joint >= HandJoint_NUM_JOINTS || seen[joint])
                          {
-                             throw py::value_error("joints: expected unique HandJoint identifiers, excluding NUM_JOINTS");
+                             throw py::value_error(
+                                 "joint_ids: expected unique HandJoint identifiers, excluding NUM_JOINTS");
                          }
                          seen[joint] = true;
                      }
                      HandSkeletonRefT native;
-                     native.joints = joints;
+                     native.joint_ids = joint_ids;
                      return pack<HandSkeletonRef>(native);
                  }),
-             py::arg("joints"))
-        .def_property_readonly("joints", vector_field(&HandSkeletonRef::joints));
+             py::arg("joint_ids"))
+        .def_property_readonly("joint_ids", vector_field(&HandSkeletonRef::joint_ids));
 
     auto poses_from_rows = [](const FloatRows& rows, const char* name)
     {
@@ -80,17 +82,17 @@ inline void bind_tactile_metadata(py::module& m)
 
     serialized_class<LBS>(m, "LBS", "Linear blend skinning bind poses and four-slot influences.")
         .def(py::init(
-                 [poses_from_rows](const FloatRows& segment_bind_pose, const FloatRows& taxel_bind_pose,
+                 [poses_from_rows](const FloatRows& segment_bind_poses, const FloatRows& taxel_bind_poses,
                                    const IndexRows& taxel_segment_indices, const FloatRows& taxel_segment_weights)
                  {
                      LBST native;
-                     native.segment_bind_pose = poses_from_rows(segment_bind_pose, "segment_bind_pose");
-                     native.taxel_bind_pose = poses_from_rows(taxel_bind_pose, "taxel_bind_pose");
+                     native.segment_bind_poses = poses_from_rows(segment_bind_poses, "segment_bind_poses");
+                     native.taxel_bind_poses = poses_from_rows(taxel_bind_poses, "taxel_bind_poses");
                      native.taxel_segment_indices =
                          structs_from_rows<UInt4, uint32_t, 4>(taxel_segment_indices, "taxel_segment_indices");
                      native.taxel_segment_weights =
                          structs_from_rows<Float4, float, 4>(taxel_segment_weights, "taxel_segment_weights");
-                     const size_t taxels = native.taxel_bind_pose.size();
+                     const size_t taxels = native.taxel_bind_poses.size();
                      if (native.taxel_segment_indices.size() != taxels || native.taxel_segment_weights.size() != taxels)
                      {
                          throw py::value_error("all taxel_* arrays must have the same length");
@@ -100,7 +102,7 @@ inline void bind_tactile_metadata(py::module& m)
                          float total = 0;
                          for (int k = 0; k < 4; ++k)
                          {
-                             if (native.taxel_segment_indices[i].values()->Get(k) >= native.segment_bind_pose.size())
+                             if (native.taxel_segment_indices[i].values()->Get(k) >= native.segment_bind_poses.size())
                              {
                                  throw py::value_error("taxel_segment_indices: slot is not a segment index");
                              }
@@ -118,15 +120,15 @@ inline void bind_tactile_metadata(py::module& m)
                      }
                      return pack<LBS>(native);
                  }),
-             py::arg("segment_bind_pose"), py::arg("taxel_bind_pose"), py::arg("taxel_segment_indices"),
+             py::arg("segment_bind_poses"), py::arg("taxel_bind_poses"), py::arg("taxel_segment_indices"),
              py::arg("taxel_segment_weights"),
              "Encode bind poses as (J, 7)/(N, 7) XYZ/XYZW rows and influences as (N, 4) arrays.")
         .def_property_readonly(
-            "segment_bind_pose", [](py::object self)
-            { return struct_vector_view<float, 7>(self, self.cast<const Serialized<LBS>&>()->segment_bind_pose()); })
+            "segment_bind_poses", [](py::object self)
+            { return struct_vector_view<float, 7>(self, self.cast<const Serialized<LBS>&>()->segment_bind_poses()); })
         .def_property_readonly(
-            "taxel_bind_pose", [](py::object self)
-            { return struct_vector_view<float, 7>(self, self.cast<const Serialized<LBS>&>()->taxel_bind_pose()); })
+            "taxel_bind_poses", [](py::object self)
+            { return struct_vector_view<float, 7>(self, self.cast<const Serialized<LBS>&>()->taxel_bind_poses()); })
         .def_property_readonly("taxel_segment_indices",
                                [](py::object self) {
                                    return struct_vector_view<uint32_t, 4>(
@@ -138,49 +140,50 @@ inline void bind_tactile_metadata(py::module& m)
 
     serialized_class<TactileMetadata>(m, "TactileMetadata", "Static tactile layout and its segment source.")
         .def(py::init(
-                 [](const Serialized<LBS>& algorithm, const Serialized<HandSkeletonRef>& segments)
+                 [](const Serialized<LBS>& geometry_mapping, const Serialized<HandSkeletonRef>& segment_source)
                  {
-                     const auto* poses = algorithm->segment_bind_pose();
-                     const auto* joints = segments->joints();
-                     if ((poses != nullptr ? poses->size() : 0) != (joints != nullptr ? joints->size() : 0))
+                     const auto* poses = geometry_mapping->segment_bind_poses();
+                     const auto* joint_ids = segment_source->joint_ids();
+                     if ((poses != nullptr ? poses->size() : 0) != (joint_ids != nullptr ? joint_ids->size() : 0))
                      {
-                         throw py::value_error("segment_bind_pose and segments.joints must have the same length");
+                         throw py::value_error(
+                             "segment_bind_poses and segment_source.joint_ids must have the same length");
                      }
                      TactileMetadataT native;
                      LBST lbs;
-                     algorithm->UnPackTo(&lbs);
-                     native.algorithm.Set(std::move(lbs));
+                     geometry_mapping->UnPackTo(&lbs);
+                     native.geometry_mapping.Set(std::move(lbs));
                      HandSkeletonRefT hand;
-                     segments->UnPackTo(&hand);
-                     native.segments.Set(std::move(hand));
+                     segment_source->UnPackTo(&hand);
+                     native.segment_source.Set(std::move(hand));
                      return pack<TactileMetadata>(native);
                  }),
-             py::arg("algorithm"), py::arg("segments"))
-        .def_property_readonly("algorithm_type", field(&TactileMetadata::algorithm_type))
-        .def_property_readonly("segments_type", field(&TactileMetadata::segments_type))
-        .def_property_readonly("algorithm",
+             py::arg("geometry_mapping"), py::arg("segment_source"))
+        .def_property_readonly("geometry_mapping_type", field(&TactileMetadata::geometry_mapping_type))
+        .def_property_readonly("segment_source_type", field(&TactileMetadata::segment_source_type))
+        .def_property_readonly("geometry_mapping",
                                [](const Serialized<TactileMetadata>& self) -> std::optional<Serialized<LBS>>
                                {
-                                   if (self->algorithm_type() == AlgorithmSource_NONE)
+                                   if (self->geometry_mapping_type() == AlgorithmSource_NONE)
                                    {
                                        return std::nullopt;
                                    }
-                                   if (const auto* algorithm = self->algorithm_as_LBS())
+                                   if (const auto* geometry_mapping = self->geometry_mapping_as_LBS())
                                    {
-                                       return self.narrow(algorithm);
+                                       return self.narrow(geometry_mapping);
                                    }
-                                   throw py::value_error("unsupported tactile algorithm");
+                                   throw py::value_error("unsupported tactile geometry mapping");
                                })
-        .def_property_readonly("segments",
+        .def_property_readonly("segment_source",
                                [](const Serialized<TactileMetadata>& self) -> std::optional<Serialized<HandSkeletonRef>>
                                {
-                                   if (self->segments_type() == SegmentSource_NONE)
+                                   if (self->segment_source_type() == SegmentSource_NONE)
                                    {
                                        return std::nullopt;
                                    }
-                                   if (const auto* segments = self->segments_as_HandSkeletonRef())
+                                   if (const auto* segment_source = self->segment_source_as_HandSkeletonRef())
                                    {
-                                       return self.narrow(segments);
+                                       return self.narrow(segment_source);
                                    }
                                    throw py::value_error("unsupported tactile segment source");
                                });

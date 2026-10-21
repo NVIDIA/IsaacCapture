@@ -28,28 +28,28 @@ inline void bind_tactile_array(py::module& m)
 
     serialized_class<TactileDataArray>(m, "TactileDataArray", "Encoded per-frame tactile reading.")
         .def(py::init(
-                 [](const std::optional<FloatRows>& taxel_force)
+                 [](const std::optional<FloatRows>& taxel_forces)
                  {
                      TactileDataArrayT native;
-                     if (taxel_force.has_value())
+                     if (taxel_forces.has_value())
                      {
-                         native.taxel_force = structs_from_rows<Point, float, 3>(*taxel_force, "taxel_force");
+                         native.taxel_forces = structs_from_rows<Point, float, 3>(*taxel_forces, "taxel_forces");
                      }
                      return pack<TactileDataArray>(native);
                  }),
-             py::arg("taxel_force") = py::none(), "Encode a tactile frame. taxel_force is an (N, 3) array.")
+             py::arg("taxel_forces") = py::none(), "Encode a tactile frame. taxel_forces is an (N, 3) array.")
         .def_property_readonly(
-            "taxel_force",
+            "taxel_forces",
             [](py::object self)
             {
                 const auto& view = self.cast<const Serialized<TactileDataArray>&>();
-                return struct_vector_view<float, 3>(self, view->taxel_force());
+                return struct_vector_view<float, 3>(self, view->taxel_forces());
             },
             "Per-taxel force as an (N, 3) float32 view aliasing this object's buffer; call .copy() to own it.")
         .def("__repr__",
              [](const Serialized<TactileDataArray>& self)
              {
-                 const auto* forces = self->taxel_force();
+                 const auto* forces = self->taxel_forces();
                  return "TactileDataArray(taxels=" + std::to_string(forces != nullptr ? forces->size() : 0) + ")";
              });
 

@@ -847,24 +847,24 @@ void write_tactile_recording(const std::string& path, const std::string& base_na
 
     if (with_metadata)
     {
-        core::HandSkeletonRefT segments;
-        segments.joints = { core::HandJoint_WRIST };
+        core::HandSkeletonRefT segment_source;
+        segment_source.joint_ids = { core::HandJoint_WRIST };
         core::LBST lbs;
-        lbs.segment_bind_pose = { make_pose(0, 0, 0) };
-        lbs.taxel_bind_pose = { make_pose(0, 0, 0), make_pose(0, 0, 0) };
+        lbs.segment_bind_poses = { make_pose(0, 0, 0) };
+        lbs.taxel_bind_poses = { make_pose(0, 0, 0), make_pose(0, 0, 0) };
         lbs.taxel_segment_indices.resize(2);
         const std::array<float, 4> weights = { 1, 0, 0, 0 };
         lbs.taxel_segment_weights.assign(2, core::Float4(flatbuffers::span<const float, 4>(weights.data(), 4)));
-        core::TactileMetadataT shape;
-        shape.algorithm.Set(std::move(lbs));
-        shape.segments.Set(std::move(segments));
-        metadata.write(0, core::pack<core::TactileMetadata>(shape), 500);
+        core::TactileMetadataT native;
+        native.geometry_mapping.Set(std::move(lbs));
+        native.segment_source.Set(std::move(segment_source));
+        metadata.write(0, core::pack<core::TactileMetadata>(native), 500);
     }
 
     for (int i = 0; i < 2; ++i)
     {
         core::TactileDataArrayT frame;
-        frame.taxel_force = { core::Point(static_cast<float>(i), 0, 0), core::Point(0, 0, 1) };
+        frame.taxel_forces = { core::Point(static_cast<float>(i), 0, 0), core::Point(0, 0, 1) };
         const int64_t time_ns = (i + 1) * 1000;
         const auto record = core::pack_record<core::TactileDataArrayRecord>(
             &frame, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
@@ -894,18 +894,18 @@ TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[repla
     auto session = core::ReplaySession::run(config);
 
     // Read when the session opens, so it is there before the first frame.
-    const auto& shape = tracker.get_metadata(*session);
-    REQUIRE(shape);
-    REQUIRE(shape->algorithm_as_LBS());
-    CHECK(shape->algorithm_as_LBS()->taxel_bind_pose()->size() == 2);
+    const auto& metadata = tracker.get_metadata(*session);
+    REQUIRE(metadata);
+    REQUIRE(metadata->geometry_mapping_as_LBS());
+    CHECK(metadata->geometry_mapping_as_LBS()->taxel_bind_poses()->size() == 2);
 
     for (int i = 0; i < 2; ++i)
     {
         session->update();
         const auto& frame = tracker.get_data(*session);
         REQUIRE(frame);
-        CHECK(frame->taxel_force()->Get(0)->x() == static_cast<float>(i));
-        CHECK(tracker.get_metadata(*session).get() == shape.get());
+        CHECK(frame->taxel_forces()->Get(0)->x() == static_cast<float>(i));
+        CHECK(tracker.get_metadata(*session).get() == metadata.get());
     }
 
     session->update();
