@@ -72,6 +72,11 @@ Optional context index: [`src/core/AGENTS.md`](src/core/AGENTS.md) (also on the 
 
 ## CMake & include structure
 
+- Optional native features must keep build-managed SDK acquisition inside the
+  existing build dependency tree. Follow the owning installation flow's SDK
+  boundary; keep platform GPU/runtime prerequisites explicit and avoid adding
+  privileged host-package installation to a source or Python install path.
+
 When you create or edit a `CMakeLists.txt`, add or move a target, place a header,
 write `#include` directives, or restructure directories, follow the repo's
 canonical CMake/include rules in **[`cmake/cmake-structure.md`](cmake/cmake-structure.md)**.

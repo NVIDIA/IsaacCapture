@@ -67,6 +67,7 @@ option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; s
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
+option(BUILD_OVXR_CAMERA_QUADS "Build optional application-owned OVXR camera quad support" OFF)
 # Televiz (src/viz) needs Vulkan, the CUDA Toolkit, and glslangValidator.
 # Only Vulkan and CUDA gate the default -- without them the machine cannot build
 # viz at all, so a core-only source build still configures. glslangValidator is
@@ -85,6 +86,11 @@ if(BUILD_VIZ AND NOT (Vulkan_FOUND AND CUDAToolkit_FOUND))
                     "may fail. Install the deps or pass -DBUILD_VIZ=OFF.")
 endif()
 message(STATUS "BUILD_VIZ: ${BUILD_VIZ} (Vulkan=${Vulkan_FOUND} CUDAToolkit=${CUDAToolkit_FOUND})")
+# Keep Televiz defaults based on host SDKs, before PiP-only SDK acquisition.
+if(BUILD_OVXR_CAMERA_QUADS AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+        AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    include(cmake/SetupOVXRCameraDependencies.cmake)
+endif()
 option(ENABLE_EXPERIMENTAL_WINDOWS_BUILD "Enable experimental Windows build support (source code only)" OFF)
 
 # Note: This is used to check if the CloudXR bundle is available to be bundled with Isaac Teleop.

@@ -3,3 +3,5 @@
 
 # Public OVXR distribution; see docs/source/getting_started/ovxr.rst.
 ovxr==0.1.0.5842
+# CUDA camera output mapping also needs bindings when no desktop mirror is used.
+cuda-bindings>=12.9,<14

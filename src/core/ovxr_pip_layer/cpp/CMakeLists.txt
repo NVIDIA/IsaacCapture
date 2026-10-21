@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+if(NOT Vulkan_FOUND)
+    message(FATAL_ERROR "The OVXR camera layer needs the installed Vulkan SDK")
+endif()
+
+add_library(ovxr_pip_layer SHARED pip_layer.cpp)
+target_compile_features(ovxr_pip_layer PRIVATE cxx_std_20)
+target_include_directories(ovxr_pip_layer PRIVATE
+    $<TARGET_PROPERTY:openxr_loader,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(ovxr_pip_layer PRIVATE Vulkan::Vulkan log_bridge::log_bridge_core)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Keep static logger/fmt symbols private to the helper's existing C ABI.
+    set(_pip_exports "${CMAKE_CURRENT_BINARY_DIR}/ovxr_pip_exports.map")
+    file(GENERATE OUTPUT "${_pip_exports}"
+        CONTENT "{ global: isaacteleop_pip_*; local: *; };\n")
+    target_link_options(ovxr_pip_layer PRIVATE "-Wl,--version-script,${_pip_exports}")
+    set_property(TARGET ovxr_pip_layer APPEND PROPERTY LINK_DEPENDS "${_pip_exports}")
+endif()
+if(CUDAToolkit_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(ovxr_pip_layer PRIVATE ISAAC_TELEOP_PIP_CUDA)
+    target_link_libraries(ovxr_pip_layer PRIVATE CUDA::cudart)
+endif()
+set_target_properties(ovxr_pip_layer PROPERTIES
+    OUTPUT_NAME XrApiLayer_isaacteleop_pip
+    # A packaged helper must not depend on the build host's CUDA SDK path.
+    # The CloudXR bundle supplies the matched CUDA runtime beside this package.
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "$ORIGIN/../../cloudxr/native"
+    INSTALL_RPATH_USE_LINK_PATH FALSE
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/teleop_session_manager/openxr_layer")
+
+set(OVXR_PIP_LAYER_DIR
+    "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/teleop_session_manager/openxr_layer")
+add_custom_command(
+    OUTPUT "${OVXR_PIP_LAYER_DIR}/XrApiLayer_isaacteleop_pip.json"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${OVXR_PIP_LAYER_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${PROJECT_SOURCE_DIR}/src/core/ovxr_pip_layer/XrApiLayer_isaacteleop_pip.json"
+        "${OVXR_PIP_LAYER_DIR}/XrApiLayer_isaacteleop_pip.json"
+    DEPENDS "${PROJECT_SOURCE_DIR}/src/core/ovxr_pip_layer/XrApiLayer_isaacteleop_pip.json")
+set_source_files_properties("${OVXR_PIP_LAYER_DIR}/XrApiLayer_isaacteleop_pip.json"
+    PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+target_sources(ovxr_pip_layer PRIVATE "${OVXR_PIP_LAYER_DIR}/XrApiLayer_isaacteleop_pip.json")
+add_library(ovxr_pip_layer::ovxr_pip_layer ALIAS ovxr_pip_layer)

@@ -13,6 +13,13 @@ endif()
 message(STATUS "[grounding] bundling robotic_grounding/ from ${ROBOTIC_GROUNDING_STAGED_DIR}")
 
 # Generate pyproject.toml from template with ISAAC_TELEOP_PYPROJECT_VERSION
+if(BUILD_OVXR_CAMERA_QUADS)
+    set(OVXR_CAMERA_PACKAGE_DATA_BLOCK
+        "\"isaaccapture.teleop_session_manager\" = [\"openxr_layer/*.so\", \"openxr_layer/*.json\"]\n")
+else()
+    set(OVXR_CAMERA_PACKAGE_DATA_BLOCK "")
+endif()
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml.in"
     "${CMAKE_CURRENT_BINARY_DIR}/pyproject.toml"
@@ -56,6 +63,10 @@ add_custom_target(python_package ALL
     DEPENDS deviceio_trackers_py deviceio_session_py oxr_py plugin_manager_py schema_py isaacteleop_python cloudxr_python stage_generated_tracker_exports
     COMMENT "Preparing Python package structure"
 )
+
+if(TARGET ovxr_pip_layer)
+    add_dependencies(python_package ovxr_pip_layer)
+endif()
 
 # viz_py only exists when BUILD_VIZ=ON. Use add_dependencies (not a
 # DEPENDS genex) so the build-order constraint is unconditional under
@@ -224,7 +235,20 @@ if(SKBUILD)
         USE_SOURCE_PERMISSIONS
         PATTERN "*.py" EXCLUDE
         PATTERN "__pycache__" EXCLUDE
+        # Reused staging can retain a formerly enabled camera helper. The option,
+        # not old files in the build tree, owns its inclusion in a scikit wheel.
+        PATTERN "openxr_layer" EXCLUDE
     )
+    if(BUILD_OVXR_CAMERA_QUADS)
+        install(TARGETS ovxr_pip_layer
+            LIBRARY DESTINATION "isaaccapture/teleop_session_manager/openxr_layer"
+            COMPONENT isaacteleop_wheel
+        )
+        install(FILES "${CMAKE_BINARY_DIR}/python_package/${_it_wheel_config}/isaaccapture/teleop_session_manager/openxr_layer/XrApiLayer_isaacteleop_pip.json"
+            DESTINATION "isaaccapture/teleop_session_manager/openxr_layer"
+            COMPONENT isaacteleop_wheel
+        )
+    endif()
     install(
         DIRECTORY "${ROBOTIC_GROUNDING_STAGED_DIR}"
         DESTINATION "."

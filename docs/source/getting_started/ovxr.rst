@@ -58,16 +58,60 @@ The Linux x86_64 OVXR wheel has SHA256
 A Windows wheel is also published; package availability is not platform runtime
 verification. OVXR 0.1.0.5842 has no Linux aarch64 wheel.
 
-Build Isaac Capture from source
---------------------------------
+Build Capture and optional camera support
+-----------------------------------------
 
-Follow :doc:`/getting_started/build_from_source/index` for the managed Python and CMake workflow.
-Build and install your own wheel with its ``ovxr`` extra using the same Python
-environment as the consuming application. The optional dependency must be
-selected explicitly; ordinary installations and imports do not require OVXR.
-Keep the source-built wheel selected in the consuming project's scoped uv source
-configuration and use ordinary lock refresh/sync/run after a rebuild. Do not
-copy an installed environment or bypass a wheel hash mismatch.
+Follow :doc:`/getting_started/build_from_source/index` for build tools, managed Python, CloudXR and
+the normal CMake dependency setup. On Linux x86-64, enabling camera quads reuses
+available Vulkan/CUDA development SDKs. When they are absent, CMake acquires
+hash-pinned Khronos Vulkan headers and NVIDIA CUDA 12 runtime/compiler SDK
+archives inside the existing build's ``_deps`` directory. Downloads are about
+45 MB plus the Vulkan headers and are reused on subsequent configurations.
+The platform GPU driver and Vulkan runtime (``libvulkan.so.1``) remain host
+prerequisites; the build does not install system packages. Base builds with
+camera quads OFF do not acquire these development SDKs.
+The headers are development input only; their vendor CMake project is not added
+to the build. Camera SDK acquisition does not change Televiz's host-SDK-based
+``BUILD_VIZ`` default; explicit ``BUILD_VIZ=ON/OFF`` selection is preserved.
+
+Other platforms still require discoverable external development SDKs. Use
+``CUDAToolkit_ROOT`` to select an existing CUDA SDK. On Linux x86-64, when camera
+support needs build-managed CUDA acquisition, an invalid explicit root fails
+configuration. ``VULKAN_SDK`` remains a hint for normal FindVulkan discovery.
+See NVIDIA's `archive-to-CMake SDK workflow
+<https://docs.nvidia.com/cuda/archive/12.0.0/cuda-installation-guide-linux/index.html#importing-tarballs-into-cmake>`__.
+Reuse a compatible existing build directory:
+
+.. code-block:: bash
+
+   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+     -DISAAC_TELEOP_PYTHON_VERSION=3.12 \
+     -DBUILD_PYTHON_BINDINGS=ON -DBUILD_OVXR_CAMERA_QUADS=ON \
+     -DBUILD_TESTING=ON
+   cmake --build build --target python_package python_stubs python_wheel \
+     ovxr_pip_layer_contract_test --parallel 2
+   ctest --test-dir build -C Release -R '^ovxr_pip_layer_contract_test$' \
+     --output-on-failure
+   uv run --no-project --python 3.12 python scripts/check_camera_quad_wheel.py \
+     build/wheels/<local-wheel>.whl --camera-quads
+   uv pip install 'build/wheels/<local-wheel>.whl[ovxr]' \
+     --index https://pypi.org/simple
+   uv pip check
+
+Replace ``<local-wheel>`` with the wheel produced by this build.
+The check uses managed Python without requiring a system ``python`` alias;
+``--no-project`` avoids a second source build. The helper uses
+the repository's pinned OpenXR SDK and discovered Vulkan/CUDA inputs, not an OVXR
+SDK archive. It borrows public OVXR native handles at runtime; it does not link
+against a local OVXR or Kit build. CMake packages the helper with its relative
+CloudXR CUDA-runtime lookup. The source build and installed native helper still
+need validation on each destination.
+
+The ``ovxr`` extra supplies OVXR and CUDA Python bindings for GPU camera output;
+it does not enable the native helper build flag or install the desktop mirror.
+Plain ``uv pip install build/wheels/<local-wheel>.whl`` does not request OVXR or
+its providers. Default source builds leave ``BUILD_OVXR_CAMERA_QUADS=OFF`` and
+do not require OVXR to be installed. Importing base Capture does not load OVXR.
 
 .. Section underline lengths include inline markup characters in the source title.
 

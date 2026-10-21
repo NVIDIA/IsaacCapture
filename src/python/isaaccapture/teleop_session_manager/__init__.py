@@ -43,6 +43,7 @@ from .teleop_state_manager_types import (
     teleop_state_manager_output_spec,
 )
 from .external_present import (
+    AuxiliaryRasterConfig,
     ExternalPresentBinding,
     ExternalPresentConfig,
     ExternalPresentHost,
@@ -82,6 +83,7 @@ __all__ = [
     "teleop_state_channel",
     "teleop_state_manager_output_spec",
     "ExternalPresentBinding",
+    "AuxiliaryRasterConfig",
     "ExternalPresentConfig",
     "ExternalPresentHost",
     "OvxrExternalPresentOwner",
