@@ -11,6 +11,10 @@ robot to a workstation over the network (split mode). It can also stream :ref:`r
 data <recorded-camera-streaming>` — a video file replayed in place of a live camera — and render
 to a desktop window instead of the headset.
 
+Controllers adjust the camera view, including its placement, shape, and stereo settings.
+This sample does not send robot commands or record robot demonstrations; see `Next steps`_
+for robot-control and recording integrations.
+
 The sample lives at :code-dir:`examples/camera_viz/ <examples/camera_viz>`. This page walks you
 from setup and a camera-free first run to real cameras and the robot → workstation split mode.
 It is the primary user guide for the sample, including commands, configuration, controller
@@ -353,6 +357,12 @@ needs values it supports (inspect them with ``v4l2-ctl --list-formats-ext``):
 .. code-block:: bash
 
    ./camera_viz.sh run configs/v4l2.yaml     # or oakd.yaml / zed.yaml
+
+**ZED Mini: UVC or SDK stereo.** In the 2560×720 UVC mode used by ``v4l2.yaml``, the left
+and right camera images are packed side by side. The sample displays that entire image on one
+plane, with the same packed image in both headset eyes. For per-eye stereo, install ZED support
+with ``./camera_viz.sh setup --with-zed`` and use ``configs/zed.yaml`` (``type: zed``,
+``stereo: true``), which retrieves a separate image for each eye through the ZED SDK.
 
 **You should see** the same startup lines as above with the camera's tag (``[v4l2]``,
 ``[oakd]``, ``[zed]``) and the live feed. Multiple entries in the ``cameras`` list render as one
@@ -927,3 +937,7 @@ Next steps
 - :ref:`Stream from a robot <split-mode>` when capture and viewing run on separate machines.
 - :ref:`Share the XR session with teleoperation <sharing-the-xr-session>` and map inputs with
   the :doc:`retargeting interface </references/retargeting/index>`.
+- Control a physical SO-101 and record demonstrations with
+  :doc:`LeRobot </integrations/lerobot/data_collection_real>`.
+- Teleoperate a simulated SO-101 and record demonstrations with
+  :doc:`Isaac Lab </integrations/lerobot/data_collection_sim>`.
