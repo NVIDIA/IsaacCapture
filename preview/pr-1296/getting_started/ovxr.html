@@ -527,6 +527,36 @@ application’s lock file after changing the wheel or dependency selection, then
 run with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span> <span class="pre">--extra</span> <span class="pre">ovxr</span></code>. Installing packages with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code>
 alone does not update the application’s lock file.</p>
 </section>
+<section id="application-specific-ovxr-versions">
+<h2>Application-specific OVXR versions<a class="headerlink" href="#application-specific-ovxr-versions" title="Link to this heading">#</a></h2>
+<p>Isaac Capture pins the tested OVXR build. OVXR’s pre-GA API can change between
+builds, as described in its
+<a class="reference external" href="https://github.com/NVIDIA-Omniverse/ovxr/blob/main/CHANGELOG.md" rel="noopener noreferrer" target="_blank">release notes</a>.
+uv respects that pin and reports a conflict if the application requires
+incompatible OVRTX or OVStage versions.</p>
+<p>To validate another OVXR build with the same Isaac Capture release, select an
+OVXR release whose declared dependencies match the application’s OVRTX/OVStage
+requirements. Add an override in the application’s root <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code>:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[tool.uv]</span>
+<span class="n">override-dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"ovxr==&lt;compatible-version&gt;"</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;compatible-version&gt;</span></code> with the selected release. If the application
+already has an <code class="docutils literal notranslate"><span class="pre">override-dependencies</span></code> list, append this entry to that list.
+Then refresh the lock file and synchronize the environment using the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code>
+extra from the example above:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>lock<span class="w"> </span>--upgrade-package<span class="w"> </span>ovxr
+uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>ovxr
+</pre></div>
+</div>
+<p>An <a class="reference external" href="https://docs.astral.sh/uv/concepts/resolution/#dependency-overrides" rel="noopener noreferrer" target="_blank">override</a>
+changes dependency resolution; it does not establish compatibility with Isaac
+Capture’s OVXR integration. Validate the application’s XR workflow before
+relying on the selected build.</p>
+<p>Applications using different provider versions need separate project
+environments and lock files. Each can install the same Isaac Capture wheel
+with its own OVXR/OVRTX/OVStage combination.</p>
+</section>
 </section>
 
 
@@ -583,6 +613,7 @@ alone does not update the application’s lock file.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-camera-panels">Optional camera panels</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-desktop-mirror">Optional desktop mirror</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-from-another-application">Use from another application</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#application-specific-ovxr-versions">Application-specific OVXR versions</a></li>
 </ul>
   </nav></div>
 
