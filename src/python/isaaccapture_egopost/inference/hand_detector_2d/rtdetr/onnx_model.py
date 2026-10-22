@@ -21,11 +21,14 @@ left/right position in the frame.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+log = logging.getLogger(__name__)
 
 __all__ = ["Detection", "HandDetector", "LABELS", "refine_box"]
 
@@ -79,8 +82,9 @@ def _preload_cuda_libs() -> None:
             for so in sorted(glob.glob(str(root / pattern))):
                 try:
                     ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
-                except OSError:
-                    pass
+                except OSError as e:
+                    # Best effort: ORT falls back to the system loader path.
+                    log.debug("Could not preload %s: %s", so, e)
         break
 
 

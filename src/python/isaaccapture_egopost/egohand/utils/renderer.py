@@ -146,6 +146,7 @@ class Renderer:
             try:
                 self._offscreen_renderer.delete()
             except Exception:
+                # Best effort: the renderer is discarded either way.
                 pass
             self._offscreen_renderer = None
             self._viewport_size = None
