@@ -509,6 +509,10 @@ prints it in the startup banner. Requests without the token, and WebSocket
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
 
+The headset bookmark carries the token as ``controlToken`` in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (``--host-client``).
+
 Web client integration
 ----------------------
 
