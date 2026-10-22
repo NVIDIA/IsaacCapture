@@ -49,13 +49,14 @@ function storeToken(key: string, token: string): void {
 }
 
 function loadToken(key: string): string | null {
+  // This page load's token wins: a denied write must not fall back to an older stored one.
+  const current = memoryTokens.get(key);
+  if (current) return current;
   try {
-    const stored = window.sessionStorage.getItem(key);
-    if (stored) return stored;
+    return window.sessionStorage.getItem(key) || null;
   } catch {
-    // Fall through to the in-memory copy.
+    return null;
   }
-  return memoryTokens.get(key) ?? null;
 }
 
 /**
