@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from isaaccapture.teleop_session_manager.camera_mailbox import CameraImage
-from isaaccapture.teleop_session_manager.owned_mirror import (
+from isaaccapture.ovxr_session_manager.camera_mailbox import CameraImage
+from isaaccapture.ovxr_session_manager.owned_mirror import (
     MirrorProduct,
     OwnedMirrorMailbox,
 )

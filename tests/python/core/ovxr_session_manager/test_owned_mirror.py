@@ -11,11 +11,11 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from isaaccapture.teleop_session_manager.desktop_mirror import (
+from isaaccapture.ovxr_session_manager.desktop_mirror import (
     DesktopMirrorConfig,
     DesktopMirrorStatus,
 )
-import isaaccapture.teleop_session_manager.owned_mirror as mirror
+import isaaccapture.ovxr_session_manager.owned_mirror as mirror
 
 
 def _prepared_mirror(*, render_products=(), auxiliary_products=()):

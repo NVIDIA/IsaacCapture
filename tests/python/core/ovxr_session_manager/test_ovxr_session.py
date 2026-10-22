@@ -14,12 +14,12 @@ from typing import ClassVar
 
 import pytest
 
-from isaaccapture.teleop_session_manager.desktop_mirror import (
+from isaaccapture.ovxr_session_manager.desktop_mirror import (
     DesktopMirrorConfig,
     DesktopMirrorStatus,
 )
-import isaaccapture.teleop_session_manager.owned_mirror as owned_mirror
-import isaaccapture.teleop_session_manager.ovxr_session as ovxr_session
+import isaaccapture.ovxr_session_manager.owned_mirror as owned_mirror
+import isaaccapture.ovxr_session_manager.ovxr_session as ovxr_session
 
 
 class _FakeOvxrError(RuntimeError):

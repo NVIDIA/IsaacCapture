@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from isaaccapture.teleop_session_manager import owned_mirror as mirror
-from isaaccapture.teleop_session_manager.desktop_mirror import DesktopMirrorConfig
+from isaaccapture.ovxr_session_manager import owned_mirror as mirror
+from isaaccapture.ovxr_session_manager.desktop_mirror import DesktopMirrorConfig
 from test_passive_mirror import LEFT, RIGHT, outputs
 
 
@@ -85,7 +85,7 @@ def test_gpu_selection_change_during_map_does_not_relabel_or_leak():
 
 
 def test_gui_device_bootstrap_omits_copy_without_a_spurious_failure():
-    from isaaccapture.teleop_session_manager.gpu_output import OwnedCudaImagePool
+    from isaaccapture.ovxr_session_manager.gpu_output import OwnedCudaImagePool
 
     pool = OwnedCudaImagePool()
     box = mirror.OwnedMirrorMailbox(30, gpu_mapper=pool)
@@ -243,7 +243,7 @@ def test_failed_map_cleanup_is_retained_and_prevents_additional_maps():
 
 @pytest.mark.parametrize("stream,event", [(0, 7), (5, 0), (1, 7), (0, 0)])
 def test_producer_event_and_stream_are_both_synchronized(stream, event):
-    from isaaccapture.teleop_session_manager.gpu_output import _wait_ready
+    from isaaccapture.ovxr_session_manager.gpu_output import _wait_ready
 
     calls = []
     cuda = SimpleNamespace(
@@ -264,7 +264,7 @@ def test_owned_mirror_copy_releases_frame_maps_and_reuses_two_allocations(
     monkeypatch, copy_failure, destination, mock_cuda
 ):
     cuda = mock_cuda
-    from isaaccapture.teleop_session_manager import gpu_output as gpu
+    from isaaccapture.ovxr_session_manager import gpu_output as gpu
 
     events = []
     allocations = []
@@ -338,7 +338,7 @@ def test_owned_mirror_copy_releases_frame_maps_and_reuses_two_allocations(
 
 def test_owned_mirror_discovers_and_keeps_the_gl_device(monkeypatch, mock_cuda):
     cuda = mock_cuda
-    from isaaccapture.teleop_session_manager import gpu_output as gpu
+    from isaaccapture.ovxr_session_manager import gpu_output as gpu
 
     pool = gpu.OwnedCudaImagePool()
     assert pool(1, 2, 100) is None
@@ -351,7 +351,7 @@ def test_owned_mirror_discovers_and_keeps_the_gl_device(monkeypatch, mock_cuda):
 
 def test_oversized_pitched_allocation_stays_rejected_on_reuse(monkeypatch, mock_cuda):
     cuda = mock_cuda
-    from isaaccapture.teleop_session_manager import gpu_output as gpu
+    from isaaccapture.ovxr_session_manager import gpu_output as gpu
 
     events = []
     source = SimpleNamespace(width=1, height=2, device=0, pointer=42, busy=False)
@@ -377,7 +377,7 @@ def test_unproved_owned_copy_keeps_borrowed_source_and_blocks_consumption(
     monkeypatch, mock_cuda
 ):
     cuda = mock_cuda
-    from isaaccapture.teleop_session_manager import gpu_output as gpu
+    from isaaccapture.ovxr_session_manager import gpu_output as gpu
 
     source = SimpleNamespace(width=1, height=1, device=0, pointer=42, busy=False)
     source.close = lambda: pytest.fail("unproved source read was unmapped")
@@ -398,7 +398,7 @@ def test_unproved_owned_copy_keeps_borrowed_source_and_blocks_consumption(
 
 
 def test_unconfigured_pool_needs_no_optional_providers(monkeypatch):
-    from isaaccapture.teleop_session_manager.gpu_output import OwnedCudaImagePool
+    from isaaccapture.ovxr_session_manager.gpu_output import OwnedCudaImagePool
 
     for name in ("cuda", "cuda.bindings", "cuda.bindings.runtime", "ovxr"):
         monkeypatch.setitem(sys.modules, name, None)
@@ -408,7 +408,7 @@ def test_unconfigured_pool_needs_no_optional_providers(monkeypatch):
 
 
 def test_empty_pool_still_retains_unproved_borrowed_sources(monkeypatch):
-    from isaaccapture.teleop_session_manager.gpu_output import OwnedCudaImagePool
+    from isaaccapture.ovxr_session_manager.gpu_output import OwnedCudaImagePool
 
     monkeypatch.setitem(sys.modules, "cuda", None)
     pool = OwnedCudaImagePool()
@@ -422,7 +422,7 @@ def test_empty_pool_still_retains_unproved_borrowed_sources(monkeypatch):
 def test_mirror_rejects_a_non_opengl_destination_with_startup_guidance(
     monkeypatch, mock_cuda
 ):
-    from isaaccapture.teleop_session_manager import gpu_output as gpu
+    from isaaccapture.ovxr_session_manager import gpu_output as gpu
 
     monkeypatch.setattr(mock_cuda, "cudaGLGetDevices", lambda *args: (219,))
     pool = gpu.OwnedCudaImagePool()

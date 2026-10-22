@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from isaaccapture.teleop_session_manager import owned_mirror as mirror
+from isaaccapture.ovxr_session_manager import owned_mirror as mirror
 
 
 @pytest.fixture

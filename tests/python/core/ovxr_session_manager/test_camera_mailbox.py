@@ -9,13 +9,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from isaaccapture.teleop_session_manager.camera_mailbox import CompletedCameraMailbox
+from isaaccapture.ovxr_session_manager.camera_mailbox import CompletedCameraMailbox
 
 
 def test_cpu_unmap_failure_retains_handle_and_blocks_more_maps(monkeypatch):
     """Exercise the real CPU copier; failed unmap must not lose its native lease."""
     b = pytest.importorskip("ovrtx._src.bindings")
-    from isaaccapture.teleop_session_manager import gpu_output
+    from isaaccapture.ovxr_session_manager import gpu_output
 
     gpu_output._api.cache_clear()
 

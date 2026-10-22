@@ -34,6 +34,8 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
    │   ├── teleop_session_manager/ # Teleop session manager (Python)
    │   ├── cloudxr/                # CloudXR runtime helper (Python)
    │   └── python/                 # Python wheel packaging (when BUILD_PYTHON_BINDINGS=ON)
+   ├── src/python/isaaccapture/
+   │   └── ovxr_session_manager/   # OVXR session ownership and presentation
    ├── src/plugins/                # Built when BUILD_PLUGINS=ON
    │   ├── plugin_utils/
    │   ├── controller_synthetic_hands/
@@ -41,6 +43,8 @@ The layout below reflects the actual ``CMakeLists.txt`` hierarchy (root ``CMakeL
    │   ├── manus/
    │   ├── oak/                    # When BUILD_PLUGIN_OAK_CAMERA=ON
    |   └── haptikos/
+   ├── tests/python/core/
+   │   └── ovxr_session_manager/   # OVXR session and presentation tests
    └── examples/
        ├── oxr/                    # OpenXR examples (C++ and Python)
        ├── retargeting/

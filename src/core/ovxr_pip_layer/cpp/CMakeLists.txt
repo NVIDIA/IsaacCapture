@@ -29,10 +29,10 @@ set_target_properties(ovxr_pip_layer PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
     INSTALL_RPATH "$ORIGIN/../../cloudxr/native"
     INSTALL_RPATH_USE_LINK_PATH FALSE
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/teleop_session_manager/openxr_layer")
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/ovxr_session_manager/openxr_layer")
 
 set(OVXR_PIP_LAYER_DIR
-    "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/teleop_session_manager/openxr_layer")
+    "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/ovxr_session_manager/openxr_layer")
 add_custom_command(
     OUTPUT "${OVXR_PIP_LAYER_DIR}/XrApiLayer_isaacteleop_pip.json"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${OVXR_PIP_LAYER_DIR}"

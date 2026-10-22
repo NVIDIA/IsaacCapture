@@ -11,7 +11,7 @@ import textwrap
 
 import pytest
 
-import isaaccapture.teleop_session_manager.desktop_mirror as desktop_mirror
+import isaaccapture.ovxr_session_manager.desktop_mirror as desktop_mirror
 
 
 def test_config_rejects_invalid_window_and_cadence():
@@ -40,7 +40,7 @@ def test_session_import_and_mirror_config_do_not_request_optional_ovui():
                     raise ModuleNotFoundError(fullname)
 
         sys.meta_path.insert(0, UnavailableOVUI())
-        from isaaccapture.teleop_session_manager import DesktopMirrorConfig
+        from isaaccapture.ovxr_session_manager import DesktopMirrorConfig
 
         DesktopMirrorConfig()
         assert not requests, requests

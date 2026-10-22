@@ -15,7 +15,7 @@ message(STATUS "[grounding] bundling robotic_grounding/ from ${ROBOTIC_GROUNDING
 # Generate pyproject.toml from template with ISAAC_TELEOP_PYPROJECT_VERSION
 if(BUILD_OVXR_CAMERA_QUADS)
     set(OVXR_CAMERA_PACKAGE_DATA_BLOCK
-        "\"isaaccapture.teleop_session_manager\" = [\"openxr_layer/*.so\", \"openxr_layer/*.json\"]\n")
+        "\"isaaccapture.ovxr_session_manager\" = [\"openxr_layer/*.so\", \"openxr_layer/*.json\"]\n")
 else()
     set(OVXR_CAMERA_PACKAGE_DATA_BLOCK "")
 endif()
@@ -242,11 +242,11 @@ if(SKBUILD)
     )
     if(BUILD_OVXR_CAMERA_QUADS)
         install(TARGETS ovxr_pip_layer
-            LIBRARY DESTINATION "isaaccapture/teleop_session_manager/openxr_layer"
+            LIBRARY DESTINATION "isaaccapture/ovxr_session_manager/openxr_layer"
             COMPONENT isaacteleop_wheel
         )
-        install(FILES "${CMAKE_BINARY_DIR}/python_package/${_it_wheel_config}/isaaccapture/teleop_session_manager/openxr_layer/XrApiLayer_isaacteleop_pip.json"
-            DESTINATION "isaaccapture/teleop_session_manager/openxr_layer"
+        install(FILES "${CMAKE_BINARY_DIR}/python_package/${_it_wheel_config}/isaaccapture/ovxr_session_manager/openxr_layer/XrApiLayer_isaacteleop_pip.json"
+            DESTINATION "isaaccapture/ovxr_session_manager/openxr_layer"
             COMPONENT isaacteleop_wheel
         )
     endif()
