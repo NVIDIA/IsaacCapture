@@ -397,7 +397,7 @@ class OvxrExternalPresentOwner:
             )
             self._worker.start()
         except Exception:
-            # No owner thread accepted the borrowed pair; rollback stays on the host lane.
+            # No owner thread accepted the borrowed pair; rollback stays on the application thread.
             self._worker = None
             self._closed = True
             try:
@@ -681,7 +681,7 @@ class OvxrExternalPresentOwner:
                 shared[mailbox.product_path] = image
 
     def camera_image_snapshot(self, index: int = 0) -> CameraImage | None:
-        """Return the latest camera image on the render-owner lane.
+        """Return the latest camera image on the render thread.
 
         CPU bytes are immutable. A GPU map is valid only within the current
         bound-frame observation, before submit/cancel; metadata may outlive it.
@@ -915,7 +915,7 @@ class OvxrExternalPresentOwner:
                                     try:
                                         self._context.destroy(stage_ordinal=ordinal)
                                     except _import_ovxr().OvxrError:
-                                        # The pinned public wrapper raises its result error
+                                        # OVXR raises its result error
                                         # only after native destroy consumed the context.
                                         # Pre-call/FFI errors still quarantine borrowed owners.
                                         context_retired = True

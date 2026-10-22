@@ -4,140 +4,82 @@
 OVXR installation
 =================
 
-OVXR is an optional presentation dependency. Build Isaac Capture from source and
-select its ``ovxr`` extra only for applications that need XR presentation.
-The optional packages are available publicly; no internal package index, GitHub
-Actions artifact or local Kit build is needed.
+OVXR provides optional XR presentation for applications that use Isaac Capture
+for teleoperation input. Select the ``ovxr`` extra when installing Isaac Capture
+to include OVXR and its rendering dependencies.
 
-.. warning::
+Install XR support
+------------------
 
-   OVXR 0.1.0.5842 requires OVRTX 0.6.0.1791947691 and OVStage 0.3.0.1791986420.
-   Applications pinning OVRTX 0.5.x or OVStage 0.2.x, including the current
-   Isaac Lab main dependency set, need a coordinated provider upgrade first.
-   This package selection prepares the Isaac Capture PRs; compatibility and
-   runtime/headset validation with the public providers remain pending.
+Follow :doc:`/development/build_from_source/index` to build Isaac Capture and
+select a Python environment matching the generated wheel. Include ``ovxr`` in
+the installation requirement:
+
+.. code-block:: bash
+
+   uv pip install "isaaccapture[ovxr]==X.Y+local" --find-links=./install/wheels/
+   uv pip check
+
+Replace ``X.Y`` with the version of your source build, as described in the build
+guide. Base installations and imports do not require OVXR.
+
+OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
+The consuming application's dependency constraints must accept those versions.
+See the package pages below for supported Python versions and platforms.
 
 Optional packages and licenses
 ------------------------------
 
-The ``isaaccapture[ovxr]`` extra retrieves OVXR and its declared OVRTX/OVStage
-dependencies. Base Isaac Capture installation/import does not request or load
-OVXR. These OV packages are downloaded separately, rather than bundled in the
-Isaac Capture wheel, and retain their own licenses.
+The ``ovxr`` extra installs OVXR and its OVRTX/OVStage dependencies separately
+from the Isaac Capture wheel. These packages retain their own licenses:
 
-* **OVXR 0.1.0.5842, OVRTX and OVStage:** NVIDIA proprietary software; review the
-  license included with each selected distribution. Package information is at
-  `OVXR <https://pypi.org/project/ovxr/0.1.0.5842/>`__,
-  `OVRTX <https://pypi.org/project/ovrtx/0.6.0.1791947691/>`__ and
-  `OVStage <https://pypi.org/project/ovstage/0.3.0.1791986420/>`__.
-  OVXR and OVStage come from PyPI; OVRTX's PyPI installer retrieves its native
-  wheel from `NVIDIA's public Python index <https://pypi.nvidia.com>`__.
+* `OVXR <https://pypi.org/project/ovxr/>`__,
+  `OVRTX <https://pypi.org/project/ovrtx/>`__ and
+  `OVStage <https://pypi.org/project/ovstage/>`__ are NVIDIA proprietary software.
+  Review the license included with each distribution before use.
 
-The README's **Separately retrieved optional materials** section contains the
-external-materials notice. Existing CloudXR native libraries are bundled in
-Isaac Capture wheels and remain subject to their separate NVIDIA license and
-CloudXR EULA acceptance.
+CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and CloudXR EULA acceptance.
 
-Install OVXR
-------------
+Optional camera panels
+----------------------
 
-With the application's Python environment selected, run:
+Camera picture-in-picture panels require the native camera helper. Follow the
+source-build guide to configure a build for your application's Python version,
+then enable camera support and rebuild the wheel:
 
 .. code-block:: bash
 
-   uv pip install ovxr==0.1.0.5842 --index https://pypi.org/simple
-   uv pip check
+   cmake -S . -B build -DBUILD_OVXR_CAMERA_QUADS=ON
+   cmake --build build --target python_package python_stubs python_wheel --parallel
 
-Use ``--python /path/to/environment/bin/python`` when that environment is not
-selected. This installs OVXR and its exact OVRTX/OVStage dependencies; the
-consuming application's other constraints must accept that provider set.
-Successful installation is not runtime, streaming or headset qualification.
+Install the generated wheel with its ``ovxr`` extra using the instructions
+above. The extra includes the CUDA Python bindings used for GPU camera output;
+``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
+The helper is disabled by default.
 
-The Linux x86_64 OVXR wheel has SHA256
-``146c90f1130456e836e120bff77e2f4f27bf387b67258e8b5c8641a0c0633854``.
-A Windows wheel is also published; package availability is not platform runtime
-verification. OVXR 0.1.0.5842 has no Linux aarch64 wheel.
+Camera support requires Vulkan and CUDA development files. On Linux x86-64,
+CMake uses installed SDKs when available and downloads missing development files
+into the build directory. The GPU driver and Vulkan runtime loader must be
+installed on the host. Other platforms require installed development SDKs.
+Use ``CUDAToolkit_ROOT`` to select a CUDA SDK and ``VULKAN_SDK`` to help locate a
+Vulkan SDK.
 
-Build Capture and optional camera support
------------------------------------------
+Use from another application
+----------------------------
 
-Follow :doc:`/getting_started/build_from_source/index` for build tools, managed Python, CloudXR and
-the normal CMake dependency setup. On Linux x86-64, enabling camera quads reuses
-available Vulkan/CUDA development SDKs. When they are absent, CMake acquires
-hash-pinned Khronos Vulkan headers and NVIDIA CUDA 12 runtime/compiler SDK
-archives inside the existing build's ``_deps`` directory. Downloads are about
-45 MB plus the Vulkan headers and are reused on subsequent configurations.
-The platform GPU driver and Vulkan runtime (``libvulkan.so.1``) remain host
-prerequisites; the build does not install system packages. Base builds with
-camera quads OFF do not acquire these development SDKs.
-The headers are development input only; their vendor CMake project is not added
-to the build. Camera SDK acquisition does not change Televiz's host-SDK-based
-``BUILD_VIZ`` default; explicit ``BUILD_VIZ=ON/OFF`` selection is preserved.
-
-Other platforms still require discoverable external development SDKs. Use
-``CUDAToolkit_ROOT`` to select an existing CUDA SDK. On Linux x86-64, when camera
-support needs build-managed CUDA acquisition, an invalid explicit root fails
-configuration. ``VULKAN_SDK`` remains a hint for normal FindVulkan discovery.
-See NVIDIA's `archive-to-CMake SDK workflow
-<https://docs.nvidia.com/cuda/archive/12.0.0/cuda-installation-guide-linux/index.html#importing-tarballs-into-cmake>`__.
-Reuse a compatible existing build directory:
-
-.. code-block:: bash
-
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-     -DISAAC_TELEOP_PYTHON_VERSION=3.12 \
-     -DBUILD_PYTHON_BINDINGS=ON -DBUILD_OVXR_CAMERA_QUADS=ON \
-     -DBUILD_TESTING=ON
-   cmake --build build --target python_package python_stubs python_wheel \
-     ovxr_pip_layer_contract_test --parallel 2
-   ctest --test-dir build -C Release -R '^ovxr_pip_layer_contract_test$' \
-     --output-on-failure
-   uv run --no-project --python 3.12 python scripts/check_camera_quad_wheel.py \
-     build/wheels/<local-wheel>.whl --camera-quads
-   uv pip install 'build/wheels/<local-wheel>.whl[ovxr]' \
-     --index https://pypi.org/simple
-   uv pip check
-
-Replace ``<local-wheel>`` with the wheel produced by this build.
-The check uses managed Python without requiring a system ``python`` alias;
-``--no-project`` avoids a second source build. The helper uses
-the repository's pinned OpenXR SDK and discovered Vulkan/CUDA inputs, not an OVXR
-SDK archive. It borrows public OVXR native handles at runtime; it does not link
-against a local OVXR or Kit build. CMake packages the helper with its relative
-CloudXR CUDA-runtime lookup. The source build and installed native helper still
-need validation on each destination.
-
-The ``ovxr`` extra supplies OVXR and CUDA Python bindings for GPU camera output;
-it does not enable the native helper build flag or install the desktop mirror.
-Plain ``uv pip install build/wheels/<local-wheel>.whl`` does not request OVXR or
-its providers. Default source builds leave ``BUILD_OVXR_CAMERA_QUADS=OFF`` and
-do not require OVXR to be installed. Importing base Capture does not load OVXR.
-
-.. Section underline lengths include inline markup characters in the source title.
-
-Keep ordinary ``uv run`` resolution consistent
-----------------------------------------------
-
-``uv pip install`` updates an environment, not an application's ``uv.lock``.
-Declare the local source-built Isaac Capture wheel in the consuming application's
-optional dependency set, then refresh its lock through the normal workflow.
-Do not use permanent ``--no-sync`` to bypass incompatible application pins.
-
-For example, a Linux x86_64 application can select:
+For a uv-managed application, declare Isaac Capture with its ``ovxr`` extra and
+select the source-built wheel in the application's project configuration:
 
 .. code-block:: toml
 
    [project.optional-dependencies]
-   ovxr = [
-     "isaaccapture[ovxr]; platform_system == 'Linux' and platform_machine == 'x86_64'",
-   ]
+   ovxr = ["isaaccapture[ovxr]"]
 
    [tool.uv.sources]
    isaaccapture = { path = "path/to/your/local-wheel.whl", extra = "ovxr" }
 
-OVXR and its dependencies resolve from their public package metadata. No internal
-index or credentials are required. Preserve any existing source selections for
-other optional dependencies. OVXR's exact OVRTX/OVStage pins must agree with the
-application; regenerate its lock and use ordinary ``uv run`` with its OVXR extra
-selected. Base Isaac Capture and other teleoperation paths should not request
-the ``ovxr`` extra.
+Replace the wheel path with the file produced by your build. Refresh the
+application's lock file after changing the wheel or dependency selection, then
+run with ``uv run --extra ovxr``. Installing packages with ``uv pip install``
+alone does not update the application's lock file.

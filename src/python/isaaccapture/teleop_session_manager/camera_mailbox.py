@@ -3,8 +3,8 @@
 
 """Bounded completed camera outputs for later application presentation.
 
-CPU snapshots own their bytes. GPU snapshots retain a public OVRTX map until
-next production or teardown; they may be consumed only on the renderer lane,
+CPU snapshots own their bytes. GPU snapshots retain an OVRTX map until
+next production or teardown; they may be consumed only on the render thread,
 with synchronous copy completion. Cadence gaps retain the last completed image.
 No borrowed result/output handle survives the callback.
 """

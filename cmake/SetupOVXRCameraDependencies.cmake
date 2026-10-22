@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Optional PiP SDK inputs belong to this build, like Kit's target dependencies.
+# Camera-panel development dependencies stay inside this build directory.
 # Keep the GPU driver/Vulkan runtime a platform prerequisite; never install host packages here.
 include(FetchContent)
 if(POLICY CMP0135)
