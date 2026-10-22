@@ -3,11 +3,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <deviceio_session/deviceio_session.hpp>
-#include <deviceio_trackers/ego_audio_tracker.hpp>
-#include <deviceio_trackers/ego_calibration_tracker.hpp>
-#include <deviceio_trackers/ego_device_state_tracker.hpp>
 #include <deviceio_trackers/ego_frame_metadata_tracker.hpp>
 #include <deviceio_trackers/ego_imu_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_audio_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_calibration_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_device_state_tracker.hpp>
 #include <live_trackers/schema_tracker_base.hpp>
 
 #include <memory>
@@ -19,13 +19,13 @@
 TEST_CASE("EGO live dispatch resolves only tensor and time extensions", "[unit][live_trackers][ego]")
 {
     std::vector<std::shared_ptr<core::ITracker>> trackers = {
-        std::make_shared<core::EgoFrameMetadataTracker>(
-            "ego_metadata",
-            std::vector<core::EgoCameraStream>{ core::EgoCameraStream_ColorLeft, core::EgoCameraStream_ColorRight }),
-        std::make_shared<core::EgoImuTracker>("ego_imu"),
-        std::make_shared<core::EgoAudioTracker>("ego_audio/Audio"),
-        std::make_shared<core::EgoCalibrationTracker>("ego_calibration/Calibration"),
-        std::make_shared<core::EgoDeviceStateTracker>("ego_device/DeviceState"),
+        std::make_shared<core::OrbbecEgoFrameMetadataTracker>(
+            "ego_metadata", std::vector<core::OrbbecEgoCameraStream>{ core::OrbbecEgoCameraStream_ColorLeft,
+                                                                      core::OrbbecEgoCameraStream_ColorRight }),
+        std::make_shared<core::OrbbecEgoImuTracker>("ego_imu"),
+        std::make_shared<core::OrbbecEgoAudioTracker>("ego_audio/Audio"),
+        std::make_shared<core::OrbbecEgoCalibrationTracker>("ego_calibration/Calibration"),
+        std::make_shared<core::OrbbecEgoDeviceStateTracker>("ego_device/DeviceState"),
     };
     const auto expected = core::SchemaTrackerBase::get_required_extensions();
     const std::set<std::string> expected_set(expected.begin(), expected.end());
@@ -40,13 +40,14 @@ TEST_CASE("EGO live dispatch resolves only tensor and time extensions", "[unit][
 
 TEST_CASE("EGO multi-stream trackers reject ambiguous collection routing", "[unit][live_trackers][ego]")
 {
-    using Camera = core::EgoFrameMetadataTracker;
-    using Imu = core::EgoImuTracker;
-    CHECK_THROWS_AS(Camera("", { core::EgoCameraStream_ColorLeft }), std::invalid_argument);
+    using Camera = core::OrbbecEgoFrameMetadataTracker;
+    using Imu = core::OrbbecEgoImuTracker;
+    CHECK_THROWS_AS(Camera("", { core::OrbbecEgoCameraStream_ColorLeft }), std::invalid_argument);
     CHECK_THROWS_AS(Camera("camera", {}), std::invalid_argument);
+    CHECK_THROWS_AS(Camera("camera", { core::OrbbecEgoCameraStream_ColorLeft, core::OrbbecEgoCameraStream_ColorLeft }),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(Camera("camera", { static_cast<core::OrbbecEgoCameraStream>(99) }), std::invalid_argument);
     CHECK_THROWS_AS(
-        Camera("camera", { core::EgoCameraStream_ColorLeft, core::EgoCameraStream_ColorLeft }), std::invalid_argument);
-    CHECK_THROWS_AS(Camera("camera", { static_cast<core::EgoCameraStream>(99) }), std::invalid_argument);
-    CHECK_THROWS_AS(Imu("imu", { core::EgoImuSensor_Accel, core::EgoImuSensor_Accel }), std::invalid_argument);
-    CHECK_THROWS_AS(Imu("imu", { static_cast<core::EgoImuSensor>(99) }), std::invalid_argument);
+        Imu("imu", { core::OrbbecEgoImuSensor_Accel, core::OrbbecEgoImuSensor_Accel }), std::invalid_argument);
+    CHECK_THROWS_AS(Imu("imu", { static_cast<core::OrbbecEgoImuSensor>(99) }), std::invalid_argument);
 }

@@ -114,13 +114,13 @@ std::unique_ptr<ITrackerImpl> try_create_haptic_command_reader_impl(ReplayDevice
 std::unique_ptr<ITrackerImpl> try_create_ego_frame_metadata_tracker_impl(ReplayDeviceIOFactory& factory,
                                                                          const ITracker& tracker)
 {
-    auto* typed = dynamic_cast<const EgoFrameMetadataTracker*>(&tracker);
+    auto* typed = dynamic_cast<const OrbbecEgoFrameMetadataTracker*>(&tracker);
     return typed ? factory.create_ego_frame_metadata_tracker_impl(typed) : nullptr;
 }
 
 std::unique_ptr<ITrackerImpl> try_create_ego_imu_tracker_impl(ReplayDeviceIOFactory& factory, const ITracker& tracker)
 {
-    auto* typed = dynamic_cast<const EgoImuTracker*>(&tracker);
+    auto* typed = dynamic_cast<const OrbbecEgoImuTracker*>(&tracker);
     return typed ? factory.create_ego_imu_tracker_impl(typed) : nullptr;
 }
 
@@ -225,13 +225,13 @@ std::unique_ptr<IHapticCommandReaderTrackerImpl> ReplayDeviceIOFactory::create_h
 }
 
 std::unique_ptr<IEgoFrameMetadataTrackerImpl> ReplayDeviceIOFactory::create_ego_frame_metadata_tracker_impl(
-    const EgoFrameMetadataTracker* tracker)
+    const OrbbecEgoFrameMetadataTracker* tracker)
 {
     return std::make_unique<ReplayEgoFrameMetadataTrackerImpl>(
         open_reader(filename_), get_name(tracker), tracker->get_stream_names(), recorded_schemas_);
 }
 
-std::unique_ptr<IEgoImuTrackerImpl> ReplayDeviceIOFactory::create_ego_imu_tracker_impl(const EgoImuTracker* tracker)
+std::unique_ptr<IEgoImuTrackerImpl> ReplayDeviceIOFactory::create_ego_imu_tracker_impl(const OrbbecEgoImuTracker* tracker)
 {
     return std::make_unique<ReplayEgoImuTrackerImpl>(
         open_reader(filename_), get_name(tracker), tracker->stream_names(), recorded_schemas_);

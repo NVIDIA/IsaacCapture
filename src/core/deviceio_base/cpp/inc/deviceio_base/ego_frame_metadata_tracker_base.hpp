@@ -12,12 +12,12 @@
 namespace core
 {
 
-struct EgoFrameMetadata;
+struct OrbbecEgoFrameMetadata;
 
 class IEgoFrameMetadataTrackerImpl : public ITrackerImpl
 {
 public:
-    virtual const Serialized<EgoFrameMetadata>& get_stream_data(size_t stream_index) const = 0;
+    virtual const Serialized<OrbbecEgoFrameMetadata>& get_stream_data(size_t stream_index) const = 0;
 };
 
 } // namespace core

@@ -57,6 +57,8 @@ def video_record(data, embedded_media):
 
 
 path, mode = sys.argv[1:3]
+if mode not in ("sidecar", "embedded"):
+    raise SystemExit(f"MCAP media mode must be sidecar or embedded: {mode!r}")
 expected_counts = {
     "ColorLeft": int(sys.argv[3]),
     "ColorRight": int(sys.argv[4]),
@@ -80,9 +82,9 @@ if manifest_path.exists():
             f"Invalid requested profile manifest {manifest_path}: {error}"
         ) from error
 
-prefixes = ["ego_metadata"]
+prefixes = ["orbbec_ego_metadata"]
 if mode == "embedded":
-    prefixes.append("ego_media")
+    prefixes.append("orbbec_ego_media")
 topics = {
     f"{prefix}/{stream}": {
         "stream": stream,
@@ -106,7 +108,7 @@ with open(path, "rb") as stream:
         if state is None:
             continue
         timestamp, sequence, profile, capture_epoch = video_record(
-            message.data, channel.topic.startswith("ego_media/")
+            message.data, channel.topic.startswith("orbbec_ego_media/")
         )
         epoch = state["epochs"].setdefault(
             capture_epoch,
@@ -183,8 +185,8 @@ for topic, state in topics.items():
         )
 if mode == "embedded":
     for stream in expected_counts:
-        metadata = topics[f"ego_metadata/{stream}"]
-        media = topics[f"ego_media/{stream}"]
+        metadata = topics[f"orbbec_ego_metadata/{stream}"]
+        media = topics[f"orbbec_ego_media/{stream}"]
         comparable = ("count", "profile", "timeline")
         if any(metadata[field] != media[field] for field in comparable):
             raise SystemExit(f"Embedded and metadata timelines differ for {stream}")

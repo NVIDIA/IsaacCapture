@@ -5,9 +5,9 @@ include "timestamp.fbs";
 
 namespace core;
 
-enum EgoImuSensor : byte { Accel = 0, Gyro = 1 }
+enum OrbbecEgoImuSensor : byte { Accel = 0, Gyro = 1 }
 
-struct EgoImuSample {
+struct OrbbecEgoImuSample {
   x_si: double;
   y_si: double;
   z_si: double;
@@ -16,20 +16,20 @@ struct EgoImuSample {
   sample_time_raw_device_clock_ns: int64;
 }
 
-table EgoImuBatch {
-  sensor: EgoImuSensor (id: 0);
+table OrbbecEgoImuBatch {
+  sensor: OrbbecEgoImuSensor (id: 0);
   sequence_number: uint64 (id: 1);
   sample_rate_hz: uint32 (id: 2);
   full_scale: float (id: 3);
-  samples: [EgoImuSample] (id: 4);
+  samples: [OrbbecEgoImuSample] (id: 4);
   capture_epoch: uint32 (id: 5);
 }
 
-table EgoImuBatchTracked { data: EgoImuBatch (id: 0); }
+table OrbbecEgoImuBatchTracked { data: OrbbecEgoImuBatch (id: 0); }
 
-table EgoImuBatchRecord {
-  data: EgoImuBatch (id: 0);
+table OrbbecEgoImuBatchRecord {
+  data: OrbbecEgoImuBatch (id: 0);
   timestamp: DeviceDataTimestamp (id: 1);
 }
 
-root_type EgoImuBatchRecord;
+root_type OrbbecEgoImuBatchRecord;

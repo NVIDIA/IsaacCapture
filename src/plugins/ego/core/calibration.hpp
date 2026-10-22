@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "inc/ego_camera/ego_camera.hpp"
+#include "inc/ego_camera/calibration.hpp"
 
 #include <libobsensor/ObSensor.hpp>
 
@@ -12,7 +12,7 @@
 
 namespace plugins::ego
 {
-bool populate_stereo_calibration_from_yaml(const std::string& yaml, core::EgoCalibrationT& calibration);
+bool populate_stereo_calibration_from_yaml(const std::string& yaml, core::OrbbecEgoCalibrationT& calibration);
 std::string raw_data(const std::shared_ptr<ob::Device>& device, OBPropertyID id);
 std::string json_escape(const std::string& input);
 } // namespace plugins::ego

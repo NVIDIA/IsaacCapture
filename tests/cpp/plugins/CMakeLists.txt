@@ -13,14 +13,6 @@ if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
 
-if(TARGET ego::mcap_merge)
-    add_subdirectory(ego_mcap)
-endif()
-
-if(TARGET ego_mcap_export_media AND UNIX)
-    add_subdirectory(ego_media)
-endif()
-
 if(BUILD_PLUGIN_EGO_CAMERA OR BUILD_EGO_MEDIA_TOOLS)
     add_subdirectory(ego)
 endif()

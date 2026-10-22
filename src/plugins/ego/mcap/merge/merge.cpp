@@ -21,9 +21,9 @@ namespace plugins::ego
 namespace
 {
 constexpr std::string_view observed_prefix = "session_observed/";
-constexpr std::array structured_names = { "core.EgoFrameMetadataRecord", "core.EgoImuBatchRecord",
-                                          "core.EgoAudioChunkRecord", "core.EgoCalibrationRecord",
-                                          "core.EgoDeviceStateRecord" };
+constexpr std::array structured_names = { "core.OrbbecEgoFrameMetadataRecord", "core.OrbbecEgoImuBatchRecord",
+                                          "core.OrbbecEgoAudioChunkRecord", "core.OrbbecEgoCalibrationRecord",
+                                          "core.OrbbecEgoDeviceStateRecord" };
 
 void check(const mcap::Status& status)
 {
@@ -273,9 +273,10 @@ void merge_recording(const std::filesystem::path& recording_path,
         // Match schema identity, including custom topic names and empty registered channels.
         for (const Source* source : { &recording, &media })
             for (const auto& [id, channel] : source->channels)
-                if (const auto schema = source->schema(*channel); schema && schema->name == "core.EgoDeviceStateRecord")
-                    throw std::runtime_error("Diagnostic recording is off but an input contains EgoDeviceState: " +
-                                             channel->topic);
+                if (const auto schema = source->schema(*channel);
+                    schema && schema->name == "core.OrbbecEgoDeviceStateRecord")
+                    throw std::runtime_error(
+                        "Diagnostic recording is off but an input contains OrbbecEgoDeviceState: " + channel->topic);
     }
     const auto conflicts = conflicting_topics(recording, media);
     if (recording.schemas.size() + media.schemas.size() > std::numeric_limits<mcap::SchemaId>::max() ||

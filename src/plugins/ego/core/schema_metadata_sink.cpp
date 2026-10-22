@@ -42,7 +42,7 @@ public:
         {
             for (const auto& stream : streams)
             {
-                const std::string name = core::EnumNameEgoCameraStream(stream.camera);
+                const std::string name = core::EnumNameOrbbecEgoCameraStream(stream.camera);
                 const std::string collection_id = collection_prefix + "/" + name;
                 pushers_.emplace(stream.camera, std::make_unique<core::SchemaPusher>(
                                                     session_->get_handles(),
@@ -53,10 +53,10 @@ public:
                                                                               .app_name = "EgoCameraPlugin" }));
                 detail::log_info() << "  Metadata: " << collection_id << std::endl;
             }
+            imu_pushers_.emplace(core::OrbbecEgoImuSensor_Accel,
+                                 make_pusher(collection_prefix + "/Accel", "imu_batch", "Ego accelerometer"));
             imu_pushers_.emplace(
-                core::EgoImuSensor_Accel, make_pusher(collection_prefix + "/Accel", "imu_batch", "Ego accelerometer"));
-            imu_pushers_.emplace(
-                core::EgoImuSensor_Gyro, make_pusher(collection_prefix + "/Gyro", "imu_batch", "Ego gyroscope"));
+                core::OrbbecEgoImuSensor_Gyro, make_pusher(collection_prefix + "/Gyro", "imu_batch", "Ego gyroscope"));
             audio_pusher_ = make_pusher(collection_prefix + "/Audio", "audio_chunk", "Ego audio index");
             calibration_pusher_ = make_pusher(collection_prefix + "/Calibration", "calibration", "Ego calibration");
             device_state_pusher_ = make_pusher(collection_prefix + "/DeviceState", "device_state", "Ego device state");
@@ -87,29 +87,29 @@ public:
         if (it == pushers_.end())
             return;
 
-        enqueue<core::EgoFrameMetadata>(*it->second, frame.metadata, frame.sample_time_local_common_clock_ns,
-                                        frame.sample_time_raw_device_clock_ns);
+        enqueue<core::OrbbecEgoFrameMetadata>(*it->second, frame.metadata, frame.sample_time_local_common_clock_ns,
+                                              frame.sample_time_raw_device_clock_ns);
     }
 
-    void on_imu_batch(const core::EgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
+    void on_imu_batch(const core::OrbbecEgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
     {
         if (const auto found = imu_pushers_.find(batch.sensor); found != imu_pushers_.end())
             enqueue(*found->second, batch, local_ns, device_ns);
     }
 
-    void on_audio_chunk(const core::EgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
+    void on_audio_chunk(const core::OrbbecEgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
     {
         if (audio_pusher_)
             enqueue(*audio_pusher_, chunk, local_ns, device_ns);
     }
 
-    void on_calibration(const core::EgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
+    void on_calibration(const core::OrbbecEgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
     {
         if (calibration_pusher_)
             enqueue(*calibration_pusher_, calibration, local_ns, device_ns);
     }
 
-    void on_device_state(const core::EgoDeviceStateT& state, int64_t local_ns, int64_t device_ns) override
+    void on_device_state(const core::OrbbecEgoDeviceStateT& state, int64_t local_ns, int64_t device_ns) override
     {
         if (device_state_pusher_)
             enqueue(*device_state_pusher_, state, local_ns, device_ns);
@@ -185,21 +185,21 @@ private:
             });
     }
 
-    void enqueue(core::SchemaPusher& pusher, const core::EgoImuBatchT& value, int64_t local_ns, int64_t device_ns)
+    void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoImuBatchT& value, int64_t local_ns, int64_t device_ns)
     {
-        enqueue<core::EgoImuBatch>(pusher, value, local_ns, device_ns);
+        enqueue<core::OrbbecEgoImuBatch>(pusher, value, local_ns, device_ns);
     }
-    void enqueue(core::SchemaPusher& pusher, const core::EgoAudioChunkT& value, int64_t local_ns, int64_t device_ns)
+    void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoAudioChunkT& value, int64_t local_ns, int64_t device_ns)
     {
-        enqueue<core::EgoAudioChunk>(pusher, value, local_ns, device_ns);
+        enqueue<core::OrbbecEgoAudioChunk>(pusher, value, local_ns, device_ns);
     }
-    void enqueue(core::SchemaPusher& pusher, const core::EgoCalibrationT& value, int64_t local_ns, int64_t device_ns)
+    void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoCalibrationT& value, int64_t local_ns, int64_t device_ns)
     {
-        enqueue<core::EgoCalibration>(pusher, value, local_ns, device_ns);
+        enqueue<core::OrbbecEgoCalibration>(pusher, value, local_ns, device_ns);
     }
-    void enqueue(core::SchemaPusher& pusher, const core::EgoDeviceStateT& value, int64_t local_ns, int64_t device_ns)
+    void enqueue(core::SchemaPusher& pusher, const core::OrbbecEgoDeviceStateT& value, int64_t local_ns, int64_t device_ns)
     {
-        enqueue<core::EgoDeviceState>(pusher, value, local_ns, device_ns);
+        enqueue<core::OrbbecEgoDeviceState>(pusher, value, local_ns, device_ns);
     }
 
     void enqueue_task(std::function<void()> task)
@@ -318,8 +318,8 @@ private:
     }
 
     std::shared_ptr<core::OpenXRSession> session_;
-    std::map<core::EgoCameraStream, std::unique_ptr<core::SchemaPusher>> pushers_;
-    std::map<core::EgoImuSensor, std::unique_ptr<core::SchemaPusher>> imu_pushers_;
+    std::map<core::OrbbecEgoCameraStream, std::unique_ptr<core::SchemaPusher>> pushers_;
+    std::map<core::OrbbecEgoImuSensor, std::unique_ptr<core::SchemaPusher>> imu_pushers_;
     std::unique_ptr<core::SchemaPusher> audio_pusher_;
     std::unique_ptr<core::SchemaPusher> calibration_pusher_;
     std::unique_ptr<core::SchemaPusher> device_state_pusher_;

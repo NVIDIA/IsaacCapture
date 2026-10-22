@@ -10,6 +10,6 @@ with open(sys.argv[1], "rb") as stream:
         topics.add(channel.topic)
 print(
     "embedded"
-    if any(topic.startswith("ego_media/") for topic in topics)
-    else "metadata-only"
+    if any(topic.startswith("orbbec_ego_media/") for topic in topics)
+    else "sidecar"
 )

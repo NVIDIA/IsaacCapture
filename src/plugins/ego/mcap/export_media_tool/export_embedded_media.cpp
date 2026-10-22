@@ -3,10 +3,10 @@
 
 #include <log_bridge/logger.hpp>
 #include <mcap/tracker_channels.hpp>
-#include <schema/ego_audio_bfbs_generated.h>
-#include <schema/ego_audio_generated.h>
-#include <schema/ego_camera_bfbs_generated.h>
-#include <schema/ego_camera_generated.h>
+#include <schema/orbbec_ego_audio_bfbs_generated.h>
+#include <schema/orbbec_ego_audio_generated.h>
+#include <schema/orbbec_ego_camera_bfbs_generated.h>
+#include <schema/orbbec_ego_camera_generated.h>
 
 #include <array>
 #include <cstdint>
@@ -22,15 +22,15 @@
 namespace
 {
 
-std::string extension(core::EgoPixelFormat format)
+std::string extension(core::OrbbecEgoPixelFormat format)
 {
     switch (format)
     {
-    case core::EgoPixelFormat_Mjpg:
+    case core::OrbbecEgoPixelFormat_Mjpg:
         return "mjpg";
-    case core::EgoPixelFormat_H264:
+    case core::OrbbecEgoPixelFormat_H264:
         return "h264";
-    case core::EgoPixelFormat_H265:
+    case core::OrbbecEgoPixelFormat_H265:
         return "h265";
     default:
         throw std::runtime_error("unsupported Ego video format in embedded MCAP");
@@ -84,16 +84,16 @@ void export_media(const std::filesystem::path& input_path, const std::filesystem
         throw std::runtime_error("embedded MCAP has no valid completed summary/footer");
     const core::RecordedSchemas recorded(*video_reader);
     video_reader.reset();
-    using VideoViewer = core::McapTrackerViewers<core::EgoEncodedVideoFrameRecord>;
+    using VideoViewer = core::McapTrackerViewers<core::OrbbecEgoEncodedVideoFrameRecord>;
     // A reader per eye prevents one eye's drain from buffering the entire other eye.
     std::array<std::unique_ptr<VideoViewer>, 2> video;
     for (size_t index = 0; index < video.size(); ++index)
-        video[index] = std::make_unique<VideoViewer>(
-            open_reader(input_path), "ego_media",
-            std::vector<std::string>{ core::EnumNameEgoCameraStream(static_cast<core::EgoCameraStream>(index)) },
-            recorded);
-    core::McapTrackerViewers<core::EgoPcmAudioChunkRecord> audio(
-        open_reader(input_path), "ego_media", { "Audio" }, recorded);
+        video[index] = std::make_unique<VideoViewer>(open_reader(input_path), "orbbec_ego_media",
+                                                     std::vector<std::string>{ core::EnumNameOrbbecEgoCameraStream(
+                                                         static_cast<core::OrbbecEgoCameraStream>(index)) },
+                                                     recorded);
+    core::McapTrackerViewers<core::OrbbecEgoPcmAudioChunkRecord> audio(
+        open_reader(input_path), "orbbec_ego_media", { "Audio" }, recorded);
 
     std::filesystem::create_directories(output_dir);
     size_t video_count = 0;
@@ -101,7 +101,7 @@ void export_media(const std::filesystem::path& input_path, const std::filesystem
     {
         std::ofstream output;
         std::filesystem::path path;
-        core::EgoPixelFormat format{};
+        core::OrbbecEgoPixelFormat format{};
         while (const auto record = video[index]->read(0))
         {
             const auto* data = record->data();
@@ -112,8 +112,8 @@ void export_media(const std::filesystem::path& input_path, const std::filesystem
             if (!output.is_open())
             {
                 format = data->pixel_format();
-                path =
-                    output_dir / (std::string(core::EnumNameEgoCameraStream(data->stream())) + "." + extension(format));
+                path = output_dir /
+                       (std::string(core::EnumNameOrbbecEgoCameraStream(data->stream())) + "." + extension(format));
                 output.open(path, std::ios::binary | std::ios::trunc);
                 if (!output)
                     throw std::runtime_error("unable to create video output: " + path.string());
@@ -131,8 +131,8 @@ void export_media(const std::filesystem::path& input_path, const std::filesystem
             if (!output)
                 throw std::runtime_error("failed while finalizing embedded video output");
             ++video_count;
-            std::cout << core::EnumNameEgoCameraStream(static_cast<core::EgoCameraStream>(index)) << ": " << path
-                      << std::endl;
+            std::cout << core::EnumNameOrbbecEgoCameraStream(static_cast<core::OrbbecEgoCameraStream>(index)) << ": "
+                      << path << std::endl;
         }
     }
 
@@ -148,7 +148,7 @@ void export_media(const std::filesystem::path& input_path, const std::filesystem
         if (!data || !data->pcm_data())
             continue;
         if (data->sample_rate_hz() == 0 || data->channel_count() == 0 || data->bits_per_sample() != 16 ||
-            data->sample_format() != core::EgoAudioSampleFormat_S16LE ||
+            data->sample_format() != core::OrbbecEgoAudioSampleFormat_S16LE ||
             static_cast<uint64_t>(data->sample_count()) * data->channel_count() * 2 != data->pcm_data()->size())
             throw std::runtime_error("embedded PCM profile or sample count is invalid");
         if (!wav.is_open())

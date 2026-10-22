@@ -102,6 +102,14 @@ returns a dictionary with `left`/`right` payload bytes, `timestamp_ns`,
   refer to reusable source buffers and must be consumed through the viewer's
   existing FrameSource lifecycle.
 
+H.264/H.265 preview tracks each eye's SDK sequence independently. At startup,
+after reconnecting, or after a sequence gap, that eye waits for parameter sets
+and an IDR (or H.265 CRA) before resuming; CRA leading RASL pictures are skipped.
+Parameter sets received separately are replayed to the decoder. The other eye
+continues decoding, and publication resumes when both current images are ready.
+The viewer may hold its previous image until recovery. A timeout alone does not
+reset the decoders; MJPEG keeps its independent-frame behavior.
+
 The source producer serializes reads and SDK close. Open failures retry;
 capture-read exceptions close/reopen the pipeline and reset encoded decoders.
 Other producer failures are retained and raised by `latest()`, preserving the

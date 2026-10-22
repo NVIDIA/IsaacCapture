@@ -72,15 +72,15 @@ struct Texture
 class Decoder
 {
 public:
-    explicit Decoder(core::EgoPixelFormat format) : format_(format)
+    explicit Decoder(core::OrbbecEgoPixelFormat format) : format_(format)
     {
-        if (format_ == core::EgoPixelFormat_Mjpg)
+        if (format_ == core::OrbbecEgoPixelFormat_Mjpg)
         {
             converter_ = std::make_unique<ob::FormatConvertFilter>();
             converter_->setFormatConvertType(FORMAT_MJPG_TO_RGB);
             return;
         }
-        const auto codec_id = format_ == core::EgoPixelFormat_H264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC;
+        const auto codec_id = format_ == core::OrbbecEgoPixelFormat_H264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC;
         const AVCodec* codec = avcodec_find_decoder(codec_id);
         if (!codec)
             throw std::runtime_error("FFmpeg decoder unavailable for Ego preview");
@@ -116,10 +116,11 @@ public:
 
     bool decode(const CapturedFrame& input, RgbFrame& output)
     {
-        if (format_ == core::EgoPixelFormat_Mjpg)
+        if (format_ == core::OrbbecEgoPixelFormat_Mjpg)
         {
             auto source = ob::FrameFactory::createVideoFrameFromBuffer(
-                input.metadata.stream == core::EgoCameraStream_ColorLeft ? OB_FRAME_COLOR_LEFT : OB_FRAME_COLOR_RIGHT,
+                input.metadata.stream == core::OrbbecEgoCameraStream_ColorLeft ? OB_FRAME_COLOR_LEFT :
+                                                                                 OB_FRAME_COLOR_RIGHT,
                 OB_FORMAT_MJPG, input.metadata.width, input.metadata.height,
                 const_cast<uint8_t*>(input.encoded_data.data()), [](uint8_t*) {},
                 static_cast<uint32_t>(input.encoded_data.size()));
@@ -191,7 +192,7 @@ private:
         }
     }
 
-    core::EgoPixelFormat format_;
+    core::OrbbecEgoPixelFormat format_;
     std::unique_ptr<ob::FormatConvertFilter> converter_;
     AVCodecContext* codec_ = nullptr;
     AVFrame* decoded_ = nullptr;
@@ -222,7 +223,7 @@ public:
             std::unique_lock<std::mutex> lock(mutex_);
             if (stop_.load())
                 return;
-            if (frame.metadata.pixel_format == core::EgoPixelFormat_Mjpg)
+            if (frame.metadata.pixel_format == core::OrbbecEgoPixelFormat_Mjpg)
                 latest_mjpeg_[frame.metadata.stream] = frame;
             else
             {
@@ -287,10 +288,10 @@ private:
             closed_.store(true);
             return;
         }
-        std::map<core::EgoCameraStream, std::unique_ptr<Decoder>> decoders;
-        std::map<core::EgoCameraStream, uint32_t> epochs;
-        std::map<core::EgoCameraStream, RgbFrame> images;
-        std::map<core::EgoCameraStream, Texture> textures;
+        std::map<core::OrbbecEgoCameraStream, std::unique_ptr<Decoder>> decoders;
+        std::map<core::OrbbecEgoCameraStream, uint32_t> epochs;
+        std::map<core::OrbbecEgoCameraStream, RgbFrame> images;
+        std::map<core::OrbbecEgoCameraStream, Texture> textures;
         const auto decode_frame = [&](const CapturedFrame& frame)
         {
             const auto stream = frame.metadata.stream;
@@ -323,7 +324,7 @@ private:
                     }
                 }
                 std::deque<CapturedFrame> encoded;
-                std::map<core::EgoCameraStream, CapturedFrame> mjpeg;
+                std::map<core::OrbbecEgoCameraStream, CapturedFrame> mjpeg;
                 {
                     std::unique_lock<std::mutex> lock(mutex_);
                     wake_.wait_for(lock, std::chrono::milliseconds(10),
@@ -347,8 +348,8 @@ private:
                 }
                 if (stop_.load())
                     break;
-                const auto left = images.find(core::EgoCameraStream_ColorLeft);
-                const auto right = images.find(core::EgoCameraStream_ColorRight);
+                const auto left = images.find(core::OrbbecEgoCameraStream_ColorLeft);
+                const auto right = images.find(core::OrbbecEgoCameraStream_ColorRight);
                 if (left != images.end() && right != images.end() &&
                     (left->second.capture_epoch != right->second.capture_epoch ||
                      std::llabs(left->second.device_timestamp_ns - right->second.device_timestamp_ns) > 5'000'000))
@@ -395,7 +396,7 @@ private:
     static constexpr size_t kMaxQueuedBytes = 64 * 1024 * 1024;
     std::deque<CapturedFrame> encoded_;
     size_t queued_bytes_ = 0;
-    std::map<core::EgoCameraStream, CapturedFrame> latest_mjpeg_;
+    std::map<core::OrbbecEgoCameraStream, CapturedFrame> latest_mjpeg_;
     std::thread worker_;
 };
 

@@ -7,11 +7,11 @@
 #include <ego_mcap/checked_write.hpp>
 #include <mcap/writer.hpp>
 #include <oxr_utils/os_time.hpp>
-#include <schema/ego_audio_bfbs_generated.h>
-#include <schema/ego_calibration_bfbs_generated.h>
-#include <schema/ego_camera_bfbs_generated.h>
-#include <schema/ego_device_state_bfbs_generated.h>
-#include <schema/ego_imu_bfbs_generated.h>
+#include <schema/orbbec_ego_audio_bfbs_generated.h>
+#include <schema/orbbec_ego_calibration_bfbs_generated.h>
+#include <schema/orbbec_ego_camera_bfbs_generated.h>
+#include <schema/orbbec_ego_device_state_bfbs_generated.h>
+#include <schema/orbbec_ego_imu_bfbs_generated.h>
 
 #include <cerrno>
 #include <cstdio>
@@ -50,25 +50,25 @@ public:
             writer_.open(output_, options);
             std::vector<std::string> video_names;
             for (const auto& stream : streams)
-                video_names.emplace_back(core::EnumNameEgoCameraStream(stream.camera));
+                video_names.emplace_back(core::EnumNameOrbbecEgoCameraStream(stream.camera));
             if (include_structured)
             {
-                video_ = std::make_unique<core::McapTrackerChannels<core::EgoFrameMetadataRecord>>(
-                    writer_, "ego_metadata", video_names);
+                video_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>>(
+                    writer_, "orbbec_ego_metadata", video_names);
             }
             for (size_t index = 0; index < streams.size(); ++index)
                 video_indices_.emplace(streams[index].camera, index);
             if (include_structured)
             {
-                imu_ = std::make_unique<core::McapTrackerChannels<core::EgoImuBatchRecord>>(
-                    writer_, "ego_imu", std::vector<std::string>{ "Accel", "Gyro" });
-                audio_ = std::make_unique<core::McapTrackerChannels<core::EgoAudioChunkRecord>>(
-                    writer_, "ego_audio", std::vector<std::string>{ "Audio" });
-                calibration_ = std::make_unique<core::McapTrackerChannels<core::EgoCalibrationRecord>>(
-                    writer_, "ego_calibration", std::vector<std::string>{ "Calibration" });
+                imu_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>(
+                    writer_, "orbbec_ego_imu", std::vector<std::string>{ "Accel", "Gyro" });
+                audio_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>>(
+                    writer_, "orbbec_ego_audio", std::vector<std::string>{ "Audio" });
+                calibration_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>>(
+                    writer_, "orbbec_ego_calibration", std::vector<std::string>{ "Calibration" });
                 if (record_device_diagnostics)
-                    device_state_ = std::make_unique<core::McapTrackerChannels<core::EgoDeviceStateRecord>>(
-                        writer_, "ego_device", std::vector<std::string>{ "DeviceState" });
+                    device_state_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoDeviceStateRecord>>(
+                        writer_, "orbbec_ego_device", std::vector<std::string>{ "DeviceState" });
             }
             mcap::Metadata policy;
             policy.name = "ego.recording";
@@ -79,10 +79,10 @@ public:
                 throw std::runtime_error("Unable to write EGO recording policy: " + policy_status.message);
             if (include_media)
             {
-                media_video_ = std::make_unique<core::McapTrackerChannels<core::EgoEncodedVideoFrameRecord>>(
-                    writer_, "ego_media", video_names);
-                media_audio_ = std::make_unique<core::McapTrackerChannels<core::EgoPcmAudioChunkRecord>>(
-                    writer_, "ego_media", std::vector<std::string>{ "Audio" });
+                media_video_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord>>(
+                    writer_, "orbbec_ego_media", video_names);
+                media_audio_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord>>(
+                    writer_, "orbbec_ego_media", std::vector<std::string>{ "Audio" });
             }
         }
         catch (...)
@@ -148,35 +148,36 @@ public:
     void on_frame_metadata(const CapturedFrame& frame) override
     {
         if (video_)
-            write_record<core::EgoFrameMetadataRecord>(*video_, video_indices_.at(frame.metadata.stream),
-                                                       frame.metadata, frame.sample_time_local_common_clock_ns,
-                                                       frame.sample_time_raw_device_clock_ns);
+            write_record<core::OrbbecEgoFrameMetadataRecord>(*video_, video_indices_.at(frame.metadata.stream),
+                                                             frame.metadata, frame.sample_time_local_common_clock_ns,
+                                                             frame.sample_time_raw_device_clock_ns);
     }
-    void on_imu_batch(const core::EgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
+    void on_imu_batch(const core::OrbbecEgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
     {
         if (imu_)
-            write_record<core::EgoImuBatchRecord>(*imu_, static_cast<size_t>(batch.sensor), batch, local_ns, device_ns);
+            write_record<core::OrbbecEgoImuBatchRecord>(
+                *imu_, static_cast<size_t>(batch.sensor), batch, local_ns, device_ns);
     }
-    void on_audio_chunk(const core::EgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
+    void on_audio_chunk(const core::OrbbecEgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
     {
         if (audio_)
-            write_record<core::EgoAudioChunkRecord>(*audio_, 0, chunk, local_ns, device_ns);
+            write_record<core::OrbbecEgoAudioChunkRecord>(*audio_, 0, chunk, local_ns, device_ns);
     }
-    void on_calibration(const core::EgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
+    void on_calibration(const core::OrbbecEgoCalibrationT& calibration, int64_t local_ns, int64_t device_ns) override
     {
         if (calibration_)
-            write_record<core::EgoCalibrationRecord>(*calibration_, 0, calibration, local_ns, device_ns);
+            write_record<core::OrbbecEgoCalibrationRecord>(*calibration_, 0, calibration, local_ns, device_ns);
     }
-    void on_device_state(const core::EgoDeviceStateT& state, int64_t local_ns, int64_t device_ns) override
+    void on_device_state(const core::OrbbecEgoDeviceStateT& state, int64_t local_ns, int64_t device_ns) override
     {
         if (device_state_)
-            write_record<core::EgoDeviceStateRecord>(*device_state_, 0, state, local_ns, device_ns);
+            write_record<core::OrbbecEgoDeviceStateRecord>(*device_state_, 0, state, local_ns, device_ns);
     }
     void on_encoded_video_frame(const CapturedFrame& frame) override
     {
         if (!media_video_)
             return;
-        core::EgoEncodedVideoFrameT data;
+        core::OrbbecEgoEncodedVideoFrameT data;
         data.stream = frame.metadata.stream;
         data.sequence_number = frame.metadata.sequence_number;
         data.width = frame.metadata.width;
@@ -185,14 +186,14 @@ public:
         data.pixel_format = frame.metadata.pixel_format;
         data.encoded_data = frame.encoded_data;
         data.capture_epoch = frame.metadata.capture_epoch;
-        write_record<core::EgoEncodedVideoFrameRecord>(*media_video_, video_indices_.at(data.stream), data,
-                                                       frame.sample_time_local_common_clock_ns,
-                                                       frame.sample_time_raw_device_clock_ns);
+        write_record<core::OrbbecEgoEncodedVideoFrameRecord>(*media_video_, video_indices_.at(data.stream), data,
+                                                             frame.sample_time_local_common_clock_ns,
+                                                             frame.sample_time_raw_device_clock_ns);
     }
-    void on_pcm_audio_chunk(const core::EgoPcmAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
+    void on_pcm_audio_chunk(const core::OrbbecEgoPcmAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
     {
         if (media_audio_)
-            write_record<core::EgoPcmAudioChunkRecord>(*media_audio_, 0, chunk, local_ns, device_ns);
+            write_record<core::OrbbecEgoPcmAudioChunkRecord>(*media_audio_, 0, chunk, local_ns, device_ns);
     }
 
 private:
@@ -282,14 +283,14 @@ private:
     mcap::McapWriter writer_;
     std::string final_filename_;
     std::string temporary_filename_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoFrameMetadataRecord>> video_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoImuBatchRecord>> imu_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoAudioChunkRecord>> audio_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoCalibrationRecord>> calibration_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoDeviceStateRecord>> device_state_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoEncodedVideoFrameRecord>> media_video_;
-    std::unique_ptr<core::McapTrackerChannels<core::EgoPcmAudioChunkRecord>> media_audio_;
-    std::map<core::EgoCameraStream, size_t> video_indices_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>> video_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>> imu_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>> audio_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>> calibration_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoDeviceStateRecord>> device_state_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord>> media_video_;
+    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord>> media_audio_;
+    std::map<core::OrbbecEgoCameraStream, size_t> video_indices_;
     bool closed_ = false;
     bool closed_successfully_ = false;
     bool aborted_ = false;

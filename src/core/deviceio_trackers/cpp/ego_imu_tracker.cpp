@@ -21,27 +21,30 @@ void validate_common(const std::string& tracker, const std::string& prefix, size
 }
 } // namespace
 
-EgoImuTracker::EgoImuTracker(std::string collection_prefix, std::vector<EgoImuSensor> sensors, size_t max_flatbuffer_size)
+OrbbecEgoImuTracker::OrbbecEgoImuTracker(std::string collection_prefix,
+                                         std::vector<OrbbecEgoImuSensor> sensors,
+                                         size_t max_flatbuffer_size)
     : collection_prefix_(std::move(collection_prefix)),
       sensors_(std::move(sensors)),
       max_flatbuffer_size_(max_flatbuffer_size)
 {
-    validate_common("EgoImuTracker", collection_prefix_, max_flatbuffer_size_);
+    validate_common("OrbbecEgoImuTracker", collection_prefix_, max_flatbuffer_size_);
     if (sensors_.empty())
-        throw std::invalid_argument("EgoImuTracker: at least one sensor is required");
-    std::set<EgoImuSensor> unique;
+        throw std::invalid_argument("OrbbecEgoImuTracker: at least one sensor is required");
+    std::set<OrbbecEgoImuSensor> unique;
     for (const auto sensor : sensors_)
     {
-        const char* name = EnumNameEgoImuSensor(sensor);
+        const char* name = EnumNameOrbbecEgoImuSensor(sensor);
         if (name == nullptr || *name == '\0')
-            throw std::invalid_argument("EgoImuTracker: invalid sensor");
+            throw std::invalid_argument("OrbbecEgoImuTracker: invalid sensor");
         if (!unique.insert(sensor).second)
-            throw std::invalid_argument("EgoImuTracker: duplicate sensor " + std::string(name));
+            throw std::invalid_argument("OrbbecEgoImuTracker: duplicate sensor " + std::string(name));
         stream_names_.emplace_back(name);
     }
 }
 
-const Serialized<EgoImuBatch>& EgoImuTracker::get_stream_data(const ITrackerSession& session, size_t stream_index) const
+const Serialized<OrbbecEgoImuBatch>& OrbbecEgoImuTracker::get_stream_data(const ITrackerSession& session,
+                                                                          size_t stream_index) const
 {
     return static_cast<const IEgoImuTrackerImpl&>(session.get_tracker_impl(*this)).get_stream_data(stream_index);
 }

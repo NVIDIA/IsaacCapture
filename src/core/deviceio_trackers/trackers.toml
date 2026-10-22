@@ -94,24 +94,24 @@ header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
 
 [[tracker]]
-name = "ego_audio"
-table = "EgoAudioChunk"
+name = "orbbec_ego_audio"
+table = "OrbbecEgoAudioChunk"
 tensor_identifier = "audio_chunk"
 max_flatbuffer_size = 32768
 mcap_channels = ["Audio", "Audio_tracked"]
 replay_channels = ["Audio"]
 
 [[tracker]]
-name = "ego_calibration"
-table = "EgoCalibration"
+name = "orbbec_ego_calibration"
+table = "OrbbecEgoCalibration"
 tensor_identifier = "calibration"
 max_flatbuffer_size = 32768
 mcap_channels = ["Calibration", "Calibration_tracked"]
 replay_channels = ["Calibration"]
 
 [[tracker]]
-name = "ego_device_state"
-table = "EgoDeviceState"
+name = "orbbec_ego_device_state"
+table = "OrbbecEgoDeviceState"
 tensor_identifier = "device_state"
 max_flatbuffer_size = 32768
 mcap_channels = ["DeviceState", "DeviceState_tracked"]

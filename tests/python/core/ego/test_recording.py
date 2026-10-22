@@ -18,6 +18,23 @@ from isaaccapture.teleop_session_manager import (
 )
 
 
+def test_vendor_plugin_is_discovered_in_the_existing_directory(monkeypatch):
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "repo_paths.py").is_file():
+            monkeypatch.syspath_prepend(str(parent))
+            break
+    from repo_paths import repo_root
+
+    plugins = repo_root() / "src/plugins"
+    manager = plugin_manager.PluginManager([str(plugins)])
+    assert "orbbec_ego_camera" in manager.get_plugin_names()
+    assert "ego_camera" not in manager.get_plugin_names()
+    info = manager.get_plugin_info("orbbec_ego_camera")
+    assert Path(info.working_dir).resolve() == plugins / "ego"
+    assert info.command == "./ego_camera_plugin"
+    assert [device.path for device in info.devices] == ["/camera/ego"]
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     fragment = tmp_path / "capture.mcap"
@@ -26,7 +43,7 @@ def setup(tmp_path, monkeypatch):
     executable.write_text("merge fixture")
     executable.chmod(0o755)
     plugin = PluginConfig(
-        "ego_camera",
+        "orbbec_ego_camera",
         "/camera/ego",
         [tmp_path],
         plugin_args=[
@@ -181,7 +198,7 @@ def test_invalid_recording_fails_before_capture(setup, invalid):
     elif invalid == "spool":
         setup.config.plugins[0].plugin_args[-1] = "--mcap-media-spool=other.mcap"
     elif invalid == "mode":
-        setup.config.plugins[0].plugin_args[1] = "--mcap-media=metadata-only"
+        setup.config.plugins[0].plugin_args[1] = "--mcap-media=sidecar"
     elif invalid == "missing_merger":
         setup.executable.unlink()
     elif invalid == "existing_output":
@@ -228,9 +245,9 @@ def test_configure_recording_honors_effective_plugin_arguments(setup):
 
 
 def test_off_rejects_explicit_diagnostic_recording_even_with_custom_topic(setup):
-    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoDeviceStateTracker
 
-    tracker = EgoDeviceStateTracker("arbitrary/DeviceState")
+    tracker = OrbbecEgoDeviceStateTracker("arbitrary/DeviceState")
     setup.config.mcap_config = McapRecordingConfig(
         str(setup.final), [(tracker, "renamed_diagnostics")]
     )
@@ -246,14 +263,14 @@ def test_off_rejects_explicit_diagnostic_recording_even_with_custom_topic(setup)
 def test_off_rejects_nv_automatic_recording_in_every_graph_root(
     setup, monkeypatch, root
 ):
-    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoDeviceStateTracker
     from isaaccapture.retargeting_engine import deviceio_source_nodes
 
     class Source:
         name = "diagnostic_side_effect"
 
         def get_tracker(self):
-            return EgoDeviceStateTracker("ego/DeviceState")
+            return OrbbecEgoDeviceStateTracker("ego/DeviceState")
 
     monkeypatch.setattr(deviceio_source_nodes, "IDeviceIOSource", Source)
     graph = SimpleNamespace(get_leaf_nodes=lambda: [Source()])
@@ -265,17 +282,17 @@ def test_off_rejects_nv_automatic_recording_in_every_graph_root(
 
 def test_off_keeps_manual_live_tracker_and_embedded_recording_lifecycle(setup):
     from isaaccapture.deviceio_trackers import (
-        EgoCalibrationTracker,
-        EgoDeviceStateTracker,
+        OrbbecEgoCalibrationTracker,
+        OrbbecEgoDeviceStateTracker,
     )
 
-    tracker = EgoDeviceStateTracker("ego/DeviceState")
+    tracker = OrbbecEgoDeviceStateTracker("ego/DeviceState")
     setup.config.trackers = [tracker]
     with embedded_recording(
         setup.config, media_fragment=setup.fragment, record_device_diagnostics=False
     ):
         assert setup.session_config.trackers[0] is tracker
-        assert isinstance(setup.session_config.trackers[1], EgoCalibrationTracker)
+        assert isinstance(setup.session_config.trackers[1], OrbbecEgoCalibrationTracker)
         assert setup.config.trackers == [tracker]
         assert (
             setup.session_config.plugins[0].plugin_args[-1]
@@ -285,14 +302,14 @@ def test_off_keeps_manual_live_tracker_and_embedded_recording_lifecycle(setup):
 
 
 def test_recording_retains_calibration_without_mutating_caller(setup):
-    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoCalibrationTracker
 
     copied = configure_recording(setup.config)
     entries = copied.mcap_config.get_tracker_names()
     assert len(entries) == 1
     calibration, name = entries[0]
-    assert isinstance(calibration, EgoCalibrationTracker)
-    assert name == "ego_calibration"
+    assert isinstance(calibration, OrbbecEgoCalibrationTracker)
+    assert name == "orbbec_ego_calibration"
     assert copied.trackers == [calibration]
     assert copied.mcap_config.filename == setup.config.mcap_config.filename
     assert setup.config.mcap_config.get_tracker_names() == []
@@ -304,9 +321,9 @@ def test_recording_retains_calibration_without_mutating_caller(setup):
 
 
 def test_recording_preserves_explicit_calibration_name_and_reference(setup):
-    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoCalibrationTracker
 
-    calibration = EgoCalibrationTracker("ego/Calibration")
+    calibration = OrbbecEgoCalibrationTracker("ego/Calibration")
     setup.config.mcap_config = McapRecordingConfig(
         str(setup.final), [(calibration, "custom_calibration")]
     )
@@ -318,22 +335,24 @@ def test_recording_preserves_explicit_calibration_name_and_reference(setup):
 
 
 def test_recording_reuses_manual_calibration(setup):
-    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoCalibrationTracker
 
-    calibration = EgoCalibrationTracker("ego/Calibration")
+    calibration = OrbbecEgoCalibrationTracker("ego/Calibration")
     setup.config.trackers = [calibration]
     copied = configure_recording(setup.config)
-    assert copied.mcap_config.get_tracker_names() == [(calibration, "ego_calibration")]
+    assert copied.mcap_config.get_tracker_names() == [
+        (calibration, "orbbec_ego_calibration")
+    ]
     assert copied.trackers == [calibration]
 
 
 def test_recording_does_not_duplicate_automatically_recorded_calibration(
     setup, monkeypatch
 ):
-    from isaaccapture.deviceio_trackers import EgoCalibrationTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoCalibrationTracker
     from isaaccapture.retargeting_engine import deviceio_source_nodes
 
-    calibration = EgoCalibrationTracker("ego/Calibration")
+    calibration = OrbbecEgoCalibrationTracker("ego/Calibration")
 
     class Source:
         name = "custom_calibration"
@@ -349,11 +368,11 @@ def test_recording_does_not_duplicate_automatically_recorded_calibration(
 
 
 def test_recording_rejects_calibration_name_collision_before_capture(setup):
-    from isaaccapture.deviceio_trackers import EgoDeviceStateTracker
+    from isaaccapture.deviceio_trackers import OrbbecEgoDeviceStateTracker
 
-    tracker = EgoDeviceStateTracker("ego/DeviceState")
+    tracker = OrbbecEgoDeviceStateTracker("ego/DeviceState")
     setup.config.mcap_config = McapRecordingConfig(
-        str(setup.final), [(tracker, "ego_calibration")]
+        str(setup.final), [(tracker, "orbbec_ego_calibration")]
     )
     with pytest.raises(ValueError, match="already used"):
         configure_recording(setup.config)

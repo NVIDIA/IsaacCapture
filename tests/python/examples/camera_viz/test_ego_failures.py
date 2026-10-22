@@ -35,6 +35,57 @@ def join_producer(source):
     assert not source._thread.is_alive(), "EGO producer did not exit"
 
 
+def nal_unit(codec, nal_type, *, short_start=False):
+    start = b"\x00\x00\x01" if short_start else b"\x00\x00\x00\x01"
+    if codec == "h265":
+        header = bytes((nal_type << 1, 1))
+    else:
+        header = bytes((nal_type | (0x60 if nal_type in (1, 5, 7, 8) else 0),))
+    return start + header + b"\x80"
+
+
+def parameter_sets(codec):
+    types = (32, 33, 34) if codec == "h265" else (7, 8)
+    return b"".join(nal_unit(codec, nal_type) for nal_type in types)
+
+
+def encoded_pair(codec, sequence_left=0, sequence_right=None, *, left=None, right=None):
+    keyframe = parameter_sets(codec) + nal_unit(codec, 19 if codec == "h265" else 5)
+    return {
+        "left": keyframe if left is None else left,
+        "right": keyframe if right is None else right,
+        "sequence_left": sequence_left,
+        "sequence_right": sequence_left if sequence_right is None else sequence_right,
+        "timestamp_ns": 123,
+    }
+
+
+def run_encoded_pairs(preview, monkeypatch, codec, pairs):
+    source, _, capture = preview
+    source._format = codec
+    decoders = [MagicMock(), MagicMock()]
+    for decoder in decoders:
+        decoder.decode.return_value = True
+    monkeypatch.setattr("sources.ego.NvVideoDecoder", MagicMock(side_effect=decoders))
+    pending = iter(pairs)
+
+    def next_pair(timeout):
+        try:
+            pair = next(pending)
+        except StopIteration:
+            source._stop.set()
+            return None
+        if isinstance(pair, Exception):
+            raise pair
+        return pair
+
+    capture.return_value.next_pair.side_effect = next_pair
+    source.start()
+    join_producer(source)
+    source.latest()  # Surface any unexpected producer failure.
+    return source, decoders
+
+
 @pytest.mark.parametrize("failure_type", [RuntimeError, SystemExit])
 @pytest.mark.parametrize("sbs", [False, True])
 def test_producer_failure_reaches_consumer_before_sdk_close(
@@ -188,7 +239,7 @@ def test_reconnect_keeps_both_decoders_on_renderer_gpu(preview, monkeypatch, cod
         if calls == 1:
             raise RuntimeError("transient SDK read failure")
         source._stop.set()
-        return {"left": b"left", "right": b"right", "timestamp_ns": 123}
+        return encoded_pair(codec)
 
     capture.return_value.next_pair.side_effect = next_pair
     source.start()
@@ -237,7 +288,7 @@ def test_decode_failure_is_fatal_but_waiting_for_output_is_not(
 
     def next_pair(timeout):
         source._stop.set()
-        return {"left": b"left", "right": b"right", "timestamp_ns": 123}
+        return encoded_pair("h264")
 
     capture.return_value.next_pair.side_effect = next_pair
     source.start()
@@ -249,6 +300,172 @@ def test_decode_failure_is_fatal_but_waiting_for_output_is_not(
     else:
         assert source.latest() is None
     capture.return_value.close.assert_called_once()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_encoded_startup_waits_for_parameters_and_keyframe(preview, monkeypatch, codec):
+    predicted = nal_unit(codec, 1)
+    idr = nal_unit(codec, 19 if codec == "h265" else 5, short_start=True)
+    params = parameter_sets(codec)
+    source, decoders = run_encoded_pairs(
+        preview,
+        monkeypatch,
+        codec,
+        [
+            encoded_pair(codec, 0, left=predicted, right=predicted),
+            encoded_pair(codec, 1, left=idr, right=idr),
+            encoded_pair(codec, 2, left=params, right=params),
+            encoded_pair(codec, 3, left=predicted, right=predicted),
+            encoded_pair(codec, 4, left=idr, right=idr),
+        ],
+    )
+    assert source._frames == 1
+    for decoder in decoders:
+        decoder.reset.assert_not_called()
+        decoder.decode.assert_called_once()
+        assert decoder.decode.call_args.args[0] == params + idr
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_encoded_recovery_replays_partial_parameters_in_dependency_order(
+    preview, monkeypatch, codec
+):
+    types = (32, 33, 34) if codec == "h265" else (7, 8)
+    pps = nal_unit(codec, types[-1])
+    partial = b"".join(nal_unit(codec, nal_type) for nal_type in types[:-1])
+    partial += nal_unit(codec, 19 if codec == "h265" else 5)
+    source, decoders = run_encoded_pairs(
+        preview,
+        monkeypatch,
+        codec,
+        [
+            encoded_pair(codec, 0, left=pps, right=pps),
+            encoded_pair(codec, 1, left=partial, right=partial),
+        ],
+    )
+    assert source._frames == 1
+    for decoder in decoders:
+        decoder.decode.assert_called_once()
+        assert decoder.decode.call_args.args[0] == parameter_sets(codec) + partial
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_encoded_gap_resets_once_and_recovers_each_eye_independently(
+    preview, monkeypatch, codec
+):
+    predicted = nal_unit(codec, 1)
+    source, decoders = run_encoded_pairs(
+        preview,
+        monkeypatch,
+        codec,
+        [
+            encoded_pair(codec, 0),
+            None,
+            encoded_pair(codec, 2, 1, left=predicted, right=predicted),
+            encoded_pair(codec, 3, 2, left=predicted, right=predicted),
+            encoded_pair(codec, 4, 3, right=predicted),
+            encoded_pair(codec, 5, 5, left=predicted, right=predicted),
+            encoded_pair(codec, 6, 6, left=predicted, right=predicted),
+            encoded_pair(codec, 7, 7, left=predicted),
+        ],
+    )
+    assert source._frames == 3
+    left_packets = [call.args[0] for call in decoders[0].decode.call_args_list]
+    right_packets = [call.args[0] for call in decoders[1].decode.call_args_list]
+    keyframe = encoded_pair(codec)["left"]
+    assert left_packets == [keyframe, keyframe, predicted, predicted, predicted]
+    assert right_packets == [keyframe, predicted, predicted, predicted, keyframe]
+    for decoder in decoders:
+        decoder.reset.assert_called_once()
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_encoded_timeouts_sei_and_no_output_keep_sequence_continuity(
+    preview, monkeypatch, codec
+):
+    source, _, capture = preview
+    source._format = codec
+    predicted = nal_unit(codec, 1)
+    sei = nal_unit(codec, 39 if codec == "h265" else 6)
+    decoders = [MagicMock(), MagicMock()]
+    for decoder in decoders:
+        decoder.decode.side_effect = [True, False, False, True]
+    monkeypatch.setattr("sources.ego.NvVideoDecoder", MagicMock(side_effect=decoders))
+    pairs = iter(
+        [
+            encoded_pair(codec, 0),
+            None,
+            encoded_pair(codec, 1, left=sei, right=sei),
+            encoded_pair(codec, 2, left=predicted, right=predicted),
+            encoded_pair(codec, 3, left=predicted, right=predicted),
+        ]
+    )
+
+    def next_pair(timeout):
+        pair = next(pairs)
+        if pair is not None and pair["sequence_left"] == 3:
+            source._stop.set()
+        return pair
+
+    capture.return_value.next_pair.side_effect = next_pair
+    source.start()
+    join_producer(source)
+    assert source.latest() is not None and source._frames == 2
+    for decoder in decoders:
+        decoder.reset.assert_not_called()
+        assert decoder.decode.call_count == 4
+
+
+@pytest.mark.parametrize("codec", ["h264", "h265"])
+def test_encoded_reconnect_clears_parameter_cache_and_waits_again(
+    preview, monkeypatch, codec
+):
+    params = parameter_sets(codec)
+    idr = nal_unit(codec, 19 if codec == "h265" else 5)
+    source, decoders = run_encoded_pairs(
+        preview,
+        monkeypatch,
+        codec,
+        [
+            encoded_pair(codec, 100, left=params, right=params),
+            RuntimeError("transient SDK read failure"),
+            encoded_pair(codec, 0, left=idr, right=idr),
+            encoded_pair(codec, 1),
+        ],
+    )
+    assert source._frames == 1
+    for decoder in decoders:
+        decoder.reset.assert_called_once()
+        decoder.decode.assert_called_once()
+        assert decoder.decode.call_args.args[0] == params + idr
+
+
+def test_hevc_cra_recovery_drops_rasl_until_trailing_picture(preview, monkeypatch):
+    codec = "h265"
+    cra = parameter_sets(codec) + nal_unit(codec, 21)
+    rasl = nal_unit(codec, 8)
+    radl = nal_unit(codec, 6)
+    predicted = nal_unit(codec, 1)
+    source, decoders = run_encoded_pairs(
+        preview,
+        monkeypatch,
+        codec,
+        [
+            encoded_pair(codec, 0, left=cra, right=cra),
+            encoded_pair(codec, 1, left=rasl, right=rasl),
+            encoded_pair(codec, 2, left=radl, right=radl),
+            encoded_pair(codec, 3, left=rasl, right=rasl),
+            encoded_pair(codec, 4, left=predicted, right=predicted),
+        ],
+    )
+    assert source._frames == 3
+    for decoder in decoders:
+        assert [call.args[0] for call in decoder.decode.call_args_list] == [
+            cra,
+            radl,
+            predicted,
+        ]
+        decoder.reset.assert_not_called()
 
 
 @pytest.mark.parametrize("failure_kind", ["gpu-conflict", "producer"])

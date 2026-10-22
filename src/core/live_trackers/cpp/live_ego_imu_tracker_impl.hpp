@@ -15,7 +15,7 @@
 namespace core
 {
 
-using EgoImuMcapChannels = McapTrackerChannels<EgoImuBatchRecord>;
+using EgoImuMcapChannels = McapTrackerChannels<OrbbecEgoImuBatchRecord>;
 
 class LiveEgoImuTrackerImpl : public IEgoImuTrackerImpl
 {
@@ -26,18 +26,18 @@ public:
     }
     static std::unique_ptr<EgoImuMcapChannels> create_mcap_channels(mcap::McapWriter& writer,
                                                                     std::string_view base_name,
-                                                                    const EgoImuTracker* tracker);
+                                                                    const OrbbecEgoImuTracker* tracker);
     LiveEgoImuTrackerImpl(const OpenXRSessionHandles& handles,
-                          const EgoImuTracker* tracker,
+                          const OrbbecEgoImuTracker* tracker,
                           std::unique_ptr<EgoImuMcapChannels> channels);
     void update(int64_t monotonic_time_ns) override;
-    const Serialized<EgoImuBatch>& get_stream_data(size_t stream_index) const override;
+    const Serialized<OrbbecEgoImuBatch>& get_stream_data(size_t stream_index) const override;
 
 private:
     struct StreamState
     {
-        std::unique_ptr<SchemaTracker<EgoImuBatchRecord, EgoImuBatch>> reader;
-        Serialized<EgoImuBatch> tracked;
+        std::unique_ptr<SchemaTracker<OrbbecEgoImuBatchRecord, OrbbecEgoImuBatch>> reader;
+        Serialized<OrbbecEgoImuBatch> tracked;
     };
     std::unique_ptr<EgoImuMcapChannels> channels_;
     std::vector<StreamState> streams_;

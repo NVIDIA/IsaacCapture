@@ -108,10 +108,10 @@ void write_fixture(const fs::path& file,
 
 void fixture_pair(const TempDirectory& temp, size_t payload_size = 4)
 {
-    write_fixture(temp.path / "session.mcap", "ego_metadata/ColorLeft", "core.EgoFrameMetadataRecord", { 30, 10 },
-                  false, payload_size);
-    write_fixture(temp.path / "capture.mcap", "ego_metadata/ColorLeft", "core.EgoFrameMetadataRecord", { 20, 5 }, false,
-                  payload_size);
+    write_fixture(temp.path / "session.mcap", "orbbec_ego_metadata/ColorLeft", "core.OrbbecEgoFrameMetadataRecord",
+                  { 30, 10 }, false, payload_size);
+    write_fixture(temp.path / "capture.mcap", "orbbec_ego_metadata/ColorLeft", "core.OrbbecEgoFrameMetadataRecord",
+                  { 20, 5 }, false, payload_size);
 }
 } // namespace
 
@@ -147,8 +147,9 @@ TEST_CASE("ego_mcap_merge preserves opaque records and host observations", "[ego
         REQUIRE(view.schema->data.size() == std::string("opaque schema fixture").size());
     }
     REQUIRE(times == std::vector<uint64_t>{ 5, 10, 20, 30 });
-    REQUIRE(topics == std::vector<std::string>{ "ego_metadata/ColorLeft", "session_observed/ego_metadata/ColorLeft",
-                                                "ego_metadata/ColorLeft", "session_observed/ego_metadata/ColorLeft" });
+    REQUIRE(topics == std::vector<std::string>{
+                          "orbbec_ego_metadata/ColorLeft", "session_observed/orbbec_ego_metadata/ColorLeft",
+                          "orbbec_ego_metadata/ColorLeft", "session_observed/orbbec_ego_metadata/ColorLeft" });
     unsigned attachments = 0;
     unsigned metadata = 0;
     auto& data = *reader.dataSource();
@@ -179,7 +180,8 @@ TEST_CASE("ego_mcap_merge preserves ordinary session topics", "[ego][unit]")
 {
     TempDirectory temp;
     write_fixture(temp.path / "session.mcap", "head/Head", "core.HeadPoseRecord", { 10 });
-    write_fixture(temp.path / "capture.mcap", "ego_media/ColorLeft", "core.EgoEncodedVideoFrameRecord", { 5 });
+    write_fixture(
+        temp.path / "capture.mcap", "orbbec_ego_media/ColorLeft", "core.OrbbecEgoEncodedVideoFrameRecord", { 5 });
     plugins::ego::merge_recording(temp.path / "session.mcap", temp.path / "capture.mcap", temp.path / "final.mcap");
     mcap::McapReader reader;
     REQUIRE(reader.open((temp.path / "final.mcap").string()).ok());
@@ -193,18 +195,18 @@ TEST_CASE("ego_mcap_merge preserves ordinary session topics", "[ego][unit]")
 TEST_CASE("ego_mcap_merge rejects ambiguous channels and unknown records", "[ego][unit]")
 {
     TempDirectory temp;
-    write_fixture(temp.path / "session.mcap", "shared", "core.EgoFrameMetadataRecord", { 10 });
+    write_fixture(temp.path / "session.mcap", "shared", "core.OrbbecEgoFrameMetadataRecord", { 10 });
     SECTION("different schema")
     {
-        write_fixture(temp.path / "capture.mcap", "shared", "core.EgoImuBatchRecord", { 5 });
+        write_fixture(temp.path / "capture.mcap", "shared", "core.OrbbecEgoImuBatchRecord", { 5 });
     }
     SECTION("reserved topic prefix")
     {
-        write_fixture(temp.path / "capture.mcap", "session_observed/existing", "core.EgoImuBatchRecord", { 5 });
+        write_fixture(temp.path / "capture.mcap", "session_observed/existing", "core.OrbbecEgoImuBatchRecord", { 5 });
     }
     SECTION("unknown semantic record")
     {
-        write_fixture(temp.path / "capture.mcap", "camera", "core.EgoImuBatchRecord", { 5 }, true);
+        write_fixture(temp.path / "capture.mcap", "camera", "core.OrbbecEgoImuBatchRecord", { 5 }, true);
     }
     REQUIRE_THROWS(plugins::ego::merge_recording(
         temp.path / "session.mcap", temp.path / "capture.mcap", temp.path / "final.mcap"));
@@ -278,28 +280,28 @@ TEST_CASE("ego_mcap_merge enforces diagnostics off across both inputs by schema"
     const auto output = temp.path / "final.mcap";
     SECTION("parent contains renamed diagnostics")
     {
-        write_fixture(parent, "custom/diagnostic", "core.EgoDeviceStateRecord", { 1 });
-        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+        write_fixture(parent, "custom/diagnostic", "core.OrbbecEgoDeviceStateRecord", { 1 });
+        write_fixture(fragment, "video", "core.OrbbecEgoFrameMetadataRecord", { 2 }, false, 4, "off");
     }
     SECTION("fragment contains diagnostics despite policy")
     {
         write_fixture(parent, "head", "core.HeadPoseRecord", { 1 });
-        write_fixture(fragment, "custom/diagnostic", "core.EgoDeviceStateRecord", { 2 }, false, 4, "off");
+        write_fixture(fragment, "custom/diagnostic", "core.OrbbecEgoDeviceStateRecord", { 2 }, false, 4, "off");
     }
     SECTION("parent registers an empty diagnostic channel")
     {
-        write_fixture(parent, "empty/diagnostic", "core.EgoDeviceStateRecord", {});
-        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+        write_fixture(parent, "empty/diagnostic", "core.OrbbecEgoDeviceStateRecord", {});
+        write_fixture(fragment, "video", "core.OrbbecEgoFrameMetadataRecord", { 2 }, false, 4, "off");
     }
     SECTION("fragment registers an empty diagnostic channel")
     {
         write_fixture(parent, "head", "core.HeadPoseRecord", { 1 });
-        write_fixture(fragment, "empty/diagnostic", "core.EgoDeviceStateRecord", {}, false, 4, "off");
+        write_fixture(fragment, "empty/diagnostic", "core.OrbbecEgoDeviceStateRecord", {}, false, 4, "off");
     }
     SECTION("parent declares a conflicting policy")
     {
         write_fixture(parent, "head", "core.HeadPoseRecord", { 1 }, false, 4, "on");
-        write_fixture(fragment, "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+        write_fixture(fragment, "video", "core.OrbbecEgoFrameMetadataRecord", { 2 }, false, 4, "off");
     }
     REQUIRE_THROWS(plugins::ego::merge_recording(parent, fragment, output));
     CHECK(fs::exists(parent));
@@ -311,7 +313,7 @@ TEST_CASE("ego_mcap_merge preserves off policy and every other record", "[ego][u
 {
     TempDirectory temp;
     write_fixture(temp.path / "session.mcap", "head", "core.HeadPoseRecord", { 1 });
-    write_fixture(temp.path / "capture.mcap", "video", "core.EgoFrameMetadataRecord", { 2 }, false, 4, "off");
+    write_fixture(temp.path / "capture.mcap", "video", "core.OrbbecEgoFrameMetadataRecord", { 2 }, false, 4, "off");
     plugins::ego::merge_recording(temp.path / "session.mcap", temp.path / "capture.mcap", temp.path / "final.mcap");
     mcap::McapReader reader;
     REQUIRE(reader.open((temp.path / "final.mcap").string()).ok());

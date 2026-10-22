@@ -10,37 +10,37 @@
 namespace core
 {
 
-EgoFrameMetadataTracker::EgoFrameMetadataTracker(const std::string& collection_prefix,
-                                                 const std::vector<EgoCameraStream>& streams,
-                                                 size_t max_flatbuffer_size)
+OrbbecEgoFrameMetadataTracker::OrbbecEgoFrameMetadataTracker(const std::string& collection_prefix,
+                                                             const std::vector<OrbbecEgoCameraStream>& streams,
+                                                             size_t max_flatbuffer_size)
     : collection_prefix_(collection_prefix), streams_(streams), max_flatbuffer_size_(max_flatbuffer_size)
 {
     if (collection_prefix_.empty())
-        throw std::invalid_argument("EgoFrameMetadataTracker: collection_prefix is required");
+        throw std::invalid_argument("OrbbecEgoFrameMetadataTracker: collection_prefix is required");
     if (streams_.empty())
-        throw std::invalid_argument("EgoFrameMetadataTracker: at least one stream is required");
+        throw std::invalid_argument("OrbbecEgoFrameMetadataTracker: at least one stream is required");
     if (max_flatbuffer_size_ == 0)
-        throw std::invalid_argument("EgoFrameMetadataTracker: max_flatbuffer_size must be positive");
+        throw std::invalid_argument("OrbbecEgoFrameMetadataTracker: max_flatbuffer_size must be positive");
 
-    std::set<EgoCameraStream> unique_streams;
+    std::set<OrbbecEgoCameraStream> unique_streams;
     for (const auto stream : streams_)
     {
-        const char* name = EnumNameEgoCameraStream(stream);
+        const char* name = EnumNameOrbbecEgoCameraStream(stream);
         if (name == nullptr || *name == '\0')
         {
-            throw std::invalid_argument("EgoFrameMetadataTracker: invalid stream value " +
+            throw std::invalid_argument("OrbbecEgoFrameMetadataTracker: invalid stream value " +
                                         std::to_string(static_cast<int>(stream)));
         }
         if (!unique_streams.insert(stream).second)
         {
-            throw std::invalid_argument("EgoFrameMetadataTracker: duplicate stream " + std::string(name));
+            throw std::invalid_argument("OrbbecEgoFrameMetadataTracker: duplicate stream " + std::string(name));
         }
         stream_names_.emplace_back(name);
     }
 }
 
-const Serialized<EgoFrameMetadata>& EgoFrameMetadataTracker::get_stream_data(const ITrackerSession& session,
-                                                                             size_t stream_index) const
+const Serialized<OrbbecEgoFrameMetadata>& OrbbecEgoFrameMetadataTracker::get_stream_data(const ITrackerSession& session,
+                                                                                         size_t stream_index) const
 {
     return static_cast<const IEgoFrameMetadataTrackerImpl&>(session.get_tracker_impl(*this)).get_stream_data(stream_index);
 }

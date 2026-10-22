@@ -7,16 +7,20 @@ import pytest
 from mcap.writer import CompressionType, IndexType, Writer
 
 from isaaccapture_examples.mcap_record_replay import replay_ego
-from isaaccapture.schema import EgoRecoveryEvent, EgoRecoveryStage, EgoDiagnosticEvent
+from isaaccapture.schema import (
+    OrbbecEgoRecoveryEvent,
+    OrbbecEgoRecoveryStage,
+    OrbbecEgoDiagnosticEvent,
+)
 
 TOPICS = {
-    "ego_metadata/ColorLeft",
-    "ego_metadata/ColorRight",
-    "ego_imu/Accel",
-    "ego_imu/Gyro",
-    "ego_audio/Audio",
-    "ego_calibration/Calibration",
-    "ego_device/DeviceState",
+    "orbbec_ego_metadata/ColorLeft",
+    "orbbec_ego_metadata/ColorRight",
+    "orbbec_ego_imu/Accel",
+    "orbbec_ego_imu/Gyro",
+    "orbbec_ego_audio/Audio",
+    "orbbec_ego_calibration/Calibration",
+    "orbbec_ego_device/DeviceState",
 }
 
 
@@ -33,7 +37,7 @@ def write_recording(path, summary, topics=TOPICS):
             use_summary_offsets=summary,
         )
         writer.start()
-        for topic in topics | {"ego_audio/Audio_tracked"}:
+        for topic in topics | {"orbbec_ego_audio/Audio_tracked"}:
             channel = writer.register_channel(topic, "test", 0)
             for sequence in range(1, 4 if topic in topics else 10):
                 writer.add_message(channel, sequence, b"sample", sequence)
@@ -75,10 +79,12 @@ class Tracker:
             sample_count=480,
             byte_count=960,
             device_uid="ego",
-            event_type=EgoDiagnosticEvent.RecoveryEvent,
+            event_type=OrbbecEgoDiagnosticEvent.RecoveryEvent,
             diagnostic_version=2,
             observed_at_ns=100,
-            event=EgoRecoveryEvent(EgoRecoveryStage.Recovered, "recovered", 1),
+            event=OrbbecEgoRecoveryEvent(
+                OrbbecEgoRecoveryStage.Recovered, "recovered", 1
+            ),
         )
 
     def get_stream_data(self, session, _):
@@ -87,11 +93,11 @@ class Tracker:
 
 def mock_trackers(monkeypatch):
     for name in (
-        "EgoFrameMetadataTracker",
-        "EgoImuTracker",
-        "EgoAudioTracker",
-        "EgoCalibrationTracker",
-        "EgoDeviceStateTracker",
+        "OrbbecEgoFrameMetadataTracker",
+        "OrbbecEgoImuTracker",
+        "OrbbecEgoAudioTracker",
+        "OrbbecEgoCalibrationTracker",
+        "OrbbecEgoDeviceStateTracker",
     ):
         monkeypatch.setattr(replay_ego, name, Tracker)
     session = Replay()
@@ -149,7 +155,7 @@ def test_recorded_policy_controls_diagnostic_tracker_registration(
                 "diagnostic_version": "2",
             },
         )
-        channel = writer.register_channel("ego_metadata/ColorLeft", "test", 0)
+        channel = writer.register_channel("orbbec_ego_metadata/ColorLeft", "test", 0)
         writer.add_message(channel, 1, b"test", 1)
         writer.finish()
     mock_trackers(monkeypatch)
@@ -167,7 +173,7 @@ def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
             {"record_device_diagnostics": "off", "diagnostic_version": "2"},
         )
         schema = writer.register_schema(
-            "core.EgoDeviceStateRecord", "flatbuffer", b"fixture"
+            "core.OrbbecEgoDeviceStateRecord", "flatbuffer", b"fixture"
         )
         writer.register_channel("custom/topic", "flatbuffer", schema)
         writer.finish()

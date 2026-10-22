@@ -55,6 +55,8 @@ for name, (expected_type, option) in scalar_options.items():
         raise SystemExit(
             f"{path}: record.{name} must be a non-empty single-line string"
         )
+    if name == "mcap_media" and value not in ("sidecar", "embedded"):
+        raise SystemExit(f"{path}: record.mcap_media must be sidecar or embedded")
     arguments.extend((option, str(value)))
 
 for name, (enabled, disabled) in boolean_options.items():

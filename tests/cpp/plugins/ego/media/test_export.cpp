@@ -3,10 +3,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <mcap/tracker_channels.hpp>
-#include <schema/ego_audio_bfbs_generated.h>
-#include <schema/ego_audio_generated.h>
-#include <schema/ego_camera_bfbs_generated.h>
-#include <schema/ego_camera_generated.h>
+#include <schema/orbbec_ego_audio_bfbs_generated.h>
+#include <schema/orbbec_ego_audio_generated.h>
+#include <schema/orbbec_ego_camera_bfbs_generated.h>
+#include <schema/orbbec_ego_camera_generated.h>
 #include <sys/wait.h>
 
 #include <atomic>
@@ -65,30 +65,31 @@ void write_fixture(const fs::path& path, bool wrong_video_stream = false, bool w
     mcap::McapWriterOptions options("ego");
     options.compression = mcap::Compression::None;
     REQUIRE(writer.open(path.string(), options).ok());
-    core::McapTrackerChannels<core::EgoEncodedVideoFrameRecord> video(writer, "ego_media", { "ColorLeft", "ColorRight" });
-    core::McapTrackerChannels<core::EgoPcmAudioChunkRecord> audio(writer, "ego_media", { "Audio" });
+    core::McapTrackerChannels<core::OrbbecEgoEncodedVideoFrameRecord> video(
+        writer, "orbbec_ego_media", { "ColorLeft", "ColorRight" });
+    core::McapTrackerChannels<core::OrbbecEgoPcmAudioChunkRecord> audio(writer, "orbbec_ego_media", { "Audio" });
     for (size_t index = 0; index < 2; ++index)
     {
         for (uint64_t sequence = 0; sequence < 2; ++sequence)
         {
-            core::EgoEncodedVideoFrameT frame;
-            frame.stream = static_cast<core::EgoCameraStream>(wrong_video_stream ? 1 - index : index);
+            core::OrbbecEgoEncodedVideoFrameT frame;
+            frame.stream = static_cast<core::OrbbecEgoCameraStream>(wrong_video_stream ? 1 - index : index);
             frame.sequence_number = sequence;
             frame.width = 1600;
             frame.height = 1300;
             frame.fps = 30;
             frame.encoded_data = { 0xff, 0xd8, static_cast<uint8_t>(index), 0xff, 0xd9 };
-            video.write(index, core::pack_record<core::EgoEncodedVideoFrameRecord>(
+            video.write(index, core::pack_record<core::OrbbecEgoEncodedVideoFrameRecord>(
                                    &frame, core::DeviceDataTimestamp(100 + sequence, 90 + sequence, 80 + sequence)));
         }
     }
-    core::EgoPcmAudioChunkT pcm;
+    core::OrbbecEgoPcmAudioChunkT pcm;
     pcm.sample_rate_hz = 48000;
     pcm.channel_count = 1;
     pcm.bits_per_sample = 16;
     pcm.sample_count = wrong_pcm_size ? 3 : 2;
     pcm.pcm_data = { 1, 2, 3, 4 };
-    audio.write(0, core::pack_record<core::EgoPcmAudioChunkRecord>(&pcm, core::DeviceDataTimestamp(101, 91, 81)));
+    audio.write(0, core::pack_record<core::OrbbecEgoPcmAudioChunkRecord>(&pcm, core::DeviceDataTimestamp(101, 91, 81)));
     writer.close();
 }
 } // namespace
@@ -138,9 +139,9 @@ TEST_CASE("ego_media_export rejects mismatched media and incomplete input", "[eg
     {
         mcap::McapWriter writer;
         REQUIRE(writer.open(source.string(), mcap::McapWriterOptions("ego")).ok());
-        mcap::Schema schema("core.EgoEncodedVideoFrameRecord", "jsonschema", "{}");
+        mcap::Schema schema("core.OrbbecEgoEncodedVideoFrameRecord", "jsonschema", "{}");
         writer.addSchema(schema);
-        mcap::Channel channel("ego_media/ColorLeft", "flatbuffer", schema.id);
+        mcap::Channel channel("orbbec_ego_media/ColorLeft", "flatbuffer", schema.id);
         writer.addChannel(channel);
         writer.close();
     }

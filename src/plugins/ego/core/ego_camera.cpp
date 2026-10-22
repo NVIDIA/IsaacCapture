@@ -173,41 +173,41 @@ OBGyroFullScaleRange gyro_scale(float scale)
     throw std::invalid_argument("Unsupported Ego gyroscope full scale");
 }
 
-OBFormat to_ob_format(core::EgoPixelFormat format)
+OBFormat to_ob_format(core::OrbbecEgoPixelFormat format)
 {
     switch (format)
     {
-    case core::EgoPixelFormat_Mjpg:
+    case core::OrbbecEgoPixelFormat_Mjpg:
         return OB_FORMAT_MJPG;
-    case core::EgoPixelFormat_H264:
+    case core::OrbbecEgoPixelFormat_H264:
         return OB_FORMAT_H264;
-    case core::EgoPixelFormat_H265:
+    case core::OrbbecEgoPixelFormat_H265:
         return OB_FORMAT_H265;
     default:
         throw std::invalid_argument("Unsupported Ego pixel format");
     }
 }
 
-OBFrameType to_ob_frame(core::EgoCameraStream stream)
+OBFrameType to_ob_frame(core::OrbbecEgoCameraStream stream)
 {
     switch (stream)
     {
-    case core::EgoCameraStream_ColorLeft:
+    case core::OrbbecEgoCameraStream_ColorLeft:
         return OB_FRAME_COLOR_LEFT;
-    case core::EgoCameraStream_ColorRight:
+    case core::OrbbecEgoCameraStream_ColorRight:
         return OB_FRAME_COLOR_RIGHT;
     default:
         throw std::invalid_argument("Unsupported Ego camera stream");
     }
 }
 
-OBSensorType to_ob_sensor(core::EgoCameraStream stream)
+OBSensorType to_ob_sensor(core::OrbbecEgoCameraStream stream)
 {
     switch (stream)
     {
-    case core::EgoCameraStream_ColorLeft:
+    case core::OrbbecEgoCameraStream_ColorLeft:
         return OB_SENSOR_COLOR_LEFT;
-    case core::EgoCameraStream_ColorRight:
+    case core::OrbbecEgoCameraStream_ColorRight:
         return OB_SENSOR_COLOR_RIGHT;
     default:
         throw std::invalid_argument("Unsupported Ego camera stream");
@@ -225,11 +225,11 @@ bool has_sensor(const std::shared_ptr<ob::Device>& device, OBSensorType sensor)
     return false;
 }
 
-void print_profiles(const std::shared_ptr<ob::Device>& device, core::EgoCameraStream stream)
+void print_profiles(const std::shared_ptr<ob::Device>& device, core::OrbbecEgoCameraStream stream)
 {
     const auto profiles = device->getSensor(to_ob_sensor(stream))->getStreamProfileList();
     std::ostringstream profiles_message;
-    profiles_message << "Available " << core::EnumNameEgoCameraStream(stream) << " profiles:";
+    profiles_message << "Available " << core::EnumNameOrbbecEgoCameraStream(stream) << " profiles:";
     for (uint32_t index = 0; index < profiles->getCount(); ++index)
     {
         const auto profile = profiles->getProfile(index);
@@ -257,20 +257,21 @@ std::shared_ptr<ob::VideoStreamProfile> select_profile(const std::shared_ptr<ob:
                                  ->getStreamProfileList()
                                  ->getVideoStreamProfile(
                                      static_cast<int>(width), static_cast<int>(height), format, static_cast<int>(fps));
-        detail::log_info() << "Selected " << core::EnumNameEgoCameraStream(stream.camera)
-                           << " profile: " << profile->getWidth() << "x" << profile->getHeight() << "@"
-                           << profile->getFps() << " " << core::EnumNameEgoPixelFormat(stream.pixel_format) << std::endl;
+        detail::log_info()
+            << "Selected " << core::EnumNameOrbbecEgoCameraStream(stream.camera) << " profile: " << profile->getWidth()
+            << "x" << profile->getHeight() << "@" << profile->getFps() << " "
+            << core::EnumNameOrbbecEgoPixelFormat(stream.pixel_format) << std::endl;
         return profile;
     }
     catch (const ob::Error& error)
     {
         print_profiles(device, stream.camera);
         throw std::runtime_error("No matching Ego profile for " +
-                                 std::string(core::EnumNameEgoCameraStream(stream.camera)) + ": " + error.what());
+                                 std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) + ": " + error.what());
     }
 }
 
-using ActiveProfiles = std::map<core::EgoCameraStream, std::shared_ptr<ob::VideoStreamProfile>>;
+using ActiveProfiles = std::map<core::OrbbecEgoCameraStream, std::shared_ptr<ob::VideoStreamProfile>>;
 
 std::shared_ptr<ob::Config> make_video_config(const ActiveProfiles& profiles, const std::vector<StreamConfig>& streams)
 {
@@ -278,9 +279,10 @@ std::shared_ptr<ob::Config> make_video_config(const ActiveProfiles& profiles, co
     for (const auto& [_, profile] : profiles)
         config->enableStream(profile);
     const bool has_interframe_video = std::any_of(streams.begin(), streams.end(),
-                                                  [](const StreamConfig& stream) {
-                                                      return stream.pixel_format == core::EgoPixelFormat_H264 ||
-                                                             stream.pixel_format == core::EgoPixelFormat_H265;
+                                                  [](const StreamConfig& stream)
+                                                  {
+                                                      return stream.pixel_format == core::OrbbecEgoPixelFormat_H264 ||
+                                                             stream.pixel_format == core::OrbbecEgoPixelFormat_H265;
                                                   });
     // Single-eye capture must not wait for an unrequested color frame.
     // MJPG capture must retain an available eye even when its stereo partner is absent.
@@ -299,8 +301,9 @@ std::string describe_profiles(const ActiveProfiles& profiles)
         if (!first)
             output << ", ";
         first = false;
-        output << core::EnumNameEgoCameraStream(stream) << "=" << profile->getWidth() << "x" << profile->getHeight()
-               << "@" << profile->getFps() << " " << ob::TypeHelper::convertOBFormatTypeToString(profile->getFormat());
+        output << core::EnumNameOrbbecEgoCameraStream(stream) << "=" << profile->getWidth() << "x"
+               << profile->getHeight() << "@" << profile->getFps() << " "
+               << ob::TypeHelper::convertOBFormatTypeToString(profile->getFormat());
     }
     return output.str();
 }
@@ -412,8 +415,8 @@ public:
         expected_frames.reserve(active_profiles_.size());
         for (const auto& [stream, profile] : active_profiles_)
         {
-            expected_frames.push_back({ to_ob_frame(stream), profile->getWidth(), profile->getHeight(),
-                                        profile->getFps(), profile->getFormat(), core::EnumNameEgoCameraStream(stream) });
+            expected_frames.push_back({ to_ob_frame(stream), profile->getWidth(), profile->getHeight(), profile->getFps(),
+                                        profile->getFormat(), core::EnumNameOrbbecEgoCameraStream(stream) });
         }
         auto readiness = std::make_shared<CaptureReadiness>();
         readiness->seen.resize(expected_frames.size());
@@ -770,7 +773,7 @@ public:
         return { selected_device_uid_, capture_epoch_, observed_at_ns };
     }
 
-    void publish_recovery_event(core::EgoRecoveryStage stage, const std::string& reason)
+    void publish_recovery_event(core::OrbbecEgoRecoveryStage stage, const std::string& reason)
     {
         const auto now = core::os_monotonic_now_ns();
         auto state = recovery_event(diagnostic_origin(now), stage, reason, auxiliary_stats_.reconnect_attempts);
@@ -873,8 +876,8 @@ public:
         }
         report_stop_error(stop_pipeline_noexcept(imu_pipeline_, imu_pipeline_started_, "IMU", device_removal_confirmed));
         drain_video_frames(false);
-        flush_imu(core::EgoImuSensor_Accel);
-        flush_imu(core::EgoImuSensor_Gyro);
+        flush_imu(core::OrbbecEgoImuSensor_Accel);
+        flush_imu(core::OrbbecEgoImuSensor_Gyro);
         drain_events();
         active_profiles_.clear();
         device_.reset();
@@ -897,7 +900,7 @@ public:
         const auto now = std::chrono::steady_clock::now();
         recovery_deadline_ = now + std::chrono::seconds(config_.reconnect_timeout_seconds);
         next_reconnect_attempt_ = now;
-        publish_recovery_event(core::EgoRecoveryStage_Started, reason);
+        publish_recovery_event(core::OrbbecEgoRecoveryStage_Started, reason);
         detail::log_error() << "Ego device serial=" << selected_device_serial_ << " uid=" << selected_device_uid_
                             << " disconnected; waiting up to " << config_.reconnect_timeout_seconds
                             << " seconds for the same physical device" << std::endl;
@@ -991,7 +994,7 @@ public:
         for (const auto& stream : streams_)
         {
             if (stats_.at(stream.camera).epoch_frame_count == 0)
-                missing += " " + std::string(core::EnumNameEgoCameraStream(stream.camera));
+                missing += " " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera));
         }
         throw std::runtime_error("Ego uid=" + selected_device_uid_ + " firmware=" + selected_firmware_ +
                                  " active profiles [" + describe_profiles(active_profiles_) +
@@ -1041,7 +1044,7 @@ public:
                                  " seconds";
             if (!recovery_last_error_.empty())
                 reason += "; last restart error: " + recovery_last_error_;
-            publish_recovery_event(core::EgoRecoveryStage_Failed, reason);
+            publish_recovery_event(core::OrbbecEgoRecoveryStage_Failed, reason);
             throw std::runtime_error(reason);
         }
         if (now < next_reconnect_attempt_)
@@ -1115,7 +1118,7 @@ public:
             ++auxiliary_stats_.successful_reconnects;
             recovering_ = false;
             device_removed_.store(false, std::memory_order_release);
-            publish_recovery_event(core::EgoRecoveryStage_Recovered, recovery_reason_);
+            publish_recovery_event(core::OrbbecEgoRecoveryStage_Recovered, recovery_reason_);
             publish_capture_status(CaptureAvailability::Streaming);
             detail::log_info() << "Ego device " << selected_device_uid_ << " recovered as capture epoch "
                                << capture_epoch_ << std::endl;
@@ -1130,7 +1133,7 @@ public:
             try
             {
                 stop_capture_for_reconnect();
-                publish_recovery_event(core::EgoRecoveryStage_Failed, recovery_last_error_);
+                publish_recovery_event(core::OrbbecEgoRecoveryStage_Failed, recovery_last_error_);
             }
             catch (const std::exception& cleanup_error)
             {
@@ -1199,7 +1202,7 @@ public:
         {
             expected_profiles.push_back({ to_ob_frame(stream), profile->getWidth(), profile->getHeight(),
                                           profile->getFps(), profile->getFormat(),
-                                          core::EnumNameEgoCameraStream(stream) });
+                                          core::EnumNameOrbbecEgoCameraStream(stream) });
         }
         struct PreflightState
         {
@@ -1366,7 +1369,7 @@ public:
 
     void capture_device_snapshot()
     {
-        std::vector<core::EgoDevicePropertyValue> properties;
+        std::vector<core::OrbbecEgoDevicePropertyValue> properties;
         for (int index = 0; index < device_->getSupportedPropertyCount(); ++index)
         {
             const auto item = device_->getSupportedProperty(static_cast<uint32_t>(index));
@@ -1522,15 +1525,15 @@ public:
         {
             if (stats.sequence_gaps != 0)
             {
-                remember_error("Ego " + std::string(core::EnumNameEgoCameraStream(stream)) + " recorded " +
+                remember_error("Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream)) + " recorded " +
                                std::to_string(stats.sequence_gaps) + " sequence gaps");
             }
         }
         finalize("IMU flush",
                  [this]
                  {
-                     flush_imu(core::EgoImuSensor_Accel);
-                     flush_imu(core::EgoImuSensor_Gyro);
+                     flush_imu(core::OrbbecEgoImuSensor_Accel);
+                     flush_imu(core::OrbbecEgoImuSensor_Gyro);
                  });
         finalize("event drain", [this] { drain_events(); });
         uint64_t dropped_video_frame_sets = 0;
@@ -1704,7 +1707,7 @@ public:
                 observed == last_video_arrival_ns_.end() ? capture_epoch_started_ns_ : observed->second;
             if (now - reference > 5'000'000'000LL)
             {
-                throw RecoverableCaptureError("Ego " + std::string(core::EnumNameEgoCameraStream(stream.camera)) +
+                throw RecoverableCaptureError("Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) +
                                               " stopped delivering frames for five seconds");
             }
         }
@@ -1761,7 +1764,7 @@ public:
                 frame->getFormat() != expected->getFormat() || profile->getFps() != expected->getFps())
             {
                 throw std::runtime_error(
-                    "Ego " + std::string(core::EnumNameEgoCameraStream(stream.camera)) +
+                    "Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) +
                     " delivered a frame outside the selected active profile " + std::to_string(expected->getWidth()) +
                     "x" + std::to_string(expected->getHeight()) + "@" + std::to_string(expected->getFps()) + " " +
                     ob::TypeHelper::convertOBFormatTypeToString(expected->getFormat()));
@@ -1784,19 +1787,19 @@ public:
             captured.encoded_data.assign(frame->getData(), frame->getData() + frame->getDataSize());
             captured.sample_time_raw_device_clock_ns = sdk_timestamp_ns(frame->getTimeStampUs());
             captured.sample_time_local_common_clock_ns = time_alignment_.sample_time(
-                stream.camera == core::EgoCameraStream_ColorLeft ? "left_rgb" : "right_rgb",
+                stream.camera == core::OrbbecEgoCameraStream_ColorLeft ? "left_rgb" : "right_rgb",
                 captured.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
             auto& stats = stats_[stream.camera];
             if (stats.epoch_frame_count > 0 && captured.metadata.sequence_number <= stats.last_sequence)
             {
                 throw std::runtime_error(
-                    "Ego " + std::string(core::EnumNameEgoCameraStream(stream.camera)) +
+                    "Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) +
                     " delivered a non-increasing sequence: previous=" + std::to_string(stats.last_sequence) +
                     " current=" + std::to_string(captured.metadata.sequence_number));
             }
             if (stats.epoch_frame_count > 0 && captured.sample_time_raw_device_clock_ns <= stats.last_device_timestamp_ns)
             {
-                throw std::runtime_error("Ego " + std::string(core::EnumNameEgoCameraStream(stream.camera)) +
+                throw std::runtime_error("Ego " + std::string(core::EnumNameOrbbecEgoCameraStream(stream.camera)) +
                                          " delivered a non-increasing raw device timestamp: previous=" +
                                          std::to_string(stats.last_device_timestamp_ns) +
                                          " current=" + std::to_string(captured.sample_time_raw_device_clock_ns));
@@ -1804,7 +1807,7 @@ public:
             sink_->on_frame(captured,
                             [this, arrival_time_local_common_clock_ns](const CapturedFrame& accepted)
                             {
-                                if (accepted.metadata.stream == core::EgoCameraStream_ColorLeft)
+                                if (accepted.metadata.stream == core::OrbbecEgoCameraStream_ColorLeft)
                                     time_alignment_.observe_left(
                                         accepted.sample_time_raw_device_clock_ns, arrival_time_local_common_clock_ns);
 #if defined(EGO_ENABLE_PREVIEW)
@@ -1843,7 +1846,7 @@ public:
         for (const auto& [stream, stats] : stats_)
         {
             detail::log_info()
-                << "  " << core::EnumNameEgoCameraStream(stream) << ": " << stats.frame_count << " frames, "
+                << "  " << core::EnumNameOrbbecEgoCameraStream(stream) << ": " << stats.frame_count << " frames, "
                 << stats.byte_count << " bytes, " << stats.sequence_gaps << " sequence gaps" << std::endl;
         }
         detail::log_info()
@@ -1856,7 +1859,7 @@ public:
             << " successful_reconnects=" << auxiliary_stats_.successful_reconnects << std::endl;
     }
 
-    const std::map<core::EgoCameraStream, StreamStats>& stats() const
+    const std::map<core::OrbbecEgoCameraStream, StreamStats>& stats() const
     {
         return stats_;
     }
@@ -1876,7 +1879,7 @@ public:
 
     struct ImuEvent
     {
-        core::EgoImuBatchT batch;
+        core::OrbbecEgoImuBatchT batch;
         int64_t local_ns = 0;
         int64_t device_ns = 0;
     };
@@ -1888,12 +1891,12 @@ public:
     };
     struct CalibrationEvent
     {
-        core::EgoCalibrationT calibration;
+        core::OrbbecEgoCalibrationT calibration;
         int64_t local_ns = 0;
     };
     struct DeviceStateEvent
     {
-        core::EgoDeviceStateT state;
+        core::OrbbecEgoDeviceStateT state;
         int64_t local_ns = 0;
     };
     using PublishEvent = std::variant<ImuEvent, AudioEvent, CalibrationEvent, DeviceStateEvent>;
@@ -1942,7 +1945,7 @@ public:
                     using Event = std::decay_t<decltype(value)>;
                     if constexpr (std::is_same_v<Event, ImuEvent>)
                     {
-                        if (value.batch.sensor == core::EgoImuSensor_Accel)
+                        if (value.batch.sensor == core::OrbbecEgoImuSensor_Accel)
                             auxiliary_stats_.accel_samples += value.batch.samples.size();
                         else
                             auxiliary_stats_.gyro_samples += value.batch.samples.size();
@@ -1951,19 +1954,19 @@ public:
                     }
                     else if constexpr (std::is_same_v<Event, AudioEvent>)
                     {
-                        core::EgoAudioChunkT chunk;
+                        core::OrbbecEgoAudioChunkT chunk;
                         chunk.sequence_number = audio_sequence_++;
                         chunk.sample_rate_hz = audio_rate_;
                         chunk.channel_count = audio_channels_;
                         chunk.bits_per_sample = audio_bits_;
-                        chunk.sample_format = core::EgoAudioSampleFormat_S16LE;
+                        chunk.sample_format = core::OrbbecEgoAudioSampleFormat_S16LE;
                         chunk.byte_count = static_cast<uint32_t>(value.bytes.size());
                         chunk.capture_epoch = capture_epoch_;
                         const uint32_t bytes_per_sample = audio_channels_ * audio_bits_ / 8;
                         chunk.sample_count = bytes_per_sample == 0 ? 0 : chunk.byte_count / bytes_per_sample;
                         if (bytes_per_sample == 0 || chunk.byte_count % bytes_per_sample != 0)
                             throw std::runtime_error("EGO audio payload is not a whole number of PCM samples");
-                        chunk.timing = std::make_shared<core::EgoAudioTimingT>(
+                        chunk.timing = std::make_shared<core::OrbbecEgoAudioTimingT>(
                             time_alignment_.audio_timing(value.device_ns, chunk.sample_count, chunk.sample_rate_hz));
                         if (!config_.audio_output.empty())
                             chunk.wav_data_offset = wav_writer_.write(value.bytes);
@@ -1971,7 +1974,7 @@ public:
                         if (metadata)
                         {
                             metadata->on_audio_chunk(chunk, value.local_ns, value.device_ns);
-                            core::EgoPcmAudioChunkT pcm;
+                            core::OrbbecEgoPcmAudioChunkT pcm;
                             pcm.sequence_number = chunk.sequence_number;
                             pcm.sample_rate_hz = chunk.sample_rate_hz;
                             pcm.channel_count = chunk.channel_count;
@@ -2001,18 +2004,18 @@ public:
 
     struct PendingImu
     {
-        std::vector<core::EgoImuSample> samples;
+        std::vector<core::OrbbecEgoImuSample> samples;
         uint64_t sequence = 0;
         int64_t first_local_ns = 0;
     };
 
-    void add_imu_sample(core::EgoImuSensor sensor, const OBFloat3D& value, float temperature, uint64_t timestamp_us)
+    void add_imu_sample(core::OrbbecEgoImuSensor sensor, const OBFloat3D& value, float temperature, uint64_t timestamp_us)
     {
-        auto& pending = sensor == core::EgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
+        auto& pending = sensor == core::OrbbecEgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
         const int64_t arrival_ns = core::os_monotonic_now_ns();
         const int64_t device_ns = sdk_timestamp_ns(timestamp_us);
-        const int64_t local_ns =
-            time_alignment_.sample_time(sensor == core::EgoImuSensor_Accel ? "accel" : "gyro", device_ns, arrival_ns);
+        const int64_t local_ns = time_alignment_.sample_time(
+            sensor == core::OrbbecEgoImuSensor_Accel ? "accel" : "gyro", device_ns, arrival_ns);
         if (pending.samples.empty())
             pending.first_local_ns = arrival_ns;
         pending.samples.emplace_back(value.x, value.y, value.z, temperature, local_ns, device_ns);
@@ -2021,18 +2024,19 @@ public:
         flush_imu(sensor);
     }
 
-    void flush_imu(core::EgoImuSensor sensor)
+    void flush_imu(core::OrbbecEgoImuSensor sensor)
     {
-        auto& pending = sensor == core::EgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
+        auto& pending = sensor == core::OrbbecEgoImuSensor_Accel ? accel_pending_ : gyro_pending_;
         if (pending.samples.empty())
             return;
         const int64_t local_ns = pending.samples.back().sample_time_local_common_clock_ns();
         const int64_t device_ns = pending.samples.back().sample_time_raw_device_clock_ns();
-        core::EgoImuBatchT batch;
+        core::OrbbecEgoImuBatchT batch;
         batch.sensor = sensor;
         batch.sequence_number = pending.sequence++;
         batch.sample_rate_hz = config_.imu_rate;
-        batch.full_scale = sensor == core::EgoImuSensor_Accel ? config_.accel_full_scale_g : config_.gyro_full_scale_dps;
+        batch.full_scale =
+            sensor == core::OrbbecEgoImuSensor_Accel ? config_.accel_full_scale_g : config_.gyro_full_scale_dps;
         batch.capture_epoch = capture_epoch_;
         batch.samples.swap(pending.samples);
         enqueue(ImuEvent{ std::move(batch), local_ns, device_ns });
@@ -2061,7 +2065,7 @@ public:
                         if (capture_active_.load(std::memory_order_acquire))
                         {
                             const auto frame = raw->as<ob::AccelFrame>();
-                            add_imu_sample(core::EgoImuSensor_Accel, frame->getValue(), frame->getTemperature(),
+                            add_imu_sample(core::OrbbecEgoImuSensor_Accel, frame->getValue(), frame->getTemperature(),
                                            frame->getTimeStampUs());
                             if (!active_accel_ready_.exchange(true, std::memory_order_acq_rel))
                                 auxiliary_readiness_wake_.notify_all();
@@ -2075,7 +2079,7 @@ public:
                         if (capture_active_.load(std::memory_order_acquire))
                         {
                             const auto frame = raw->as<ob::GyroFrame>();
-                            add_imu_sample(core::EgoImuSensor_Gyro, frame->getValue(), frame->getTemperature(),
+                            add_imu_sample(core::OrbbecEgoImuSensor_Gyro, frame->getValue(), frame->getTemperature(),
                                            frame->getTimeStampUs());
                             if (!active_gyro_ready_.exchange(true, std::memory_order_acq_rel))
                                 auxiliary_readiness_wake_.notify_all();
@@ -2203,12 +2207,12 @@ public:
                                  "] timed out waiting for auxiliary streams after video became active:" + missing);
     }
 
-    static std::shared_ptr<core::EgoCameraIntrinsicsT> camera_intrinsics(const OBCalibrationParam& param,
-                                                                         OBSensorType sensor)
+    static std::shared_ptr<core::OrbbecEgoCameraIntrinsicsT> camera_intrinsics(const OBCalibrationParam& param,
+                                                                               OBSensorType sensor)
     {
         const auto& source = param.intrinsics[sensor];
         const auto& distortion = param.distortion[sensor];
-        auto result = std::make_shared<core::EgoCameraIntrinsicsT>();
+        auto result = std::make_shared<core::OrbbecEgoCameraIntrinsicsT>();
         result->width = source.width;
         result->height = source.height;
         result->fx = source.fx;
@@ -2221,12 +2225,12 @@ public:
         return result;
     }
 
-    static std::shared_ptr<core::EgoExtrinsicsT> extrinsics(const OBCalibrationParam& param,
-                                                            OBSensorType from,
-                                                            OBSensorType to)
+    static std::shared_ptr<core::OrbbecEgoExtrinsicsT> extrinsics(const OBCalibrationParam& param,
+                                                                  OBSensorType from,
+                                                                  OBSensorType to)
     {
         const auto& source = param.extrinsics[from][to];
-        auto result = std::make_shared<core::EgoExtrinsicsT>();
+        auto result = std::make_shared<core::OrbbecEgoExtrinsicsT>();
         result->rotation.assign(std::begin(source.rot), std::end(source.rot));
         result->translation_mm.assign(std::begin(source.trans), std::end(source.trans));
         return result;
@@ -2239,7 +2243,7 @@ public:
         const auto first = active_profiles_.begin()->second;
         if (!config_.time_alignment.empty())
         {
-            if (!active_profiles_.count(core::EgoCameraStream_ColorLeft))
+            if (!active_profiles_.count(core::OrbbecEgoCameraStream_ColorLeft))
                 throw std::invalid_argument("EGO capture timing profile requires the left reference camera");
             for (const auto& [_, profile] : active_profiles_)
                 if (profile->getWidth() != first->getWidth() || profile->getHeight() != first->getHeight() ||
@@ -2256,20 +2260,20 @@ public:
                   std::to_string(ob::Version::getPatch()),
               format, first->getWidth(), first->getHeight(), first->getFps(), config_.enable_imu ? config_.imu_rate : 0U,
               audio ? 48000U : 0U, static_cast<uint16_t>(audio ? 1 : 0), static_cast<uint16_t>(audio ? 16 : 0),
-              active_profiles_.count(core::EgoCameraStream_ColorRight) != 0, loaded_sdk_binary_sha256() });
+              active_profiles_.count(core::OrbbecEgoCameraStream_ColorRight) != 0, loaded_sdk_binary_sha256() });
     }
 
-    void attach_time_alignment(core::EgoCalibrationT& value)
+    void attach_time_alignment(core::OrbbecEgoCalibrationT& value)
     {
-        value.time_alignment = std::make_shared<core::EgoTimeAlignmentT>();
+        value.time_alignment = std::make_shared<core::OrbbecEgoTimeAlignmentT>();
         value.time_alignment->json = time_alignment_.snapshot();
-        if (core::pack<core::EgoCalibration>(value).buffer().size() > core::EGO_MAX_FLATBUFFER_SIZE)
+        if (core::pack<core::OrbbecEgoCalibration>(value).buffer().size() > core::EGO_MAX_FLATBUFFER_SIZE)
             throw std::runtime_error("EGO calibration with timing provenance exceeds the 32 KiB transport limit");
     }
 
     void publish_calibration(const std::shared_ptr<ob::Config>& pipeline_config)
     {
-        core::EgoCalibrationT value;
+        core::OrbbecEgoCalibrationT value;
         value.device_uid = device_->getDeviceInfo()->getUid();
         value.capture_epoch = capture_epoch_ + (recovering_ ? 1U : 0U);
         time_alignment_.begin_epoch(value.capture_epoch);
@@ -2311,14 +2315,41 @@ public:
         try
         {
             value.raw_alignment_yaml = raw_data(device_, OB_RAW_DATA_ALIGN_CALIB_YAML);
-            value.raw_imu_yaml = raw_data(device_, OB_RAW_DATA_IMU_CALIB_YAML);
-            if ((!value.color_left || !value.color_right) &&
-                !populate_stereo_calibration_from_yaml(value.raw_alignment_yaml, value))
-                detail::log_error() << "Raw alignment calibration does not contain a usable stereo pair." << std::endl;
         }
         catch (const std::exception& error)
         {
-            detail::log_error() << "Raw calibration unavailable: " << error.what() << std::endl;
+            detail::log_error() << "Raw alignment calibration unavailable: " << error.what() << std::endl;
+        }
+        try
+        {
+            value.raw_imu_yaml = raw_data(device_, OB_RAW_DATA_IMU_CALIB_YAML);
+        }
+        catch (const std::exception& error)
+        {
+            detail::log_error() << "Raw IMU calibration unavailable: " << error.what() << std::endl;
+        }
+        if (!value.color_left || !value.color_right || !value.left_to_right)
+        {
+            core::OrbbecEgoCalibrationT fallback;
+            if (populate_stereo_calibration_from_yaml(value.raw_alignment_yaml, fallback))
+            {
+                if (!value.color_left)
+                    value.color_left = std::move(fallback.color_left);
+                if (!value.color_right)
+                    value.color_right = std::move(fallback.color_right);
+                if (!value.left_to_right)
+                    value.left_to_right = std::move(fallback.left_to_right);
+            }
+            else
+                detail::log_error() << "Raw alignment calibration does not contain a usable stereo pair." << std::endl;
+        }
+        if (!value.accel_to_left || !value.gyro_to_left)
+        {
+            if (populate_imu_calibration_from_yaml(value.raw_imu_yaml, value))
+                detail::log_info() << "Using raw IMU calibration for missing IMU-to-left-camera extrinsics." << std::endl;
+            else
+                detail::log_error()
+                    << "Raw IMU calibration does not contain a usable IMU-to-left-camera transform." << std::endl;
         }
         if (!sdk_calibration_error.empty())
         {
@@ -2340,7 +2371,7 @@ public:
             if (!json)
                 throw std::runtime_error("Unable to open calibration output: " + config_.calibration_output);
             const auto write_intrinsics =
-                [&json](const char* name, const std::shared_ptr<core::EgoCameraIntrinsicsT>& intrinsics)
+                [&json](const char* name, const std::shared_ptr<core::OrbbecEgoCameraIntrinsicsT>& intrinsics)
             {
                 json << "  \"" << name << "\": ";
                 if (!intrinsics)
@@ -2356,8 +2387,8 @@ public:
                     json << (index == 0 ? "" : ",") << intrinsics->distortion[index];
                 json << "]}";
             };
-            const auto write_extrinsics = [&json](
-                                              const char* name, const std::shared_ptr<core::EgoExtrinsicsT>& extrinsics)
+            const auto write_extrinsics =
+                [&json](const char* name, const std::shared_ptr<core::OrbbecEgoExtrinsicsT>& extrinsics)
             {
                 json << "  \"" << name << "\": ";
                 if (!extrinsics)
@@ -2414,7 +2445,7 @@ public:
         if (selected_device_uid_.empty())
             return;
         // Disconnect detection belongs to removal callbacks and existing stream liveness checks.
-        core::EgoCaptureSummaryT summary;
+        core::OrbbecEgoCaptureSummaryT summary;
         uint64_t dropped_video_frame_sets = 0;
         {
             std::lock_guard<std::mutex> lock(video_queue_mutex_);
@@ -2427,7 +2458,7 @@ public:
             summary.dropped_events = auxiliary_stats_.dropped_events;
             if (!async_error_.empty() || summary.dropped_events != 0 || dropped_video_frame_sets != 0)
             {
-                summary.capture_health = core::EgoCaptureHealth_Incomplete;
+                summary.capture_health = core::OrbbecEgoCaptureHealth_Incomplete;
                 if (!async_error_.empty())
                     summary.reason = async_error_;
                 else if (summary.dropped_events != 0)
@@ -2437,15 +2468,15 @@ public:
             }
             else if (events_.size() >= kMaxQueuedEvents * 85 / 100)
             {
-                summary.capture_health = core::EgoCaptureHealth_Warning;
+                summary.capture_health = core::OrbbecEgoCaptureHealth_Warning;
                 summary.reason = "metadata queue reached 85 percent capacity";
             }
             else
-                summary.capture_health = core::EgoCaptureHealth_Healthy;
+                summary.capture_health = core::OrbbecEgoCaptureHealth_Healthy;
         }
         if (!final_error.empty())
         {
-            summary.capture_health = core::EgoCaptureHealth_Incomplete;
+            summary.capture_health = core::OrbbecEgoCaptureHealth_Incomplete;
             summary.reason = final_error;
         }
         const auto now = core::os_monotonic_now_ns();
@@ -2466,7 +2497,7 @@ public:
 private:
     CaptureConfig config_;
     TimeAlignment time_alignment_;
-    std::optional<core::EgoCalibrationT> last_calibration_;
+    std::optional<core::OrbbecEgoCalibrationT> last_calibration_;
     std::unique_ptr<ob::Context> context_;
     std::shared_ptr<EgoSdkDevice> device_;
     std::unique_ptr<ob::Pipeline> pipeline_;
@@ -2478,8 +2509,8 @@ private:
 #if defined(EGO_ENABLE_PREVIEW)
     std::unique_ptr<Preview> preview_;
 #endif
-    std::map<core::EgoCameraStream, StreamStats> stats_;
-    std::map<core::EgoCameraStream, int64_t> last_video_arrival_ns_;
+    std::map<core::OrbbecEgoCameraStream, StreamStats> stats_;
+    std::map<core::OrbbecEgoCameraStream, int64_t> last_video_arrival_ns_;
     std::vector<PropertySetting> original_properties_;
     std::vector<PropertySetting> requested_controls_;
     AuxiliaryStats auxiliary_stats_;
@@ -2557,7 +2588,7 @@ void EgoCamera::print_stats() const
     impl_->print_stats();
 }
 
-const std::map<core::EgoCameraStream, StreamStats>& EgoCamera::stats() const
+const std::map<core::OrbbecEgoCameraStream, StreamStats>& EgoCamera::stats() const
 {
     return impl_->stats();
 }

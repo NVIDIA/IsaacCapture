@@ -5,15 +5,21 @@ name: Test EGO Software
 
 on:
   push:
-    branches: [main, 'release/*.*.x', feature/Orbbec-Ego-stereo-camera, feature/Orbbec-EgoPro-quad-camera]
+    branches: [main, 'release/*.*.x']
     paths: &ego_paths
     - '.github/workflows/test-ego-software.yaml'
+    - '.github/actions/setup-uv/**'
     - 'CMakeLists.txt'
     - 'pyproject.toml'
     - 'cmake/**'
+    - 'deps/**'
+    - 'src/CMakeLists.txt'
+    - 'src/core/CMakeLists.txt'
     - 'src/plugins/CMakeLists.txt'
     - 'src/plugins/ego/**'
+    - 'src/plugins/plugin_utils/**'
     - 'src/core/schema/**'
+    - 'src/core/schema_compat/**'
     - 'src/core/codegen/**'
     - 'src/core/mcap/**'
     - 'src/core/deviceio_base/**'
@@ -23,11 +29,32 @@ on:
     - 'src/core/replay_trackers/**'
     - 'src/core/plugin_manager/**'
     - 'src/core/python/**'
+    - 'src/core/log_bridge/**'
+    - 'src/core/oxr/**'
+    - 'src/core/oxr_utils/**'
+    - 'src/core/pusherio/**'
+    - 'src/core/cloudxr/**'
     - 'src/compat/**'
+    - 'src/python/CMakeLists.txt'
     - 'src/python/isaaccapture/**'
-    - 'examples/camera_viz/**'
+    # camera_viz Python EGO tests run in Build Ubuntu with BUILD_VIZ=ON.
+    - 'examples/CMakeLists.txt'
     - 'examples/mcap_record_replay/**'
-    - 'tests/**'
+    - 'tests/CMakeLists.txt'
+    - 'tests/cpp/CMakeLists.txt'
+    - 'tests/cpp/core/CMakeLists.txt'
+    - 'tests/cpp/core/schema/**'
+    - 'tests/cpp/core/mcap/**'
+    - 'tests/cpp/core/live_trackers/**'
+    - 'tests/cpp/core/replay_deviceio_session/**'
+    - 'tests/cpp/plugins/CMakeLists.txt'
+    - 'tests/cpp/plugins/ego*/**'
+    - 'tests/python/CMakeLists.txt'
+    - 'tests/python/core/CMakeLists.txt'
+    - 'tests/python/core/schema/**'
+    - 'tests/python/core/ego/**'
+    - 'tests/python/examples/mcap_record_replay/**'
+    - 'tests/python/repo_paths.py'
   pull_request:
     paths: *ego_paths
   workflow_dispatch:
@@ -41,16 +68,14 @@ permissions:
 
 jobs:
   test-ego-software:
-    # The SDK runner must never execute untrusted fork code.
+    # PR execution policy is independent of the runner type.
     if: >-
       github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository
-    # Verify repository/workflow access and an online runner with all labels.
-    # A blocked or unassigned job provides no build or test result.
-    runs-on: [self-hosted, linux, orbbec-sdk]
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      ORBBEC_SDK_ROOT: ${{ vars.ORBBEC_SDK_ROOT }}
+      EGO_BUILD_DIR: ${{ github.workspace }}/build-ego-py3.11
       UV_CACHE_DIR: /tmp/isaaccapture-ego-uv-cache
 
     steps:
@@ -61,21 +86,12 @@ jobs:
     - name: Install pinned uv
       uses: ./.github/actions/setup-uv
 
-    - name: Check runner SDK
+    - name: Install build dependencies and pinned EGO SDK
       shell: bash
       run: |
         set -euo pipefail
-        if [[ -z "${ORBBEC_SDK_ROOT}" ]]; then
-          echo "Set the protected ORBBEC_SDK_ROOT Actions variable for the orbbec-sdk runner."
-          exit 1
-        fi
-        for required in \
-          "${ORBBEC_SDK_ROOT}/include/libobsensor/ObSensor.hpp" \
-          "${ORBBEC_SDK_ROOT}/lib/OrbbecSDKConfig.cmake" \
-          "${ORBBEC_SDK_ROOT}/lib/libOrbbecSDK.so.2"; do
-          [[ -f "${required}" ]] || { echo "Missing Orbbec SDK file: ${required}"; exit 1; }
-        done
-        printf 'EGO_BUILD_DIR=%s\n' "${RUNNER_TEMP}/ego-software-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+        env -u ORBBEC_SDK_ROOT -u PYTHONPATH -u AMENT_PREFIX_PATH -u COLCON_PREFIX_PATH \
+          ./src/plugins/ego/install.sh --skip-udev --preset py3.11 --jobs 4
 
     - name: Configure and build
       shell: bash
@@ -86,8 +102,9 @@ jobs:
           -DISAAC_TELEOP_PYTHON_VERSION=3.11 \
           -DBUILD_VIZ=OFF \
           -DBUILD_TESTING=ON \
-          -DBUILD_PLUGIN_EGO_CAMERA=ON \
-          -DORBBEC_SDK_ROOT="${ORBBEC_SDK_ROOT}"
+          -DBUILD_EXAMPLES=ON \
+          -DBUILD_PYTHON_BINDINGS=ON \
+          -DBUILD_PLUGIN_EGO_CAMERA=ON
         cmake --build "${EGO_BUILD_DIR}" --parallel 4
 
     - name: Run hardware-free EGO tests

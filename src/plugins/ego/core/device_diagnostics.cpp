@@ -12,9 +12,9 @@ namespace plugins::ego
 namespace
 {
 template <typename Payload>
-core::EgoDeviceStateT event(const DiagnosticOrigin& origin, Payload payload)
+core::OrbbecEgoDeviceStateT event(const DiagnosticOrigin& origin, Payload payload)
 {
-    core::EgoDeviceStateT value;
+    core::OrbbecEgoDeviceStateT value;
     value.diagnostic_version = core::EGO_DIAGNOSTIC_VERSION;
     value.observed_at_ns = origin.observed_at_ns;
     value.device_uid = origin.uid;
@@ -24,14 +24,14 @@ core::EgoDeviceStateT event(const DiagnosticOrigin& origin, Payload payload)
 }
 } // namespace
 
-core::EgoDeviceStateT sdk_report(const DiagnosticOrigin& origin,
-                                 uint64_t sequence,
-                                 int32_t work_mode,
-                                 uint64_t status_flags,
-                                 uint64_t error_flags,
-                                 uint64_t storage_free_bytes)
+core::OrbbecEgoDeviceStateT sdk_report(const DiagnosticOrigin& origin,
+                                       uint64_t sequence,
+                                       int32_t work_mode,
+                                       uint64_t status_flags,
+                                       uint64_t error_flags,
+                                       uint64_t storage_free_bytes)
 {
-    core::EgoSdkReportT payload;
+    core::OrbbecEgoSdkReportT payload;
     payload.sequence_number = sequence;
     payload.work_mode = work_mode;
     payload.status_flags = status_flags;
@@ -40,28 +40,28 @@ core::EgoDeviceStateT sdk_report(const DiagnosticOrigin& origin,
     return event(origin, std::move(payload));
 }
 
-core::EgoDeviceStateT capture_summary(const DiagnosticOrigin& origin, core::EgoCaptureSummaryT summary)
+core::OrbbecEgoDeviceStateT capture_summary(const DiagnosticOrigin& origin, core::OrbbecEgoCaptureSummaryT summary)
 {
     return event(origin, std::move(summary));
 }
 
-core::EgoDeviceStateT recovery_event(const DiagnosticOrigin& origin,
-                                     core::EgoRecoveryStage stage,
-                                     const std::string& reason,
-                                     uint32_t reconnect_attempt)
+core::OrbbecEgoDeviceStateT recovery_event(const DiagnosticOrigin& origin,
+                                           core::OrbbecEgoRecoveryStage stage,
+                                           const std::string& reason,
+                                           uint32_t reconnect_attempt)
 {
-    core::EgoRecoveryEventT payload;
+    core::OrbbecEgoRecoveryEventT payload;
     payload.stage = stage;
     payload.reason = reason;
     payload.reconnect_attempt = reconnect_attempt;
     return event(origin, std::move(payload));
 }
 
-core::EgoDeviceStateT device_snapshot(const DiagnosticOrigin& origin,
-                                      std::optional<float> temperature,
-                                      const std::vector<core::EgoDevicePropertyValue>& properties)
+core::OrbbecEgoDeviceStateT device_snapshot(const DiagnosticOrigin& origin,
+                                            std::optional<float> temperature,
+                                            const std::vector<core::OrbbecEgoDevicePropertyValue>& properties)
 {
-    core::EgoDeviceSnapshotT payload;
+    core::OrbbecEgoDeviceSnapshotT payload;
     if (temperature && std::isfinite(*temperature))
         payload.imu_temperature_c = *temperature;
     payload.properties = properties;

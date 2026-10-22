@@ -3,11 +3,11 @@
 
 #pragma once
 
-#include <schema/ego_audio_generated.h>
-#include <schema/ego_calibration_generated.h>
-#include <schema/ego_camera_generated.h>
-#include <schema/ego_device_state_generated.h>
-#include <schema/ego_imu_generated.h>
+#include <schema/orbbec_ego_audio_generated.h>
+#include <schema/orbbec_ego_calibration_generated.h>
+#include <schema/orbbec_ego_camera_generated.h>
+#include <schema/orbbec_ego_device_state_generated.h>
+#include <schema/orbbec_ego_imu_generated.h>
 
 #include <cstdint>
 #include <functional>
@@ -22,9 +22,9 @@ namespace plugins::ego
 
 struct StreamConfig
 {
-    core::EgoCameraStream camera;
+    core::OrbbecEgoCameraStream camera;
     std::string output_path;
-    core::EgoPixelFormat pixel_format = core::EgoPixelFormat_Mjpg;
+    core::OrbbecEgoPixelFormat pixel_format = core::OrbbecEgoPixelFormat_Mjpg;
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t fps = 0;
@@ -32,7 +32,7 @@ struct StreamConfig
 
 enum class McapMediaMode
 {
-    MetadataOnly,
+    Sidecar,
     Embedded,
 };
 
@@ -74,7 +74,7 @@ struct CaptureConfig
     bool record_device_diagnostics = true;
     std::string mcap_filename;
     std::string mcap_media_spool;
-    McapMediaMode mcap_media_mode = McapMediaMode::MetadataOnly;
+    McapMediaMode mcap_media_mode = McapMediaMode::Sidecar;
     bool keep_media_sidecars = false;
     std::string calibration_output;
     std::string time_alignment;
@@ -93,7 +93,7 @@ void validate_resolved_stream_config(const StreamConfig& stream, uint32_t resolv
 
 struct CapturedFrame
 {
-    core::EgoFrameMetadataT metadata;
+    core::OrbbecEgoFrameMetadataT metadata;
     std::vector<uint8_t> encoded_data;
     int64_t sample_time_local_common_clock_ns = 0;
     int64_t sample_time_raw_device_clock_ns = 0;
@@ -123,22 +123,22 @@ public:
     // Payload references are borrowed; copy any data retained after the call returns.
     // Timestamp pairs are (local common-clock ns, raw device-clock ns).
     virtual void on_frame_metadata(const CapturedFrame& frame) = 0;
-    virtual void on_imu_batch(const core::EgoImuBatchT&, int64_t, int64_t)
+    virtual void on_imu_batch(const core::OrbbecEgoImuBatchT&, int64_t, int64_t)
     {
     }
-    virtual void on_audio_chunk(const core::EgoAudioChunkT&, int64_t, int64_t)
+    virtual void on_audio_chunk(const core::OrbbecEgoAudioChunkT&, int64_t, int64_t)
     {
     }
     virtual void on_encoded_video_frame(const CapturedFrame&)
     {
     }
-    virtual void on_pcm_audio_chunk(const core::EgoPcmAudioChunkT&, int64_t, int64_t)
+    virtual void on_pcm_audio_chunk(const core::OrbbecEgoPcmAudioChunkT&, int64_t, int64_t)
     {
     }
-    virtual void on_calibration(const core::EgoCalibrationT&, int64_t, int64_t)
+    virtual void on_calibration(const core::OrbbecEgoCalibrationT&, int64_t, int64_t)
     {
     }
-    virtual void on_device_state(const core::EgoDeviceStateT&, int64_t, int64_t)
+    virtual void on_device_state(const core::OrbbecEgoDeviceStateT&, int64_t, int64_t)
     {
     }
     virtual void on_capture_status(const CaptureStatus&)
@@ -228,7 +228,7 @@ public:
     void update();
     void close();
     void print_stats() const;
-    const std::map<core::EgoCameraStream, StreamStats>& stats() const;
+    const std::map<core::OrbbecEgoCameraStream, StreamStats>& stats() const;
     const AuxiliaryStats& auxiliary_stats() const;
     bool preview_closed() const;
 

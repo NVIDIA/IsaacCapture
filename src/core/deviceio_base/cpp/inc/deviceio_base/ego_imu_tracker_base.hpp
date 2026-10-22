@@ -12,12 +12,12 @@
 namespace core
 {
 
-struct EgoImuBatch;
+struct OrbbecEgoImuBatch;
 
 class IEgoImuTrackerImpl : public ITrackerImpl
 {
 public:
-    virtual const Serialized<EgoImuBatch>& get_stream_data(size_t stream_index) const = 0;
+    virtual const Serialized<OrbbecEgoImuBatch>& get_stream_data(size_t stream_index) const = 0;
 };
 
 } // namespace core

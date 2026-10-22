@@ -25,23 +25,23 @@ void signal_handler(int signal)
         stop_requested.store(true, std::memory_order_relaxed);
 }
 
-core::EgoCameraStream parse_camera_name(const std::string& name)
+core::OrbbecEgoCameraStream parse_camera_name(const std::string& name)
 {
     if (name == "ColorLeft")
-        return core::EgoCameraStream_ColorLeft;
+        return core::OrbbecEgoCameraStream_ColorLeft;
     if (name == "ColorRight")
-        return core::EgoCameraStream_ColorRight;
+        return core::OrbbecEgoCameraStream_ColorRight;
     throw std::runtime_error("Unknown camera name: '" + name + "'. Expected ColorLeft or ColorRight.");
 }
 
-core::EgoPixelFormat parse_pixel_format(const std::string& value)
+core::OrbbecEgoPixelFormat parse_pixel_format(const std::string& value)
 {
     if (value == "mjpg" || value == "mjpeg")
-        return core::EgoPixelFormat_Mjpg;
+        return core::OrbbecEgoPixelFormat_Mjpg;
     if (value == "h264")
-        return core::EgoPixelFormat_H264;
+        return core::OrbbecEgoPixelFormat_H264;
     if (value == "h265" || value == "hevc")
-        return core::EgoPixelFormat_H265;
+        return core::OrbbecEgoPixelFormat_H265;
     throw std::runtime_error("Unknown format '" + value + "'. Expected mjpg, h264, or h265.");
 }
 
@@ -96,11 +96,11 @@ plugins::ego::StreamConfig parse_stream_arg(const std::string& arg)
 
 plugins::ego::McapMediaMode parse_mcap_media_mode(const std::string& value)
 {
-    if (value == "metadata-only")
-        return plugins::ego::McapMediaMode::MetadataOnly;
+    if (value == "sidecar")
+        return plugins::ego::McapMediaMode::Sidecar;
     if (value == "embedded")
         return plugins::ego::McapMediaMode::Embedded;
-    throw std::runtime_error("--mcap-media must be metadata-only or embedded");
+    throw std::runtime_error("--mcap-media must be sidecar or embedded");
 }
 
 void print_usage(const char* program)
@@ -124,7 +124,7 @@ void print_usage(const char* program)
               << "Metadata (mutually exclusive):\n"
               << "  --mcap-filename=PATH            Write a local MCAP\n"
               << "  --collection-prefix=PREFIX      Publish metadata via OpenXR tensors\n"
-              << "  --mcap-media=metadata-only|embedded (default metadata-only)\n"
+              << "  --mcap-media=sidecar|embedded (default sidecar)\n"
               << "  --keep-media-sidecars           Keep raw video/WAV with embedded MCAP\n"
               << "  --mcap-media-spool=PATH         Embedded-media fragment for TeleopSession merger\n"
               << "  --record-device-diagnostics=on|off  Save detailed diagnostics in local MCAP (default on)\n"
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
 try
 {
     plugins::ego::CaptureConfig capture_config;
-    std::map<core::EgoCameraStream, plugins::ego::StreamConfig> stream_map;
+    std::map<core::OrbbecEgoCameraStream, plugins::ego::StreamConfig> stream_map;
     bool list_capabilities = false;
     for (int index = 1; index < argc; ++index)
     {

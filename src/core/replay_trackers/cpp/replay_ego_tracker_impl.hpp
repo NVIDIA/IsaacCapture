@@ -7,8 +7,8 @@
 #include <deviceio_base/ego_imu_tracker_base.hpp>
 #include <log_bridge/logger.hpp>
 #include <mcap/tracker_channels.hpp>
-#include <schema/ego_camera_generated.h>
-#include <schema/ego_imu_generated.h>
+#include <schema/orbbec_ego_camera_generated.h>
+#include <schema/orbbec_ego_imu_generated.h>
 
 #include <memory>
 #include <string_view>
@@ -25,11 +25,11 @@ public:
                                       const std::vector<std::string>& channels,
                                       const RecordedSchemas& recorded);
     void update(int64_t monotonic_time_ns) override;
-    const Serialized<EgoFrameMetadata>& get_stream_data(size_t stream_index) const override;
+    const Serialized<OrbbecEgoFrameMetadata>& get_stream_data(size_t stream_index) const override;
 
 private:
-    std::unique_ptr<McapTrackerViewers<EgoFrameMetadataRecord>> viewers_;
-    std::vector<Serialized<EgoFrameMetadata>> streams_;
+    std::unique_ptr<McapTrackerViewers<OrbbecEgoFrameMetadataRecord>> viewers_;
+    std::vector<Serialized<OrbbecEgoFrameMetadata>> streams_;
     std::shared_ptr<spdlog::logger> logger_;
     std::vector<bool> warned_no_data_;
 };
@@ -42,11 +42,11 @@ public:
                             const std::vector<std::string>& channels,
                             const RecordedSchemas& recorded);
     void update(int64_t monotonic_time_ns) override;
-    const Serialized<EgoImuBatch>& get_stream_data(size_t stream_index) const override;
+    const Serialized<OrbbecEgoImuBatch>& get_stream_data(size_t stream_index) const override;
 
 private:
-    std::unique_ptr<McapTrackerViewers<EgoImuBatchRecord>> viewers_;
-    std::vector<Serialized<EgoImuBatch>> streams_;
+    std::unique_ptr<McapTrackerViewers<OrbbecEgoImuBatchRecord>> viewers_;
+    std::vector<Serialized<OrbbecEgoImuBatch>> streams_;
     std::shared_ptr<spdlog::logger> logger_;
     std::vector<bool> warned_no_data_;
 };

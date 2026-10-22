@@ -126,7 +126,7 @@ class RecordDecoder:
         matches = [i for i, obj in enumerate(self.objects) if obj["name"] == root_name]
         if (
             len(matches) != 1
-            or not root_name.startswith("core.Ego")
+            or not root_name.startswith("core.OrbbecEgo")
             or not root_name.endswith("Record")
         ):
             raise ValueError(f"Unsupported EGO record schema: {root_name}")
@@ -195,7 +195,7 @@ class RecordDecoder:
                 return ByteVector(start, count)
             if (
                 element == 15
-                and self.objects[field["index"]]["name"] == "core.EgoImuSample"
+                and self.objects[field["index"]]["name"] == "core.OrbbecEgoImuSample"
             ):
                 index = field["index"]
                 if index not in self.struct_dtypes:

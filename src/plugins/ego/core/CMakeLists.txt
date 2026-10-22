@@ -7,6 +7,8 @@ set(ego_camera_core_sources
     ego_camera.cpp
     calibration.cpp
     calibration.hpp
+    inc/ego_camera/calibration.hpp
+    inc/ego_camera/raw_calibration.hpp
     device_diagnostics.cpp
     device_diagnostics.hpp
     device_controls.cpp
@@ -46,6 +48,7 @@ target_link_libraries(ego_camera_core
         isaacteleop_schema
     PRIVATE
         nlohmann_json::nlohmann_json
+        yaml-cpp::yaml-cpp
         OpenSSL::Crypto
         ${CMAKE_DL_LIBS}
         ob::OrbbecSDK

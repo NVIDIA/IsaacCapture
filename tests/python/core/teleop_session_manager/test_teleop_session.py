@@ -1641,7 +1641,7 @@ class TestStatusMonitoringIntegration:
         "plugin_name,root,path",
         [
             ("manus_hand_plugin", "/manus", "/hand/left"),
-            ("ego_camera", "ego_instance", "/camera/ego"),
+            ("orbbec_ego_camera", "ego_instance", "/camera/ego"),
         ],
     )
     def test_supported_inventory_preserves_plugin_launch_order(

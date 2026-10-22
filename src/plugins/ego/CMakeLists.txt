@@ -25,10 +25,29 @@ if(BUILD_PLUGIN_EGO_CAMERA)
         endif()
     endforeach()
 
+    # A cached package directory must not override a newly selected SDK root.
+    set(OrbbecSDK_DIR "${ORBBEC_SDK_ROOT}/lib" CACHE PATH "Selected EGO SDK CMake package directory" FORCE)
     find_package(OrbbecSDK CONFIG REQUIRED
         PATHS "${ORBBEC_SDK_ROOT}/lib"
         NO_DEFAULT_PATH
     )
+
+    # Recheck when the SDK changes inside an existing build tree.
+    unset(EGO_SDK_HAS_REQUIRED_APIS CACHE)
+    try_compile(EGO_SDK_HAS_REQUIRED_APIS
+        "${CMAKE_CURRENT_BINARY_DIR}/sdk_check"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/sdk_check.cpp"
+        LINK_LIBRARIES ob::OrbbecSDK
+        CXX_STANDARD 17
+        OUTPUT_VARIABLE _ego_sdk_check_output
+    )
+    if(NOT EGO_SDK_HAS_REQUIRED_APIS)
+        message(FATAL_ERROR
+            "The SDK at '${ORBBEC_SDK_ROOT}' lacks the required EGO APIs or cannot link them. "
+            "Use the EGO-specific v2.10.6-EGO-20261019 build from "
+            "https://github.com/orbbec/OrbbecSDK_v2-EGO/releases/tag/v2.10.6-EGO-20261019\n"
+            "${_ego_sdk_check_output}")
+    endif()
 
     set(EGO_PLUGIN_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/plugin.yaml")
 

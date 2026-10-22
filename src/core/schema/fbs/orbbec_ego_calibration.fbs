@@ -5,7 +5,7 @@ include "timestamp.fbs";
 
 namespace core;
 
-table EgoCameraIntrinsics {
+table OrbbecEgoCameraIntrinsics {
   width: uint32 (id: 0);
   height: uint32 (id: 1);
   fx: float (id: 2);
@@ -16,36 +16,36 @@ table EgoCameraIntrinsics {
   distortion: [float] (id: 7);
 }
 
-table EgoExtrinsics {
+table OrbbecEgoExtrinsics {
   rotation: [float] (id: 0);
   translation_mm: [float] (id: 1);
 }
 
 // Versioned EGO timing provenance/model transported by the existing calibration channel.
-table EgoTimeAlignment {
+table OrbbecEgoTimeAlignment {
   json: string (id: 0);
 }
 
-table EgoCalibration {
+table OrbbecEgoCalibration {
   device_uid: string (id: 0);
-  color_left: EgoCameraIntrinsics (id: 1);
-  color_right: EgoCameraIntrinsics (id: 2);
-  left_to_right: EgoExtrinsics (id: 3);
+  color_left: OrbbecEgoCameraIntrinsics (id: 1);
+  color_right: OrbbecEgoCameraIntrinsics (id: 2);
+  left_to_right: OrbbecEgoExtrinsics (id: 3);
   accel_intrinsics: [float] (id: 4);
   gyro_intrinsics: [float] (id: 5);
-  accel_to_left: EgoExtrinsics (id: 6);
-  gyro_to_left: EgoExtrinsics (id: 7);
+  accel_to_left: OrbbecEgoExtrinsics (id: 6);
+  gyro_to_left: OrbbecEgoExtrinsics (id: 7);
   raw_alignment_yaml: string (id: 8);
   raw_imu_yaml: string (id: 9);
   capture_epoch: uint32 (id: 10);
-  time_alignment: EgoTimeAlignment (id: 11);
+  time_alignment: OrbbecEgoTimeAlignment (id: 11);
 }
 
-table EgoCalibrationTracked { data: EgoCalibration (id: 0); }
+table OrbbecEgoCalibrationTracked { data: OrbbecEgoCalibration (id: 0); }
 
-table EgoCalibrationRecord {
-  data: EgoCalibration (id: 0);
+table OrbbecEgoCalibrationRecord {
+  data: OrbbecEgoCalibration (id: 0);
   timestamp: DeviceDataTimestamp (id: 1);
 }
 
-root_type EgoCalibrationRecord;
+root_type OrbbecEgoCalibrationRecord;

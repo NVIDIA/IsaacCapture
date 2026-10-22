@@ -21,9 +21,9 @@ void validate_stream_config(const StreamConfig& stream, const CaptureConfig& con
     static_cast<void>(config);
     switch (stream.pixel_format)
     {
-    case core::EgoPixelFormat_Mjpg:
-    case core::EgoPixelFormat_H264:
-    case core::EgoPixelFormat_H265:
+    case core::OrbbecEgoPixelFormat_Mjpg:
+    case core::OrbbecEgoPixelFormat_H264:
+    case core::OrbbecEgoPixelFormat_H265:
         return;
     default:
         throw std::invalid_argument("Unsupported Ego pixel format");
@@ -32,8 +32,8 @@ void validate_stream_config(const StreamConfig& stream, const CaptureConfig& con
 
 void validate_resolved_stream_config(const StreamConfig& stream, uint32_t resolved_fps)
 {
-    const bool encoded =
-        stream.pixel_format == core::EgoPixelFormat_H264 || stream.pixel_format == core::EgoPixelFormat_H265;
+    const bool encoded = stream.pixel_format == core::OrbbecEgoPixelFormat_H264 ||
+                         stream.pixel_format == core::OrbbecEgoPixelFormat_H265;
     if (encoded && resolved_fps > 30)
     {
         throw std::invalid_argument("resolved encoded profile is " + std::to_string(resolved_fps) +
@@ -59,7 +59,7 @@ public:
                 file = std::make_unique<std::ofstream>(stream.output_path, std::ios::binary | std::ios::trunc);
                 if (!*file)
                     throw std::runtime_error("Unable to open encoded output: " + stream.output_path);
-                detail::log_info() << "Add stream: " << core::EnumNameEgoCameraStream(stream.camera) << " -> "
+                detail::log_info() << "Add stream: " << core::EnumNameOrbbecEgoCameraStream(stream.camera) << " -> "
                                    << stream.output_path << std::endl;
             }
             writers_.emplace(stream.camera, Writer{ std::move(file), stream.pixel_format });
@@ -130,7 +130,7 @@ public:
             {
                 if (!failures.empty())
                     failures += "; ";
-                failures += std::string(core::EnumNameEgoCameraStream(stream));
+                failures += std::string(core::EnumNameOrbbecEgoCameraStream(stream));
             }
         }
         if (!failures.empty())
@@ -153,7 +153,7 @@ private:
     struct Writer
     {
         std::unique_ptr<std::ofstream> file;
-        core::EgoPixelFormat format;
+        core::OrbbecEgoPixelFormat format;
         bool parameter_sets_ready = false;
         bool has_vps = false;
         bool has_sps = false;
@@ -174,7 +174,7 @@ private:
         static bool is_ego_timestamp_sei(const std::vector<uint8_t>& bytes,
                                          size_t payload_begin,
                                          size_t payload_end,
-                                         core::EgoPixelFormat format)
+                                         core::OrbbecEgoPixelFormat format)
         {
             const auto begin = bytes.begin() + static_cast<std::ptrdiff_t>(payload_begin);
             const auto end = bytes.begin() + static_cast<std::ptrdiff_t>(payload_end);
@@ -219,7 +219,7 @@ private:
                 }
                 offset += 2;
                 if (!matches(offset, kTimestamp) || !consume_decimal(offset) ||
-                    !matches(offset, format == core::EgoPixelFormat_H264 ? kH264Frame : kH265Frame) ||
+                    !matches(offset, format == core::OrbbecEgoPixelFormat_H264 ? kH264Frame : kH265Frame) ||
                     !consume_decimal(offset))
                 {
                     continue;
@@ -232,7 +232,7 @@ private:
 
         std::vector<uint8_t> remove_ego_timestamp_sei(const std::vector<uint8_t>& bytes) const
         {
-            if (format == core::EgoPixelFormat_Mjpg)
+            if (format == core::OrbbecEgoPixelFormat_Mjpg)
                 return bytes;
 
             std::vector<uint8_t> result;
@@ -248,10 +248,10 @@ private:
                 size_t next = nal_begin;
                 while (next < bytes.size() && start_code_size(bytes, next) == 0)
                     ++next;
-                const uint8_t nal_type =
-                    format == core::EgoPixelFormat_H264 ? bytes[nal_begin] & 0x1fU : (bytes[nal_begin] >> 1U) & 0x3fU;
+                const uint8_t nal_type = format == core::OrbbecEgoPixelFormat_H264 ? bytes[nal_begin] & 0x1fU :
+                                                                                     (bytes[nal_begin] >> 1U) & 0x3fU;
                 const bool is_sei =
-                    format == core::EgoPixelFormat_H264 ? nal_type == 6 : nal_type == 39 || nal_type == 40;
+                    format == core::OrbbecEgoPixelFormat_H264 ? nal_type == 6 : nal_type == 39 || nal_type == 40;
                 if (!is_sei || !is_ego_timestamp_sei(bytes, nal_begin + 1, next, format))
                     result.insert(result.end(), bytes.begin() + static_cast<std::ptrdiff_t>(current),
                                   bytes.begin() + static_cast<std::ptrdiff_t>(next));
@@ -262,7 +262,7 @@ private:
 
         bool accept(const std::vector<uint8_t>& bytes, bool sequence_gap)
         {
-            if (format == core::EgoPixelFormat_Mjpg)
+            if (format == core::OrbbecEgoPixelFormat_Mjpg)
                 return true;
 
             if (sequence_gap)
@@ -288,7 +288,7 @@ private:
                 const size_t nal_offset = offset + code_size;
                 if (nal_offset >= bytes.size())
                     break;
-                if (format == core::EgoPixelFormat_H264)
+                if (format == core::OrbbecEgoPixelFormat_H264)
                 {
                     const uint8_t nal_type = bytes[nal_offset] & 0x1fU;
                     has_sps = has_sps || nal_type == 7;
@@ -308,7 +308,8 @@ private:
                 offset = nal_offset + 1;
             }
             if (!parameter_sets_ready)
-                parameter_sets_ready = keyframe && has_sps && has_pps && (format == core::EgoPixelFormat_H264 || has_vps);
+                parameter_sets_ready =
+                    keyframe && has_sps && has_pps && (format == core::OrbbecEgoPixelFormat_H264 || has_vps);
             // Ego emits a separate SEI-only frame that carries a device timestamp.
             // Timestamp metadata is recorded independently; a standalone SEI is not a
             // decodable elementary-video access unit and must not be appended to media.
@@ -325,7 +326,7 @@ private:
         }
     };
 
-    std::map<core::EgoCameraStream, Writer> writers_;
+    std::map<core::OrbbecEgoCameraStream, Writer> writers_;
     std::unique_ptr<IMetadataSink> metadata_sink_;
     bool media_closed_ = false;
     bool media_failed_ = false;

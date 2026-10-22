@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <schema/ego_audio_generated.h>
+#include <schema/orbbec_ego_audio_generated.h>
 
 #include <cstdint>
 #include <memory>
@@ -50,7 +50,7 @@ public:
     void begin_epoch(uint32_t epoch);
     bool observe_left(int64_t raw_ns, int64_t arrival_ns);
     int64_t sample_time(const std::string& stream, int64_t raw_ns, int64_t arrival_ns);
-    core::EgoAudioTimingT audio_timing(int64_t raw_ns, uint32_t sample_count, uint32_t sample_rate);
+    core::OrbbecEgoAudioTimingT audio_timing(int64_t raw_ns, uint32_t sample_count, uint32_t sample_rate);
     bool has_update() const;
     std::string snapshot() const;
 

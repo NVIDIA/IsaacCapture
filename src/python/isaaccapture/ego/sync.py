@@ -23,15 +23,24 @@ if TYPE_CHECKING:
 
 STREAMS = ("left_rgb", "right_rgb", "accel", "gyro", "audio")
 _TOPICS = {
-    "ego_metadata/ColorLeft": ("left_rgb", "core.EgoFrameMetadataRecord"),
-    "ego_metadata/ColorRight": ("right_rgb", "core.EgoFrameMetadataRecord"),
-    "ego_imu/Accel": ("accel", "core.EgoImuBatchRecord"),
-    "ego_imu/Gyro": ("gyro", "core.EgoImuBatchRecord"),
-    "ego_audio/Audio": ("audio", "core.EgoAudioChunkRecord"),
-    "ego_media/ColorLeft": ("left_rgb", "core.EgoEncodedVideoFrameRecord"),
-    "ego_media/ColorRight": ("right_rgb", "core.EgoEncodedVideoFrameRecord"),
-    "ego_media/Audio": ("audio", "core.EgoPcmAudioChunkRecord"),
-    "ego_calibration/Calibration": ("calibration", "core.EgoCalibrationRecord"),
+    "orbbec_ego_metadata/ColorLeft": ("left_rgb", "core.OrbbecEgoFrameMetadataRecord"),
+    "orbbec_ego_metadata/ColorRight": (
+        "right_rgb",
+        "core.OrbbecEgoFrameMetadataRecord",
+    ),
+    "orbbec_ego_imu/Accel": ("accel", "core.OrbbecEgoImuBatchRecord"),
+    "orbbec_ego_imu/Gyro": ("gyro", "core.OrbbecEgoImuBatchRecord"),
+    "orbbec_ego_audio/Audio": ("audio", "core.OrbbecEgoAudioChunkRecord"),
+    "orbbec_ego_media/ColorLeft": ("left_rgb", "core.OrbbecEgoEncodedVideoFrameRecord"),
+    "orbbec_ego_media/ColorRight": (
+        "right_rgb",
+        "core.OrbbecEgoEncodedVideoFrameRecord",
+    ),
+    "orbbec_ego_media/Audio": ("audio", "core.OrbbecEgoPcmAudioChunkRecord"),
+    "orbbec_ego_calibration/Calibration": (
+        "calibration",
+        "core.OrbbecEgoCalibrationRecord",
+    ),
 }
 
 
@@ -201,7 +210,7 @@ def _load(recording):
                     f"Sensor discriminator disagrees with topic {channel.topic}"
                 )
             item = {"data": data, "ref": ref, "media": None}
-            if channel.topic.startswith("ego_media/"):
+            if channel.topic.startswith("orbbec_ego_media/"):
                 vector = data.get("encoded_data", data.get("pcm_data"))
                 if not isinstance(vector, ByteVector):
                     raise ValueError(f"Missing embedded media on {channel.topic}")
@@ -222,6 +231,7 @@ def _load(recording):
                 if encoded:
                     models.append(json.loads(encoded))
     media_paths = set()
+    sidecar_trailing_bytes = dict.fromkeys(("left_rgb", "right_rgb"), 0)
     issues = []
     scoped_issues = []
 
@@ -352,8 +362,16 @@ def _load(recording):
                 for item in records[stream]
                 if item["media"] and item["media"].storage == "sidecar"
             ]
-            if refs and Path(refs[0].path).stat().st_size != byte_offset:
-                issue(f"{stream}: sidecar contains unindexed bytes", (stream,))
+            if refs:
+                size = Path(refs[0].path).stat().st_size
+                if size < byte_offset:
+                    issue(
+                        f"{stream}: sidecar is shorter than its metadata index",
+                        (stream,),
+                    )
+                # Host polling can end before the plugin flushes its final frames.
+                # Unindexed suffixes have no associations or verified frame boundaries.
+                sidecar_trailing_bytes[stream] = max(0, size - byte_offset)
     if media:
         issue(
             f"{len(media)} embedded media records have no canonical metadata",
@@ -381,6 +399,7 @@ def _load(recording):
         "models": models,
         "identity": identity,
         "media_paths": media_paths,
+        "sidecar_trailing_bytes": sidecar_trailing_bytes,
         "issues": issues,
         "scoped_issues": scoped_issues,
         "ignored_records": ignored,
@@ -1295,6 +1314,10 @@ def analyze_recording_sync(
             if stream in ("left_rgb", "right_rgb", "audio")
             else 0,
         }
+        if stream in loaded["sidecar_trailing_bytes"]:
+            inventory[stream]["sidecar_trailing_bytes"] = loaded[
+                "sidecar_trailing_bytes"
+            ][stream]
     model = None
     errors = []
     windows = []

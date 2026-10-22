@@ -8,7 +8,8 @@ missing eyes or device timestamps more than 2 ms apart; publication uses
 host monotonic time sampled after payload extraction, not camera exposure time.
 
 MJPEG uses SDK conversion to host RGB, pinned staging, and CUDA upload.
-H.264/H.265 host payloads feed one shared-codec NVDEC decoder per eye.
+H.264/H.265 host payloads feed one shared-codec NVDEC decoder per eye;
+sequence gaps wait for a parameterized random-access frame before resuming.
 Both paths finish GPU writes before publishing reusable triple buffers.
 The viewer supplies its CUDA device ID; buffers and both decoders use that GPU.
 
@@ -25,6 +26,7 @@ run preview and recording separately because each needs device ownership.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Optional
@@ -36,6 +38,75 @@ from ._helpers import alloc_pinned_host, notify, notify_verbose
 from ._nv_decode import NvVideoDecoder
 
 logger = logging.getLogger("isaaccapture.camera_viz.sources.ego")
+
+
+def _nal_units(packet: bytes, hevc: bool):
+    starts = list(re.finditer(rb"\x00\x00\x00?\x01", packet))
+    for index, start in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(packet)
+        if start.end() + (2 if hevc else 1) > end:
+            continue
+        header = packet[start.end()]
+        nal_type = (header >> 1) & 0x3F if hevc else header & 0x1F
+        yield nal_type, packet[start.start() : end]
+
+
+class _EyeDecoder:
+    """Keep one EGO eye's NVDEC references valid across capture gaps."""
+
+    def __init__(self, width: int, height: int, *, gpu_id: int, codec: str):
+        self._decoder = NvVideoDecoder(width, height, gpu_id=gpu_id, codec=codec)
+        self._hevc = codec == "h265"
+        self._parameter_types = (32, 33, 34) if self._hevc else (7, 8)
+        self._sequence = None
+        self._waiting = True
+        self._parameters = {}
+        self._skip_rasl = False
+
+    def reset(self) -> None:
+        self._decoder.reset()
+        self._sequence = None
+        self._waiting = True
+        self._parameters.clear()
+        self._skip_rasl = False
+
+    def decode(self, packet: bytes, sequence: int, rgba_out) -> bool:
+        if self._sequence is not None and sequence != self._sequence + 1:
+            self.reset()
+        # SEI-only and deliberately skipped packets still consume SDK sequence numbers.
+        self._sequence = sequence
+        if self._waiting or self._skip_rasl:
+            units = list(_nal_units(packet, self._hevc))
+            types = {nal_type for nal_type, _ in units}
+            if self._waiting:
+                self._parameters.update(
+                    (nal_type, data)
+                    for nal_type, data in units
+                    if nal_type in self._parameter_types
+                )
+                keyframes = {19, 20, 21} if self._hevc else {5}
+                if not types.intersection(keyframes) or not all(
+                    nal_type in self._parameters for nal_type in self._parameter_types
+                ):
+                    return False
+                # Replay the full dependency order when recovery parameters span packets.
+                if not all(nal_type in types for nal_type in self._parameter_types):
+                    packet = (
+                        b"".join(
+                            self._parameters[nal_type]
+                            for nal_type in self._parameter_types
+                        )
+                        + packet
+                    )
+                self._parameters.clear()
+                self._waiting = False
+                self._skip_rasl = self._hevc and 21 in types
+            elif types.intersection({8, 9}):
+                # CRA leading RASL pictures may reference pictures before random access.
+                return False
+            elif any(nal_type <= 31 and nal_type not in (6, 7) for nal_type in types):
+                self._skip_rasl = False
+        return self._decoder.decode(packet, rgba_out)
 
 
 class EgoSource(FrameSource):
@@ -217,13 +288,13 @@ class EgoSource(FrameSource):
                 landing_left = cp.empty(shape, dtype=cp.uint8)
                 landing_right = cp.empty(shape, dtype=cp.uint8)
             else:
-                decoder_left = NvVideoDecoder(
+                decoder_left = _EyeDecoder(
                     self._spec.width,
                     self._spec.height,
                     gpu_id=self._gpu_id,
                     codec=self._format,
                 )
-                decoder_right = NvVideoDecoder(
+                decoder_right = _EyeDecoder(
                     self._spec.width,
                     self._spec.height,
                     gpu_id=self._gpu_id,
@@ -289,10 +360,14 @@ class EgoSource(FrameSource):
                     produced = True
                 else:
                     produced_left = decoder_left.decode(
-                        pair["left"], self._buffers_left[index]
+                        pair["left"],
+                        int(pair["sequence_left"]),
+                        self._buffers_left[index],
                     )
                     produced_right = decoder_right.decode(
-                        pair["right"], self._buffers_right[index]
+                        pair["right"],
+                        int(pair["sequence_right"]),
+                        self._buffers_right[index],
                     )
                     produced = produced_left and produced_right
                 if not produced:

@@ -51,12 +51,12 @@ def recording(tmp_path):
     def compile_record(name, data):
         nonlocal serial
         family = {
-            "EgoFrameMetadataRecord": "ego_camera",
-            "EgoEncodedVideoFrameRecord": "ego_camera",
-            "EgoImuBatchRecord": "ego_imu",
-            "EgoAudioChunkRecord": "ego_audio",
-            "EgoPcmAudioChunkRecord": "ego_audio",
-            "EgoCalibrationRecord": "ego_calibration",
+            "OrbbecEgoFrameMetadataRecord": "orbbec_ego_camera",
+            "OrbbecEgoEncodedVideoFrameRecord": "orbbec_ego_camera",
+            "OrbbecEgoImuBatchRecord": "orbbec_ego_imu",
+            "OrbbecEgoAudioChunkRecord": "orbbec_ego_audio",
+            "OrbbecEgoPcmAudioChunkRecord": "orbbec_ego_audio",
+            "OrbbecEgoCalibrationRecord": "orbbec_ego_calibration",
         }[name]
         if name not in schema_paths:
             schema_paths[name] = source / f"{family}.fbs"
@@ -259,8 +259,8 @@ def recording(tmp_path):
                     "time_alignment": {"json": json.dumps(baseline)},
                 }
                 add(
-                    "ego_calibration/Calibration",
-                    "EgoCalibrationRecord",
+                    "orbbec_ego_calibration/Calibration",
+                    "OrbbecEgoCalibrationRecord",
                     calibration_data,
                     ORIGIN,
                 )
@@ -268,8 +268,8 @@ def recording(tmp_path):
                     baseline["host_bridge"].update(bridge)
                     calibration_data["time_alignment"] = {"json": json.dumps(baseline)}
                     add(
-                        "ego_calibration/Calibration",
-                        "EgoCalibrationRecord",
+                        "orbbec_ego_calibration/Calibration",
+                        "OrbbecEgoCalibrationRecord",
                         calibration_data,
                         ORIGIN,
                     )
@@ -296,15 +296,15 @@ def recording(tmp_path):
                             "sdk_metadata": [{"key": 19, "value": 123456789}],
                         }
                         add(
-                            f"ego_metadata/{side}",
-                            "EgoFrameMetadataRecord",
+                            f"orbbec_ego_metadata/{side}",
+                            "OrbbecEgoFrameMetadataRecord",
                             metadata,
                             raw,
                         )
                         if duplicate_observation:
                             add(
-                                f"session_observed/ego_metadata/{side}",
-                                "EgoFrameMetadataRecord",
+                                f"session_observed/orbbec_ego_metadata/{side}",
+                                "OrbbecEgoFrameMetadataRecord",
                                 metadata,
                                 raw,
                             )
@@ -316,8 +316,8 @@ def recording(tmp_path):
                             }
                             media["encoded_data"] = [0, 0, 1, frame_id % 256]
                             add(
-                                f"ego_media/{side}",
-                                "EgoEncodedVideoFrameRecord",
+                                f"orbbec_ego_media/{side}",
+                                "OrbbecEgoEncodedVideoFrameRecord",
                                 media,
                                 raw,
                             )
@@ -342,8 +342,8 @@ def recording(tmp_path):
                             }
                         )
                     add(
-                        f"ego_imu/{sensor}",
-                        "EgoImuBatchRecord",
+                        f"orbbec_ego_imu/{sensor}",
+                        "OrbbecEgoImuBatchRecord",
                         {
                             "sensor": sensor,
                             "sequence_number": 0,
@@ -372,7 +372,12 @@ def recording(tmp_path):
                                 "first_sample_index": first,
                                 "continuity_known": False,
                             }
-                        add("ego_audio/Audio", "EgoAudioChunkRecord", data, 0)
+                        add(
+                            "orbbec_ego_audio/Audio",
+                            "OrbbecEgoAudioChunkRecord",
+                            data,
+                            0,
+                        )
                         if embedded:
                             pcm = {
                                 key: value
@@ -385,7 +390,12 @@ def recording(tmp_path):
                                     **pcm["timing"],
                                     "first_sample_index": first + 1,
                                 }
-                            add("ego_media/Audio", "EgoPcmAudioChunkRecord", pcm, 0)
+                            add(
+                                "orbbec_ego_media/Audio",
+                                "OrbbecEgoPcmAudioChunkRecord",
+                                pcm,
+                                0,
+                            )
                         wav.extend(b"\x00\x01" * count)
             writer.finish()
         if not embedded:
@@ -927,7 +937,7 @@ def test_populated_spatial_calibration_is_decoded_with_timing_provenance(recordi
         schema, channel, message = next(
             make_reader(source).iter_messages(log_time_order=False)
         )
-    assert channel.topic == "ego_calibration/Calibration"
+    assert channel.topic == "orbbec_ego_calibration/Calibration"
     data = RecordDecoder(schema.data, schema.name).decode(message.data)["data"]
     assert data["color_left"]["width"] == 16
     assert data["color_left"]["distortion"] == pytest.approx([0.1, 0.2, 0.3, 0.4])
@@ -990,7 +1000,7 @@ def test_imu_vectors_are_immutable_views_without_per_sample_dicts(recording):
     path, _ = recording(imu_samples=2000)
     with path.open("rb") as source:
         for schema, channel, message in make_reader(source).iter_messages():
-            if channel.topic == "ego_imu/Accel":
+            if channel.topic == "orbbec_ego_imu/Accel":
                 record = RecordDecoder(schema.data, schema.name).decode(message.data)
                 samples = record["data"]["samples"]
                 assert isinstance(samples, np.ndarray)
@@ -1034,6 +1044,60 @@ def test_sidecar_hash_and_external_path_are_checked(recording, tmp_path):
     media.write_bytes(b"xxxx" * 4)
     with pytest.raises(ValueError, match="fingerprint"):
         list(iter_sync_windows(path, required_streams=ALL, alignment=alignment_path))
+
+
+@pytest.mark.parametrize(
+    "stream, side", [("left_rgb", "ColorLeft"), ("right_rgb", "ColorRight")]
+)
+@pytest.mark.parametrize("trailing_bytes", [1, 30_395])
+def test_sidecar_tail_is_reported_without_changing_associations(
+    recording, stream, side, trailing_bytes
+):
+    path, model = recording()
+    windows = list(iter_sync_windows(path, required_streams=ALL, alignment=model))
+    media = path.parent / "raw" / f"{side}.h264"
+    with media.open("ab") as output:
+        output.write(bytes(trailing_bytes))
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        list(iter_sync_windows(path, required_streams=ALL, alignment=model))
+
+    model["recording_fingerprint"] = recording_fingerprint(path)
+    assert (
+        list(iter_sync_windows(path, required_streams=ALL, alignment=model)) == windows
+    )
+    report = analyze_recording_sync(path, required_streams=ALL, alignment=model)
+    assert report["alignment"]["status"] == "validated"
+    assert report["issues"] == []
+    assert report["streams"][stream]["sidecar_trailing_bytes"] == trailing_bytes
+    for name in ("left_rgb", "right_rgb"):
+        assert report["streams"][name]["records"] == 4
+        assert report["streams"][name]["missing_media_records"] == 0
+        if name != stream:
+            assert report["streams"][name]["sidecar_trailing_bytes"] == 0
+    assert report["coverage"]["window_count"] == len(windows)
+    assert report["coverage"]["complete_windows"] == len(windows)
+
+
+@pytest.mark.parametrize(
+    "stream, side", [("left_rgb", "ColorLeft"), ("right_rgb", "ColorRight")]
+)
+def test_sidecar_truncation_still_rejects_missing_indexed_bytes(
+    recording, stream, side
+):
+    path, model = recording()
+    media = path.parent / "raw" / f"{side}.h264"
+    with media.open("r+b") as output:
+        output.truncate(media.stat().st_size - 1)
+    model["recording_fingerprint"] = recording_fingerprint(path)
+
+    report = analyze_recording_sync(path, required_streams=ALL, alignment=model)
+    assert report["alignment"]["status"] == "invalid"
+    assert report["streams"][stream]["missing_media_records"] == 1
+    assert report["streams"][stream]["sidecar_trailing_bytes"] == 0
+    assert report["coverage"]["complete_windows"] == 0
+    with pytest.raises(ValueError, match="shorter than its metadata index"):
+        list(iter_sync_windows(path, required_streams=ALL, alignment=model))
 
 
 def test_truncated_flatbuffer_is_rejected(recording):

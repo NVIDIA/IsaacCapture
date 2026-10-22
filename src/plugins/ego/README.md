@@ -22,12 +22,53 @@ The examples below use the native `ego_camera_plugin` executable. The optional
 
 The plugin does not provide depth, IR, D2C, point clouds, or YUYV streams.
 
-## Build
+## Install and Build
 
-### Prerequisites
+### One-command Installation
 
-For Linux x86_64, use an external OrbbecSDK v2 package compatible with the EGO
-camera and host architecture. Its root must contain:
+On Linux x86_64, install CMake 3.24 or newer and `uv`, then run from the
+Isaac Capture repository root:
+
+```bash
+./src/plugins/ego/install.sh
+```
+
+The installer installs native build/media dependencies, downloads the pinned
+EGO SDK below, verifies its SHA-256, installs the SDK's udev rules, and builds
+the native tools with `ego.sh build`. Reconnect the camera after installation.
+Repeated runs reuse the verified download. Add `--preview` for SDL preview.
+
+After reconnecting, inspect the camera with the native executable:
+
+```bash
+export EGO_BIN="$PWD/build-ego-py3.11/src/plugins/ego_camera"
+export EGO_PLUGIN="$EGO_BIN/ego_camera_plugin"
+"$EGO_PLUGIN" --list-capabilities
+```
+
+For an already extracted SDK, use `--sdk-root /path/to/OrbbecSDK` or set
+`ORBBEC_SDK_ROOT`. Use `--skip-deps` or `--skip-udev` on a prepared host.
+Containers skip udev setup; install the rules on the host and reconnect the
+camera before running in a container. Use `--container` when container
+detection is unavailable. Run `install.sh --help` for other build options.
+
+### Manual Prerequisites
+
+Use the EGO-specific
+[OrbbecSDK_v2-EGO v2.10.6-EGO-20261019 release](https://github.com/orbbec/OrbbecSDK_v2-EGO/releases/tag/v2.10.6-EGO-20261019).
+For Linux x86_64, download
+[`OrbbecSDK_v2.10.6_202610191449_d49af169_linux_x86_64.tar.gz`](https://github.com/orbbec/OrbbecSDK_v2-EGO/releases/download/v2.10.6-EGO-20261019/OrbbecSDK_v2.10.6_202610191449_d49af169_linux_x86_64.tar.gz).
+General OrbbecSDK v2 releases, including the ordinary v2.10.6 package, do not
+provide the required EGO APIs and cannot replace this EGO-specific build.
+
+From the directory containing the downloaded archive, extract it and set the SDK path:
+
+```bash
+tar -xzf OrbbecSDK_v2.10.6_202610191449_d49af169_linux_x86_64.tar.gz
+export ORBBEC_SDK="$PWD/OrbbecSDK_v2.10.6_202610191449_d49af169_linux_x86_64"
+```
+
+The extracted SDK root must contain:
 
 ```text
 include/libobsensor/ObSensor.hpp
@@ -45,10 +86,20 @@ sudo apt install -y build-essential cmake ccache clang-format-14 patchelf \
   pkg-config libudev-dev nlohmann-json3-dev libssl-dev ffmpeg jq usbutils
 ```
 
-Install the udev rules from the same SDK package, then reconnect the camera:
+EGO uses USB VID `0x2bc5`, PID `0x1201`. The SDK's
+`shared/99-obsensor-libusb.rules` includes this rule:
+
+```udev
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="1201", MODE:="0666", OWNER:="root", GROUP:="video", SYMLINK+="Ego"
+```
+
+Install the rules from the same SDK package, reload them, and reconnect the
+camera for non-root access:
 
 ```bash
-sudo /path/to/OrbbecSDK/shared/install_udev_rules.sh
+sudo "$ORBBEC_SDK/shared/install_udev_rules.sh"
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
 
 SDL preview is optional. To build it, also install:
@@ -57,12 +108,12 @@ SDL preview is optional. To build it, also install:
 sudo apt install -y libsdl2-dev libavcodec-dev libavutil-dev libswscale-dev
 ```
 
-### Configure and Build
+### Manual Configure and Build
 
-Run from the repository root and replace the SDK path with your extracted package:
+Run from the Isaac Capture repository root, keeping `ORBBEC_SDK` set to the
+extracted SDK path above:
 
 ```bash
-export ORBBEC_SDK=/absolute/path/to/OrbbecSDK
 cmake -S . -B build-ego-py3.11 \
   -DISAAC_TELEOP_PYTHON_VERSION=3.11 \
   -DBUILD_VIZ=OFF -DBUILD_PLUGIN_EGO_CAMERA=ON \
@@ -157,14 +208,8 @@ For a WAV sidecar, add `--audio-output="$RUN/Audio.wav"` to the recording comman
 For audio embedded in MCAP without a WAV sidecar, use `--enable-audio` instead.
 Audio is disabled by default; enabling IMU does not enable audio.
 
-Audio capture, storage, and export are supported, but cross-stream audio
-synchronization has not passed physical acceptance. One tested Ethernet setup
-with firmware 1.1.10 and an SDK 2.9.0 build returned audio timestamps advancing
-about 1.875 times faster than the 48 kHz PCM sample timeline. This observation
-does not establish the same fault for other SDK builds, devices, or USB paths.
-Successful WAV playback does not establish synchronization. Offline audio
-association requires an independently validated time model and continuity
-evidence; disabling audio does not establish RGB/IMU physical synchronization.
+Audio capture, storage, and export are supported; synchronization with the
+camera and IMU requires separate validation.
 
 ### Record Data in MCAP
 
@@ -215,24 +260,24 @@ from pathlib import Path
 import isaaccapture.deviceio_trackers as dt
 from isaaccapture.deviceio_session import McapRecordingConfig
 from isaaccapture.ego import configure_recording
-from isaaccapture.schema import EgoCameraStream
+from isaaccapture.schema import OrbbecEgoCameraStream
 from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession
 
 run = Path("recordings/teleop_ego").resolve()
 (run / "raw").mkdir(parents=True, exist_ok=True)
 ego_entries = [
-    (dt.EgoFrameMetadataTracker(
-        "ego", [EgoCameraStream.ColorLeft, EgoCameraStream.ColorRight]
-    ), "ego_metadata"),
-    (dt.EgoImuTracker("ego"), "ego_imu"),
-    (dt.EgoCalibrationTracker("ego/Calibration"), "ego_calibration"),
-    (dt.EgoDeviceStateTracker("ego/DeviceState"), "ego_device"),
+    (dt.OrbbecEgoFrameMetadataTracker(
+        "ego", [OrbbecEgoCameraStream.ColorLeft, OrbbecEgoCameraStream.ColorRight]
+    ), "orbbec_ego_metadata"),
+    (dt.OrbbecEgoImuTracker("ego"), "orbbec_ego_imu"),
+    (dt.OrbbecEgoCalibrationTracker("ego/Calibration"), "orbbec_ego_calibration"),
+    (dt.OrbbecEgoDeviceStateTracker("ego/DeviceState"), "orbbec_ego_device"),
 ]
 existing = config.mcap_config.get_tracker_names() if config.mcap_config else []
 config.trackers.extend(tracker for tracker, _ in ego_entries)
 config.mcap_config = McapRecordingConfig(str(run / "metadata.mcap"), existing + ego_entries)
 config.plugins.append(PluginConfig(
-    plugin_name="ego_camera",
+    plugin_name="orbbec_ego_camera",
     plugin_root_id="ego_camera",
     search_paths=[Path("build-ego-py3.11/src/plugins").resolve()],
     required=True,
@@ -258,11 +303,12 @@ installation, use `install-ego-py3.11/plugins`. Keep the 15-second EGO shutdown
 budget and absolute output paths. Collection prefixes and MCAP source names
 serve different purposes; retain these canonical names for the EGO offline reader.
 
-For audio, add `dt.EgoAudioTracker("ego/Audio")` with recording name `ego_audio`
-and an absolute `--audio-output=...` path. Current availability is queried through
+For audio, add `(dt.OrbbecEgoAudioTracker("ego/Audio"), "orbbec_ego_audio")` to `ego_entries`
+before extending `config.trackers` and creating `McapRecordingConfig`, and add
+`f"--audio-output={run / 'Audio.wav'}"` to `plugin_args`. The offline reader
+requires this filename beside the session MCAP. Query current availability through
 `session.get_device_status("ego_camera/camera/ego")` after `session.step()`;
-`EgoDeviceStateTracker` carries historical diagnostic events. Version-2
-diagnostics replace the old EGO layout; old diagnostic recordings are unsupported.
+`OrbbecEgoDeviceStateTracker` carries historical diagnostic events in version-2 payloads.
 
 ### Store Media Inside MCAP
 
@@ -270,8 +316,11 @@ Media layout is separate from the recording workflow:
 
 | Layout | Option | Media location |
 |---|---|---|
-| Sidecar (default) | `--mcap-media=metadata-only` | Video/WAV files beside structured MCAP data. |
+| Sidecar (default) | `--mcap-media=sidecar` | Video/WAV files beside structured MCAP data. |
 | Embedded | `--mcap-media=embedded` | Encoded video and enabled PCM audio inside MCAP, without transcoding. |
+
+Both layouts record the selected video streams and optional audio; the option
+controls where media is stored. Only `sidecar` and `embedded` are accepted.
 
 For a self-contained local recording, omit video output paths:
 
@@ -333,7 +382,7 @@ These entries describe the native executable, not wrapper presets:
 | `--enable-audio` / `--audio-output=PATH.wav` | Off | Enable PCM; the output option also writes WAV. |
 | `--preview` | Off | Open SDL preview. |
 | `--mcap-filename=PATH` / `--collection-prefix=PREFIX` | Neither | Choose local MCAP or live publication. |
-| `--mcap-media=metadata-only\|embedded` | `metadata-only` | Choose media layout; embedded requires an MCAP/publication destination. |
+| `--mcap-media=sidecar\|embedded` | `sidecar` | Choose media layout; embedded requires an MCAP/publication destination. |
 | `--keep-media-sidecars` | Off | Retain sidecars in embedded mode. |
 | `--mcap-media-spool=PATH` | None | Required fragment for embedded TeleopSession. |
 | `--record-device-diagnostics=on\|off` | `on` | Include diagnostic events in MCAP. |
@@ -362,7 +411,8 @@ stops. Use `--persist-controls` only when device changes should remain.
 EGO has no `--quality` option; bitrate values are SDK property values, not OAK's units.
 
 To omit stored diagnostic events, use `--record-device-diagnostics=off`.
-Capture checks, recovery, logs, live diagnostics, and NV monitoring remain active.
+Capture checks, recovery, logs, live diagnostics, and Isaac Capture device
+monitoring remain active.
 For TeleopSession, use `config = configure_recording(config,
 record_device_diagnostics=False)` or the same keyword on `embedded_recording`.
 Remove diagnostic trackers from explicit recording lists and automatically
@@ -391,6 +441,7 @@ The local MCAP example produces:
 recordings/ego_mcap_<timestamp>/
 ├── raw/ColorLeft.h264
 ├── raw/ColorRight.h264
+├── Audio.wav              # When audio output is enabled.
 ├── calibration.json
 └── metadata.mcap
 ```
@@ -398,11 +449,35 @@ recordings/ego_mcap_<timestamp>/
 Audio adds `Audio.wav` only when requested with an output path. Embedded mode
 stores media in MCAP and omits video/WAV sidecars unless explicitly retained.
 
-Canonical structured topics are `ego_metadata/ColorLeft`, `ego_metadata/ColorRight`,
-`ego_imu/Accel`, `ego_imu/Gyro`, `ego_calibration/Calibration`, and
-`ego_device/DeviceState`; audio adds `ego_audio/Audio`. IMU/audio topics depend
+Schema and tracker types use `OrbbecEgo*`; the logical plugin name is
+`orbbec_ego_camera`. This is a breaking rename of the former `Ego*` Python APIs,
+`core.Ego*` schema names, and `ego_*` MCAP topics.
+
+Canonical structured topics are `orbbec_ego_metadata/ColorLeft`, `orbbec_ego_metadata/ColorRight`,
+`orbbec_ego_imu/Accel`, `orbbec_ego_imu/Gyro`, `orbbec_ego_calibration/Calibration`, and
+`orbbec_ego_device/DeviceState`; audio adds `orbbec_ego_audio/Audio`. IMU/audio topics depend
 on enabled and available sensors, and diagnostics can be omitted. Embedded
-media uses `ego_media/ColorLeft`, `ego_media/ColorRight`, and optional `ego_media/Audio`.
+media uses `orbbec_ego_media/ColorLeft`, `orbbec_ego_media/ColorRight`, and optional `orbbec_ego_media/Audio`.
+
+### Calibration Data
+
+`orbbec_ego_calibration/Calibration` stores the camera intrinsics, stereo extrinsics,
+IMU-to-left-camera extrinsics, and original alignment/IMU YAML in MCAP.
+`--calibration-output=PATH.json` exports the same calibration as a sidecar;
+`ego.sh record` creates `calibration.json` automatically.
+
+SDK calibration takes priority. When it is unavailable, the plugin fills missing
+camera fields from the alignment YAML and missing `accel_to_left` / `gyro_to_left`
+from the IMU YAML's `cam0.T_cam_imu`. Here `cam0` is `ColorLeft`; the rotation is
+row-major and the translation is in millimeters. This follows the pinned
+[EGO SDK's registration of IMU-to-camera and coincident gyro/accel extrinsics](https://github.com/orbbec/OrbbecSDK_v2-EGO/blob/d49af1694a05f533502e4697c5c7a7861e408973/src/device/ego/DataAcquisitionAlgParamManager.cpp#L597-L605).
+The fallback validates the rigid transform and preserves both original YAML
+strings. It does not change IMU samples, apply intrinsic corrections, or apply
+the YAML's time offset.
+
+SDK warnings about unavailable profile calibration can remain when the fallback
+has supplied all fields. Check the recorded fields with the strict verification
+below. Unsupported or invalid calibration remains missing and is reported.
 
 MCAP is written as `PATH.partial` and promoted to `PATH` only after successful
 capture and cleanup. A remaining `.partial`, nonzero exit, or queue/sequence
@@ -429,6 +504,21 @@ video counts/cadence, enabled sensors, and capture health:
 python3 -m pip install --user mcap  # If the MCAP reader is not installed.
 ./src/plugins/ego/ego.sh verify "$RUN" --plugin "$EGO_PLUGIN" --expect-imu
 ```
+
+To require complete calibration as well, add `--require-calibration` to `record`
+or `verify`:
+
+```bash
+./src/plugins/ego/ego.sh record --duration 30 --require-calibration
+./src/plugins/ego/ego.sh verify "$RUN" --plugin "$EGO_PLUGIN" --expect-imu --require-calibration
+```
+
+This checks camera calibration for each video epoch and IMU extrinsics when IMU
+is enabled, including profile dimensions, finite values, proper rotations,
+and agreement between MCAP and the final `calibration.json`. Native recordings
+must supply `--calibration-output="$RUN/calibration.json"` for that sidecar check.
+Without `--require-calibration`, verification reports calibration completeness while
+retaining compatibility with recordings that lack calibration fields.
 
 Omit `--expect-imu` if IMU was not requested; add `--expect-audio` when audio was
 requested. This verifier expects `metadata.mcap` and two video streams; it is
@@ -487,7 +577,17 @@ python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
   --alignment /absolute/path/to/alignment.json --output "$RUN/sync_audit.json"
 ```
 
-The reader needs accessible sidecar media or a completed embedded MCAP.
+In sidecar mode, the reader requires `raw/ColorLeft.<ext>`,
+`raw/ColorRight.<ext>`, and, when audio is recorded, `Audio.wav`, all relative
+to the MCAP's directory. The extension is `mjpg`, `h264`, or `h265`, matching
+the recorded format. Other output paths are valid for native capture, but
+sidecars must follow this layout for offline reading. Passing a directory
+selects `metadata.mcap`; pass the MCAP file explicitly if it has another name.
+A completed embedded MCAP carries its own media and does not need sidecars.
+
+Unindexed video bytes after the metadata-indexed prefix are reported as
+`sidecar_trailing_bytes` for each video stream and excluded from associations.
+Missing bytes referenced by metadata remain an error.
 Missing required streams/models fail; missing samples remain incomplete.
 Add audio only with a validated audio model and continuity evidence. The audit
 does not establish synchronization with other devices or absolute host sampling accuracy.
@@ -561,14 +661,12 @@ These describe SDK behavior; EGO profiles and control ranges must be checked on 
 
 ## Quick Start with ego.sh (Optional)
 
-The helper automates dependency checks, native builds, run-directory creation,
-and post-recording verification. It does not install packages or download SDKs.
+After `install.sh` or the manual build above, the helper automates dependency
+checks, native rebuilds, run-directory creation, and post-recording verification.
 Unlike the native executable, `record` requests both eyes at H.264
 `1600x1300@30`, available IMU, calibration, and local MCAP by default; audio is off.
 
 ```bash
-./src/plugins/ego/ego.sh doctor --sdk-root "$ORBBEC_SDK"
-./src/plugins/ego/ego.sh build --sdk-root "$ORBBEC_SDK" --jobs 8
 ./src/plugins/ego/ego.sh capabilities
 ./src/plugins/ego/ego.sh record --duration 30
 ./src/plugins/ego/ego.sh record --help

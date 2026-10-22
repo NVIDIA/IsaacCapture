@@ -14,18 +14,18 @@ from pathlib import Path
 
 from isaaccapture.deviceio_session import McapReplayConfig, ReplaySession
 from isaaccapture.deviceio_trackers import (
-    EgoFrameMetadataTracker,
-    EgoAudioTracker,
-    EgoCalibrationTracker,
-    EgoDeviceStateTracker,
-    EgoImuTracker,
+    OrbbecEgoFrameMetadataTracker,
+    OrbbecEgoAudioTracker,
+    OrbbecEgoCalibrationTracker,
+    OrbbecEgoDeviceStateTracker,
+    OrbbecEgoImuTracker,
 )
 from isaaccapture.schema import (
-    EgoCameraStream,
-    EgoSdkReport,
-    EgoCaptureSummary,
-    EgoRecoveryEvent,
-    EgoDeviceSnapshot,
+    OrbbecEgoCameraStream,
+    OrbbecEgoSdkReport,
+    OrbbecEgoCaptureSummary,
+    OrbbecEgoRecoveryEvent,
+    OrbbecEgoDeviceSnapshot,
 )
 from mcap.reader import make_reader
 
@@ -83,7 +83,10 @@ def _diagnostic_policy(path: Path, expected: bool | None) -> bool:
                 )
             for channel in summary.channels.values():
                 schema = summary.schemas.get(channel.schema_id)
-                if schema is not None and schema.name == "core.EgoDeviceStateRecord":
+                if (
+                    schema is not None
+                    and schema.name == "core.OrbbecEgoDeviceStateRecord"
+                ):
                     raise ValueError(
                         f"Diagnostics off but channel exists: {channel.topic}"
                     )
@@ -98,19 +101,19 @@ def replay(
     path: Path, max_updates: int, *, record_device_diagnostics: bool | None = None
 ) -> dict[str, int]:
     diagnostics = _diagnostic_policy(path, record_device_diagnostics)
-    frame_tracker = EgoFrameMetadataTracker(
+    frame_tracker = OrbbecEgoFrameMetadataTracker(
         "ego_metadata",
-        [EgoCameraStream.ColorLeft, EgoCameraStream.ColorRight],
+        [OrbbecEgoCameraStream.ColorLeft, OrbbecEgoCameraStream.ColorRight],
     )
-    imu_tracker = EgoImuTracker("ego_imu")
-    audio_tracker = EgoAudioTracker("ego_audio/Audio")
-    calibration_tracker = EgoCalibrationTracker("ego_calibration/Calibration")
-    state_tracker = EgoDeviceStateTracker("ego_device/DeviceState")
+    imu_tracker = OrbbecEgoImuTracker("ego_imu")
+    audio_tracker = OrbbecEgoAudioTracker("ego_audio/Audio")
+    calibration_tracker = OrbbecEgoCalibrationTracker("ego_calibration/Calibration")
+    state_tracker = OrbbecEgoDeviceStateTracker("ego_device/DeviceState")
     trackers = [
-        (frame_tracker, "ego_metadata"),
-        (imu_tracker, "ego_imu"),
-        (audio_tracker, "ego_audio"),
-        (calibration_tracker, "ego_calibration"),
+        (frame_tracker, "orbbec_ego_metadata"),
+        (imu_tracker, "orbbec_ego_imu"),
+        (audio_tracker, "orbbec_ego_audio"),
+        (calibration_tracker, "orbbec_ego_calibration"),
     ]
     counts = {
         "ColorLeft": 0,
@@ -122,19 +125,19 @@ def replay(
         "DeviceState": 0,
     }
     topics = {
-        "ego_metadata/ColorLeft",
-        "ego_metadata/ColorRight",
-        "ego_imu/Accel",
-        "ego_imu/Gyro",
-        "ego_audio/Audio",
-        "ego_calibration/Calibration",
-        "ego_device/DeviceState",
+        "orbbec_ego_metadata/ColorLeft",
+        "orbbec_ego_metadata/ColorRight",
+        "orbbec_ego_imu/Accel",
+        "orbbec_ego_imu/Gyro",
+        "orbbec_ego_audio/Audio",
+        "orbbec_ego_calibration/Calibration",
+        "orbbec_ego_device/DeviceState",
     }
     if diagnostics:
-        trackers.append((state_tracker, "ego_device"))
+        trackers.append((state_tracker, "orbbec_ego_device"))
     else:
         del counts["DeviceState"]
-        topics.remove("ego_device/DeviceState")
+        topics.remove("orbbec_ego_device/DeviceState")
     # ReplaySession has no EOF accessor; payload-less records also return None.
     updates = _update_count(path, topics)
     if max_updates:
@@ -184,13 +187,13 @@ def replay(
             if state is not None:
                 counts["DeviceState"] += 1
                 event = state.event
-                if isinstance(event, EgoSdkReport):
+                if isinstance(event, OrbbecEgoSdkReport):
                     detail = f"seq={event.sequence_number} work_mode={event.work_mode} status_flags={event.status_flags} error_flags={event.error_flags} storage_free_bytes={event.storage_free_bytes}"
-                elif isinstance(event, EgoCaptureSummary):
+                elif isinstance(event, OrbbecEgoCaptureSummary):
                     detail = f"health={event.capture_health} queue={event.queue_peak}/{event.queue_capacity} dropped_events={event.dropped_events} dropped_video_frame_sets={event.dropped_video_frame_sets} final={event.is_final} reason={event.reason}"
-                elif isinstance(event, EgoRecoveryEvent):
+                elif isinstance(event, OrbbecEgoRecoveryEvent):
                     detail = f"stage={event.stage} attempt={event.reconnect_attempt} reason={event.reason}"
-                elif isinstance(event, EgoDeviceSnapshot):
+                elif isinstance(event, OrbbecEgoDeviceSnapshot):
                     detail = f"imu_temperature_c={event.imu_temperature_c} properties={len(event.properties)}"
                 else:
                     raise ValueError("Unsupported EGO diagnostic event")

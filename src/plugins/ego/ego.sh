@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # One entry point for building, inspecting, recording, and verifying the
-# capability-compatible EGO camera plugin.  It intentionally never
-# installs packages, SDKs, or udev rules: those operations need user approval.
+# capability-compatible EGO camera plugin. Use install.sh to download the
+# pinned SDK and prepare system dependencies and host udev rules.
 
 set -euo pipefail
 
@@ -28,7 +28,7 @@ Usage:
   src/plugins/ego/ego.sh build --sdk-root PATH [--preview] [--preset py3.11] [--jobs N] [--clean] [--install-prefix PATH]
   src/plugins/ego/ego.sh capabilities [--preset py3.11] [--plugin PATH] [--device-uid UID]
   src/plugins/ego/ego.sh record [--config FILE.toml] [options] [-- PLUGIN_OPTIONS...]
-  src/plugins/ego/ego.sh verify RUN_DIRECTORY [--preset py3.11] [--plugin PATH]
+  src/plugins/ego/ego.sh verify RUN_DIRECTORY [--require-calibration] [--preset py3.11] [--plugin PATH]
   src/plugins/ego/ego.sh export-media RUN_DIRECTORY [--output DIRECTORY] [--preset py3.11]
 
 Common record options:
@@ -44,9 +44,10 @@ Common record options:
   --audio                        Request optional audio (default: off; synchronization remains unverified).
   --no-audio                     Disable audio, overriding an audio-enabled configuration.
   --preview                       Enable the plugin's SDL preview (requires a --preview build).
-  --mcap-media MODE               metadata-only (default) or embedded.
+  --mcap-media MODE               sidecar (default) or embedded.
   --record-device-diagnostics=on|off  Save detailed diagnostics in MCAP (default on).
   --keep-media-sidecars           Retain H.264/H.265/MJPEG and WAV beside embedded MCAP.
+  --require-calibration           Require complete structured calibration during verification.
   --preset NAME --plugin PATH     Select a build tree or override the executable.
 
 Examples:
@@ -91,6 +92,10 @@ validate_sdk_root() {
     [[ -f "$sdk_root/lib/OrbbecSDKConfig.cmake" ]] || die "Invalid SDK root '$sdk_root': missing lib/OrbbecSDKConfig.cmake"
     [[ -f "$sdk_root/lib/libOrbbecSDK.so.2" ]] || die "Invalid SDK root '$sdk_root': missing lib/libOrbbecSDK.so.2"
     [[ -d "$sdk_root/lib/extensions" ]] || die "Invalid SDK root '$sdk_root': missing lib/extensions"
+    command -v c++ >/dev/null 2>&1 || die "Missing C++ compiler. Install build-essential."
+    if ! c++ -std=c++17 -fsyntax-only -I "$sdk_root/include" "$SCRIPT_DIR/tools/sdk_check.cpp"; then
+        die "SDK lacks the required EGO APIs. Use https://github.com/orbbec/OrbbecSDK_v2-EGO/releases/tag/v2.10.6-EGO-20261019"
+    fi
 }
 
 resolve_plugin() {
@@ -244,11 +249,11 @@ command_doctor() {
 
     if command -v lsusb >/dev/null 2>&1; then
         local usb_line bus device node
-        usb_line="$(lsusb -d 2bc5: 2>/dev/null || true)"
+        usb_line="$(lsusb -d 2bc5:1201 2>/dev/null || true)"
         if [[ -z "$usb_line" ]]; then
-            warn "No Orbbec USB device found. Connect the camera before capabilities or record."
+            warn "No EGO USB device (2bc5:1201) found. Connect the camera before capabilities or record."
         else
-            echo "Detected Orbbec USB device(s):"
+            echo "Detected EGO USB device(s) (2bc5:1201):"
             echo "$usb_line"
             while IFS= read -r usb_line; do
                 bus="$(awk '{print $2}' <<< "$usb_line")"
@@ -448,10 +453,11 @@ command_record() {
     local reconnect_timeout=30
     local reconnect_interval_ms=1000
     local request_imu=1
+    local require_calibration=0
     # Optional audio must be requested explicitly, not enabled by sensor discovery.
     local request_audio=0
     local preview=0
-    local media_mode="metadata-only"
+    local media_mode="sidecar"
     local keep_sidecars=0
     local record_diagnostics=on
     local -a passthrough=()
@@ -499,13 +505,18 @@ command_record() {
             --reconnect-interval-ms) reconnect_interval_ms="${2:-}"; shift 2 ;;
             --imu) request_imu=1; shift ;;
             --no-imu) request_imu=0; shift ;;
+            --require-calibration) require_calibration=1; shift ;;
             --audio) request_audio=1; shift ;;
             --no-audio) request_audio=0; shift ;;
             --preview) preview=1; shift ;;
             --no-preview) preview=0; shift ;;
             --record-device-diagnostics=*) record_diagnostics="${1#*=}"; shift ;;
             --record-device-diagnostics) record_diagnostics="${2:-}"; shift 2 ;;
-            --mcap-media) media_mode="${2:-}"; shift 2 ;;
+            --mcap-media)
+                media_mode="${2:-}"
+                [[ "$media_mode" == "sidecar" || "$media_mode" == "embedded" ]] || record_usage_error "--mcap-media must be sidecar or embedded"
+                shift 2
+                ;;
             --keep-media-sidecars) keep_sidecars=1; shift ;;
             --no-keep-media-sidecars) keep_sidecars=0; shift ;;
             --preset) preset="${2:-}"; shift 2 ;;
@@ -517,14 +528,14 @@ command_record() {
     done
     preset_python_version "$preset" >/dev/null
     [[ "$format" == "mjpg" || "$format" == "h264" || "$format" == "h265" ]] || record_usage_error "--format must be mjpg, h264, or h265"
-    [[ "$media_mode" == "metadata-only" || "$media_mode" == "embedded" ]] || record_usage_error "--mcap-media must be metadata-only or embedded"
+    [[ "$media_mode" == "sidecar" || "$media_mode" == "embedded" ]] || record_usage_error "--mcap-media must be sidecar or embedded"
     [[ "$width" =~ ^[1-9][0-9]*$ && "$height" =~ ^[1-9][0-9]*$ && "$fps" =~ ^[1-9][0-9]*$ ]] || record_usage_error "width, height, and fps must be positive integers"
     [[ "$reconnect_timeout" =~ ^[0-9]+$ ]] || record_usage_error "--reconnect-timeout must be a non-negative integer"
     [[ "$reconnect_interval_ms" =~ ^[1-9][0-9]*$ ]] || record_usage_error "--reconnect-interval-ms must be a positive integer"
     if [[ -n "$duration" ]]; then
         [[ "$duration" =~ ^[1-9][0-9]*$ ]] || record_usage_error "--duration must be a positive integer"
     fi
-    if (( keep_sidecars )) && [[ "$media_mode" == "metadata-only" ]]; then
+    if (( keep_sidecars )) && [[ "$media_mode" == "sidecar" ]]; then
         record_usage_error "--keep-media-sidecars is only valid with embedded media"
     fi
 
@@ -550,7 +561,7 @@ command_record() {
     fi
     [[ ! -e "$run_dir" ]] || die "Output directory already exists: $run_dir"
     mkdir -p "$run_dir/logs"
-    if [[ "$media_mode" == "metadata-only" ]] || (( keep_sidecars )); then
+    if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
         mkdir -p "$run_dir/raw"
     fi
     write_requested_profile_manifest "$run_dir/requested_profile.json" "$format" "$width" "$height" "$fps" "$record_diagnostics"
@@ -588,7 +599,7 @@ command_record() {
         "--reconnect-timeout=$reconnect_timeout"
         "--reconnect-interval-ms=$reconnect_interval_ms"
     )
-    if [[ "$media_mode" == "metadata-only" ]] || (( keep_sidecars )); then
+    if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
         plugin_args+=(
             "--add-stream=camera=ColorLeft,output=$run_dir/raw/ColorLeft.$extension,format=$format,width=$width,height=$height,fps=$fps"
             "--add-stream=camera=ColorRight,output=$run_dir/raw/ColorRight.$extension,format=$format,width=$width,height=$height,fps=$fps"
@@ -603,7 +614,7 @@ command_record() {
     (( preview )) && plugin_args+=(--preview)
     (( enable_imu )) && plugin_args+=(--enable-imu --imu-rate=1000)
     if (( enable_audio )); then
-        if [[ "$media_mode" == "metadata-only" ]] || (( keep_sidecars )); then
+        if [[ "$media_mode" == "sidecar" ]] || (( keep_sidecars )); then
             plugin_args+=("--audio-output=$run_dir/Audio.wav")
         else
             plugin_args+=(--enable-audio)
@@ -617,17 +628,21 @@ command_record() {
     echo "Stop with Ctrl-C once; the plugin will finalize media and MCAP files."
     local capture_status
     local -a pipeline_statuses=()
+    # Catch INT without propagating SIG_IGN to the plugin. Keep tee alive
+    # until shutdown logs and MCAP finalization have completed.
+    trap ':' INT
     set +e
     if [[ -n "$duration" ]]; then
-        timeout --preserve-status --signal=INT --kill-after=30s "$duration" \
-            "$plugin" "${plugin_args[@]}" 2>&1 | tee "$run_dir/logs/capture.log"
+        timeout --foreground --preserve-status --signal=INT --kill-after=30s "$duration" \
+            "$plugin" "${plugin_args[@]}" 2>&1 | tee -i "$run_dir/logs/capture.log"
     else
-        "$plugin" "${plugin_args[@]}" 2>&1 | tee "$run_dir/logs/capture.log"
+        "$plugin" "${plugin_args[@]}" 2>&1 | tee -i "$run_dir/logs/capture.log"
     fi
     pipeline_statuses=("${PIPESTATUS[@]}")
+    trap - INT
+    set -e
     capture_status=${pipeline_statuses[0]}
     [[ "${pipeline_statuses[1]}" -eq 0 ]] || die "Unable to write capture log: $run_dir/logs/capture.log"
-    set -e
     if [[ "$capture_status" -ne 0 ]]; then
         die "Capture failed with status $capture_status. See $run_dir/logs/capture.log"
     fi
@@ -637,6 +652,7 @@ command_record() {
     local -a verify_args=("$run_dir" --preset "$preset" --plugin "$plugin" --media-mode "$media_mode")
     (( enable_imu )) && verify_args+=(--expect-imu)
     (( enable_audio )) && verify_args+=(--expect-audio)
+    (( require_calibration )) && verify_args+=(--require-calibration)
     command_verify "${verify_args[@]}"
 }
 
@@ -755,13 +771,19 @@ command_verify_impl() {
     local expected_mode=""
     local expect_imu=0
     local expect_audio=0
+    local require_calibration=0
     while (( $# )); do
         case "$1" in
             --preset) preset="${2:-}"; shift 2 ;;
             --plugin) plugin_path="${2:-}"; shift 2 ;;
-            --media-mode) expected_mode="${2:-}"; shift 2 ;;
+            --media-mode)
+                expected_mode="${2:-}"
+                [[ "$expected_mode" == "sidecar" || "$expected_mode" == "embedded" ]] || die "Unknown MCAP media mode '$expected_mode'"
+                shift 2
+                ;;
             --expect-imu) expect_imu=1; shift ;;
             --expect-audio) expect_audio=1; shift ;;
+            --require-calibration) require_calibration=1; shift ;;
             --help|-h) usage; return 0 ;;
             *) die "Unknown verify option: $1" ;;
         esac
@@ -782,11 +804,14 @@ command_verify_impl() {
     if [[ -z "$mode" ]]; then
         mode="$(python3 "$SCRIPT_DIR/tools/detect_media_mode.py" "$mcap")"
     fi
-    [[ "$mode" == "metadata-only" || "$mode" == "embedded" ]] || die "Unknown MCAP media mode '$mode'"
+    [[ "$mode" == "sidecar" || "$mode" == "embedded" ]] || die "Unknown MCAP media mode '$mode'"
 
     local -a topic_check_args=("$mcap" "$mode" "--requested-profile=$run_dir/requested_profile.json")
     (( expect_imu )) && topic_check_args+=(--expect-imu)
     (( expect_audio )) && topic_check_args+=(--expect-audio)
+    if (( require_calibration )); then
+        topic_check_args+=(--require-calibration "--calibration-json=$run_dir/calibration.json")
+    fi
     python3 "$SCRIPT_DIR/tools/verify_sensor_topics.py" "${topic_check_args[@]}"
 
     check_capture_health_log "$run_dir/logs/capture.log"

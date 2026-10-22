@@ -339,7 +339,7 @@ int64_t TimeAlignment::sample_time(const std::string& stream, int64_t raw_ns, in
     return mapped;
 }
 
-core::EgoAudioTimingT TimeAlignment::audio_timing(int64_t raw_ns, uint32_t sample_count, uint32_t sample_rate)
+core::OrbbecEgoAudioTimingT TimeAlignment::audio_timing(int64_t raw_ns, uint32_t sample_count, uint32_t sample_rate)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (sample_count == 0 || sample_rate == 0)
@@ -358,7 +358,7 @@ core::EgoAudioTimingT TimeAlignment::audio_timing(int64_t raw_ns, uint32_t sampl
             impl_->updated = true;
         }
     }
-    core::EgoAudioTimingT result;
+    core::OrbbecEgoAudioTimingT result;
     result.segment_id = impl_->audio_segment;
     result.first_sample_index = impl_->audio_index;
     result.continuity_known = false;

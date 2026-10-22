@@ -9,7 +9,7 @@ from pathlib import Path
 
 import isaaccapture.deviceio_trackers as deviceio_trackers
 from isaaccapture.deviceio_session import DeviceIOSession, McapRecordingConfig
-from isaaccapture.schema import EgoCameraStream
+from isaaccapture.schema import OrbbecEgoCameraStream
 import isaaccapture.oxr as oxr
 import isaaccapture.plugin_manager as plugin_manager
 
@@ -29,17 +29,17 @@ def main() -> int:
     args = parser.parse_args()
 
     prefix = "ego"
-    frame = deviceio_trackers.EgoFrameMetadataTracker(
+    frame = deviceio_trackers.OrbbecEgoFrameMetadataTracker(
         prefix,
         [
-            EgoCameraStream.ColorLeft,
-            EgoCameraStream.ColorRight,
+            OrbbecEgoCameraStream.ColorLeft,
+            OrbbecEgoCameraStream.ColorRight,
         ],
     )
-    imu = deviceio_trackers.EgoImuTracker(prefix)
-    audio = deviceio_trackers.EgoAudioTracker(prefix + "/Audio")
-    calibration = deviceio_trackers.EgoCalibrationTracker(prefix + "/Calibration")
-    state = deviceio_trackers.EgoDeviceStateTracker(prefix + "/DeviceState")
+    imu = deviceio_trackers.OrbbecEgoImuTracker(prefix)
+    audio = deviceio_trackers.OrbbecEgoAudioTracker(prefix + "/Audio")
+    calibration = deviceio_trackers.OrbbecEgoCalibrationTracker(prefix + "/Calibration")
+    state = deviceio_trackers.OrbbecEgoDeviceStateTracker(prefix + "/DeviceState")
     trackers = [frame, imu, audio, calibration, state]
 
     suffix = {"mjpg": "mjpg", "h264": "h264", "h265": "h265"}[args.format]
@@ -59,11 +59,11 @@ def main() -> int:
         plugin_args.append(f"--collection-prefix={prefix}")
 
     manager = plugin_manager.PluginManager([str(args.plugin_root)])
-    if "ego_camera" not in manager.get_plugin_names():
-        raise RuntimeError("ego_camera plugin was not discovered")
+    if "orbbec_ego_camera" not in manager.get_plugin_names():
+        raise RuntimeError("orbbec_ego_camera plugin was not discovered")
 
     with manager.start(
-        "ego_camera", "ego_camera", plugin_args, shutdown_timeout_seconds=15.0
+        "orbbec_ego_camera", "ego_camera", plugin_args, shutdown_timeout_seconds=15.0
     ) as plugin:
         if args.mode != "schema-pusher":
             deadline = time.monotonic() + args.duration
@@ -76,11 +76,11 @@ def main() -> int:
         recording = McapRecordingConfig(
             str(args.mcap),
             [
-                (frame, "ego_metadata"),
-                (imu, "ego_imu"),
-                (audio, "ego_audio"),
-                (calibration, "ego_calibration"),
-                (state, "ego_device"),
+                (frame, "orbbec_ego_metadata"),
+                (imu, "orbbec_ego_imu"),
+                (audio, "orbbec_ego_audio"),
+                (calibration, "orbbec_ego_calibration"),
+                (state, "orbbec_ego_device"),
             ],
         )
         with oxr.OpenXRSession("EgoCameraTest", extensions) as oxr_session:

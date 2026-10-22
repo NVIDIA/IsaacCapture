@@ -15,7 +15,7 @@ fps = 30
 imu = true
 audio = false # Set true to capture optional audio; cross-stream synchronization is unverified.
 preview = false
-mcap_media = "metadata-only" # Or "embedded".
+mcap_media = "sidecar" # Or "embedded".
 record_device_diagnostics = true # Live monitoring remains enabled when false.
 keep_media_sidecars = false  # Valid only with embedded media.
 

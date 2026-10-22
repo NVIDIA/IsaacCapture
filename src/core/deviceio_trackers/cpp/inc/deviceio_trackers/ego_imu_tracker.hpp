@@ -4,8 +4,8 @@
 #pragma once
 
 #include <deviceio_base/ego_imu_tracker_base.hpp>
-#include <schema/ego_imu_generated.h>
 #include <schema/ego_limits.hpp>
+#include <schema/orbbec_ego_imu_generated.h>
 
 #include <cstddef>
 #include <string>
@@ -14,22 +14,22 @@
 namespace core
 {
 
-class EgoImuTracker : public ITracker
+class OrbbecEgoImuTracker : public ITracker
 {
 public:
-    EgoImuTracker(std::string collection_prefix,
-                  std::vector<EgoImuSensor> sensors = { EgoImuSensor_Accel, EgoImuSensor_Gyro },
-                  size_t max_flatbuffer_size = EGO_MAX_FLATBUFFER_SIZE);
+    OrbbecEgoImuTracker(std::string collection_prefix,
+                        std::vector<OrbbecEgoImuSensor> sensors = { OrbbecEgoImuSensor_Accel, OrbbecEgoImuSensor_Gyro },
+                        size_t max_flatbuffer_size = EGO_MAX_FLATBUFFER_SIZE);
     std::string_view get_name() const override
     {
-        return "EgoImuTracker";
+        return "OrbbecEgoImuTracker";
     }
-    const Serialized<EgoImuBatch>& get_stream_data(const ITrackerSession& session, size_t stream_index) const;
+    const Serialized<OrbbecEgoImuBatch>& get_stream_data(const ITrackerSession& session, size_t stream_index) const;
     const std::string& collection_prefix() const
     {
         return collection_prefix_;
     }
-    const std::vector<EgoImuSensor>& sensors() const
+    const std::vector<OrbbecEgoImuSensor>& sensors() const
     {
         return sensors_;
     }
@@ -48,7 +48,7 @@ public:
 
 private:
     std::string collection_prefix_;
-    std::vector<EgoImuSensor> sensors_;
+    std::vector<OrbbecEgoImuSensor> sensors_;
     std::vector<std::string> stream_names_;
     size_t max_flatbuffer_size_;
 };

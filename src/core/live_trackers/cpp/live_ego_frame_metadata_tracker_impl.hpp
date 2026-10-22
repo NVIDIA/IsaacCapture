@@ -7,7 +7,7 @@
 
 #include <deviceio_trackers/ego_frame_metadata_tracker.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
-#include <schema/ego_camera_generated.h>
+#include <schema/orbbec_ego_camera_generated.h>
 
 #include <memory>
 #include <string>
@@ -17,8 +17,8 @@
 namespace core
 {
 
-using EgoFrameMetadataMcapChannels = McapTrackerChannels<EgoFrameMetadataRecord>;
-using EgoFrameMetadataSchemaTracker = SchemaTracker<EgoFrameMetadataRecord, EgoFrameMetadata>;
+using EgoFrameMetadataMcapChannels = McapTrackerChannels<OrbbecEgoFrameMetadataRecord>;
+using EgoFrameMetadataSchemaTracker = SchemaTracker<OrbbecEgoFrameMetadataRecord, OrbbecEgoFrameMetadata>;
 
 class LiveEgoFrameMetadataTrackerImpl : public IEgoFrameMetadataTrackerImpl
 {
@@ -28,22 +28,21 @@ public:
         return SchemaTrackerBase::get_required_extensions();
     }
 
-    static std::unique_ptr<EgoFrameMetadataMcapChannels> create_mcap_channels(mcap::McapWriter& writer,
-                                                                              std::string_view base_name,
-                                                                              const EgoFrameMetadataTracker* tracker);
+    static std::unique_ptr<EgoFrameMetadataMcapChannels> create_mcap_channels(
+        mcap::McapWriter& writer, std::string_view base_name, const OrbbecEgoFrameMetadataTracker* tracker);
 
     LiveEgoFrameMetadataTrackerImpl(const OpenXRSessionHandles& handles,
-                                    const EgoFrameMetadataTracker* tracker,
+                                    const OrbbecEgoFrameMetadataTracker* tracker,
                                     std::unique_ptr<EgoFrameMetadataMcapChannels> mcap_channels);
 
     void update(int64_t monotonic_time_ns) override;
-    const Serialized<EgoFrameMetadata>& get_stream_data(size_t stream_index) const override;
+    const Serialized<OrbbecEgoFrameMetadata>& get_stream_data(size_t stream_index) const override;
 
 private:
     struct StreamState
     {
         std::unique_ptr<EgoFrameMetadataSchemaTracker> reader;
-        Serialized<EgoFrameMetadata> tracked;
+        Serialized<OrbbecEgoFrameMetadata> tracked;
     };
 
     std::unique_ptr<EgoFrameMetadataMcapChannels> mcap_channels_;

@@ -4,8 +4,8 @@
 #pragma once
 
 #include <deviceio_base/ego_frame_metadata_tracker_base.hpp>
-#include <schema/ego_camera_generated.h>
 #include <schema/ego_limits.hpp>
+#include <schema/orbbec_ego_camera_generated.h>
 
 #include <cstddef>
 #include <string>
@@ -14,21 +14,21 @@
 namespace core
 {
 
-class EgoFrameMetadataTracker : public ITracker
+class OrbbecEgoFrameMetadataTracker : public ITracker
 {
 public:
     static constexpr size_t DEFAULT_MAX_FLATBUFFER_SIZE = EGO_MAX_FLATBUFFER_SIZE;
 
-    EgoFrameMetadataTracker(const std::string& collection_prefix,
-                            const std::vector<EgoCameraStream>& streams,
-                            size_t max_flatbuffer_size = DEFAULT_MAX_FLATBUFFER_SIZE);
+    OrbbecEgoFrameMetadataTracker(const std::string& collection_prefix,
+                                  const std::vector<OrbbecEgoCameraStream>& streams,
+                                  size_t max_flatbuffer_size = DEFAULT_MAX_FLATBUFFER_SIZE);
 
     std::string_view get_name() const override
     {
-        return "EgoFrameMetadataTracker";
+        return "OrbbecEgoFrameMetadataTracker";
     }
 
-    const Serialized<EgoFrameMetadata>& get_stream_data(const ITrackerSession& session, size_t stream_index) const;
+    const Serialized<OrbbecEgoFrameMetadata>& get_stream_data(const ITrackerSession& session, size_t stream_index) const;
 
     size_t get_stream_count() const
     {
@@ -40,7 +40,7 @@ public:
         return collection_prefix_;
     }
 
-    const std::vector<EgoCameraStream>& streams() const
+    const std::vector<OrbbecEgoCameraStream>& streams() const
     {
         return streams_;
     }
@@ -57,7 +57,7 @@ public:
 
 private:
     std::string collection_prefix_;
-    std::vector<EgoCameraStream> streams_;
+    std::vector<OrbbecEgoCameraStream> streams_;
     size_t max_flatbuffer_size_;
     std::vector<std::string> stream_names_;
 };
