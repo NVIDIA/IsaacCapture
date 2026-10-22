@@ -442,86 +442,52 @@
                   
   <section id="ovxr-installation">
 <h1>OVXR installation<a class="headerlink" href="#ovxr-installation" title="Link to this heading">#</a></h1>
-<p>OVXR is an optional presentation dependency. Build Isaac Capture from source and
-select its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra only for applications that need XR presentation.
-The optional packages are available publicly; no internal package index, GitHub
-Actions artifact or local Kit build is needed.</p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p>OVXR 0.1.0.5842 requires OVRTX 0.6.0.1791947691 and OVStage 0.3.0.1791986420.
-Applications pinning OVRTX 0.5.x or OVStage 0.2.x, including the current
-Isaac Lab main dependency set, need a coordinated provider upgrade first.
-This package selection prepares the Isaac Capture PRs; compatibility and
-runtime/headset validation with the public providers remain pending.</p>
-</div>
-<section id="optional-packages-and-licenses">
-<h2>Optional packages and licenses<a class="headerlink" href="#optional-packages-and-licenses" title="Link to this heading">#</a></h2>
-<p>The <code class="docutils literal notranslate"><span class="pre">isaaccapture[ovxr]</span></code> extra retrieves OVXR and its declared OVRTX/OVStage
-dependencies. Base Isaac Capture installation/import does not request or load
-OVXR. These OV packages are downloaded separately, rather than bundled in the
-Isaac Capture wheel, and retain their own licenses.</p>
-<ul class="simple">
-<li><p><strong>OVXR 0.1.0.5842, OVRTX and OVStage:</strong> NVIDIA proprietary software; review the
-license included with each selected distribution. Package information is at
-<a class="reference external" href="https://pypi.org/project/ovxr/0.1.0.5842/" rel="noopener noreferrer" target="_blank">OVXR</a>,
-<a class="reference external" href="https://pypi.org/project/ovrtx/0.6.0.1791947691/" rel="noopener noreferrer" target="_blank">OVRTX</a> and
-<a class="reference external" href="https://pypi.org/project/ovstage/0.3.0.1791986420/" rel="noopener noreferrer" target="_blank">OVStage</a>.
-OVXR and OVStage come from PyPI; OVRTX’s PyPI installer retrieves its native
-wheel from <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">NVIDIA’s public Python index</a>.</p></li>
-</ul>
-<p>The README’s <strong>Separately retrieved optional materials</strong> section contains the
-external-materials notice. Existing CloudXR native libraries are bundled in
-Isaac Capture wheels and remain subject to their separate NVIDIA license and
-CloudXR EULA acceptance.</p>
-</section>
-<section id="install-ovxr">
-<h2>Install OVXR<a class="headerlink" href="#install-ovxr" title="Link to this heading">#</a></h2>
-<p>With the application’s Python environment selected, run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="nv">ovxr</span><span class="o">==</span><span class="m">0</span>.1.0.5842<span class="w"> </span>--index<span class="w"> </span>https://pypi.org/simple
+<p>OVXR provides optional XR presentation for applications that use Isaac Capture
+for teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra when installing Isaac Capture
+to include OVXR and its rendering dependencies.</p>
+<section id="install-xr-support">
+<h2>Install XR support<a class="headerlink" href="#install-xr-support" title="Link to this heading">#</a></h2>
+<p>Follow <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> to build Isaac Capture and
+select a Python environment matching the generated wheel. Include <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> in
+the installation requirement:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[ovxr]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
 uv<span class="w"> </span>pip<span class="w"> </span>check
 </pre></div>
 </div>
-<p>Use <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">/path/to/environment/bin/python</span></code> when that environment is not
-selected. This installs OVXR and its exact OVRTX/OVStage dependencies; the
-consuming application’s other constraints must accept that provider set.
-Successful installation is not runtime, streaming or headset qualification.</p>
-<p>The Linux x86_64 OVXR wheel has SHA256
-<code class="docutils literal notranslate"><span class="pre">146c90f1130456e836e120bff77e2f4f27bf387b67258e8b5c8641a0c0633854</span></code>.
-A Windows wheel is also published; package availability is not platform runtime
-verification. OVXR 0.1.0.5842 has no Linux aarch64 wheel.</p>
+<p>Replace <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> with the version of your source build, as described in the build
+guide. Base installations and imports do not require OVXR.</p>
+<p>OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
+The consuming application’s dependency constraints must accept those versions.
+See the package pages below for supported Python versions and platforms.</p>
 </section>
-<section id="build-isaac-capture-from-source">
-<h2>Build Isaac Capture from source<a class="headerlink" href="#build-isaac-capture-from-source" title="Link to this heading">#</a></h2>
-<p>Follow <a class="reference internal" href="build_from_source/index.html"><span class="doc">Build from Source</span></a> for the managed Python and CMake workflow.
-Build and install your own wheel with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra using the same Python
-environment as the consuming application. The optional dependency must be
-selected explicitly; ordinary installations and imports do not require OVXR.
-Keep the source-built wheel selected in the consuming project’s scoped uv source
-configuration and use ordinary lock refresh/sync/run after a rebuild. Do not
-copy an installed environment or bypass a wheel hash mismatch.</p>
+<section id="optional-packages-and-licenses">
+<h2>Optional packages and licenses<a class="headerlink" href="#optional-packages-and-licenses" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra installs OVXR and its OVRTX/OVStage dependencies separately
+from the Isaac Capture wheel. These packages retain their own licenses:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://pypi.org/project/ovxr/" rel="noopener noreferrer" target="_blank">OVXR</a>,
+<a class="reference external" href="https://pypi.org/project/ovrtx/" rel="noopener noreferrer" target="_blank">OVRTX</a> and
+<a class="reference external" href="https://pypi.org/project/ovstage/" rel="noopener noreferrer" target="_blank">OVStage</a> are NVIDIA proprietary software.
+Review the license included with each distribution before use.</p></li>
+</ul>
+<p>CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and CloudXR EULA acceptance.</p>
 </section>
-<section id="keep-ordinary-uv-run-resolution-consistent">
-<h2>Keep ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> resolution consistent<a class="headerlink" href="#keep-ordinary-uv-run-resolution-consistent" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> updates an environment, not an application’s <code class="docutils literal notranslate"><span class="pre">uv.lock</span></code>.
-Declare the local source-built Isaac Capture wheel in the consuming application’s
-optional dependency set, then refresh its lock through the normal workflow.
-Do not use permanent <code class="docutils literal notranslate"><span class="pre">--no-sync</span></code> to bypass incompatible application pins.</p>
-<p>For example, a Linux x86_64 application can select:</p>
+<section id="use-from-another-application">
+<h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
+<p>For a uv-managed application, declare Isaac Capture with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra and
+select the source-built wheel in the application’s project configuration:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[project.optional-dependencies]</span>
-<span class="n">ovxr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
-<span class="w">  </span><span class="s2">"isaaccapture[ovxr]; platform_system == 'Linux' and platform_machine == 'x86_64'"</span><span class="p">,</span>
-<span class="p">]</span>
+<span class="n">ovxr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"isaaccapture[ovxr]"</span><span class="p">]</span>
 
 <span class="k">[tool.uv.sources]</span>
 <span class="n">isaaccapture</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"path/to/your/local-wheel.whl"</span><span class="p">,</span><span class="w"> </span><span class="n">extra</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"ovxr"</span><span class="w"> </span><span class="p">}</span>
 </pre></div>
 </div>
-<p>OVXR and its dependencies resolve from their public package metadata. No internal
-index or credentials are required. Preserve any existing source selections for
-other optional dependencies. OVXR’s exact OVRTX/OVStage pins must agree with the
-application; regenerate its lock and use ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> with its OVXR extra
-selected. Base Isaac Capture and other teleoperation paths should not request
-the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra.</p>
+<p>Replace the wheel path with the file produced by your build. Refresh the
+application’s lock file after changing the wheel or dependency selection, then
+run with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span> <span class="pre">--extra</span> <span class="pre">ovxr</span></code>. Installing packages with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code>
+alone does not update the application’s lock file.</p>
 </section>
 </section>
 
@@ -574,10 +540,9 @@ the <code class="docutils literal notranslate"><span class="pre">ovxr</span></co
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-xr-support">Install XR support</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-packages-and-licenses">Optional packages and licenses</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-ovxr">Install OVXR</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build-isaac-capture-from-source">Build Isaac Capture from source</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#keep-ordinary-uv-run-resolution-consistent">Keep ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> resolution consistent</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-from-another-application">Use from another application</a></li>
 </ul>
   </nav></div>
 
