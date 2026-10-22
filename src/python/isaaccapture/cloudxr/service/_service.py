@@ -689,49 +689,6 @@ class CloudXRService:
                 )
             )
 
-        # A recorded process may still be starting its IPC socket.
-        for name in ("monado.pid", "cloudxr.pid"):
-            try:
-                pid = int(Path(run_dir, name).read_text().strip())
-            except (FileNotFoundError, ValueError):
-                continue
-            if pid <= 0:
-                continue
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                continue
-            except PermissionError:
-                pass  # Liveness cannot be disproved; preserve the recorded owner.
-            else:
-                if sys.platform == "linux":
-                    try:
-                        mappings = Path(f"/proc/{pid}/maps").read_text()
-                    except (FileNotFoundError, ProcessLookupError):
-                        continue
-                    except OSError:
-                        pass  # Unreadable identity must not discard a possible owner.
-                    else:
-                        # PID files survive container restarts and PID reuse.
-                        # Recognize both embedded CloudXR and standalone Monado,
-                        # including versioned libraries and unlinked live mappings.
-                        if not any(
-                            re.fullmatch(
-                                r"(?:libcloudxr|libmonado)\.so(?:\.\d+)*|monado-service",
-                                Path(
-                                    line.split(maxsplit=5)[-1].removesuffix(
-                                        " (deleted)"
-                                    )
-                                ).name,
-                            )
-                            for line in mappings.splitlines()
-                        ):
-                            continue
-            raise RuntimeError(
-                f"A recorded CloudXR process {pid} may still own {run_dir}. "
-                "Stop or reconcile it before starting a new runtime."
-            )
-
         for name in ("ipc_cloudxr", "runtime_started", "monado.pid", "cloudxr.pid"):
             path = os.path.join(run_dir, name)
             try:

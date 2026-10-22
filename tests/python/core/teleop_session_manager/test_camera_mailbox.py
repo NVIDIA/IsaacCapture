@@ -124,8 +124,23 @@ def test_mapping_failure_never_escapes_c_callback_or_reuses_stale_pixels():
 
 
 def test_gpu_camera_retains_cadence_gaps_and_retires_on_owner():
-    from test_gpu_mirror import FakeMap
-    from test_passive_mirror import outputs
+    import threading
+
+    class FakeMap:
+        width = height = 1
+
+        def __init__(self, handle):
+            self.pointer = handle
+            self.closed = False
+            self.owner = threading.get_ident()
+
+        def close(self):
+            assert threading.get_ident() == self.owner
+            assert not self.closed
+            self.closed = True
+
+    def outputs(**handles):
+        return _outputs(*[_frame(float(h), h) for h in handles.values()])
 
     made = []
 
@@ -136,9 +151,7 @@ def test_gpu_camera_retains_cadence_gaps_and_retires_on_owner():
 
     mailbox = CompletedCameraMailbox("/Render/Left", 64, gpu_mapper=mapper)
     # The shared fixture uses /Render/Left and can omit the camera on a step.
-    from test_passive_mirror import LEFT
-
-    mailbox.product_path = LEFT.path
+    mailbox.product_path = "/Camera"
     mailbox.on_outputs(None, 1, outputs(Left=1))
     first = mailbox.snapshot()
     assert first.gpu is made[0] and first.rgba is None

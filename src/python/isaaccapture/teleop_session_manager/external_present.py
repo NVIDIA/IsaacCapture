@@ -25,7 +25,7 @@ from .desktop_mirror import (
     DesktopMirrorConfig,
     DesktopMirrorStatus,
 )
-from .camera_mailbox import CompletedCameraMailbox, CameraImage
+from .camera_mailbox import CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
 from .owned_mirror import MirrorProduct, OwnedDesktopMirrorWorker, OwnedMirrorMailbox
 from .gpu_output import (
@@ -758,17 +758,6 @@ class OvxrExternalPresentOwner:
             # selected owned copy, never borrowing a quad's short-lived array.
         if self._mirror_mailbox is not None:
             self._mirror_mailbox.on_outputs(renderer, outputs, shared)
-
-    def camera_image_snapshot(self, index: int = 0) -> CameraImage | None:
-        """Return the latest camera image on the render thread.
-
-        CPU bytes are immutable. A GPU map is valid only within the current
-        bound-frame observation, before submit/cancel; metadata may outlive it.
-        It must not escape to an asynchronous caller.
-        """
-        if not self._camera_mailboxes:
-            return None
-        return self._camera_mailboxes[index].snapshot()
 
     def _acquire_desktop_mirror_frame(self) -> object | None:
         mailbox = self._mirror_mailbox

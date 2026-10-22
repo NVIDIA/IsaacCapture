@@ -51,22 +51,15 @@ private:
     bool try_create_default_hand_tracker(XrSession session, XrHandEXT hand, std::vector<XrHandTrackerEXT>& trackers);
     void destroy_hand_trackers(std::vector<XrHandTrackerEXT>& trackers);
     void destroy_xdev_list();
-    void update_hand(std::vector<XrHandTrackerEXT>& trackers,
-                     std::vector<XrXDevIdMNDX>& fallback_xdevs,
-                     XrHandEXT hand,
-                     XrTime time,
-                     std::optional<HandPoseT>& tracked);
+    void update_hand(const std::vector<XrHandTrackerEXT>& trackers, XrTime time, std::optional<HandPoseT>& tracked);
     bool try_update_hand(XrHandTrackerEXT tracker, XrTime time, std::optional<HandPoseT>& tracked);
 
     XrTimeConverter time_converter_;
     XrSpace base_space_;
-    XrSession session_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.LiveHandTrackerImpl");
 
     std::vector<XrHandTrackerEXT> left_hand_trackers_;
     std::vector<XrHandTrackerEXT> right_hand_trackers_;
-    std::vector<XrXDevIdMNDX> left_fallback_xdevs_;
-    std::vector<XrXDevIdMNDX> right_fallback_xdevs_;
     XrXDevListMNDX xdev_list_;
 
     // The snapshots published each frame, encoded from locals in update().

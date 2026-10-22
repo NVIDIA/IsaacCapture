@@ -50,10 +50,6 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 - Use raw strings for regular-expression patterns passed to
   ``pytest.raises(..., match=...)``; Ruff rejects escaped metacharacters in
   ordinary strings.
-- Optional renderer tests must run without graphics extras: mock provider APIs
-  for lifecycle tests and use `pytest.importorskip` for real binding-type tests.
-  Stub parent packages as well as submodules; another test file may not have
-  imported the real namespace.
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
 - Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or

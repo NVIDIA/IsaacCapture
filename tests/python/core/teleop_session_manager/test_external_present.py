@@ -938,7 +938,6 @@ def test_auxiliary_raster_registers_one_borrowed_product_without_a_second_frame_
     owner.close()
 
     assert _FakeContext.selected_products == (host.auxiliary_render_product_path,)
-    assert owner.camera_image_snapshot() is None
     assert not hasattr(desc, "enable_raster_layer")
     assert not hasattr(desc, "auxiliary_render_product")
     assert [name for name, _thread in _FakeContext.operations].count("submit") == 0

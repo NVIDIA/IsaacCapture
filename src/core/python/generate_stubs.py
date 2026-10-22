@@ -41,7 +41,14 @@ def generate_stub(module_name: str, package_dir: Path) -> bool:
     sys.path.insert(0, str(package_dir))
 
     try:
-        from pybind11_stubgen import main as stubgen_main
+        from pybind11_stubgen import (
+            CLIArgs,
+            Printer,
+            Writer,
+            run,
+            stub_parser_from_args,
+            to_output_and_subdir,
+        )
     except ImportError:
         _err("Error: pybind11-stubgen not installed")
         _err("This script should be run via: uv run --with pybind11-stubgen")
@@ -49,10 +56,46 @@ def generate_stub(module_name: str, package_dir: Path) -> bool:
 
     print(f"Generating stubs for {module_name}...")
 
+    # Configure stubgen using the proper API
+    args = CLIArgs(
+        module_name=module_name,
+        output_dir=str(package_dir),
+        root_suffix="",
+        ignore_invalid_expressions=None,
+        ignore_invalid_identifiers=None,
+        ignore_unresolved_names=None,
+        ignore_all_errors=True,  # Continue even if some signatures fail
+        enum_class_locations=[],
+        numpy_array_wrap_with_annotated=False,
+        numpy_array_use_type_var=False,
+        numpy_array_remove_parameters=False,
+        print_invalid_expressions_as_is=False,
+        print_safe_value_reprs=None,
+        exit_code=True,
+        dry_run=False,
+        stub_extension="pyi",
+    )
+
     try:
-        # Use the CLI entry point: the lower-level run() signature changes between releases.
-        stubgen_main(
-            ["--ignore-all-errors", "--exit-code", "-o", str(package_dir), module_name]
+        parser = stub_parser_from_args(args)
+        printer = Printer(
+            invalid_expr_as_ellipses=not args.print_invalid_expressions_as_is
+        )
+        out_dir, sub_dir = to_output_and_subdir(
+            output_dir=args.output_dir,
+            module_name=args.module_name,
+            root_suffix=args.root_suffix,
+        )
+        writer = Writer(stub_ext=args.stub_extension)
+
+        run(
+            parser=parser,
+            printer=printer,
+            module_name=args.module_name,
+            out_dir=out_dir,
+            sub_dir=sub_dir,
+            dry_run=args.dry_run,
+            writer=writer,
         )
         print(f"  Generated stubs for {module_name}")
         return True

@@ -12,10 +12,6 @@ the CSS — where it moves when the code moves.
 Keep small API-option updates to purpose, prerequisites, and usage; avoid
 example wrappers and lifecycle walkthroughs unless needed to use the option.
 
-Keep public installation guides focused on prerequisites and usage. Link to package
-metadata for dependency versions and platform availability; omit internal setup
-alternatives, development-status notes, and one-off artifact hashes.
-
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which

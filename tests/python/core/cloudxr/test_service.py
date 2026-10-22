@@ -410,44 +410,6 @@ class TestServiceContextManager:
 class TestCleanupStaleRuntime:
     """Tests for CloudXRService._cleanup_stale_runtime."""
 
-    @pytest.mark.parametrize("pid_name", ["cloudxr.pid", "monado.pid"])
-    def test_recycled_pid_does_not_block_startup(self, tmp_path, pid_name):
-        if sys.platform != "linux":
-            pytest.skip("Runtime identity uses Linux process mappings")
-        pid_file = tmp_path / pid_name
-        pid_file.write_text(str(os.getpid()))
-        CloudXRService._cleanup_stale_runtime(str(tmp_path))
-        assert not pid_file.exists()
-
-    @pytest.mark.parametrize(
-        "identity",
-        [
-            "/sdk/libcloudxr.so",
-            "/sdk/libcloudxr.so (deleted)",
-            "/sdk/libcloudxr.so.6",
-            "/usr/bin/monado-service",
-            "/sdk/libmonado.so.0",
-            None,
-        ],
-    )
-    def test_retains_live_pid_before_socket_startup(self, tmp_path, identity):
-        """Missing IPC must not erase another runtime's startup ownership."""
-        pid_file = tmp_path / "cloudxr.pid"
-        pid_file.write_text(str(os.getpid()))
-        read_text = Path.read_text
-
-        def read_identity(path, *args, **kwargs):
-            if str(path) == f"/proc/{os.getpid()}/maps":
-                if identity is None:
-                    raise PermissionError("process maps denied")
-                return f"1000-2000 r-xp 0 00:00 1 {identity}\n"
-            return read_text(path, *args, **kwargs)
-
-        with patch.object(Path, "read_text", read_identity):
-            with pytest.raises(RuntimeError, match="process"):
-                CloudXRService._cleanup_stale_runtime(str(tmp_path))
-        assert pid_file.read_text() == str(os.getpid())
-
     @staticmethod
     def _stale_run_dir(tmp_path) -> tuple[str, list[str]]:
         """Create a run dir holding every sentinel file; return it and their paths."""
