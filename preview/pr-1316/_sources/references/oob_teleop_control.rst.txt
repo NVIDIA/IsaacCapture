@@ -85,14 +85,18 @@ You should see output confirming the hub is running:
 
 If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with **all three** required query
-parameters — ``oobEnable``, ``serverIP``, and ``port``:
+parameters — ``oobEnable``, ``serverIP``, and ``port`` — plus the hub's
+``controlToken``:
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
 
 Replace ``<HOST_IP>`` with the streaming host's LAN IP. The ``port`` must
-match the proxy port (default 48322).
+match the proxy port (default 48322). ``<CONTROL_TOKEN>`` is the value of
+``CONTROL_TOKEN``, or the generated token printed in the startup banner; the
+banner's bookmark shows it as ``<REDACTED>``, so substitute it before pasting.
+Without the token the hub rejects the headset and the client does not retry.
 
 .. note::
 
@@ -107,7 +111,7 @@ self-signed certificate check):
 
 .. code-block:: bash
 
-   curl -k https://<HOST_IP>:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state
 
 You should see the headset listed under ``"headsets"`` with
 ``"connected": true``:
@@ -143,7 +147,7 @@ configuration overrides via the HTTP config API:
 
 .. code-block:: bash
 
-   curl -k "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
 
 See ``GET /api/oob/v1/config`` below for all supported keys.
 
@@ -157,7 +161,7 @@ from a PC to collect them:
 .. code-block:: bash
 
    # Poll every 2 seconds (adjust to taste)
-   watch -n 2 'curl -sk https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
+   watch -n 2 'curl -sk -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
 
 The ``metricsByCadence`` field on each headset entry will now contain live streaming metrics.
 
@@ -444,7 +448,7 @@ version.
 
 .. code-block:: bash
 
-   curl -k https://localhost:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/state
 
 Example response:
 
@@ -477,7 +481,7 @@ Push config to connected headsets via query parameters:
 
 .. code-block:: bash
 
-   curl -k "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
 
 Example response:
 
@@ -513,7 +517,7 @@ The web client connects to the hub when the page URL contains
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
 
 The client builds ``wss://{serverIP}:{port}/oob/v1/ws`` and:
 
