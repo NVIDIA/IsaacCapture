@@ -21,7 +21,7 @@ def main():
         "--camera-quads", action=argparse.BooleanOptionalAction, required=True
     )
     args = parser.parse_args()
-    prefix = "isaaccapture/teleop_session_manager/openxr_layer/"
+    prefix = "isaaccapture/ovxr_session_manager/openxr_layer/"
     expected = {
         prefix + "libXrApiLayer_isaacteleop_pip.so",
         prefix + "XrApiLayer_isaacteleop_pip.json",

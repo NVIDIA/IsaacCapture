@@ -4,6 +4,7 @@
 add_subdirectory(schema)
 add_subdirectory(retargeting_engine)
 add_subdirectory(teleop_session_manager)
+add_subdirectory(ovxr_session_manager)
 
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(cloudxr)

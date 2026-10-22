@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from isaaccapture.teleop_session_manager.camera_mailbox import CameraImage
-from isaaccapture.teleop_session_manager.ovxr_session import AuxiliaryRasterConfig
-from isaaccapture.teleop_session_manager.openxr_quad import OpenXRCameraQuad
-import isaaccapture.teleop_session_manager.openxr_quad as quad_module
+from isaaccapture.ovxr_session_manager.camera_mailbox import CameraImage
+from isaaccapture.ovxr_session_manager.ovxr_session import AuxiliaryRasterConfig
+from isaaccapture.ovxr_session_manager.openxr_quad import OpenXRCameraQuad
+import isaaccapture.ovxr_session_manager.openxr_quad as quad_module
 
 
 class _Function:

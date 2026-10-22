@@ -42,14 +42,6 @@ from .teleop_state_manager_types import (
     teleop_state_channel,
     teleop_state_manager_output_spec,
 )
-from .ovxr_session import (
-    AuxiliaryRasterConfig,
-    OvxrSessionBinding,
-    OvxrSessionConfig,
-    OvxrApplicationInterface,
-    OvxrSession,
-    StageOrdinalLedger,
-)
 
 __all__ = [
     "AsyncRetargetRunnerStopped",
@@ -82,10 +74,4 @@ __all__ = [
     "reset_event_channel",
     "teleop_state_channel",
     "teleop_state_manager_output_spec",
-    "OvxrSessionBinding",
-    "AuxiliaryRasterConfig",
-    "OvxrSessionConfig",
-    "OvxrApplicationInterface",
-    "OvxrSession",
-    "StageOrdinalLedger",
 ]

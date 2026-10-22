@@ -27,12 +27,11 @@ class BuildPy(build_py):
 
     def run(self):
         super().run()
-        if not self.package_data.get("isaaccapture.teleop_session_manager"):
+        if not self.package_data.get("isaaccapture.ovxr_session_manager"):
             # Setuptools reuses build_lib; omitted package data is not deleted.
             # Remove only these generated optional outputs, never source files.
             root = (
-                Path(self.build_lib)
-                / "isaaccapture/teleop_session_manager/openxr_layer"
+                Path(self.build_lib) / "isaaccapture/ovxr_session_manager/openxr_layer"
             )
             for name in (
                 "libXrApiLayer_isaacteleop_pip.so",
