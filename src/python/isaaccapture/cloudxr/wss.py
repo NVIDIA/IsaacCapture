@@ -710,7 +710,8 @@ async def run(
             from .oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
 
             _host_client_static_dir = require_web_client_static_dir(
-                require_health_probe=setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY")
+                require_health_probe=setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"),
+                require_fragment_token=setup_oob,
             )
 
         http_handler = _make_http_handler(
