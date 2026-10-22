@@ -65,6 +65,15 @@ def manifest_records(path: Path) -> list[dict]:
     return records
 
 
+def bound_names(records) -> list[str]:
+    """The sidecar file names the records bind."""
+    return [
+        sidecar["filename"]
+        for record in records
+        for sidecar in record["sidecars"].values()
+    ]
+
+
 def sidecar_failures(beside: Path, record: dict) -> list[str]:
     """Each sidecar a checked record binds that is not beside it as bound."""
     failures = []
@@ -696,11 +705,7 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
         )
     # The same holds for evidence: a file no record binds is never verified.
     # Wheels sharing the directory are the check above's to judge.
-    expected = {
-        sidecar["filename"]
-        for record in by_name.values()
-        for sidecar in record["sidecars"].values()
-    }
+    expected = set(bound_names(by_name.values()))
     if manifest_path.parent.resolve() == evidence_dir.resolve():
         expected.add(manifest_path.name)
     if evidence_dir.resolve() == wheel_dir.resolve():

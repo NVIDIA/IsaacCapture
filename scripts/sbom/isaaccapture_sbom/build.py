@@ -543,10 +543,8 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
         # Already in place, and verified above; copying onto itself would raise.
         if parent.resolve() == evidence_out.resolve():
             continue
-        for sidecar in record["sidecars"].values():
-            shutil.copyfile(
-                parent / sidecar["filename"], evidence_out / sidecar["filename"]
-            )
+        for name in validate_module.bound_names([record]):
+            shutil.copyfile(parent / name, evidence_out / name)
     return merged
 
 
