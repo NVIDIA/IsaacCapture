@@ -14,7 +14,7 @@ table HandSkeletonRef {
   // Ordered, unique HandJoint identifiers; NUM_JOINTS is not a joint.
   // Segment indices address this vector, not HandJoint ordinals. Bind and current
   // segment poses map joint-local coordinates into the same hand-root frame.
-  joint_ids: [HandJoint] (id: 0, required); // src/core/schema/fbs/hand.fbs
+  joint_ids: [HandJoint] (id: 0, required); // defined in hand.fbs
 }
 
 union SegmentSource {
