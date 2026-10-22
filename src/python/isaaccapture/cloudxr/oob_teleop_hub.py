@@ -25,6 +25,9 @@ log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub")
 
 OOB_WS_PATH = "/oob/v1/ws"
 
+# Metrics and status frames are small JSON; anything larger is not a headset.
+MAX_FRAME_CHARS = 256 * 1024
+
 
 @dataclass
 class _HeadsetState:
@@ -79,6 +82,12 @@ class OOBControlHub:
                 if not isinstance(raw, str):
                     await self._send_error(ws, "BAD_REQUEST", "Expected text frame")
                     continue
+
+                # Reject before json.loads so an oversized frame costs no parsing.
+                if len(raw) > MAX_FRAME_CHARS:
+                    await self._send_error(ws, "BAD_REQUEST", "Frame too large")
+                    await ws.close(1009, "Frame too large")
+                    return
 
                 try:
                     msg = json.loads(raw)

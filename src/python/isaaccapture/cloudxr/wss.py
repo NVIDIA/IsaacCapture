@@ -296,11 +296,11 @@ def _oob_token(request, q: dict[str, str]) -> str | None:
 
 
 def _json_response(status: int, phrase: str, body: dict) -> Response:
-    """Build a JSON :class:`Response` with CORS headers."""
+    """Build a JSON :class:`Response` for the OOB hub API (no CORS headers)."""
     return Response(
         status,
         phrase,
-        Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+        Headers({"Content-Type": "application/json"}),
         json.dumps(body).encode(),
     )
 
@@ -336,7 +336,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 return Response(
                     200,
                     "OK",
-                    Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+                    Headers({"Content-Type": "application/json"}),
                     json.dumps(snapshot).encode(),
                 )
 
@@ -366,7 +366,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
             return Response(
                 404,
                 "Not Found",
-                Headers({"Content-Type": "text/plain", **CORS_HEADERS}),
+                Headers({"Content-Type": "text/plain"}),
                 b"Not found",
             )
 
@@ -438,7 +438,12 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
 
 
 def add_cors_headers(connection, request, response):
-    """``process_response`` hook: inject CORS headers into every WebSocket upgrade response."""
+    """``process_response`` hook: inject CORS headers into every response except hub API ones."""
+    # websockets runs this hook on process_request responses too. The hub API
+    # returns headset state, so it must not be readable cross-origin; the web
+    # client only needs CORS for the cert page and static files.
+    if _is_oob_hub_http_path(_normalize_request_path(request.path or "/")):
+        return
     response.headers.update(CORS_HEADERS)
 
 

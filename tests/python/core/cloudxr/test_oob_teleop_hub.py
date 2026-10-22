@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from oob_teleop_hub import OOBControlHub
+from oob_teleop_hub import MAX_FRAME_CHARS, OOBControlHub
 
 TOKEN = "test-control-token"
 
@@ -534,3 +534,16 @@ async def test_http_oob_set_config_rejects_unauthenticated(
     snapshot = await hub.get_snapshot()
     assert snapshot["config"] == {"serverIP": "10.0.0.1", "port": 9000}
     assert snapshot["configVersion"] == 0
+
+
+@pytest.mark.asyncio
+async def test_oversized_frame_closes_connection() -> None:
+    hub = OOBControlHub(control_token="test-control-token")
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    await ws.inject("x" * (MAX_FRAME_CHARS + 1))
+    await task
+
+    assert json.loads(ws.sent[0])["payload"]["message"] == "Frame too large"
+    assert ws.close_calls == [(1009, "Frame too large")]
