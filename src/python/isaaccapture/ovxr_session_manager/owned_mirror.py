@@ -57,6 +57,10 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         self._started = False
         self._last_status = DesktopMirrorStatus(status_text=config.initial_status_text)
 
+    def prepare_for_session_start(self) -> None:
+        # Select before the XR worker starts; keep the caller's backend policy.
+        os.environ.setdefault("OMNIUI_BACKEND", "opengl")
+
     def on_session_started(
         self,
         binding: OvxrSessionBinding,
@@ -498,9 +502,6 @@ class OwnedDesktopMirrorWorker:
         failure = None
         completions = {}
         try:
-            # CUDA destination discovery needs OpenGL. Select it only for this
-            # optional worker, before OVUI initialization; preserve caller policy.
-            os.environ.setdefault("OMNIUI_BACKEND", "opengl")
             import omni.ui as ui
 
             ui.init(

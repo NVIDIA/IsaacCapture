@@ -115,21 +115,32 @@ def test_optional_consumer_error_is_visible_without_invalidating_owned_image():
     "configured_backend,expected_backend",
     [(None, "opengl"), ("opengl", "opengl"), ("vulkan", "vulkan")],
 )
-def test_missing_optional_ui_records_failure_and_closes_worker(
-    monkeypatch, mock_omni_ui, configured_backend, expected_backend
+def test_mirror_prepares_backend_before_worker_start(
+    monkeypatch, configured_backend, expected_backend
 ):
     # Register restoration even when the original environment has no selection.
     monkeypatch.setenv("OMNIUI_BACKEND", configured_backend or "")
     if configured_backend is None:
         monkeypatch.delenv("OMNIUI_BACKEND")
+    owner = mirror.OwnedDesktopMirror(DesktopMirrorConfig())
+    assert os.environ.get("OMNIUI_BACKEND") == configured_backend
+    owner.prepare_for_session_start()
+    assert os.environ["OMNIUI_BACKEND"] == expected_backend
+    assert owner._worker is None
+    owner.close()
+
+
+def test_missing_optional_ui_records_failure_and_closes_worker(
+    monkeypatch, mock_omni_ui
+):
+    monkeypatch.delenv("OMNIUI_BACKEND", raising=False)
     mock_omni_ui(None)
     callbacks = []
     worker = mirror.OwnedDesktopMirrorWorker(
         lambda: None, DesktopMirrorConfig(), lambda: callbacks.append("user-close")
     )
-    assert os.environ.get("OMNIUI_BACKEND") == configured_backend
     worker._run()
-    assert os.environ["OMNIUI_BACKEND"] == expected_backend
+    assert "OMNIUI_BACKEND" not in os.environ
     assert worker.status.closed and "omni.ui" in worker.status.error
     assert callbacks == []
 

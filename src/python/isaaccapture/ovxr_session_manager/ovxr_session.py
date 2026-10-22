@@ -245,10 +245,15 @@ class OvxrSessionConfig:
 class OvxrFrameConsumer(Protocol):
     """Frame-owner callbacks for an optional completed-output consumer.
 
-    Initialize after context creation. ``finish_frame`` releases borrowed outputs
+    Prepare on the caller thread before ownership transfer, then initialize on
+    the render thread after context creation. ``finish_frame`` releases borrowed outputs
     before submit/cancel. ``close`` must tolerate incomplete startup and raise if
     retirement is unproved, so rendering providers stay alive.
     """
+
+    @abstractmethod
+    def prepare_for_session_start(self) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def on_session_started(
@@ -377,6 +382,8 @@ class OvxrSession:
             raise RuntimeError(
                 f"OVXR session is missing required Context methods: {', '.join(missing)}"
             )
+        for consumer in self._frame_consumers:
+            consumer.prepare_for_session_start()
         capability = self._host.offer_render_owner_transfer()
 
         def run() -> None:

@@ -1111,6 +1111,8 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
     events = []
     threads = []
     outputs = object()
+    caller_thread = threading.get_native_id()
+    host = _FakeHost()
 
     class Context(_FakeContext):
         def begin_frame(self):
@@ -1125,6 +1127,11 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
         def record(self, event):
             events.append((event, self.name))
             threads.append(threading.get_native_id())
+
+        def prepare_for_session_start(self):
+            assert host.offer_thread is None
+            assert owner._worker is None
+            self.record("prepare")
 
         def on_session_started(self, _binding, _config, request_shutdown):
             assert any(name == "create" for name, _ in _FakeContext.operations)
@@ -1153,15 +1160,15 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
     monkeypatch.setattr(ovxr_session, "native_renderer_handle", lambda _renderer: 7)
     monkeypatch.setattr(ovxr_session, "completed_outputs", lambda *_args: outputs)
     owner = ovxr_session.OvxrSession(
-        _FakeHost(), _config(), frame_consumers=(Consumer("first"), Consumer("second"))
+        host, _config(), frame_consumers=(Consumer("first"), Consumer("second"))
     )
-    try:
+    with owner:
         owner.start()
         owner.request_render("step-1")
         _wait_for_operation("submit")
-    finally:
-        owner.close()
     assert events == [
+        ("prepare", "first"),
+        ("prepare", "second"),
         ("start", "first"),
         ("start", "second"),
         ("outputs", "first"),
@@ -1173,8 +1180,29 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
         ("close", "second"),
         ("close", "first"),
     ]
-    assert set(threads) == {owner.render_worker_native_thread_id}
+    assert threads[:2] == [caller_thread, caller_thread]
+    assert set(threads[2:]) == {owner.render_worker_native_thread_id}
     assert not any(name == "cancel" for name, _ in _FakeContext.operations)
+
+
+def test_consumer_preparation_failure_preserves_application_ownership():
+    host = _FakeHost()
+    failure = RuntimeError("consumer preparation failed")
+
+    def prepare():
+        raise failure
+
+    consumer = SimpleNamespace(prepare_for_session_start=prepare)
+    with ovxr_session.OvxrSession(
+        host, _config(), frame_consumers=(consumer,)
+    ) as owner:
+        with pytest.raises(RuntimeError) as caught:
+            owner.start()
+        assert caught.value is failure
+        assert host.offer_thread is None
+        assert owner._worker is None
+        assert _FakeContext.operations == []
+    assert owner.retirement_complete
 
 
 def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch):
