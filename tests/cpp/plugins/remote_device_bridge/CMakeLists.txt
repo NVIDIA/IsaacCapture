@@ -4,6 +4,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 add_executable(remote_plugin_session_tests
+    test_websocket_transport.cpp
     test_wire_codec.cpp
 )
 
