@@ -47,26 +47,30 @@ finishing, calibration, and license.
 | RTAB-Map | Through VIO backends | Odometry every frame; map pose jumps at loop closures | Any time, graph nodes | Optional new map | Synchronous API; RANSAC seed is a global | BSD-3-Clause core |
 | DROID-SLAM | None | Keyframes only, revised later | End of run, re-reading all input | Not detected | Synchronous mode | BSD-3-Clause |
 
-Every backend fits the contract once its adapter handles the differences below. Two stretch
-it: Kimera-VIO outputs poses only at keyframes, so per-frame output needs IMU propagation in
-the adapter, and DROID-SLAM needs the whole input again at the end, so it fits only offline
-re-estimate runs.
+These findings inform adapter design; they do not establish conformance. Kimera-VIO's
+keyframe-only output would remain sparse under the current contract, which does not require
+invented per-frame poses. DROID-SLAM's final trajectory requires another pass over all input,
+so that path belongs to a deferred offline workflow. Each proposed adapter still needs
+qualification for fixed frames, status, calibration, bounded buffering, and shutdown.
 
-## What the survey changed in the design
+## Implications for the design
+
+The interface design is authoritative for release scope. This table separates required
+adapter behavior from proposals that still need a decision.
 
 | Finding | Design rule |
 |---|---|
-| Backends offer different live poses (odometry, loop-corrected) at different rates (every frame, keyframes) | Each adapter states which pose it publishes and at what rate; data collection uses the loop-corrected pose |
+| Backends offer different live poses (odometry, loop-corrected) at different rates (every frame, keyframes) | Each adapter states which pose it publishes and at what rate; selecting the production live pose remains a decision gate |
 | VINS-Fusion, OpenVINS, Basalt, and DROID-SLAM report no tracking status | The adapter derives `Initializing` and `Lost`; a failure that ends tracking for good is fatal |
 | Frames change in different ways: a new map, a new odometry frame, an early reset, a re-anchored map | The adapter detects every change and reports `Lost` until the backend is back in the original frame |
 | Outputs use different native frames: rectified cameras, IMU bodies, a different frame for an export | Each output declares its own native frame, including any rectification rotation |
-| Refined output is in memory, a file, an end-of-run step, or a separate offline tool, and may cover only keyframes | Refined output is optional, available after input ends, and may cover part of the run; a separate tool runs as part of re-estimate |
-| A repeatable mode can take a different code path (VINS-Fusion) | Re-estimate uses the repeatable mode; reproduce keeps the live mode |
-| VINS-Fusion, OpenVINS, and OKVIS2 can refine calibration online | The adapter states it and records the final estimates |
+| Refined output is in memory, a file, an end-of-run step, or a separate offline tool, and may cover only keyframes | A future refined-output contract must declare coverage, frame, completion, and provenance. Neither that API nor an offline tool is an initial-release commitment |
+| A repeatable mode can take a different code path (VINS-Fusion) | A future offline tool must distinguish reproducing the live computation from re-estimating in another mode. Initial recording preserves exact inputs, outcomes, setup, and build identity |
+| VINS-Fusion, OpenVINS, and OKVIS2 can refine calibration online | The adapter declares this behavior; internal estimates must not silently mutate the canonical applied setup |
 | Process-global state is common (ORB-SLAM3, VINS-Fusion, Kimera-VIO, and others) | One rig per capture process |
-| Finishing differs: ORB-SLAM3 and stella_vslam return without waiting for optimization; VINS-Fusion never returns | The adapter states how long finishing takes, which sets the stop timeout |
+| Finishing differs: ORB-SLAM3 and stella_vslam return without waiting for optimization; VINS-Fusion never returns | The adapter qualifies completion and abort behavior; configurable timeout versus explicit finish handshake remains an integration decision |
 | Backend databases do not keep raw input (RTAB-Map keeps no raw IMU) | The session recording, not a backend database, is the input for offline runs |
-| Loop-corrected live poses jump without a frame change | The recording keeps loop-closure corrections as backend events |
+| Loop-corrected live poses jump without a frame change | Record the selected output semantics; detailed engine-event recording is a proposal, separate from the required input/outcome/setup records |
 
 ## Per-library findings
 
