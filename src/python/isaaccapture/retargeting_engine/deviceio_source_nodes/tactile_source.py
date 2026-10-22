@@ -181,7 +181,9 @@ class TactileSource(IDeviceIOSource):
             geometry_mapping.taxel_segment_weights,
         )
         for index, value in enumerate(values):
+            # Schema stubs have mixed array types; normalize before NumPy operations.
+            array = np.asarray(value)
             # Copied: the views alias the metadata the tracker holds and compares later pushes to.
-            layout_out[index] = value.astype(
-                np.int32 if value.dtype == np.uint32 else value.dtype
+            layout_out[index] = array.astype(
+                np.int32 if array.dtype == np.uint32 else array.dtype
             )
