@@ -89,7 +89,7 @@ class OvxrSessionBinding:
         if (
             len(paths) > 3
             or len(paths) != len(set(paths))
-            or any((not path.startswith("/") for path in paths))
+            or any(not path.startswith("/") for path in paths)
         ):
             raise ValueError(
                 "auxiliary RenderProduct paths must be absolute, unique, and at most three"
@@ -131,24 +131,24 @@ class AuxiliaryRasterConfig:
                 "auxiliary raster panel_width_m must be finite and positive"
             )
         if len(self.position) != 3 or not all(
-            (math.isfinite(value) for value in self.position)
+            math.isfinite(value) for value in self.position
         ):
             raise ValueError(
                 "auxiliary raster position must contain three finite values"
             )
         if len(self.orientation_xyzw) != 4 or not all(
-            (math.isfinite(value) for value in self.orientation_xyzw)
+            math.isfinite(value) for value in self.orientation_xyzw
         ):
             raise ValueError(
                 "auxiliary raster orientation must contain four finite values"
             )
-        norm = math.sqrt(sum((value * value for value in self.orientation_xyzw)))
+        norm = math.sqrt(sum(value * value for value in self.orientation_xyzw))
         if norm <= 0.0:
             raise ValueError("auxiliary raster orientation must have non-zero norm")
         object.__setattr__(
             self,
             "orientation_xyzw",
-            tuple((value / norm for value in self.orientation_xyzw)),
+            tuple(value / norm for value in self.orientation_xyzw),
         )
         if self.space != "head_locked":
             raise ValueError("auxiliary raster space must be 'head_locked'")
@@ -206,12 +206,12 @@ class OvxrSessionConfig:
             not math.isfinite(self.depth_near_z)
             or not math.isfinite(self.depth_far_z)
             or self.depth_near_z <= 0.0
-            or (self.depth_far_z <= self.depth_near_z)
+            or self.depth_far_z <= self.depth_near_z
         ):
             raise ValueError(
                 "depth_near_z and depth_far_z must both be zero or finite with 0 < near < far"
             )
-        if len(self.camera_paths) != 2 or any((not path for path in self.camera_paths)):
+        if len(self.camera_paths) != 2 or any(not path for path in self.camera_paths):
             raise ValueError("OVXR stereo requires exactly two non-empty camera paths")
 
 
@@ -454,10 +454,11 @@ class OvxrSession:
             if (
                 not force
                 and self._worker_last_published_ordinal is not None
-                and (not self._worker_publication_requested)
+                and not self._worker_publication_requested
             ):
                 return None
             self._worker_publication_requested = False
+
         try:
             with self._host.publication_guard():
                 ordinal = self._host.publish_complete_scene(publication_id)
@@ -521,7 +522,8 @@ class OvxrSession:
         with self._teardown_state_lock:
             if not self._ovxr_teardown_complete.is_set() and self._worker.is_alive():
                 _LOGGER.warning(
-                    "OVXR teardown did not complete within %.3f seconds; interrupting the owned OpenXR runtime",
+                    "OVXR teardown did not complete within %.3f seconds; "
+                    "interrupting the owned OpenXR runtime",
                     _WORKER_SHUTDOWN_GRACE_SECONDS,
                 )
                 try:
@@ -530,8 +532,9 @@ class OvxrSession:
                     fallback_error = exc
         self._worker.join(timeout=30.0)
         if self._worker.is_alive():
-            if self._cloudxr_stop_started.is_set() and (
-                not self._cloudxr_stop_complete.is_set()
+            if (
+                self._cloudxr_stop_started.is_set()
+                and not self._cloudxr_stop_complete.is_set()
             ):
                 raise TimeoutError("CloudXR launcher did not stop") from wake_error
             raise TimeoutError("OVXR session worker did not stop") from wake_error
