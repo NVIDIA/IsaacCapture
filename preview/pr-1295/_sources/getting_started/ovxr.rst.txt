@@ -91,11 +91,9 @@ alone does not update the application's lock file.
 Application-specific OVXR versions
 ----------------------------------
 
-Isaac Capture pins the tested OVXR build. OVXR's pre-GA API can change between
-builds, as described in its
-`release notes <https://github.com/NVIDIA-Omniverse/ovxr/blob/main/CHANGELOG.md>`__.
-uv respects that pin and reports a conflict if the application requires
-incompatible OVRTX or OVStage versions.
+Isaac Capture pins the OVXR version used for compatibility testing. uv respects
+that pin and reports a conflict if the application requires incompatible OVRTX
+or OVStage versions.
 
 To validate another OVXR build with the same Isaac Capture release, select an
 OVXR release whose declared dependencies match the application's OVRTX/OVStage
