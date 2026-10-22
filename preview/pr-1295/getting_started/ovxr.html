@@ -490,12 +490,11 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 above. The extra includes the CUDA Python bindings used for GPU camera output;
 <code class="docutils literal notranslate"><span class="pre">BUILD_OVXR_CAMERA_QUADS</span></code> controls whether the wheel contains the native helper.
 The helper is disabled by default.</p>
-<p>Camera support requires Vulkan and CUDA development files. On Linux x86-64,
-CMake uses installed SDKs when available and downloads missing development files
-into the build directory. The GPU driver and Vulkan runtime loader must be
-installed on the host. Other platforms require installed development SDKs.
-Use <code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select a CUDA SDK and <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code> to help locate a
-Vulkan SDK.</p>
+<p>Install the Vulkan development SDK before configuring camera support. Linux
+builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
+Use <code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select a CUDA Toolkit installation and <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code>
+to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
+on the host.</p>
 </section>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
