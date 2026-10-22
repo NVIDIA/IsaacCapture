@@ -716,7 +716,7 @@ class OvxrExternalPresentOwner:
                                     try:
                                         self._context.destroy(stage_ordinal=ordinal)
                                     except _import_ovxr().OvxrError:
-                                        # The pinned public wrapper raises its result error
+                                        # OVXR raises its result error
                                         # only after native destroy consumed the context.
                                         # Pre-call/FFI errors still quarantine borrowed owners.
                                         context_retired = True

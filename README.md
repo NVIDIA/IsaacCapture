@@ -68,7 +68,7 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
-- [OVXR installation and source-built camera support](docs/source/getting_started/ovxr.rst) (optional public packages)
+- [OVXR installation](docs/source/getting_started/ovxr.rst)
 
 
 ### Install & Run Isaac Lab
