@@ -286,6 +286,40 @@ def _config(**kwargs):
     )
 
 
+@pytest.mark.parametrize(
+    "extra,required,expected",
+    [
+        (None, (), []),
+        (
+            ("XR_EXT_hand_tracking", "XR_NV_opaque_data_channel"),
+            ("XR_KHR_convert_timespec_time", "XR_NV_opaque_data_channel"),
+            [
+                "XR_EXT_hand_tracking",
+                "XR_NV_opaque_data_channel",
+                "XR_KHR_convert_timespec_time",
+            ],
+        ),
+        (
+            (),
+            ("XR_KHR_win32_convert_performance_counter_time",),
+            ["XR_KHR_win32_convert_performance_counter_time"],
+        ),
+    ],
+)
+def test_session_enables_only_device_requirements_and_application_extras(
+    extra, required, expected
+):
+    config = _config() if extra is None else _config(extra_openxr_extensions=extra)
+    owner = ovxr_session.OvxrSession(
+        _FakeHost(), config, required_openxr_extensions=required
+    )
+    try:
+        owner.start()
+        assert owner._context.desc.extra_openxr_extensions == expected
+    finally:
+        owner.close()
+
+
 def _wait_for_operation(name: str) -> None:
     deadline = time.monotonic() + 1.0
     while name not in [operation for operation, _thread in _FakeContext.operations]:
