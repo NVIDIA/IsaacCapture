@@ -35,6 +35,7 @@ from .desktop_mirror import (
     _CadenceSampler,
     _InputCopyCompletion,
 )
+from .ovxr_session import OvxrFrameConsumer
 
 _MAX_MIRROR_IMAGE_BYTES = 64 * 1024 * 1024
 _LOGGER = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     from .ovxr_session import OvxrSessionBinding, OvxrSessionConfig
 
 
-class OwnedDesktopMirror:
+class OwnedDesktopMirror(OvxrFrameConsumer):
     """Own the mirror's product selection, image copies, and UI worker."""
 
     def __init__(self, config: DesktopMirrorConfig) -> None:
