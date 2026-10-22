@@ -260,6 +260,8 @@ def _write_atomic_bytes(dest: Path, data: bytes) -> None:
 _REQUIRED_WEB_CLIENT_ASSETS = ("index.html", "bundle.js")
 # Hardcoded — any new async chunk emitted by webpack must be added here manually.
 _OPTIONAL_WEB_CLIENT_ASSETS = ("bundle.emulator.js",)
+# Storage-key literal from webxr_client/helpers/oobControlToken.ts; survives minification.
+_OOB_TOKEN_FRAGMENT_MARKER = b"oobControlToken:"
 
 
 def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path:
@@ -322,10 +324,13 @@ def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path
             bundle_bytes = bundle.read_bytes()
         except OSError as exc:
             raise RuntimeError(f"Cannot read WebXR bundle {bundle}: {exc}") from exc
-        if b"healthProbe" not in bundle_bytes or b"healthReport" not in bundle_bytes:
+        if any(
+            marker not in bundle_bytes
+            for marker in (b"healthProbe", b"healthReport", _OOB_TOKEN_FRAGMENT_MARKER)
+        ):
             raise RuntimeError(
                 f"WebXR bundle {bundle} lacks the OOB healthProbe/healthReport "
-                "protocol. Build deps/cloudxr/webxr_client with `npm run build` "
+                "protocol or fragment control-token support. Build deps/cloudxr/webxr_client with `npm run build` "
                 "and set TELEOP_WEB_CLIENT_STATIC_DIR to its build directory. "
                 "An older non-empty static cache is not replaced automatically."
             )
@@ -514,8 +519,9 @@ def build_headset_bookmark_url(
     CloudXR streaming backend rather than refused.
 
     A HashRouter fragment is appended at the end when ``TELEOP_CLIENT_ROUTE``
-    is set (e.g. ``#/real/gear/dexmate``); by default no fragment is added
-    and the WebXR client picks its own landing route.
+    is set (e.g. ``#/real/gear/dexmate``); by default the WebXR client picks its
+    own landing route.  The control token rides in the same fragment as
+    ``?controlToken=...`` so it is never sent over the network in the request.
     """
     cfg = stream_config or {}
     if not cfg.get("serverIP") or cfg.get("port") is None:
@@ -525,8 +531,6 @@ def build_headset_bookmark_url(
     params: dict[str, str] = {}
     if oob_enable:
         params["oobEnable"] = "1"
-        if control_token:
-            params["controlToken"] = control_token
     params["serverIP"] = str(cfg["serverIP"])
     params["port"] = str(int(cfg["port"]))
     v = cfg.get("codec")
@@ -566,9 +570,11 @@ def build_headset_bookmark_url(
     sep = "&" if "?" in base else "?"
     url = f"{base}{sep}{q}"
     route = teleop_client_route_from_env()
-    if route:
-        url = f"{url}#{route}"
-    return url
+    fragment = route
+    if oob_enable and control_token:
+        # Fragment, not query: it is never sent in a request target or Referer.
+        fragment += "?" + urlencode({"controlToken": control_token})
+    return f"{url}#{fragment}" if fragment else url
 
 
 def redact_control_token(text: str) -> str:
@@ -665,10 +671,8 @@ def print_oob_hub_startup_banner(
     bookmark_display = build_headset_bookmark_url(
         web_client_base=web_base,
         stream_config=stream_cfg,
-        control_token=None,
+        control_token=token,
     )
-    if token:
-        bookmark_display = f"{bookmark_display}&controlToken={token}"
     bookmark_display = redact_control_token(bookmark_display)
     wss_primary = f"wss://{primary_host}:{port}{OOB_WS_PATH}"
 

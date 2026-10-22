@@ -199,15 +199,48 @@ def test_build_headset_bookmark_url_minimal() -> None:
     assert q["port"] == ["48322"]
 
 
-def test_build_headset_bookmark_url_with_token() -> None:
-    """control_token is included as controlToken in the bookmark URL query string."""
+def test_build_headset_bookmark_url_token_rides_in_fragment(
+    clear_teleop_env: None,
+) -> None:
+    """The control token goes in the fragment so it never reaches a request target."""
     u = build_headset_bookmark_url(
         web_client_base="https://h.test/",
         stream_config={"serverIP": "10.0.0.1", "port": 48322},
         control_token="secret123",
     )
-    q = parse_qs(urlparse(u).query)
-    assert q["controlToken"] == ["secret123"]
+    parts = urlparse(u)
+    assert "controlToken" not in parse_qs(parts.query)
+    assert "secret123" not in parts.query
+    assert parts.fragment == "?controlToken=secret123"
+
+
+def test_build_headset_bookmark_url_token_follows_route(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a route, the token is a parameter of that fragment, and is URL-encoded."""
+    monkeypatch.setenv("TELEOP_CLIENT_ROUTE", "/real/dexmate")
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={"serverIP": "10.0.0.1", "port": 48322},
+        control_token="a&b=c?d#e",
+    )
+    fragment = urlparse(u).fragment
+    route, _, params = fragment.partition("?")
+    assert route == "/real/dexmate"
+    assert parse_qs(params)["controlToken"] == ["a&b=c?d#e"]
+
+
+def test_build_headset_bookmark_url_no_token_when_oob_disabled(
+    clear_teleop_env: None,
+) -> None:
+    """The token only authenticates hub operations, so it is omitted without OOB."""
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={"serverIP": "10.0.0.1", "port": 48322},
+        control_token="secret123",
+        oob_enable=False,
+    )
+    assert "secret123" not in u
 
 
 def test_build_headset_bookmark_url_with_codec() -> None:
@@ -566,7 +599,12 @@ def test_oob_static_dir_rejects_cached_bundle_without_health_protocol(
     with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
         require_web_client_static_dir(require_health_probe=True)
 
+    # Health protocol alone is not enough: the bundle must also read a fragment token.
     bundle.write_bytes(b'"healthProbe" "healthReport"')
+    with pytest.raises(RuntimeError, match="fragment control-token"):
+        require_web_client_static_dir(require_health_probe=True)
+
+    bundle.write_bytes(b'"healthProbe" "healthReport" "oobControlToken:"')
     assert (
         require_web_client_static_dir(require_health_probe=True) == tmp_path.resolve()
     )
