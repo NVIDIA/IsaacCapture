@@ -56,7 +56,18 @@ inline void bind_tactile_metadata(py::module& m)
                      return pack<HandSkeletonRef>(native);
                  }),
              py::arg("joint_ids"))
-        .def_property_readonly("joint_ids", vector_field(&HandSkeletonRef::joint_ids));
+        .def_property_readonly("joint_ids",
+                               [](const Serialized<HandSkeletonRef>& self)
+                               {
+                                   // FlatBuffers exposes enum-vector storage as uint8_t.
+                                   std::vector<HandJoint> joint_ids;
+                                   joint_ids.reserve(self->joint_ids()->size());
+                                   for (const auto joint : *self->joint_ids())
+                                   {
+                                       joint_ids.push_back(static_cast<HandJoint>(joint));
+                                   }
+                                   return joint_ids;
+                               });
 
     auto poses_from_rows = [](const FloatRows& rows, const char* name)
     {

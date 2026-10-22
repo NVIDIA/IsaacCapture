@@ -51,6 +51,15 @@ def test_metadata_round_trip():
     assert metadata.geometry_mapping.taxel_segment_indices[0, 0] == 1
 
 
+@pytest.mark.parametrize("joint_ids", [[], [HandJoint.WRIST, HandJoint.INDEX_TIP]])
+def test_joint_ids_can_reconstruct_hand_reference(joint_ids):
+    hand = HandSkeletonRef(joint_ids)
+    rebuilt = HandSkeletonRef(hand.joint_ids)
+    assert all(isinstance(joint, HandJoint) for joint in hand.joint_ids)
+    assert rebuilt.joint_ids == joint_ids
+    assert rebuilt.to_bytes() == hand.to_bytes()
+
+
 def test_nested_views_and_arrays_retain_the_buffer():
     metadata = TactileMetadata(
         LBS(**lbs_arrays()), HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
