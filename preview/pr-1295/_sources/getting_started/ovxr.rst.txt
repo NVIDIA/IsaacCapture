@@ -68,6 +68,10 @@ Vulkan SDK.
 Use from another application
 ----------------------------
 
+``isaaccapture.teleop_session_manager.ovxr_session`` provides ``OvxrSession``
+and ``OvxrSessionConfig``. Implement ``OvxrSessionHost`` to supply the
+application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
+
 For a uv-managed application, declare Isaac Capture with its ``ovxr`` extra and
 select the source-built wheel in the application's project configuration:
 

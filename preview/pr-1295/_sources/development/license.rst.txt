@@ -28,6 +28,7 @@ Pre-commit automatically checks and updates license headers with
 `REUSE <https://reuse.software/>`_. It selects ``Apache-2.0`` by default and
 ``LicenseRef-OpenMDW-1.1`` for EgoPost, preserving existing attribution and
 explicit third-party exceptions. Review and stage any automatic edits before
-committing.
+committing. Checked-in third-party files record upstream's terms; see *What stops
+the Release build* in :code-file:`scripts/sbom/README.md`.
 
 You can also run ``reuse spdx -o project.spdx`` to generate an SPDX report for the project.
