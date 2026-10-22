@@ -264,7 +264,9 @@ _OPTIONAL_WEB_CLIENT_ASSETS = ("bundle.emulator.js",)
 _OOB_TOKEN_FRAGMENT_MARKER = b"oobControlToken:"
 
 
-def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path:
+def require_web_client_static_dir(
+    *, require_health_probe: bool = False, require_fragment_token: bool = False
+) -> Path:
     """Ensure web client static assets exist under :func:`resolve_web_client_static_dir`.
 
     Creates the directory if needed. If ``index.html``, ``bundle.js``, or
@@ -273,8 +275,9 @@ def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path
 
     Idempotent: safe to call from both :class:`~.launcher.CloudXRLauncher` and ``wss.run``
     (second call skips network when files are present). OOB automation requires
-    the current browser health protocol; a non-empty older cache is not a
-    compatible substitute.
+    the current browser health protocol, and any OOB use requires fragment
+    control-token support (*require_fragment_token*); a non-empty older cache is
+    not a compatible substitute.
 
     Raises:
         RuntimeError: If the path is invalid or downloads/final validation fail.
@@ -318,19 +321,22 @@ def require_web_client_static_dir(*, require_health_probe: bool = False) -> Path
         fp = p / name
         if not fp.is_file() or fp.stat().st_size == 0:
             raise RuntimeError(f"Web client file missing or empty after fetch: {fp}")
+    required = []
     if require_health_probe:
+        required += [b"healthProbe", b"healthReport"]
+    if require_fragment_token:
+        required.append(_OOB_TOKEN_FRAGMENT_MARKER)
+    if required:
         bundle = p / "bundle.js"
         try:
             bundle_bytes = bundle.read_bytes()
         except OSError as exc:
             raise RuntimeError(f"Cannot read WebXR bundle {bundle}: {exc}") from exc
-        if any(
-            marker not in bundle_bytes
-            for marker in (b"healthProbe", b"healthReport", _OOB_TOKEN_FRAGMENT_MARKER)
-        ):
+        missing = [m.decode() for m in required if m not in bundle_bytes]
+        if missing:
             raise RuntimeError(
-                f"WebXR bundle {bundle} lacks the OOB healthProbe/healthReport "
-                "protocol or fragment control-token support. Build deps/cloudxr/webxr_client with `npm run build` "
+                f"WebXR bundle {bundle} lacks required OOB support ({', '.join(missing)}). "
+                "Build deps/cloudxr/webxr_client with `npm run build` "
                 "and set TELEOP_WEB_CLIENT_STATIC_DIR to its build directory. "
                 "An older non-empty static cache is not replaced automatically."
             )
