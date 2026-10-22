@@ -377,13 +377,14 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -513,6 +514,9 @@ support the Vulkan UI backend. This setting does not change headset rendering.</
 </section>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">isaaccapture.teleop_session_manager.ovxr_session</span></code> provides <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code>
+and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrSessionHost</span></code> to supply the
+application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.</p>
 <p>For a uv-managed application, declare Isaac Capture with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra and
 select the source-built wheel in the application’s project configuration:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[project.optional-dependencies]</span>
