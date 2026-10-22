@@ -3,6 +3,7 @@
 
 """Isolated provider doubles for CPU-only mirror lifecycle tests."""
 
+import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
@@ -13,6 +14,11 @@ import pytest
 @pytest.fixture
 def mock_omni_ui(monkeypatch):
     def install(ui):
+        async def run_async():
+            await asyncio.Future()
+
+        if ui is not None and not hasattr(ui, "run_async"):
+            ui.run_async = run_async
         omni = ModuleType("omni")
         omni.__path__ = []
         omni.ui = ui

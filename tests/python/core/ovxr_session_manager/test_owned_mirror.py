@@ -173,7 +173,6 @@ def test_mirror_async_upload_failure_is_not_reported_as_user_close(
     ui = SimpleNamespace(
         init=lambda *_args, **_kwargs: None,
         shutdown=lambda: None,
-        run=lambda task: asyncio.run(task),
         ByteImageProvider=RaisingProvider,
         Window=lambda *_args, **_kwargs: Context(),
         ZStack=Context,
@@ -279,7 +278,6 @@ def test_inprocess_slow_upload_keeps_latest_snapshot_and_closes(
     ui = SimpleNamespace(
         init=lambda *_args, **_kwargs: None,
         shutdown=lambda: None,
-        run=lambda task: asyncio.run(task),
         ByteImageProvider=Provider,
         Window=lambda *_args, **_kwargs: Context(),
         Frame=Context,
@@ -367,9 +365,11 @@ def test_inprocess_slow_upload_keeps_latest_snapshot_and_closes(
     assert callbacks == []
 
 
-@pytest.mark.parametrize("callback_raises", [False, True])
-def test_normal_window_close_does_not_turn_coroutine_finalization_into_error(
-    monkeypatch, callback_raises, mock_omni_ui
+@pytest.mark.parametrize(
+    "run_error,callback_raises", [(False, False), (False, True), (True, False)]
+)
+def test_ui_exit_finishes_async_tasks_before_cleanup(
+    monkeypatch, run_error, callback_raises, mock_omni_ui
 ):
     class Context:
         def __enter__(self):
@@ -379,26 +379,22 @@ def test_normal_window_close_does_not_turn_coroutine_finalization_into_error(
             return False
 
         def destroy(self):
-            pass
+            assert loops
+            assert not any(asyncio.all_tasks(loop) for loop in loops)
 
     Context.frame = Context()
-    retained = []
+    loops = []
 
-    def run(coro):
-        # Stock standalone closes its loop when the native window closes,
-        # without finishing the still-suspended caller coroutine.
-        loop = asyncio.new_event_loop()
-        task = loop.create_task(coro)
-        loop.call_soon(loop.stop)
-        loop.run_forever()
-        assert not task.done()
-        loop.close()
-        retained.append((task, coro))
+    async def run_async():
+        loops.append(asyncio.get_running_loop())
+        await asyncio.sleep(0)
+        if run_error:
+            raise RuntimeError("native mirror failed")
 
     ui = SimpleNamespace(
         init=lambda *_args, **_kwargs: None,
         shutdown=lambda: None,
-        run=run,
+        run_async=run_async,
         ByteImageProvider=lambda: None,
         Window=lambda *_args, **_kwargs: Context(),
         ZStack=Context,
@@ -423,16 +419,15 @@ def test_normal_window_close_does_not_turn_coroutine_finalization_into_error(
         lambda: None, DesktopMirrorConfig(), on_close
     )
     worker._run()
-    assert worker.status.closed and callbacks == ["user-close"]
-    task, coro = retained.pop()
-    # Make the delayed coroutine destruction deterministic. Suppress only the
-    # fixture task's expected "destroyed pending" warning from the closed loop.
-    task._log_destroy_pending = False
-    coro.close()
+    assert worker.status.closed
+    assert callbacks == ([] if run_error else ["user-close"])
     assert worker.status.error == (
-        "application close failed" if callback_raises else None
+        "native mirror failed"
+        if run_error
+        else "application close failed"
+        if callback_raises
+        else None
     )
-    assert callbacks == ["user-close"]
 
 
 def test_rates_measure_host_and_submitted_render_events_not_gui_uploads(monkeypatch):

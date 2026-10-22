@@ -660,20 +660,32 @@ class OwnedDesktopMirrorWorker:
                                     last_sequence=last,
                                 )
                         await asyncio.sleep(1.0 / self._config.max_fps)
-                except GeneratorExit:
-                    # Stock standalone can close its loop while drive is
-                    # suspended. Coroutine finalization is not an upload error
-                    # and must not overwrite the completed window-close status.
+                except (asyncio.CancelledError, GeneratorExit):
                     raise
                 except BaseException as error:
-                    # OVUI's standalone loop does not retrieve an async task's
-                    # exception. Record it here so a failed copy is not
-                    # mistaken for a human closing the mirror window.
+                    # Preserve upload errors so they are not reported as a
+                    # user closing the mirror window.
                     failure = error
                     self._update(error=str(error))
                     self._stop.set()
 
-            ui.run(drive())
+            # Own the loop so window closure cannot strand the update task.
+            async def run():
+                tasks = (
+                    asyncio.create_task(drive()),
+                    asyncio.create_task(ui.run_async()),
+                )
+                try:
+                    done, _ = await asyncio.wait(
+                        tasks, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    await asyncio.gather(*done)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+            asyncio.run(run())
         except BaseException as error:
             failure = error
             self._update(error=str(error))

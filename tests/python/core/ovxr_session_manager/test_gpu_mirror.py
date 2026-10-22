@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import sys
 import threading
 from types import SimpleNamespace
@@ -170,7 +169,6 @@ def test_gpu_upload_release_is_after_completion_and_failed_wait_keeps_map(
     ui = SimpleNamespace(
         init=lambda *_a, **_k: None,
         shutdown=lambda: events.append("shutdown"),
-        run=lambda task: asyncio.run(task),
         ByteImageProvider=Provider,
         Window=Context,
         Frame=Context,
