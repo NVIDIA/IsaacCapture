@@ -18,6 +18,10 @@ class _FakeOvxrError(RuntimeError):
     pass
 
 
+class _WorkerAbort(BaseException):
+    pass
+
+
 class _FakeContext:
     operations: ClassVar[list[tuple[str, int]]] = []
     create_error: BaseException | None = None
@@ -305,11 +309,9 @@ def test_session_enables_only_device_requirements_and_application_extras(
     owner = ovxr_session.OvxrSession(
         _FakeHost(), config, required_openxr_extensions=required
     )
-    try:
+    with owner:
         owner.start()
         assert owner._context.desc.extra_openxr_extensions == expected
-    finally:
-        owner.close()
 
 
 def _wait_for_operation(name: str) -> None:
@@ -353,6 +355,47 @@ def _call_in_thread(callback):
     thread = threading.Thread(target=call)
     thread.start()
     return thread, errors
+
+
+@pytest.mark.parametrize("wait_phase", ["bootstrap", "xr"])
+def test_interrupted_start_cancels_worker_before_retirement(monkeypatch, wait_phase):
+    entered = threading.Event()
+    release = threading.Event()
+    failure = _WorkerAbort("startup interrupted")
+
+    def block_startup():
+        entered.set()
+        assert release.wait(timeout=2.0)
+
+    class Host(_FakeHost):
+        def attach_on_render_thread(self, capability):
+            if wait_phase == "bootstrap":
+                block_startup()
+            return super().attach_on_render_thread(capability)
+
+    class InterruptedCondition(threading.Condition):
+        def wait_for(self, predicate, timeout=None):
+            if (timeout is None) == (wait_phase == "xr"):
+                assert entered.wait(timeout=1.0)
+                raise failure
+            return super().wait_for(predicate, timeout)
+
+    owner = ovxr_session.OvxrSession(Host(), _config())
+    owner._worker_condition = InterruptedCondition()
+    if wait_phase == "xr":
+        monkeypatch.setattr(owner, "_bring_up_openxr", block_startup)
+    try:
+        with pytest.raises(_WorkerAbort) as caught:
+            owner.start()
+        assert caught.value is failure
+        assert owner.shutdown_requested
+        assert owner._worker_closing
+    finally:
+        release.set()
+        owner.close()
+
+    assert not owner._worker.is_alive()
+    assert owner.retirement_complete
 
 
 def test_bootstrap_timeout_cancels_slow_attach_without_creating_context():
@@ -459,13 +502,11 @@ def test_shutdown_rejects_late_publication_without_error(force):
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
-    try:
+    with owner:
         owner.request_shutdown()
         assert owner.request_render("late-step", force=force) is None
         assert host.publish_threads == []
         assert owner._worker_pending_ordinal is None
-    finally:
-        owner.close()
     assert owner.retirement_complete
 
 
@@ -481,13 +522,11 @@ def test_shutdown_during_publication_does_not_enqueue_a_frame(monkeypatch):
 
     monkeypatch.setattr(host, "publish_complete_scene", publish_then_shutdown)
     owner.start()
-    try:
+    with owner:
         assert owner.request_render("last-step") is None
         assert host.publish_threads == [threading.get_native_id()]
         assert owner._worker_pending_ordinal is None
         assert not host.publication_closed
-    finally:
-        owner.close()
     assert owner.retirement_complete
     assert "submit" not in [name for name, _thread in _FakeContext.operations]
 
@@ -582,10 +621,8 @@ def test_host_wait_render_output_is_forwarded_to_ovxr():
     owner = ovxr_session.OvxrSession(host, _config(host_wait_render_output=True))
 
     owner.start()
-    try:
+    with owner:
         assert owner._context.desc.host_wait_render_output is True
-    finally:
-        owner.close()
 
 
 def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
@@ -778,7 +815,7 @@ def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
     owner._borrowers_quiesced = ObservedQuiescence()
     owner.start()
     context = owner._context
-    try:
+    with owner:
         owner.request_shutdown()
         assert waiting.wait(timeout=1.0)
         assert owner._worker.is_alive()
@@ -790,8 +827,6 @@ def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
             isinstance(event, tuple) and event[0] in {"host-close", "environment-close"}
             for event in host.events
         )
-    finally:
-        owner.close()
 
     assert not owner._worker.is_alive()
     assert owner.retirement_complete
@@ -1332,11 +1367,14 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
     ]
 
 
-def test_render_failure_waits_for_borrowers_and_preserves_first_error(monkeypatch):
+@pytest.mark.parametrize("failure_type", [RuntimeError, _WorkerAbort])
+def test_render_failure_waits_for_borrowers_and_preserves_first_error(
+    monkeypatch, failure_type
+):
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
-    failure = RuntimeError("bind failed")
+    failure = failure_type("bind failed")
     _FakeContext.bind_error = failure
     failed = threading.Event()
     original = owner._record_worker_failure
@@ -1360,14 +1398,14 @@ def test_render_failure_waits_for_borrowers_and_preserves_first_error(monkeypatc
             owner.external_oxr_handles,
             lambda: owner.request_render("step-2"),
         ):
-            with pytest.raises(RuntimeError) as caught:
+            with pytest.raises(failure_type) as caught:
                 read()
             assert caught.value is failure
     finally:
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(failure_type) as caught:
             owner.close()
         assert caught.value is failure
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(failure_type) as caught:
         owner.close()
     assert caught.value is failure
     assert host.publication_closed
@@ -1442,13 +1480,11 @@ def test_paused_frames_use_runtime_pacing_without_an_added_idle_wait(
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
     owner._worker_condition = ObservedCondition()
-    try:
+    with owner:
         owner.start()
         owner._context.bind_results = [bind_result]
         owner.request_render("paused-scene")
         assert fourth_frame.wait(1.0)
-    finally:
-        owner.close()
 
     assert not [wait for wait in idle_waits if wait[0] is not None]
     assert [
@@ -1486,13 +1522,11 @@ def test_idle_or_unready_frames_keep_a_wakeable_backoff(monkeypatch, begin_resul
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
     owner._worker_condition = ObservedCondition()
-    try:
+    with owner:
         owner.start()
         if begin_result is not None:
             owner.request_render("unready-scene")
         assert backed_off.wait(1.0)
-    finally:
-        owner.close()
 
     assert len(waits) >= 3
     assert all(timeout == 0.01 for timeout in waits)
@@ -1523,7 +1557,7 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
     monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake)
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config(), max_blank_frames=1)
-    try:
+    with owner:
         owner.start()
         assert missing_observed.wait(1.0)
         assert owner.external_oxr_handles() is None
@@ -1539,18 +1573,14 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
         assert handles_observed.is_set()
         assert owner.external_oxr_handles() == (11, 22, 33, 44)
         assert set(get_threads) == {host.attach_thread}
-    finally:
-        owner.close()
 
 
 @pytest.mark.parametrize("mode,expected", [("ar", 5), ("vr", 4)])
 def test_session_mode_is_forwarded_to_ovxr(mode, expected):
     owner = ovxr_session.OvxrSession(_FakeHost(), _config(session_mode=mode))
-    try:
+    with owner:
         owner.start()
         assert owner._context.desc.session_mode == expected
-    finally:
-        owner.close()
 
 
 def test_config_rejects_unknown_session_mode():
