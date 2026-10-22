@@ -108,6 +108,19 @@ describe('captureOobControlToken', () => {
     expect(getOobControlToken(hubQuery())).toBeUndefined();
   });
 
+  it('prefers the fresh in-memory token over a stale stored one when the write is denied', () => {
+    window.sessionStorage.setItem('oobControlToken:10.0.0.5:48322', 'stale');
+    const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    visit(`/client/?${HUB}#/real?controlToken=fresh`);
+    captureOobControlToken();
+    expect(getOobControlToken(hubQuery())).toBe('fresh');
+    spy.mockRestore();
+    warn.mockRestore();
+  });
+
   it('still serves the token for this page load when sessionStorage is denied', () => {
     const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('denied');
