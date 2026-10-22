@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Tactile
 
-A mock tactile device and a consumer for exercising the tactile tracker without hardware.
+A mock tactile device and a consumer for exercising the tactile tracker without tactile hardware.
 
 - `feeder` publishes a 26-joint hand with 200 taxels by default. Each frame carries one
   `TactileDataArray`; it publishes `TactileMetadata` when it starts and every second after that.
@@ -26,7 +26,8 @@ Install the example:
 uv pip install -e ./examples/tactile
 ```
 
-Start the printer first; it starts the CloudXR runtime, and no headset needs to connect:
+Start the printer first; it starts the CloudXR runtime. Live initialization requires an
+OpenXR HMD system; if none is available, it waits for a headset client to connect:
 
 ```bash
 python -m isaaccapture_examples.tactile.printer --accept-eula --duration 0
