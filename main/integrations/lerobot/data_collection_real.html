@@ -398,6 +398,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
@@ -444,7 +448,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -534,7 +537,7 @@ other install options:</p>
 <pre class="literal-block">uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv pip install -e &quot;.[feetech,kinematics,dataset]&quot; &quot;huggingface_hub&gt;=1.5&quot;
-uv pip install &quot;isaaccapture[cloudxr,retargeters-lite]~=1.6.0&quot; &quot;scipy&gt;=1.14&quot; \
+uv pip install &quot;isaaccapture[cloudxr,retargeters-lite]~=1.7.0&quot; &quot;scipy&gt;=1.14&quot; \
       --extra-index-url <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">https://pypi.nvidia.com</a> --prerelease=allow</pre>
 <p>The upstream <code class="docutils literal notranslate"><span class="pre">isaac_teleop_to_so101</span></code> scripts still import <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code>.
 Installing <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> includes that compatibility alias automatically
