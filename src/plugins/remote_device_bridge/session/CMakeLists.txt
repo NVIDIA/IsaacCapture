@@ -9,6 +9,10 @@ find_package(Threads REQUIRED)
 # plugin that offers --remote. It must never link the OpenXR loader or
 # plugin_utils: plugin processes using it stay free of an OpenXR runtime.
 add_library(remote_plugin_session STATIC
+    clock_offset_estimator.cpp
+    inc/remote_plugin_session/clock_offset_estimator.hpp
+    remote_plugin_session.cpp
+    inc/remote_plugin_session/remote_plugin_session.hpp
     tcp_socket.cpp
     inc/remote_plugin_session/tcp_socket.hpp
     inc/remote_plugin_session/transport.hpp
