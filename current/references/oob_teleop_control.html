@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -370,8 +370,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
 </ul>
@@ -387,7 +385,6 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -475,13 +472,6 @@ observing every 5 seconds. A meaningful device, network, rule, or browser
 change opens a fresh 60-second recovery episode. Override the positive,
 finite values with <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code> and
 <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code>; invalid values fail host preflight.</p>
-<p>At INFO, OOB progress reports headset waiting and connection, browser readiness,
-and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
-USB-health blocks remain visible with operator action. An unchanged wait for
-an absent headset is announced once; routine setup steps are DEBUG messages.
-Progress uses the <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr.oob_teleop_env.oob-progress</span></code> logger.
-It remains visible through filters selecting its parent logger, while embedded
-applications can also select progress alone.</p>
 <p>To start the hub <strong>without</strong> any <code class="docutils literal notranslate"><span class="pre">adb</span></code> interaction — useful in containers,
 CI, or wireless-only environments — set <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_HUB_ONLY=1</span></code> and open
 the teleop URL on the headset manually. This mode supports WiFi setup only
@@ -1352,7 +1342,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 21, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
       <br/>
     
   </p>
