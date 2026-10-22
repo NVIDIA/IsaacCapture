@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Public OVXR distribution; see docs/source/getting_started/ovxr.rst.
+# Tested pre-GA build; application overrides: docs/source/getting_started/ovxr.rst.
 ovxr==0.1.0.5842
