@@ -44,7 +44,10 @@ class _FakeContext:
 
     def get_openxr_handles(self):
         return SimpleNamespace(
-            xr_instance=11, xr_session=22, xr_space=33, xr_get_instance_proc_addr=44
+            xr_instance=11,
+            xr_session=22,
+            xr_space=33,
+            xr_get_instance_proc_addr=44,
         )
 
     def set_frame_render_products(self, products):
@@ -55,11 +58,11 @@ class _FakeContext:
         return SimpleNamespace()
 
     def submit_openxr_blank_frame(self):
-        return (0, SimpleNamespace())
+        return 0, SimpleNamespace()
 
     def begin_frame(self):
         self.__class__.operations.append(("begin", threading.get_native_id()))
-        return (0, SimpleNamespace(step_result=0))
+        return 0, SimpleNamespace(step_result=0)
 
     def bind_frame(self, _plan, _time, *, stage_ordinal):
         self.__class__.operations.append(("bind", threading.get_native_id()))
@@ -72,11 +75,11 @@ class _FakeContext:
             result = self.bind_results[0]
         if result in self.__class__.seal_bind_results:
             self.__class__.ordinal_ledger.seal_external(stage_ordinal)
-        return (result, result in self.__class__.seal_bind_results)
+        return result, result in self.__class__.seal_bind_results
 
     def submit_frame(self, _plan, *, additional_layers=()):
         self.__class__.operations.append(("submit", threading.get_native_id()))
-        return (0, SimpleNamespace(submitted=True))
+        return 0, SimpleNamespace(submitted=True)
 
     def cancel_frame(self, _plan):
         self.__class__.operations.append(("cancel", threading.get_native_id()))
@@ -298,7 +301,7 @@ def _call_in_thread(callback):
 
     thread = threading.Thread(target=call)
     thread.start()
-    return (thread, errors)
+    return thread, errors
 
 
 def test_bootstrap_timeout_cancels_slow_attach_without_creating_context():
@@ -327,13 +330,14 @@ def test_bootstrap_timeout_cancels_slow_attach_without_creating_context():
         assert owner._borrowers_quiesced.wait(timeout=1.0)
         assert owner.owns_environment
         assert not owner.retirement_complete
-        assert not any((isinstance(event, tuple) for event in host.events))
+        assert not any(isinstance(event, tuple) for event in host.events)
     finally:
         allow_attach.set()
         start_thread.join(timeout=1.0)
         if close_thread is not None:
             close_thread.join(timeout=1.0)
         owner.close()
+
     assert close_errors == []
     assert not owner._worker.is_alive()
     assert owner.retirement_complete
@@ -374,19 +378,26 @@ def test_scene_publication_is_admitted_once_per_render_demand(monkeypatch):
     monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake_ovxr)
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
+
     try:
         first_ordinal = owner.request_render("step-1")
         assert frame_entered.wait(timeout=1.0)
+
         second_ordinal = owner.request_render("step-2")
         assert second_ordinal > first_ordinal
         assert owner._worker_publication_requested is False
         assert owner.request_render("step-3") is None
+
         assert owner.request_render("reset-1", force=True) > second_ordinal
         assert [
             event
             for event in host.events
             if isinstance(event, tuple) and event[0] == "publish"
-        ] == [("publish", "step-1"), ("publish", "step-2"), ("publish", "reset-1")]
+        ] == [
+            ("publish", "step-1"),
+            ("publish", "step-2"),
+            ("publish", "reset-1"),
+        ]
     finally:
         release_frame.set()
         owner.close()
@@ -474,6 +485,7 @@ def test_non_isaaclab_host_lends_exact_pair_to_one_owner_thread(timeout_s):
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
     caller_thread = threading.get_native_id()
+
     owner.start(timeout_s=timeout_s)
     assert host.offer_thread == caller_thread
     assert host.attach_thread == owner.render_worker_native_thread_id
@@ -484,9 +496,11 @@ def test_non_isaaclab_host_lends_exact_pair_to_one_owner_thread(timeout_s):
     assert context.desc.ordinal_mode == 1
     assert context.desc.host_wait_render_output is False
     assert owner.external_oxr_handles() == (11, 22, 33, 44)
+
     scene_ordinal = owner.request_render("step-1")
     _wait_for_operation("submit")
     owner.close()
+
     assert host.publish_threads == [caller_thread]
     render_operations = [
         thread_id
@@ -515,6 +529,7 @@ def test_non_isaaclab_host_lends_exact_pair_to_one_owner_thread(timeout_s):
 def test_host_wait_render_output_is_forwarded_to_ovxr():
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config(host_wait_render_output=True))
+
     owner.start()
     try:
         assert owner._context.desc.host_wait_render_output is True
@@ -528,6 +543,7 @@ def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [1, 0]
+
     scene_ordinal = owner.request_render("step-1")
     _wait_for_operation("cancel")
     deadline = time.monotonic() + 1.0
@@ -536,6 +552,7 @@ def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
             raise AssertionError("timed out waiting for retry submission")
         time.sleep(0.001)
     owner.close()
+
     names = [name for name, _thread in _FakeContext.operations]
     assert names.count("bind") >= 2
     assert names.index("cancel") < names.index("submit")
@@ -563,6 +580,7 @@ def test_bind_timeout_reconciles_an_unsealed_ordinal_then_reuses_it():
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [1, 0]
+
     owner.request_render("step-1")
     _wait_for_operation("cancel")
     deadline = time.monotonic() + 1.0
@@ -570,6 +588,7 @@ def test_bind_timeout_reconciles_an_unsealed_ordinal_then_reuses_it():
         assert time.monotonic() < deadline
         time.sleep(0.001)
     owner.close()
+
     assert len(_FakeContext.bind_ordinals) >= 2
     assert _FakeContext.bind_ordinals[1] == _FakeContext.bind_ordinals[0]
     assert (
@@ -585,6 +604,7 @@ def test_bind_not_ready_without_writes_retries_the_unsealed_ledger_ordinal():
     owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [2, 0]
+
     owner.request_render("step-1")
     _wait_for_operation("cancel")
     deadline = time.monotonic() + 1.0
@@ -592,6 +612,7 @@ def test_bind_not_ready_without_writes_retries_the_unsealed_ledger_ordinal():
         assert time.monotonic() < deadline
         time.sleep(0.001)
     owner.close()
+
     assert len(_FakeContext.bind_ordinals) >= 2
     assert _FakeContext.bind_ordinals[1] == _FakeContext.bind_ordinals[0]
     assert (
@@ -622,8 +643,10 @@ def test_create_failure_does_not_reserve_or_publish_an_ordinal():
     host = _FakeHost()
     _FakeContext.create_error = RuntimeError("create failed")
     owner = ovxr_session.OvxrSession(host, _config())
+
     with pytest.raises(RuntimeError, match="create failed"):
         owner.start()
+
     assert host.ordinal_ledger.issued == []
     assert host.ordinal_ledger.external_resolutions == []
     assert host.ordinal_ledger.abandoned == []
@@ -713,14 +736,12 @@ def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
         assert not owner.retirement_complete
         assert "destroy" not in [name for name, _thread in _FakeContext.operations]
         assert not any(
-            (
-                isinstance(event, tuple)
-                and event[0] in {"host-close", "environment-close"}
-                for event in host.events
-            )
+            isinstance(event, tuple) and event[0] in {"host-close", "environment-close"}
+            for event in host.events
         )
     finally:
         owner.close()
+
     assert not owner._worker.is_alive()
     assert owner.retirement_complete
     assert _FakeContext.operations.count(("destroy", host.attach_thread)) == 1
@@ -807,7 +828,9 @@ def test_worker_thread_start_failure_rolls_back_host_and_preserves_first_error(
 def test_close_before_start_aborts_host_without_creating_context():
     host = _FakeHost()
     owner = ovxr_session.OvxrSession(host, _config())
+
     owner.close()
+
     assert host.events == ["abort"]
     assert _FakeContext.operations == []
 
@@ -840,15 +863,19 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
+
     owner.start()
     owner.close()
+
     assert launcher_events == [
         ("create", owner.render_worker_native_thread_id),
         ("stop", owner.render_worker_native_thread_id),
     ]
 
 
-def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(monkeypatch):
+def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(
+    monkeypatch,
+):
     host = _FakeHost()
     frame_wait_entered = threading.Event()
     runtime_stopped = threading.Event()
@@ -884,10 +911,12 @@ def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(monke
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
     owner.start()
+
     assert owner.request_render("step-1") == 10
     assert frame_wait_entered.wait(timeout=1.0)
     with pytest.raises(RuntimeError, match="request exit failed") as error:
         owner.close()
+
     assert isinstance(error.value.__cause__, RuntimeError)
     assert str(error.value.__cause__) == "runtime interrupt failed"
     assert [name for name, _thread in launcher_events].count("interrupt") == 1
@@ -902,6 +931,7 @@ def test_context_teardown_completion_prevents_interrupt_during_cloudxr_stop(
 ):
     host = _FakeHost()
     launcher = _ControlledLauncher(block_stop=True)
+
     monkeypatch.setattr(
         ovxr_session,
         "_create_cloudxr_launcher",
@@ -913,6 +943,7 @@ def test_context_teardown_completion_prevents_interrupt_during_cloudxr_stop(
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
     owner.start()
+
     close_thread, close_errors = _call_in_thread(owner.close)
     try:
         assert launcher.stop_started.wait(timeout=1.0)
@@ -925,6 +956,7 @@ def test_context_teardown_completion_prevents_interrupt_during_cloudxr_stop(
     finally:
         launcher.allow_stop.set()
         close_thread.join(timeout=1.0)
+
     assert not close_thread.is_alive()
     assert close_errors == []
     assert owner._cloudxr_stop_complete.is_set()
@@ -937,6 +969,7 @@ def test_context_teardown_completion_prevents_interrupt_during_cloudxr_stop(
 def test_destroy_failure_retains_borrowed_providers_and_forbids_retry(monkeypatch):
     host = _FakeHost()
     launcher = _ControlledLauncher()
+
     monkeypatch.setattr(
         ovxr_session,
         "_create_cloudxr_launcher",
@@ -949,9 +982,11 @@ def test_destroy_failure_retains_borrowed_providers_and_forbids_retry(monkeypatc
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
     owner.start()
-    context, binding = (owner._context, owner._binding)
+    context, binding = owner._context, owner._binding
+
     with pytest.raises(RuntimeError, match="destroy failed") as error:
         owner.close()
+
     assert error.value is failure
     assert owner._context is context
     assert owner._binding is binding
@@ -960,10 +995,8 @@ def test_destroy_failure_retains_borrowed_providers_and_forbids_retry(monkeypatc
     assert owner._ovxr_teardown_complete.is_set()
     assert launcher.events == []
     assert not any(
-        (
-            isinstance(event, tuple) and event[0] in ("host-close", "environment-close")
-            for event in host.events
-        )
+        isinstance(event, tuple) and event[0] in ("host-close", "environment-close")
+        for event in host.events
     )
     destroy_attempts = list(_FakeContext.destroy_ordinals)
     with pytest.raises(RuntimeError, match="destroy failed"):
@@ -1060,6 +1093,7 @@ def test_failed_exit_request_does_not_prevent_proven_context_retirement():
 def test_cloudxr_stop_failure_is_reported_without_runtime_interrupt(monkeypatch):
     host = _FakeHost()
     launcher = _ControlledLauncher(stop_error=RuntimeError("cloudxr stop failed"))
+
     monkeypatch.setattr(
         ovxr_session,
         "_create_cloudxr_launcher",
@@ -1070,8 +1104,10 @@ def test_cloudxr_stop_failure_is_reported_without_runtime_interrupt(monkeypatch)
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
     owner.start()
+
     with pytest.raises(RuntimeError, match="cloudxr stop failed"):
         owner.close()
+
     assert owner._ovxr_teardown_complete.is_set()
     assert owner._cloudxr_stop_complete.is_set()
     assert launcher.events == [("stop-start", owner.render_worker_native_thread_id)]
@@ -1080,6 +1116,7 @@ def test_cloudxr_stop_failure_is_reported_without_runtime_interrupt(monkeypatch)
 def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeypatch):
     host = _FakeHost()
     launcher = _ControlledLauncher(block_stop=True)
+
     monkeypatch.setattr(
         ovxr_session,
         "_create_cloudxr_launcher",
@@ -1091,6 +1128,7 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(host, config)
+
     start_thread, start_errors = _call_in_thread(owner.start)
     assert launcher.stop_started.wait(timeout=1.0)
     assert owner._ovxr_teardown_complete.is_set()
@@ -1102,6 +1140,7 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
         launcher.allow_stop.set()
         start_thread.join(timeout=1.0)
         close_thread.join(timeout=1.0)
+
     assert not start_thread.is_alive()
     assert not close_thread.is_alive()
     assert [str(error) for error in start_errors] == ["create failed"]
@@ -1126,17 +1165,15 @@ def test_render_failure_waits_for_borrowers_and_preserves_first_error(monkeypatc
         failed.set()
 
     monkeypatch.setattr(owner, "_record_worker_failure", record)
+
     owner.request_render("step-1")
     try:
         assert failed.wait(timeout=1.0)
         assert not owner._closed
         assert "destroy" not in [name for name, _thread in _FakeContext.operations]
         assert not any(
-            (
-                isinstance(event, tuple)
-                and event[0] in {"host-close", "environment-close"}
-                for event in host.events
-            )
+            isinstance(event, tuple) and event[0] in {"host-close", "environment-close"}
+            for event in host.events
         )
         for read in (
             owner.external_oxr_handles,
@@ -1165,11 +1202,13 @@ def test_bind_failure_remains_primary_when_ordinal_reconciliation_also_fails():
     owner.start()
     _FakeContext.bind_error = RuntimeError("bind failed")
     host.ordinal_ledger.resolve_error = RuntimeError("reconciliation failed")
+
     owner.request_render("step-1")
     deadline = time.monotonic() + 1.0
     while not owner.shutdown_requested:
         assert time.monotonic() < deadline
         time.sleep(0.001)
+
     with pytest.raises(RuntimeError, match="bind failed") as error:
         owner.close()
     assert isinstance(error.value.__cause__, RuntimeError)
@@ -1182,6 +1221,7 @@ def test_destroy_failure_remains_primary_when_ordinal_reconciliation_also_fails(
     owner.start()
     _FakeContext.destroy_error = RuntimeError("destroy failed")
     host.ordinal_ledger.resolve_error = RuntimeError("reconciliation failed")
+
     with pytest.raises(RuntimeError, match="destroy failed") as error:
         owner.close()
     assert isinstance(error.value.__cause__, RuntimeError)
@@ -1228,6 +1268,7 @@ def test_paused_frames_use_runtime_pacing_without_an_added_idle_wait(
         assert fourth_frame.wait(1.0)
     finally:
         owner.close()
+
     assert not [wait for wait in idle_waits if wait[0] is not None]
     assert [
         event
@@ -1248,7 +1289,7 @@ def test_idle_or_unready_frames_keep_a_wakeable_backoff(monkeypatch, begin_resul
         def begin_frame(self):
             assert begin_result is not None
             self.__class__.operations.append(("begin", threading.get_native_id()))
-            return (begin_result, None)
+            return begin_result, None
 
     class ObservedCondition(threading.Condition):
         def wait(self, timeout=None):
@@ -1271,8 +1312,9 @@ def test_idle_or_unready_frames_keep_a_wakeable_backoff(monkeypatch, begin_resul
         assert backed_off.wait(1.0)
     finally:
         owner.close()
+
     assert len(waits) >= 3
-    assert all((timeout == 0.01 for timeout in waits))
+    assert all(timeout == 0.01 for timeout in waits)
     assert "submit" not in [name for name, _thread in _FakeContext.operations]
     assert not owner._worker.is_alive()
 
