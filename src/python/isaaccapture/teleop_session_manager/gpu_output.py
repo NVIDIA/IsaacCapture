@@ -319,7 +319,7 @@ def map_cuda_array_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpu
             or len(shape) != 3
             or shape[2] != 4
         ):
-            raise ValueError("mirror GPU output must be an opaque RGBA CUDA array")
+            raise ValueError("camera GPU output must be an opaque RGBA CUDA array")
         info = cuda.cudaArrayGetInfo(int(dl.data))
         _check_cuda(info)
         channel, extent = info[1:3]
