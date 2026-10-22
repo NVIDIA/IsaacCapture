@@ -518,8 +518,8 @@ arguments and to anyone who sees the URL.
 
 A client build older than this change only reads ``?controlToken=`` from the
 query and will not authenticate against a fragment bookmark. With
-``--host-client`` the host refuses a cached ``bundle.js`` that lacks fragment
-support; rebuild ``deps/cloudxr/webxr_client`` and point
+``--host-client`` with ``--setup-oob`` the host refuses a cached ``bundle.js`` that
+lacks fragment support; rebuild ``deps/cloudxr/webxr_client`` and point
 ``TELEOP_WEB_CLIENT_STATIC_DIR`` at the build output. A hand-built
 ``?controlToken=`` query link still works, but that URL has already been sent in
 the request.

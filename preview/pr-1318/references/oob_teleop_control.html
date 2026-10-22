@@ -934,8 +934,8 @@ URLs as secrets anyway: the fragment is visible to the page, to <code class="doc
 arguments and to anyone who sees the URL.</p>
 <p>A client build older than this change only reads <code class="docutils literal notranslate"><span class="pre">?controlToken=</span></code> from the
 query and will not authenticate against a fragment bookmark. With
-<code class="docutils literal notranslate"><span class="pre">--host-client</span></code> the host refuses a cached <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> that lacks fragment
-support; rebuild <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/webxr_client</span></code> and point
+<code class="docutils literal notranslate"><span class="pre">--host-client</span></code> with <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> the host refuses a cached <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> that
+lacks fragment support; rebuild <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/webxr_client</span></code> and point
 <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> at the build output. A hand-built
 <code class="docutils literal notranslate"><span class="pre">?controlToken=</span></code> query link still works, but that URL has already been sent in
 the request.</p>
