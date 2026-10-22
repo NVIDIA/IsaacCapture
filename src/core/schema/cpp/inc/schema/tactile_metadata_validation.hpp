@@ -39,6 +39,17 @@ namespace core
         seen[joint_id] = true;
     }
 
+    for (const auto* indices : *lbs->taxel_segment_indices())
+    {
+        for (const auto segment_index : *indices->values())
+        {
+            if (segment_index >= lbs->segment_bind_poses()->size())
+            {
+                return false;
+            }
+        }
+    }
+
     for (const auto* weights : *lbs->taxel_segment_weights())
     {
         double sum = 0.0;

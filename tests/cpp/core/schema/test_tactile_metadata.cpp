@@ -133,6 +133,26 @@ TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joi
     CHECK_FALSE(core::verify_tactile_metadata(*metadata));
 }
 
+TEST_CASE("TactileMetadata semantic verification rejects out-of-range segment indices", "[unit][tactile_metadata]")
+{
+    auto native = make_metadata();
+    auto& lbs = *native.geometry_mapping.AsLBS();
+    std::array<uint32_t, 4> indices = { 1, 0, 0, 0 };
+    SECTION("nonzero-weight slot")
+    {
+        indices[0] = 2;
+    }
+    SECTION("zero-weight slot")
+    {
+        indices[3] = 2;
+    }
+    lbs.taxel_segment_indices[0] = core::UInt4(flatbuffers::span<const uint32_t, 4>(indices.data(), 4));
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+}
+
 TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "[unit][tactile_metadata]")
 {
     auto native = make_metadata();
