@@ -126,28 +126,14 @@ class MappedGpuImage(MappedOutput):
     is_array: bool = False
 
 
-def map_cuda_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpuImage:
-    """Retain a ready linear CUDA map for stock OVUI's device-pointer upload.
-
-    OVRTX may copy an array to linear memory here. This removes the CPU round
-    trip, not all GPU copies. Map lifetime survives destruction of the step
-    result; only the application owner unmaps, after UI copy completion.
-    """
-    return _map_rgba(renderer, handle, max_bytes, array=False)
-
-
 def map_cuda_array_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpuImage:
     """Retain the native image array, avoiding OVRTX array-to-linear conversion."""
-    return _map_rgba(renderer, handle, max_bytes, array=True)
-
-
-def _map_rgba(renderer, handle, max_bytes, *, array):
     from cuda.bindings import runtime as cuda
 
     b, lib = _api()
     mapped = b.ovrtx_render_var_output_t()
     desc = b.ovrtx_map_output_description_t(
-        device_type=b.Device.CUDA_ARRAY if array else b.Device.CUDA, sync_stream=None
+        device_type=b.Device.CUDA_ARRAY, sync_stream=None
     )
     result = lib.ovrtx_map_render_var_output(
         renderer,
@@ -172,44 +158,29 @@ def _map_rgba(renderer, handle, max_bytes, *, array):
             raise ValueError("mirror GPU output must be CUDA memory")
         image.device = int(dl.device.device_id)
         _check_cuda(cuda.cudaSetDevice(image.device))
-        if array:
-            if (
-                dl.dtype.code.value != 3
-                or dl.byte_offset
-                or len(shape) != 3
-                or shape[2] != 4
-            ):
-                raise ValueError("mirror GPU output must be an opaque RGBA CUDA array")
-            info = cuda.cudaArrayGetInfo(int(dl.data))
-            _check_cuda(info)
-            channel, extent = info[1:3]
-            height, width, _ = shape
-            if (channel.x, channel.y, channel.z, channel.w, int(channel.f)) != (
-                8,
-                8,
-                8,
-                8,
-                1,
-            ) or (extent.width, extent.height) != (width, height):
-                raise ValueError(
-                    "camera CUDA array is not unsigned RGBA8 at the declared size"
-                )
-            pitch = width * 4
-            image.is_array = True
-        elif dl.dtype.code.value != 1 or dl.dtype.bits != 8:
-            raise ValueError("mirror GPU output must be CUDA uint8 RGBA")
-        elif len(shape) == 3 and shape[2] == 4 and dl.dtype.lanes == 1:
-            height, width, _ = shape
-            pitch = int(dl.strides[0]) if dl.strides else width * 4
-            if dl.strides and tuple(dl.strides[i] for i in (1, 2)) != (4, 1):
-                raise ValueError("mirror GPU output channels are not packed RGBA")
-        elif len(shape) == 2 and dl.dtype.lanes == 4:
-            height, width = shape
-            pitch = int(dl.strides[0]) * 4 if dl.strides else width * 4
-            if dl.strides and dl.strides[1] != 1:
-                raise ValueError("mirror GPU output pixels are not packed RGBA")
-        else:
-            raise ValueError(f"unexpected GPU output shape {shape}")
+        if (
+            dl.dtype.code.value != 3
+            or dl.byte_offset
+            or len(shape) != 3
+            or shape[2] != 4
+        ):
+            raise ValueError("mirror GPU output must be an opaque RGBA CUDA array")
+        info = cuda.cudaArrayGetInfo(int(dl.data))
+        _check_cuda(info)
+        channel, extent = info[1:3]
+        height, width, _ = shape
+        if (channel.x, channel.y, channel.z, channel.w, int(channel.f)) != (
+            8,
+            8,
+            8,
+            8,
+            1,
+        ) or (extent.width, extent.height) != (width, height):
+            raise ValueError(
+                "camera CUDA array is not unsigned RGBA8 at the declared size"
+            )
+        pitch = width * 4
+        image.is_array = True
         if width <= 0 or height <= 0 or pitch < width * 4 or pitch * height > max_bytes:
             raise ValueError("mirror GPU output exceeds bounded image size")
         image.width, image.height, image.pitch = width, height, pitch

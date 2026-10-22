@@ -93,10 +93,6 @@ async function connectAndCapture(
   const consoleLines = [];
   page.on('console', msg => consoleLines.push(msg.text()));
 
-  // These tests own the IWER pose programmatically. DevUI's camera rig writes
-  // that same pose every frame and would overwrite moveHeadsetBy(). Exercise
-  // the client's supported IWER-without-DevUI path so there is one pose writer.
-  await page.route('**/iwer-devui.min.js', route => route.abort());
   await page.goto('http://localhost:8082/');
   // See AppMockTest.spec.js: "IWER DevUI initialized with XR device." logs before
   // installRuntime() and is skipped on the supported no-DevUI path - "IWER runtime installed."
@@ -111,10 +107,6 @@ async function connectAndCapture(
   if (trackHeadset !== undefined)
     await setFormValue(page, 'controlPanelTrackHeadset', trackHeadset);
 
-  consoleLines.push(
-    '[test] before Start pose count=' +
-      consoleLines.filter(l => l.startsWith('[CloudXRUI] headset=')).length
-  );
   await page.click('#startButton', { timeout: 15000 });
   await waitForConsoleText(consoleLines, 'CloudXR stream started');
 
@@ -223,12 +215,7 @@ test.describe('control panel positioning settings', () => {
     test.setTimeout(30000);
     const { consoleLines } = await connectAndCapture(page, { trackHeadset: true });
     const countAfterConnect = parseLastPanelPoseLog(consoleLines).count;
-    expect(
-      countAfterConnect,
-      consoleLines
-        .filter(l => l.startsWith('[CloudXRUI] headset=') || l.startsWith('[test]'))
-        .join('\n')
-    ).toBe(1);
+    expect(countAfterConnect).toBe(1);
 
     // Tracking recomputes position every frame under the hood, but shouldn't log every frame -
     // only a real reposition beyond CloudXRUI's TRACKING_LOG_EPSILON_M does (see below).

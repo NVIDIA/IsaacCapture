@@ -19,7 +19,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from .camera_mailbox import CompletedCameraMailbox, CameraImage
+from .camera_mailbox import CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
 from .gpu_output import completed_outputs, map_cuda_array_rgba, native_renderer_handle
 
@@ -255,7 +255,6 @@ class OvxrExternalPresentOwner:
         self._pending_plan = None
         self._binding: ExternalPresentBinding | None = None
         self._cloudxr_launcher = None
-        self._camera_mailbox: CompletedCameraMailbox | None = None
         self._camera_quad_attached = False
         self._camera_mailboxes: list[CompletedCameraMailbox] = []
         self._camera_quads: list[OpenXRCameraQuad] = []
@@ -665,31 +664,13 @@ class OvxrExternalPresentOwner:
                         auxiliary_paths, auxiliaries, self._camera_quads, strict=True
                     )
                 ]
-                self._camera_mailbox = (
-                    self._camera_mailboxes[0] if self._camera_mailboxes else None
-                )
                 if auxiliaries:
                     self._context.set_frame_render_products(list(auxiliary_paths))
 
     def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
         """Frame-owner copies before result retirement; PiP owns its independent copy."""
-        shared = {}
         for mailbox in self._camera_mailboxes:
             mailbox.on_outputs(user_data, renderer, outputs)
-            image = mailbox.snapshot()
-            if mailbox.error() is not None or (image is not None and image.gpu is None):
-                shared[mailbox.product_path] = image
-
-    def camera_image_snapshot(self, index: int = 0) -> CameraImage | None:
-        """Return the latest camera image on the render thread.
-
-        CPU bytes are immutable. A GPU map is valid only within the current
-        bound-frame observation, before submit/cancel; metadata may outlive it.
-        It must not escape to an asynchronous caller.
-        """
-        if not self._camera_mailboxes:
-            return None
-        return self._camera_mailboxes[index].snapshot()
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -951,7 +932,6 @@ class OvxrExternalPresentOwner:
             return
         self._camera_quads.clear()
         self._camera_mailboxes.clear()
-        self._camera_mailbox = None
         with self._teardown_state_lock:
             self._ovxr_teardown_complete.set()
         if self._cloudxr_launcher is not None:

@@ -565,7 +565,7 @@ export default function CloudXR3DUI({
         resetPanelRelativeToHead(state.camera, false);
         needsInitialPlacement.current = false;
       }
-    } else if (isXRMode && trackHeadset) {
+    } else if (trackHeadset) {
       // Continuous version of the same reset: every frame instead of once, using whatever
       // headOffsetRef currently holds (the config default, or wherever the operator is currently
       // dragging to - see handleApply, which updates it every frame too, not just on release),
