@@ -4,7 +4,7 @@
 """Application-neutral ownership of an OVXR session.
 
 The application keeps ownership of simulation publication and lends one exact
-renderer/Stage/ordinal-ledger tuple through :class:`OvxrSessionHost`.  This
+renderer/Stage/ordinal-ledger tuple through :class:`OvxrApplicationInterface`.  This
 module owns the OVXR context, its sole render thread, CloudXR, frame
 cancellation, recovery, and ordered teardown.  It intentionally has no
 dependency on Isaac Lab or on any simulation type.
@@ -28,8 +28,8 @@ _WORKER_SHUTDOWN_GRACE_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
 
 
-class OvxrSessionHost(Protocol):
-    """Simulation-host operations needed by the OVXR session."""
+class OvxrApplicationInterface(Protocol):
+    """Application operations required by the OVXR session."""
 
     def offer_render_owner_transfer(self) -> object: ...
 
@@ -151,7 +151,7 @@ class OvxrSession:
 
     def __init__(
         self,
-        host: OvxrSessionHost,
+        host: OvxrApplicationInterface,
         config: OvxrSessionConfig,
         *,
         required_openxr_extensions: Iterable[str] = (),

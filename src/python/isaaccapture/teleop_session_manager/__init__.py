@@ -45,7 +45,7 @@ from .teleop_state_manager_types import (
 from .ovxr_session import (
     OvxrSessionBinding,
     OvxrSessionConfig,
-    OvxrSessionHost,
+    OvxrApplicationInterface,
     OvxrSession,
     StageOrdinalLedger,
 )
@@ -83,7 +83,7 @@ __all__ = [
     "teleop_state_manager_output_spec",
     "OvxrSessionBinding",
     "OvxrSessionConfig",
-    "OvxrSessionHost",
+    "OvxrApplicationInterface",
     "OvxrSession",
     "StageOrdinalLedger",
 ]
