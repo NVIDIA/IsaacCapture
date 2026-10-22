@@ -211,7 +211,7 @@ class OvxrSession:
 
         ``timeout_s`` must be finite, positive and within ``threading.TIMEOUT_MAX``.
         It bounds host attachment readiness, not the subsequent peer-gated XR wait.
-        Expiry requests cancellation; an attachment already in progress must finish
+        Expiry and interruption request cancellation; an active attachment must finish
         before the owner thread can retire its borrowed resources.
         """
         self._require_open()
@@ -292,6 +292,8 @@ class OvxrSession:
                             ):
                                 self._worker_condition.wait(0.01)
             except BaseException as exc:
+                # Thread failures cannot reach the caller automatically. Preserve
+                # interrupts too, for caller-side re-raising and cleanup.
                 self._record_worker_failure(exc)
             finally:
                 if self._worker_ready:
@@ -321,30 +323,35 @@ class OvxrSession:
                 )
             raise
         with self._worker_condition:
-            bootstrap_ready = self._worker_condition.wait_for(
-                lambda: (
-                    self._worker_bootstrap_ready
-                    or self._worker_error is not None
-                    or self._shutdown_requested.is_set()
-                ),
-                timeout_s,
-            )
-            if not bootstrap_ready:
-                self._request_worker_shutdown()
-                raise TimeoutError("OVXR session worker bootstrap did not become ready")
-            self._raise_worker_error()
-            self._worker_condition.wait_for(
-                lambda: (
-                    self._worker_ready
-                    or self._worker_closing
-                    or self._worker_error is not None
-                    or self._shutdown_requested.is_set()
+            try:
+                bootstrap_ready = self._worker_condition.wait_for(
+                    lambda: (
+                        self._worker_bootstrap_ready
+                        or self._worker_error is not None
+                        or self._shutdown_requested.is_set()
+                    ),
+                    timeout_s,
                 )
-            )
-            self._raise_worker_error()
-            if not self._worker_ready:
-                return False
-            return True
+                if not bootstrap_ready:
+                    raise TimeoutError(
+                        "OVXR session worker bootstrap did not become ready"
+                    )
+                self._raise_worker_error()
+                self._worker_condition.wait_for(
+                    lambda: (
+                        self._worker_ready
+                        or self._worker_closing
+                        or self._worker_error is not None
+                        or self._shutdown_requested.is_set()
+                    )
+                )
+                self._raise_worker_error()
+                if not self._worker_ready:
+                    return False
+                return True
+            except BaseException:
+                self._request_worker_shutdown()
+                raise
 
     def request_render(
         self, publication_id: Hashable, *, force: bool = False
