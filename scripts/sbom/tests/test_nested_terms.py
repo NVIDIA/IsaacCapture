@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Terms a component states for one part of itself ship only where that part did."""
+"""Scope nested license terms to the files contributed to the wheel."""
 
 from __future__ import annotations
 
@@ -61,7 +61,6 @@ def _kept(workspace, built=None) -> dict[str, dict | None]:
         for item in component["evidence"]
         if item["kind"] == "nested"
     }
-    # What was dropped is absent; name it so a test can say so.
     for root in sorted(_deps(workspace).glob("*-src")):
         for item in licensing.discover_in_tree(root.name, root, root.name):
             if item.kind == "nested":
@@ -171,7 +170,6 @@ def test_without_a_record_per_object_include_directories_stand_in(
 
     assert kept["beta-src/include/COPYING"]["how"] == "include-dir"
     assert kept["beta-src/include/COPYING"]["path"] == "beta-src/include"
-    # Beneath the include directory too: any header under it may have been read.
     assert kept["beta-src/include/beta/fmt/LICENSE"]["how"] == "include-dir"
     assert kept["beta-src/docs/LICENSE"] is None
 
@@ -372,7 +370,6 @@ def test_a_build_tree_file_keeps_its_place_and_names_only_its_own_sources(
     ]
     assert shown("beta", deps / "beta-build/gen/other.h") == ["beta-src/gen/other.h"]
     assert shown("beta", deps / "beta-build/gen/blank.h") == ["beta-src/gen/blank.h"]
-    # A source-tree file is itself, whatever else holds its bytes.
     assert shown("beta", beta / "a/dup.h") == ["beta-src/a/dup.h"]
     assert shown("linked", deps / "linked-build/gen/config.h") == [
         "linked-src/gen/config.h"

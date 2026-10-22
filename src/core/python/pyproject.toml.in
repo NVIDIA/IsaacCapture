@@ -9,9 +9,7 @@
 # See: numpy.org/devdocs/dev/depending_on_numpy.html
 
 [build-system]
-# setuptools>=77 for PEP 639: the SPDX `license` string and `license-files`
-# below are what put LICENSE.md and LICENSES/ under .dist-info/licenses/ and
-# name them in METADATA. The SBOM collector appends third-party texts there.
+# setuptools>=77 implements PEP 639 license metadata and file placement.
 requires = ["setuptools>=77", "wheel", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 

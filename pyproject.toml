@@ -15,9 +15,8 @@ description = "Isaac Teleop"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-# The license texts every isaaccapture wheel ships; src/core/python/CMakeLists.txt
-# reads this list for the setuptools wheel, so name a text here and nowhere else.
-# Not a glob over LICENSES/: that pool also licenses components no wheel carries.
+# Shared with the setuptools wheel via src/core/python/CMakeLists.txt.
+# Avoid a LICENSES/ glob: the pool includes terms for components no wheel carries.
 license-files = [
     "LICENSE.md",
     "LICENSES/Apache-2.0.txt",
@@ -117,10 +116,8 @@ isaacteleop = { path = "src/compat" }
 [tool.scikit-build]
 # EgoPost is hosted here but is not part of the Isaac Capture distribution.
 sdist.exclude = ["src/python/isaaccapture_egopost/**", "LICENSES/LicenseRef-OpenMDW-1.1.txt"]
-# Floor matches CMakeLists' cmake_minimum_required (3.27, for cmake_file_api).
-# Ubuntu 22.04's apt CMake is 3.22 and no longer satisfies it, so scikit-build-core
-# fetches CMake from PyPI there; the <4 cap keeps that fetch on the 3.x line rather
-# than silently jumping to 4.x.
+# SBOM file-API queries require CMake 3.27. scikit-build-core fetches a newer
+# CMake when the system copy is too old; keep that fetch on the 3.x line.
 cmake.version = ">=3.27,<4"
 cmake.build-type = "Release"
 

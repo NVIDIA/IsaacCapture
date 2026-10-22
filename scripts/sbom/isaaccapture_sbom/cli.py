@@ -22,10 +22,9 @@ from . import validate as validate_module
 
 
 def _repo_root(value: str | None) -> Path:
-    """The checkout to inventory: given, else the one the caller is standing in.
+    """Resolve the requested checkout, defaulting to the caller's working tree.
 
-    Not derived from this file's location -- the collector is installed into an
-    environment of its own, so its own path says nothing about the checkout.
+    The installed collector's location is unrelated to the source checkout.
     """
     if value:
         return Path(value).resolve()
@@ -73,8 +72,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
         manifests.append(manifest)
         print(f"packaged evidence into {wheel.name}")
 
-    # The merge a release uses: the set is stamped after its last wheel, and one
-    # filename cannot stand for two wheels.
     merged = build_module.merge_records(
         [item for manifest in manifests for item in manifest["wheels"]]
     )
@@ -216,17 +213,10 @@ def main(argv: list[str] | None = None) -> int:
         licensing.ExpressionReadError,
         discovery.ArchiveError,
         discovery.SupplierError,
-        # Raised both for a build tree with no file API reply and for a repo
-        # root git cannot answer for; its message is the instruction to the
-        # operator, and a traceback buries it.
         discovery.FileApiError,
         wheelfile.WheelError,
         validate_module.ManifestError,
-        # Malformed input reaches these through a document, a manifest or a
-        # wheel's own metadata: a corrupt JSON body, a requirement that will not
-        # parse, a `--wheel` that is not a zip, a manifest missing a key, a file
-        # that is not there. Each has something worth printing; a traceback
-        # buries it and exits 1 where the caller expects 2.
+        # Report malformed inputs as CLI errors (exit 2), without a traceback.
         ValueError,
         OSError,
         KeyError,

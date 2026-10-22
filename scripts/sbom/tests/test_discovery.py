@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""What the build left behind is the only dependency declaration there is."""
+"""Build provenance discovery tests."""
 
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ from isaaccapture_sbom import discovery
 def test_source_trees_are_found_without_being_listed(workspace):
     components = discovery.discover_source_trees(workspace.build / "_deps")
 
-    # license-list-data is the SPDX reference data deps/third_party fetches. It is
-    # fetched the same way as everything else, so it is discovered the same way.
     assert set(components) == {
         "alpha",
         "beta",
@@ -57,11 +55,7 @@ SDL_HASH = "SHA256=" + "5f" * 32
 def test_an_archive_fetched_inside_a_checkout_is_not_that_checkout(
     workspace, monkeypatch, hook
 ):
-    """git answers for the repository enclosing `build/`; the declaration does not.
-
-    A hook runs with GIT_DIR exported, which makes every directory look like
-    the root of that repository.
-    """
+    """GIT_DIR can override -C, even for an archive nested under the project checkout."""
     deps = workspace.build / "_deps"
     synth.write(deps / "sdl2-src/LICENSE.txt", synth.spdx_text("Zlib"))
     synth.declare(deps, "sdl2", urls=(SDL_RELEASE,), digest=SDL_HASH)
@@ -511,8 +505,6 @@ def test_a_toolkit_licence_beside_a_library_is_not_a_sidecar(tmp_path):
 
 
 def test_a_build_tree_without_a_file_api_reply_says_so(workspace):
-    """The query lives in CMakeLists, so a missing reply means the tree was
-    configured by a CMake too old to honour it — say that, don't guess."""
     import shutil
 
     shutil.rmtree(workspace.build / ".cmake")
@@ -522,8 +514,7 @@ def test_a_build_tree_without_a_file_api_reply_says_so(workspace):
 
 
 def test_a_stale_codemodel_beside_the_current_one_is_not_read(workspace):
-    """Reply filenames are unspecified, so the index is the only thing that says
-    which codemodel belongs to this configure. A leftover one sorts later here."""
+    """The stale codemodel sorts later; only the index selects the current one."""
     reply = workspace.build / ".cmake" / "api" / "v1" / "reply"
     stale = json.loads((reply / "codemodel-v2-fixture.json").read_text())
     stale["configurations"] = [{"name": synth.CONFIG, "targets": []}]
@@ -535,15 +526,11 @@ def test_a_stale_codemodel_beside_the_current_one_is_not_read(workspace):
 
 
 def test_a_configuration_the_codemodel_does_not_describe_is_refused(workspace):
-    """The cache names the configuration; a reply that does not describe it is a
-    reply for another build, and attributing from it would credit the wrong one."""
     with pytest.raises(discovery.FileApiError, match="Debug"):
         discovery.BuildGraph(workspace.build, "Debug")
 
 
 def test_the_graph_is_read_from_the_codemodel_not_from_generator_output(workspace):
-    """link.txt is a Makefile-generator artifact; Ninja writes none. Reading the
-    file API is what makes the collector work under either."""
     assert not list(workspace.build.rglob("link.txt"))
     assert not (workspace.build / "compile_commands.json").exists()
 
@@ -554,10 +541,7 @@ def test_the_graph_is_read_from_the_codemodel_not_from_generator_output(workspac
 
 
 def test_third_party_checked_in_here_is_still_third_party(workspace):
-    """Not everything third-party arrives through FetchContent. A file checked
-    into the repository that someone else wrote says so in its REUSE info, and
-    that is what separates it from the project's own code -- not the directory
-    it sits in."""
+    """Copyright metadata, not directory placement, identifies vendored code."""
     from isaaccapture_sbom import evidence as evidence_module
 
     space = evidence_module.discover(workspace.root, workspace.build)
@@ -567,7 +551,6 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
         if component.kind == "vendored-source"
     }
 
-    # Named for what it is, not as though the holder were a product.
     assert [c.name for c in vendored.values()] == [
         "Vendored source (Upstream Widgets Ltd)"
     ]
@@ -576,12 +559,9 @@ def test_third_party_checked_in_here_is_still_third_party(workspace):
     ]
     component = next(iter(vendored.values()))
     assert component.license_concluded == "BSL-1.0"
-    # The text for the identifier the file declares comes from the SPDX list this
-    # build pinned -- never from this repository's own REUSE pool, whose copies
-    # license this project and carry its notices.
+    # Use upstream reference texts, not the repository's own license pool.
     assert [item.path for item in component.evidence] == ["BSL-1.0.txt"]
     assert all(item.origin == "spdx-reference" for item in component.evidence)
-    # The notice the component states about itself is recorded, not dropped.
     assert "Upstream Widgets Ltd" in component.copyright_text
 
 
@@ -600,11 +580,7 @@ def test_a_vendored_header_is_credited_to_the_artifact_that_includes_it(workspac
 def test_the_codemodel_reader_works_on_a_codemodel_cmake_wrote(
     live_build_dir, checkout
 ):
-    """Reads this repository's own build tree, not a synthesized one.
-
-    Deliberately makes no claim about which dependencies are present -- only
-    about the shape of what the reader gets back, so a bump cannot break it.
-    """
+    """Check real codemodel structure without depending on the current dependency set."""
     graph = discovery.BuildGraph(live_build_dir)
 
     assert graph.artifacts, "a configured build declares at least one artifact"
@@ -618,19 +594,13 @@ def test_the_codemodel_reader_works_on_a_codemodel_cmake_wrote(
         for how in graph.contributions(artifact).values():
             assert how <= {"compiled-source", "header-include"}
 
-    # Relative link-line paths resolve against the directory the link ran in;
-    # resolved against any other, an archive this build made matches no target.
+    # Relative link paths must resolve to this build's indexed outputs.
     named = {path for node in graph._nodes.values() for path in node.linked}
     assert named & set(graph.artifacts), "this project links static libraries it builds"
 
 
 def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data):
-    """A developer's other build directory holds staged copies of the repo.
-
-    Walking those as source makes a file's origin ambiguous, which surfaces as
-    an unexplained wheel member rather than a wrong one. A configured tree says
-    what it is with a CMakeCache.txt.
-    """
+    """A second configured build contains staged source copies that must not enter the source index."""
     from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
@@ -650,12 +620,7 @@ def test_a_second_build_tree_is_not_mistaken_for_source(workspace, license_data)
 
 
 def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
-    """Archives here are downloaded at configure time, not checked in.
-
-    The fetch script writes the URL beside the tarball, so the origin is read
-    rather than guessed; without that file the document must say it does not
-    know.
-    """
+    """The fetch script preserves archive origin in a .source sidecar."""
     from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
@@ -673,15 +638,11 @@ def test_a_fetched_archive_records_where_it_came_from(workspace, license_data):
     after = known.components[synth.SDK_ARCHIVE]
 
     assert after.download_location.startswith("https://api.ngc.nvidia.com/")
-    # The registrable name, not the endpoint: SPDX supplier is who a recipient
-    # asks for source or terms, and a CDN hostname answers nobody.
     assert after.supplier == "Organization: nvidia"
     assert "fetched from https://" in after.source_info
 
 
 def test_a_build_tree_with_no_configuration_says_so(workspace):
-    """Guessing Release would read a directory that need not exist, and every
-    member it would have explained becomes an unexplained one instead."""
     from isaaccapture_sbom import evidence
 
     cache = workspace.build / "CMakeCache.txt"
@@ -699,7 +660,6 @@ def test_a_build_tree_with_no_configuration_says_so(workspace):
 
 
 def test_the_supplier_is_read_from_the_project_not_written_here(workspace):
-    """A fork or a rename must not leave the document naming the wrong party."""
 
     assert discovery.project_supplier(workspace.root) == "Organization: NVIDIA"
 
@@ -733,13 +693,7 @@ def test_a_project_naming_several_authors_stops_rather_than_choosing(workspace):
 def test_a_relative_build_dir_still_keeps_the_staged_tree_out(
     workspace, license_data, monkeypatch
 ):
-    """`--build-dir` is free-form, and the workflow passes a relative one.
-
-    The staged package tree is what the wheel was built from, so indexing it
-    lets a member explain itself -- the one route around the gate every other
-    member has to pass. The exclusion compared an absolute skip path against
-    relative walked ones and silently matched nothing.
-    """
+    """The workflow passes a relative build directory; staging must still be excluded."""
     from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
@@ -755,13 +709,7 @@ def test_a_relative_build_dir_still_keeps_the_staged_tree_out(
 def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
     workspace, license_data
 ):
-    """vcpkg installs its ports under the build directory.
-
-    Those headers carry their upstream contributors' copyright lines. Read as
-    repository source they become one "vendored" component per person -- seventy
-    of them on a real build -- each then failing the gate for shipping no licence
-    text of its own.
-    """
+    """Installed dependency headers must not become one vendored component per copyright holder."""
     from isaaccapture_sbom import evidence, licensing
 
     licensing.load_corpus(license_data)
@@ -775,13 +723,7 @@ def test_a_dependency_installed_into_the_build_tree_is_not_vendored_source(
 
 
 def test_vendored_material_asserts_no_package_identifier(workspace, license_data):
-    """A copyright holder is not a package.
-
-    Checked-in third-party material is identified by the copyright holder its
-    REUSE info or header names, because that is the only identity it has. Minting
-    `pkg:generic/<holder>` from it named a package that does not exist, and a
-    reader resolving that locator finds nothing or finds something else.
-    """
+    """Copyright ownership does not establish a resolvable package identity."""
     from isaaccapture_sbom import licensing
 
     licensing.load_corpus(license_data)
@@ -798,7 +740,6 @@ def test_vendored_material_asserts_no_package_identifier(workspace, license_data
 
     assert component.kind == "vendored-source"
     assert component.purl == "NOASSERTION"
-    # Who it came from is still stated; that much was observed.
     assert component.supplier == "Organization: Upstream Widgets Ltd"
 
 
@@ -831,7 +772,6 @@ def _notices(components) -> dict[str, set[str]]:
 
 _LICENCE_TAG = "SPDX-" + "License-Identifier: MIT"
 _IGNORED_BAR = "// REUSE-IgnoreStart\n// Copyright 2020 Bar Ltd\n// REUSE-IgnoreEnd\n"
-# Third-party headers, by what REUSE can read of them.
 _HEADERS = {
     "copyright-and-licence": f"// Copyright 2020 Bar Ltd\n// {_LICENCE_TAG}\n",
     "copyright-only": "// Copyright 2020 Bar Ltd\n",
@@ -869,9 +809,7 @@ _DECLARED = {
     "files", [pytest.param(files, id=name) for name, files in _DECLARED.items()]
 )
 def test_a_vendored_files_terms_are_what_reuse_declares(tmp_path, files):
-    """A header tag, a `.license` sidecar and a REUSE.toml annotation are one
-    declaration; each gives the identifier as written, `OR` and all, and the
-    reference text for every licence it names."""
+    """All declaration forms preserve OR and supply every referenced text."""
     for relative, text in files.items():
         synth.write(tmp_path / relative, text)
 
@@ -951,10 +889,6 @@ def test_a_vendored_files_terms_are_what_reuse_declares(tmp_path, files):
 def test_a_file_lending_nothing_is_named_not_covered_by_its_sibling(
     tmp_path, tag, reason
 ):
-    """A holder's licences are pooled for the component; a file whose own REUSE
-    info names a licence with no current SPDX reference text, states an
-    expression that does not parse, or names an id that is neither SPDX-listed
-    nor a LicenseRef- is still recorded, with why."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src/a.h").write_text(
         "// Copyright 2020 Foo Inc\n// SPDX-" + "License-Identifier: MIT\n"
@@ -984,8 +918,7 @@ def test_a_listed_identifier_passes_the_per_file_gate(tmp_path, expression):
 
 
 def test_a_link_without_reuse_info_takes_its_targets(tmp_path):
-    """The REUSE lint skips symlinks and checks only the target, so a link with
-    no info of its own is read the same way; a link's own info still wins."""
+    """A symlink's own REUSE metadata wins; without it, use the target's metadata."""
     synth.write(tmp_path / "src/real/x.h", "// Copyright 2020 Foo Inc\n")
     _link(tmp_path, "src/link/x.h", "../real/x.h")
     synth.write(
@@ -1125,7 +1058,6 @@ def test_a_header_counts_where_reuse_applies_it_beside_an_annotation(
 
 
 def test_declared_notices_naming_the_project_keep_the_file_first_party(tmp_path):
-    """The header's holder does not decide where a sidecar names the project."""
     components = _vendored(
         tmp_path,
         {
@@ -1199,7 +1131,6 @@ def test_license_files_and_the_pool_are_not_candidates(tmp_path):
 
 
 def test_a_build_input_reuse_does_not_cover_is_not_a_candidate(tmp_path):
-    """An include directory's licence text and sidecar are not sources."""
     synth.write(tmp_path / "inc/x.h", "// Copyright 2020 Foo Inc\n")
     synth.write(tmp_path / "inc/x.h.license", f"SPDX-FileCopyrightText: {_FOO}\n")
     synth.write(tmp_path / "inc/LICENSE", "Copyright (c) 2020 Bar Ltd\n")
@@ -1309,8 +1240,6 @@ def test_a_copyright_string_in_a_first_party_body_names_no_holder(tmp_path):
     ],
 )
 def test_without_a_declared_holder_the_head_still_decides(tmp_path, files, expected):
-    """Where REUSE declares no copyright holder, a text file's first copyright
-    line names it, whether or not REUSE read that line."""
     assert _notices(_vendored(tmp_path, files)) == expected
 
 

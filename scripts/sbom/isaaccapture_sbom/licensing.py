@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Find the license texts a component ships, and name what they are.
+"""Identify component license texts against the SPDX corpus.
 
-Nothing here declares a license. Texts are discovered in the component's own
-files and matched against the SPDX reference corpus; a text that matches nothing
-is still packaged and reported as unidentified, never guessed at.
+Preserve unmatched terms verbatim and report them as unidentified.
 """
 
 from __future__ import annotations
@@ -31,10 +29,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from .discovery import Reach
 
 
-# Root-level names that carry a grant, and the ones that carry notices instead.
-# Both are packaged; only the first kind is matched against the corpus.
-# The word has to stand alone: BSD-LICENSE and LICENSE.md are grants, while
-# licenses.md and accessingLicenses.md are indexes that merely mention them.
+# Match standalone grant names: BSD-LICENSE and LICENSE.md, not license indexes.
+# Notices are packaged separately and do not determine the license expression.
 _GRANT_NAMES = re.compile(
     r"(^|[-_.])(LICEN[CS]E|COPYING|UNLICENSE|EULA)([-_.]|$)", re.IGNORECASE
 )
@@ -47,16 +43,11 @@ _WORD = re.compile(r"[^a-z0-9]+")
 _NGRAM = 6
 # A canonical text has to be almost entirely present before it is named.
 _CONTAINMENT_THRESHOLD = 0.90
-# ...and has to account for a real share of the file it was found in. Large
-# agreements (the CUDA EULA, for one) reproduce whole OSS licenses in an
-# appendix; those reach full containment at a few percent coverage, while a
-# genuine match sits well above it -- a Debian copyright file naming several
-# licenses around the one matched is the low end, at a quarter.
+# Coverage rejects an OSS license quoted in a larger agreement's appendix
+# (for example CUDA's EULA) as the agreement's own terms.
 _COVERAGE_THRESHOLD = 0.20
-# A grant whose matches account for less of it than this, its copyright notices
-# aside, is carried as well as named: the rest may be terms no id names -- fmt's
-# MIT carries an exception paragraph. A holder list is not terms, so it does not
-# count against the match. Not a gate on naming.
+# Carry partially explained grants too: unmatched prose may add terms, as
+# in fmt's MIT exception. Exclude copyright notices from this coverage measure.
 _EXPLAINED_THRESHOLD = 0.80
 # Two licenses are one family when either text is nearly inside the other.
 _FAMILY_THRESHOLD = 0.90
@@ -64,9 +55,7 @@ _FAMILY_THRESHOLD = 0.90
 _SPDX_TAG = re.compile(r"SPDX-License-Identifier:\s*(?P<expression>[^\n\r*/#]+)")
 _FILE_COPYRIGHT = re.compile(r"SPDX-FileCopyrightText:\s*(?P<notice>[^\n\r]+)")
 # REUSE-IgnoreEnd
-# Heading, then everything up to the next heading or a blank-line run.
-# The heading has to BE about licensing, not merely start with the word --
-# "# License List Data" is a project title, not a grant.
+# Require a licensing heading; a title such as "License List Data" is not a grant.
 _README_LICENSE_SECTION = re.compile(
     r"^#{1,6}\s*(licen[cs]e|licen[cs]es|licensing|licen[cs]e information|copyright|legal)"
     r"\s*$(?P<body>.*?)(?=^#{1,6}\s|\Z)",
@@ -94,9 +83,8 @@ class LicenseEvidence:
     identified: str | None = None
     matches: tuple[tuple[str, float, float], ...] = ()
     spdx_tag: str | None = None
-    # For "nested" terms: what they cover, as a path in the component -- their
-    # directory, or the one file a REUSE `.license` sidecar annotates -- and,
-    # where a wheel keeps them, the strongest evidence that it reached a member.
+    # Nested terms cover a directory or one sidecar-annotated file. reached_by
+    # records the strongest evidence that this scope contributed to the wheel.
     scope: str | None = None
     reached_by: Reach | None = None
 
@@ -124,15 +112,12 @@ class LicenseEvidence:
         return found
 
 
-# What counts as a text that discharges the packaging obligation. A REUSE pool
-# names no single expression for the component and is still a real text, so it
-# counts. The build gate, the report and the verifier all ask this question;
-# they ask it here.
+# A REUSE pool satisfies text packaging even when no component-wide license
+# can be concluded. Share this predicate across build, report, and verification.
 OBLIGATION_KINDS = frozenset({"grant", "pool"})
 
 
 def satisfies_obligation(kind: str) -> bool:
-    """For callers holding the JSON form, where there is no dataclass to filter."""
     return kind in OBLIGATION_KINDS
 
 
@@ -141,17 +126,14 @@ def obligation_texts(evidence) -> list[LicenseEvidence]:
 
 
 def grant_texts(evidence) -> list[LicenseEvidence]:
-    """The texts a component's own licence is read from."""
     return [item for item in evidence if item.kind == "grant"]
 
 
 def pool_texts(evidence) -> list[LicenseEvidence]:
-    """A REUSE pool's texts: what individual files are under, not the component."""
     return [item for item in evidence if item.kind == "pool"]
 
 
 def pool_names(paths) -> str:
-    """A pool's texts by the licence each is named for, as `MIT, Zlib`."""
     return ", ".join(sorted(Path(path).stem for path in paths))
 
 
@@ -166,12 +148,9 @@ def carried_and_named(evidence) -> list[LicenseEvidence]:
 
 
 def verbatim_terms(evidence) -> str:
-    """The body a LicenseRef carries for a component, from `carried_texts`.
+    """Join carried grants, or all grants if none need carrying.
 
-    One component can state its terms across several files, so this is a join
-    and not a file. The build records its digest and the verifier compares
-    against that, which only works while both sides join the same way -- so they
-    both call this. A component with nothing carried states every grant.
+    Build and verification must use identical joins when binding these terms by hash.
     """
     texts = carried_texts(evidence) or grant_texts(evidence)
     return "\n\n".join(item.text for item in texts)
@@ -181,12 +160,10 @@ _DIGITS = re.compile(r"\d+")
 
 
 def _normalize(text: str) -> list[str]:
-    """Reduce a license to comparable boilerplate.
+    """Normalize years and clause numbers for matching.
 
-    Years and clause numbers are the part that differs between two copies of one
-    license, so digits come out. Copyright lines stay: BSD clause 3 and MIT's
-    notice-retention clause both contain the word, and upstream wrapping differs
-    from SPDX's, so dropping those lines loses real text asymmetrically.
+    Retain copyright lines: BSD and MIT clauses contain that word, and deleting
+    whole lines would remove terms differently depending on upstream wrapping.
     """
     return [
         word for word in _WORD.sub(" ", _DIGITS.sub(" ", text.lower())).split() if word
@@ -204,12 +181,7 @@ def _ngrams(words: list[str]) -> set[str]:
 
 @dataclass(frozen=True)
 class Reference:
-    """One SPDX licence, normalized for comparison and kept verbatim.
-
-    The text is retained because it is the only authoritative copy of a licence
-    this build has: a component whose terms are declared as an identifier has
-    to be packaged with the text that identifier names.
-    """
+    """An SPDX reference with n-grams for matching and verbatim text for packaging."""
 
     name: str
     grams: frozenset[str]
@@ -226,10 +198,8 @@ class CorpusError(Exception):
 
 _CORPUS: tuple[str, dict[str, Reference]] | None = None
 _CORPUS_META: dict[str, object] = {}
-# Every licence and exception id the same list names, deprecated ones included.
 _LISTED: "_Listed | None" = None
-# Parsing and n-gramming the whole SPDX list costs about half a second. Keyed by
-# directory and only ever read within one process, so a re-load is free.
+# Cache parsing and n-gram construction by corpus directory within this process.
 _PARSED: dict[str, tuple[str, dict[str, Reference], "_Listed"]] = {}
 
 
@@ -249,13 +219,10 @@ def corpus_provenance() -> dict[str, object]:
 
 
 def load_corpus(json_dir: Path) -> str:
-    """Load SPDX reference texts from the checkout deps/third_party fetched.
+    """Load the pinned SPDX corpus from its json/ directory.
 
-    `json_dir` is the `json/` directory of spdx/license-list-data: the licence
-    reference texts, every licence and exception id the list names, and the
-    exceptions' texts. Deprecated licence ids are
-    skipped: naming a component with one would be reporting a license SPDX has
-    withdrawn.
+    Retain all identifiers and exception texts for declaration checks; exclude
+    deprecated license IDs from matching candidates.
     """
     global _CORPUS, _LISTED
     details = json_dir / "details"
@@ -341,7 +308,7 @@ def _checkout_commit(source_dir: Path) -> str:
 
 
 def corpus() -> tuple[str, dict[str, Reference]]:
-    """SPDX reference texts as (list version, {id: (name, n-grams)})."""
+    """Return (license-list version, references indexed by identifier)."""
     if _CORPUS is None:
         raise CorpusError(
             "SPDX license list data has not been loaded; it is fetched by the build "
@@ -351,16 +318,10 @@ def corpus() -> tuple[str, dict[str, Reference]]:
 
 
 def identify(text: str) -> list[tuple[str, float, float]]:
-    """Name the licenses a text contains, as (id, containment, coverage).
+    """Return (id, canonical-text containment, input-text coverage) matches.
 
-    Containment says how much of a canonical license is present; coverage says
-    how much of this file that accounts for. Both must clear their threshold, so
-    a license quoted in an appendix is not mistaken for the file's own terms. A
-    file really can carry two licenses -- dual-licensed sources do -- so this
-    returns every match that survives the family resolution below.
-
-    Compare every reference; do not prune by length. Pruning ties correctness to
-    the accept conditions never growing, and fails by not identifying a license.
+    Both thresholds must pass. Keep distinct matches after family resolution;
+    do not prune by length, which can miss matches as acceptance thresholds change.
     """
     candidate = _ngrams(_normalize(text))
     if not candidate:
@@ -393,15 +354,10 @@ def _dominated(
     scored: dict[str, tuple[float, float, float]],
     entries: dict[str, Reference],
 ) -> set[str]:
-    """Within a family of near-identical licenses, keep only the best fit.
+    """Keep the highest Jaccard match within near-identical license families.
 
-    Whole families differ by one clause: BSD-2 inside BSD-3, Apache-2.0 inside
-    ECL-2.0, CC-BY-4.0 inside CC-BY-NC-4.0. Every one of those clears the
-    containment threshold against a file that is really the other, so the
-    discriminator has to be which reference explains the whole file *and nothing
-    more* -- the highest Jaccard similarity. Preferring the longer text instead
-    would report Apache-2.0 code as ECL-2.0, and CC-BY-4.0 as its
-    non-commercial variant.
+    Length alone would favor ECL-2.0 over Apache-2.0, or CC-BY-NC over CC-BY,
+    even when the input contains no additional terms.
     """
     dropped: set[str] = set()
     for left in scored:
@@ -422,11 +378,9 @@ def _family(entries: dict[str, Reference], left: str, right: str) -> bool:
 
 
 def alternatives(matches) -> list[tuple[str, ...]]:
-    """Matched ids, grouped where one text cannot tell them apart.
+    """Group tied matches that their texts cannot distinguish.
 
-    Family members that tie survive `_dominated` together: GPL-3.0-only and
-    GPL-3.0-or-later share one reference text. `_name_for` says which id, if
-    any, such a group names.
+    For example, GPL-3.0-only and GPL-3.0-or-later share a reference text.
     """
     entries = corpus()[1]
     groups: list[list[str]] = []
@@ -447,12 +401,10 @@ def alternatives(matches) -> list[tuple[str, ...]]:
 
 
 def _name_for(group: tuple[str, ...]) -> str | None:
-    """The id a text matching this group of `alternatives` names, if any.
+    """Select an unsuffixed base ID when every alternative extends it.
 
-    Where every other id extends one by a suffix -- MPL-2.0 and its
-    no-copyleft-exception variant, OFL-1.1 and its -RFN and -no-RFN -- that one
-    is SPDX's id for the unmodified text, and a notice selects the variant.
-    -only and -or-later have no such id: naming either asserts a choice.
+    MPL/OFL variants need a selecting notice; GPL -only/-or-later has no base
+    ID, so choosing either from the text alone would assert an unsupported grant.
     """
     plain = [
         base
@@ -463,15 +415,14 @@ def _name_for(group: tuple[str, ...]) -> str | None:
 
 
 def _either(names) -> str:
-    """One text matching references it cannot choose between, for a reader."""
     return "matches the reference text of " + " or ".join(names)
 
 
 def matched_prose(matches, name=lambda match: match[0], join=" AND ", lead=""):
-    """What a text matched, for a reader: a tie is one text matching either
-    reference, never both licences at once. `name` renders one match, and
-    `lead` precedes the matches named outright, joined by `join`; a prose
-    clause is set off with "; " so no " AND " ever reads as joining it."""
+    """Render matches with tied alternatives as prose, not a license conjunction.
+
+    Separate alternative clauses with semicolons so AND cannot join them.
+    """
     if not matches:
         return None
     by_id = {match[0]: match for match in matches}
@@ -502,17 +453,13 @@ SPDX_REFERENCE = "spdx-reference"
 def evidence_for(
     component: str, origin: str, display: str, text: str, kind: str
 ) -> LicenseEvidence:
-    # A reference text is not matched: scoring it against the corpus it came
-    # from returns a perfect score, which reads as a measurement of the
-    # component's own file and is a measurement of nothing. Nested terms are
-    # matched to tell their holders from the licence's steward, never to
-    # conclude the component's licence.
+    # Do not score reference texts against their own corpus. Nested matches
+    # identify license-author notices; they do not conclude the component license.
     matchable = kind in ("grant", "nested") and origin != SPDX_REFERENCE
     tag = _SPDX_TAG.search(text[:4096]) if matchable else None
     matches = tuple(identify(text)) if matchable else ()
     identified = matched_prose(matches)
     if origin == SPDX_REFERENCE:
-        # Named by the identifier it was fetched for, with no score behind it.
         identified = Path(display).stem
     return LicenseEvidence(
         component=component,
@@ -529,13 +476,11 @@ def evidence_for(
 
 
 def files_in(directory: Path) -> Callable[[str], bool]:
-    """Whether `directory` holds a file of a given name: `is_sidecar`'s `beside`."""
     return lambda name: (directory / name).is_file()
 
 
 def is_sidecar(name: str, beside: Callable[[str], bool]) -> bool:
-    """A REUSE `.license` sidecar: the annotation of a file `beside` finds next
-    to it. Named so with nothing to annotate, it is a licence file."""
+    """A .license file is a sidecar only when its annotated file exists beside it."""
     annotated = name.removesuffix(".license")
     return annotated not in {name, ""} and beside(annotated)
 
@@ -553,7 +498,7 @@ def classify(name: str, beside: Callable[[str], bool]) -> str | None:
 def discover_in_tree(
     component: str, root: Path, display_prefix: str
 ) -> list[LicenseEvidence]:
-    """Every license and notice file a source tree carries, at its root or in LICENSES/."""
+    """Collect root grants/notices, reference pools, and scoped nested terms."""
     found: list[LicenseEvidence] = []
     candidates: list[tuple[Path, str]] = []
 
@@ -565,11 +510,8 @@ def discover_in_tree(
                 (item, "pool") for item in sorted(entry.rglob("*")) if item.is_file()
             )
 
-    # A subdirectory can carry its own terms and its own holder -- a vendored
-    # asset set inside a larger project. Collected as "nested" so it neither
-    # discharges the component's packaging obligation nor changes its licence,
-    # and kept only where what it covers reached the wheel; see
-    # `build._with_reached_nested`.
+    # Nested terms apply only to reached files (build._with_reached_nested);
+    # they neither satisfy the root grant requirement nor set the component license.
     for path in sorted(root.rglob("*")) if root.is_dir() else []:
         if (
             path.is_file()
@@ -598,7 +540,6 @@ def discover_in_tree(
             scope = f"{display_prefix}/{covered.relative_to(root).as_posix()}"
             item = replace(item, scope=scope)
         found.append(item)
-    # "nested" never satisfies the grant test below; that is the point.
 
     if not grant_texts(found):
         found.extend(_readme_fallback(component, root, display_prefix))
@@ -622,13 +563,8 @@ def _readme_fallback(
         section = _README_LICENSE_SECTION.search(text)
         if section is None or not section.group("body").strip():
             continue
-        # The section, not the whole README. Hashing the file would publish its
-        # build instructions as the terms that shipped, and would bury a real
-        # licence quoted there under enough prose to fall below the coverage
-        # threshold and degrade to a LicenseRef.
-        # The fragment is load-bearing: the digest below is of the section, not
-        # of the file, and a path naming the whole file beside it is a pair a
-        # verifier cannot reproduce.
+        # Hash and package only the licensing section. The path fragment makes its
+        # digest reproducible and keeps unrelated README prose out of the terms.
         display = f"{display_prefix}/{entry.name}#license-section"
         return [
             evidence_for(
@@ -653,12 +589,10 @@ def license_ref(component_key: str) -> str:
 
 
 def expressible(license_id: str) -> bool:
-    """Whether the SPDX grammar we ship can validate this identifier.
+    """Check identifiers against the pinned expression grammar.
 
-    The SPDX license list the build fetches moves ahead of the list bundled in
-    `license-expression`, so the corpus can name an ID the grammar cannot parse.
-    Matching against the newer corpus is right; naming an ID that a consumer's
-    validator -- which ships the older list -- will reject is not.
+    The fetched SPDX list may be newer than license-expression's bundled list;
+    newer IDs must travel as LicenseRefs until the grammar supports them.
     """
     if license_id.startswith("LicenseRef-"):
         return True
@@ -669,7 +603,6 @@ def expressible(license_id: str) -> bool:
 
 
 def grammar_names(identifiers) -> bool:
-    """Whether the SPDX grammar this document ships with can name every id."""
     return all(expressible(item) or is_exception(item) for item in identifiers)
 
 
@@ -687,7 +620,6 @@ def _explained(text: str, groups) -> float:
 
 
 def _without_notices(text: str) -> str:
-    """The text without the lines `read_notices` takes its notices from."""
     notices = [_normalize(notice) for notice in read_notices(text)]
     return "\n".join(
         line
@@ -715,7 +647,7 @@ def why_unnamed(evidence) -> str:
         for group in sorted({group for grant in carried for group in grant.tied})
     ]
     reasons += [
-        # Rounded down: "only 75%" beside a 75% threshold reads as a contradiction.
+        # Round down so a below-threshold result cannot display as meeting the threshold.
         "what matched in the SPDX reference corpus accounts for only "
         f"{math.floor(grant.explained * 100)}% of {grant.text.path}, its "
         "copyright notices aside"
@@ -737,11 +669,8 @@ def why_unnamed(evidence) -> str:
 
 
 def why_unresolved(evidence) -> str:
-    """Why a component whose texts shipped concludes NOASSERTION.
-
-    Without a grant, its only texts are a REUSE pool. With one, its grants
-    yielded no id: the grammar refused to combine them, or an SPDX reference
-    text carries no identified id.
+    """Explain NOASSERTION: either a reference pool without a grant, or
+    grants whose identifiers could not form an expression.
     """
     if grants := grant_texts(evidence):
         paths = ", ".join(sorted(item.path for item in grants))
@@ -760,7 +689,6 @@ def _listed() -> _Listed:
 
 
 def listed_exception(identifier: str) -> bool:
-    """Whether the pinned list names this id as an exception."""
     return identifier in _listed().exceptions
 
 
@@ -783,12 +711,10 @@ def exception_evidence(component_key: str, expression: str) -> list[LicenseEvide
 
 
 def why_unlicensed(expressions) -> str | None:
-    """Why one vendored file's REUSE expressions fail the per-file gate, if they do.
+    """Explain a vendored file's REUSE declaration failure, if any.
 
-    `expressions` are REUSE's `SpdxExpression`s, so REUSE decides what parses.
-    Every licence named needs a reference text: a LicenseRef beside MIT would
-    otherwise be defined in the document by MIT's text, and an obligation with
-    none ships nothing. An exception needs only to be listed as an exception.
+    Every license operand needs its own reference text: MIT cannot supply the
+    terms for an adjacent LicenseRef. Exceptions need a listed exception ID.
     """
     entries = corpus()[1]
     licences: set[str] = set()
@@ -850,9 +776,7 @@ def why_unlicensed(expressions) -> str | None:
 
 @dataclass(frozen=True)
 class _Grant:
-    """One grant as read: the ids it names, split by whether the grammar can
-    express them, the tied groups it names none for, and how much of it its
-    matches account for, a tie counted once."""
+    """A grant's supported/newer IDs, tied alternatives, and text coverage."""
 
     text: LicenseEvidence
     named: tuple[str, ...] = ()
@@ -884,8 +808,7 @@ class _Reading:
 
 def _read_grant(item: LicenseEvidence) -> _Grant:
     if item.origin == SPDX_REFERENCE:
-        # Named by the identifier it was fetched for; matching it against the
-        # corpus it came from would be circular.
+        # The declared ID identifies this text; matching it to its own corpus is circular.
         ids, tied, explained = [item.identified] if item.identified else [], (), 1.0
     else:
         groups = alternatives(item.matches)
@@ -903,11 +826,11 @@ def _read_grant(item: LicenseEvidence) -> _Grant:
 
 
 def _reading(evidence) -> _Reading:
-    """Every grant names the ids it can and is carried verbatim where its ids
-    do not say everything: it matches nothing, ties without a plain id, is
-    mostly unmatched, or needs an id the grammar cannot express. A REUSE
-    declaration keeps its structure, an OR or a WITH, so one such id carries
-    every text it declares."""
+    """Separate named grants from terms that must travel verbatim.
+
+    If a REUSE declaration contains an unsupported ID, carry all of its texts
+    together to preserve OR/WITH semantics.
+    """
     read = [_read_grant(item) for item in grant_texts(evidence)]
     whole = any(grant.declared and grant.newer for grant in read)
     carried = [
@@ -933,13 +856,10 @@ def _reading(evidence) -> _Reading:
 def declared_terms(
     component_key: str, expressions
 ) -> tuple[str, list[LicenseEvidence]]:
-    """A vendored component's terms as its REUSE info declares them, and the
-    reference texts that convey them.
+    """Preserve REUSE expressions and supply their reference texts.
 
-    The expressions keep their structure -- rebuilding them from the texts
-    turns `A OR B` into `A AND B`. Where `_reading` carries a text, the whole
-    declaration travels as the component's LicenseRef, its exceptions' texts
-    with it.
+    Reconstructing from texts would turn OR into AND. Unsupported declarations
+    travel whole as a LicenseRef, including exception texts.
     """
     declared = combine(sorted(expressions))
     evidence = canonical_evidence(component_key, set(expressions))
@@ -952,28 +872,16 @@ def declared_terms(
 
 
 def expression(evidence: list[LicenseEvidence], component_key: str) -> tuple[str, str]:
-    """Concluded and declared expressions for one component.
-
-    Concluded names what was matched in a text that ships with the artifact. A
-    grant `_reading` carries is not dropped and not guessed at: it adds the
-    component's LicenseRef, whose text travels in the document, which says
-    "these are the terms we shipped" without claiming to know which license
-    they are.
-    """
+    """Conclude matched IDs plus a LicenseRef for any unresolved grant text."""
     reading = _reading(evidence)
     identified = reading.named + (
         [license_ref(component_key)] if reading.carried else []
     )
     concluded = _combine(identified) if identified else NOASSERTION
 
-    # Declared is the same expression, because the text it was read from is the
-    # component's own LICENSE -- shipping that file is how authors declare a
-    # licence, so one artifact answers both questions.
-    #
-    # Never from a REUSE tag on a grant file. OpenXR's COPYING.adoc is prose
-    # about which licences the project uses, tagged CC-BY-4.0 for the prose, and
-    # promoting that declared a linked Apache-2.0 SDK under a documentation
-    # licence.
+    # Declared and concluded both derive from the component's grant text.
+    # Do not use its REUSE tag: OpenXR's COPYING.adoc is tagged CC-BY-4.0
+    # for the documentation, not for the SDK it describes.
     return concluded, concluded
 
 
@@ -990,13 +898,7 @@ def _combine(expressions: list[str]) -> str:
 
 
 def normalized_expression(expression: str) -> str:
-    """Put an expression through the SPDX grammar before it reaches a document.
-
-    Upstream tags are written by hand and arrive with lowercase operators and
-    odd spacing; emitting those unchanged would put an unparseable expression in
-    an SBOM. Anything the grammar rejects is reported as NOASSERTION rather than
-    passed through.
-    """
+    """Normalize an SPDX expression, returning NOASSERTION when parsing fails."""
     try:
         return str(_spdx_licensing().parse(expression, validate=False))
     except (ExpressionError, ValueError, TypeError):
@@ -1013,13 +915,9 @@ _NOTICE_YEARS = re.compile(r"\b(\d{4})(?:\s*[-\u2013]\s*(\d{4}))?\b")
 
 
 def fold_notices(notices) -> list[str]:
-    """Drop a notice another already covers.
+    """Remove notices subsumed by another notice for the same holder.
 
-    Files written in different years state one holder over different year ranges,
-    and listing every one names that holder several times over. Merging the
-    ranges instead would claim a year no file claims, so only a notice whose
-    holder matches another's and whose years that other already contains is
-    dropped -- it says nothing the one kept does not.
+    Do not merge disjoint year ranges: that would claim years no input states.
     """
     parsed = []
     for notice in notices:
@@ -1040,20 +938,17 @@ def fold_notices(notices) -> list[str]:
     )
 
 
-# A notice is `Copyright` plus a marker that prose does not carry: a (c), a ©,
-# or a year. It need not start the line and the lead-in is not bounded: a NOTICE
-# writes `Box collision code (engine_collision_box.c) is Copyright 2016 ...`.
+# Require a copyright marker or year, allowing an unbounded prose lead-in
+# such as "Box collision code (...) is Copyright 2016 ...".
 _PLAIN_COPYRIGHT = re.compile(
     r"^.*?(?P<notice>Copyright\b\s*(?:\(c\)|©|\d{4})[^\n\r]*)$",
     re.MULTILINE | re.IGNORECASE,
 )
-# A clause broken by the end of a line, left dangling by taking the line alone.
-# Words a notice can end on only because the line broke mid-clause.
+# Connectives that indicate a notice was cut off mid-clause.
 _DANGLING_WORDS = frozenset(
     {"and", "or", "is", "was", "are", "were", "by", "under", "the", "a"}
 )
-# Years, year ranges and the markers around them: what is left is the holder.
-# A sentence, as against a name: the Debian `Copyright:` field holds both.
+# Distinguish explanatory prose from holder names in Debian Copyright fields.
 _PROSE = re.compile(
     r"\b(derived|contributed|reserved|portions?|redistribut\w+|written|"
     r"modified|see|provided|permission|granted|warrant\w*|software|hereby|"
@@ -1081,22 +976,17 @@ def normalized_tag(text: str) -> str | None:
     # A LicenseRef here has no text to define it with, as for any other file.
     if expression == NOASSERTION or license_refs(expression):
         return None
-    # And the grammar has to know every id in it. `normalized_expression` parses
-    # without validating, so a tag naming nothing real reached the document and
-    # failed its own conformance check -- the same reason a conclusion is tested.
+    # Parsing without validation accepts unknown IDs; validate before emitting.
     if not all(map(expressible, _spdx_licensing().license_keys(expression))):
         return None
     return expression
 
 
 def notice_is_the_licence_authors(notice: str, identified: list[str]) -> bool:
-    """Whether this notice belongs to the licence rather than to the component.
+    """Identify notices belonging to the license author, not the component.
 
-    A COPYING that *is* the reference text carries the steward's own line -- the
-    FSF's in every GPL, Sam Hocevar's in WTFPL -- so a component shipping one
-    verbatim would be credited to whoever wrote the licence. The corpus already
-    holds those texts, so the question is answered by looking rather than by
-    keeping a list of stewards.
+    Compare against the corpus rather than maintaining a steward list
+    (for example FSF in GPL, or Sam Hocevar in WTFPL).
     """
     entries = corpus()[1]
     collapsed = _steward_form(notice)
@@ -1115,13 +1005,7 @@ def _steward_form(text: str) -> str:
 
 
 def read_notices(text: str) -> list[str]:
-    """Every concrete copyright notice a licence text states.
-
-    All of them: glfw names two holders and miniz names two, and under MIT, BSD
-    and Zlib the notice is the obligation, so keeping the first is a notice file
-    that does not discharge it. A reference text carries the template instead --
-    `Copyright [yyyy] [name of copyright owner]` -- which names nobody.
-    """
+    """Read all concrete copyright notices, excluding unfilled reference templates."""
     lines = text.splitlines()
     found: list[str] = _debian_copyright_fields(lines)
     for index, line in enumerate(lines):
@@ -1129,10 +1013,7 @@ def read_notices(text: str) -> list[str]:
         if not match:
             continue
         notice = " ".join(match.group("notice").split()).rstrip("*/ ")
-        # The holder can sit on the lines below: after a trailing comma (libccd
-        # names a department, a faculty and a university), or after nothing at
-        # all (Debian copyright files and qhull put the years on one line and the
-        # holder on the next). Keep reading until a holder appears.
+        # Holders may continue below a year-only line or trailing comma (Debian, qhull, libccd).
         step = index
         while step + 1 < len(lines) and step - index < 3:
             if not (notice.endswith(",") or not _names_a_holder(notice)):
@@ -1145,9 +1026,7 @@ def read_notices(text: str) -> list[str]:
             if ahead >= len(lines):
                 break
             following = " ".join(lines[ahead].split())
-            # A new notice, a field of its own, or a sentence is not a holder:
-            # a year-only notice followed by the licence body would otherwise
-            # take its first line as the name.
+            # Stop before a new notice, field, or license clause is mistaken for a holder.
             if (
                 not following
                 or _PLAIN_COPYRIGHT.match(following)
@@ -1200,20 +1079,13 @@ def _copyright_fields(lines: list[str]) -> list[list[list[str]]]:
 
 
 def _debian_copyright_fields(lines: list[str]) -> list[str]:
-    """Holders a Debian copyright file states without the word `Copyright`.
-
-    `Copyright:` is a field there, and its value may be a bare name -- libmd
-    credits Poul-Henning Kamp, Colin Plumb and Steve Reid that way. Nothing else
-    in the file names them, so a parser looking for the word finds nobody.
-    """
+    """Read bare holders from Debian Copyright fields without requiring the word Copyright."""
     found: list[str] = []
     for field in _copyright_fields(lines):
         values = [value for paragraph in field for value in paragraph]
         for position, value in enumerate(values):
             holder = value.rstrip(".")
-            # A field whose value opens with a notice proper is read by the scan
-            # below, prose and all; only a field naming a bare holder is read
-            # here, and only for as long as it keeps naming one.
+            # Full notices are handled by read_notices; stop here when bare holders end.
             if _PLAIN_COPYRIGHT.match(holder) or _PROSE.search(holder):
                 break
             if position and len(holder) > 60:
@@ -1224,13 +1096,9 @@ def _debian_copyright_fields(lines: list[str]) -> list[str]:
 
 
 def dep5_copyright(text: str) -> list[str] | None:
-    """The notices in the `Copyright:` fields of a machine-readable Debian
-    copyright file; None where the file is not one (no `Format:` field opening
-    it).
+    """Read DEP5 Copyright fields, or return None without an opening Format field.
 
-    Only the fields are read: licence paragraphs quote other people's notices.
-    Stanzas covering only the Debian packaging name its packagers, not the
-    library's holders.
+    Ignore quoted notices in license prose and packaging-only stanzas.
     """
     lines = text.splitlines()
     first = next((line for line in lines if line.strip()), "")
@@ -1293,7 +1161,6 @@ def _notices_in(paragraph: list[str]) -> list[str]:
 
 
 def _stanzas(lines: list[str]) -> list[list[str]]:
-    """A Debian control-style file's stanzas, split at blank lines."""
     stanzas: list[list[str]] = [[]]
     for line in lines:
         if line.strip():
@@ -1304,10 +1171,9 @@ def _stanzas(lines: list[str]) -> list[list[str]]:
 
 
 def _packaging_only(stanza: list[str]) -> bool:
-    """Whether a stanza's `Files:` patterns all lie under `debian/`.
+    """Identify stanzas limited to debian/; their holders are packagers.
 
-    Those name whoever packaged the library for Debian, not its holders. A
-    stanza with no `Files:` field -- the header -- is not one.
+    A header without Files is not packaging-only.
     """
     patterns: list[str] = []
     for index, line in enumerate(stanza):
@@ -1336,7 +1202,6 @@ def _without_dangling(notice: str) -> str:
 
 
 def _names_a_holder(notice: str) -> bool:
-    """Whether anything is left once the years and their punctuation come out."""
     rest = _YEARS_AND_MARKS.sub(" ", notice[len("Copyright") :])
     return bool(re.search(r"[A-Za-z]{2}", rest))
 
@@ -1348,19 +1213,15 @@ def read_copyright(text: str) -> str | None:
 
 
 def combine(expressions: list[str]) -> str:
-    """Public form of the AND-combiner, for callers assembling an expression."""
     return _combine(expressions)
 
 
 def canonical_evidence(
     component_key: str, expressions: set[str]
 ) -> list[LicenseEvidence]:
-    """The SPDX reference text for the ids a vendored file's REUSE info declares.
+    """Fetch reference texts for vendored declarations from the pinned SPDX list.
 
-    The text its identifier names is what conveys those terms. It comes from the
-    list this build pinned and fetched -- never from this repository's own REUSE
-    pool, whose copies exist to license *this* project and carry its notices,
-    not the component's.
+    Do not use the repository's REUSE pool: its texts can carry our own notices.
     """
     found: list[LicenseEvidence] = []
     seen: set[str] = set()
@@ -1369,10 +1230,7 @@ def canonical_evidence(
         try:
             parsed = _spdx_licensing().parse(expression, validate=False)
         except (ExpressionError, ValueError, TypeError):
-            # REUSE info is written by hand and can say anything -- "Public
-            # domain or MIT License" is not an expression. One that will not
-            # parse names no reference text; the build's per-file gate names the
-            # file that states it, so nothing stops here.
+            # The per-file build gate reports malformed declarations with their source paths.
             continue
         for token in _spdx_licensing().license_keys(parsed):
             reference = entries.get(token)
@@ -1396,13 +1254,9 @@ class ExpressionReadError(Exception):
 
 
 def shared_refs(components) -> dict[str, str]:
-    """Rename map putting components with byte-identical terms on one LicenseRef.
+    """Share a LicenseRef among components with byte-identical terms.
 
-    A LicenseRef identifies a text, not a component, so two builds of one SDK
-    under the same EULA share an id. The map is produced here, before anything
-    renders, so the document, the report and the packaged notices all name the
-    same id -- they are cross-referenced, and a text shipped under one name in
-    the wheel's notices and another in the wheel's SBOM reconciles with nothing.
+    Resolve IDs before rendering so notices, reports, and SPDX agree.
     """
     by_text: dict[str, list[str]] = {}
     for component in components:
@@ -1424,7 +1278,6 @@ SHARED_REF = "LicenseRef-shared-text-"
 
 
 def shared_ref(text: str) -> str:
-    """The id components carrying byte-identical terms share, named by them."""
     return SHARED_REF + sha256_text(text)[:12]
 
 
@@ -1433,11 +1286,7 @@ def sha256_text(text: str) -> str:
 
 
 def rename_refs(expression: str, renamed: dict[str, str]) -> str:
-    """Substitute whole identifiers, never substrings.
-
-    `LicenseRef-alpha` is a prefix of `LicenseRef-alpha-extra`, so a plain
-    replace turns the longer id into one nothing defines and orphans its entry.
-    """
+    """Replace whole identifiers: LicenseRef-alpha must not alter LicenseRef-alpha-extra."""
     for old_id, new_id in renamed.items():
         expression = re.sub(
             rf"(?<![\w.-]){re.escape(old_id)}(?![\w.-])", new_id, expression
@@ -1446,12 +1295,7 @@ def rename_refs(expression: str, renamed: dict[str, str]) -> str:
 
 
 def is_exception(identifier: str) -> bool:
-    """Whether an identifier is a licence exception rather than a licence.
-
-    An exception modifies the licence it is attached to; the pinned list ships
-    their texts separately, and one ships only where its expression travels as a
-    LicenseRef.
-    """
+    """Check whether an identifier names an SPDX license exception."""
     try:
         parsed = _spdx_licensing().parse(identifier, validate=False)
     except (ExpressionError, ValueError, TypeError):
@@ -1462,11 +1306,9 @@ def is_exception(identifier: str) -> bool:
 
 
 def operands_of(expression: str) -> list[str]:
-    """An expression split into parts that may be AND-joined without changing it.
+    """Split expressions into operands that can be AND-joined without changing meaning.
 
-    An `OR` is one choice and splitting it asserts both halves, so it stays
-    whole. Everything else decomposes to identifiers, which keeps a roll-up flat
-    and free of an id two components happen to share.
+    Keep OR choices whole; splitting them would require both alternatives.
     """
     try:
         parsed = _spdx_licensing().parse(expression, validate=False)
@@ -1493,9 +1335,7 @@ def license_refs(*expressions: str) -> list[str]:
         try:
             parsed = _spdx_licensing().parse(expression, validate=False)
         except (ExpressionError, ValueError, TypeError) as error:
-            # Walking past it hid every reference inside: a document could carry
-            # `LicenseRef-never-defined AND (((` and be reported as defining
-            # everything it uses.
+            # Malformed expressions must fail closed; skipping one could hide undefined references.
             raise ExpressionReadError(f"{expression!r}: {error}") from error
         found.update(
             key

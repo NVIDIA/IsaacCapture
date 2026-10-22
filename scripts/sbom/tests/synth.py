@@ -1,18 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A synthetic project, build tree and wheel for the SBOM collector's tests.
+"""Generate synthetic build trees and wheels, including malformed gate inputs.
 
-The fixture has to be a build tree: a file API reply, fetched source trees, an
-SDK tarball, a staged package directory. Generated rather than built, because the
-gates need inputs a working build cannot produce -- a member from nowhere, a
-component with no license text, a tampered wheel -- and because the suite must
-run with no compiler, no network and no configured CMake.
-
-Keep every reader anchored to something real as well, or a fixture the collector
-agrees with proves nothing: the codemodel reader against this repo's own build
-tree, the ELF reader against a system library, the matcher against the fetched
-SPDX corpus.
+Check reader assumptions separately against real CMake replies, ELF files,
+and the SPDX corpus.
 """
 
 from __future__ import annotations
@@ -40,9 +32,7 @@ DIST_INFO = "isaaccapture-0.4.0.dist-info"
 SDK_ARCHIVE = "deps/vendor/demosdk-1.2.0-linux-amd64.tar.gz"
 SDK_DEMO_BUILD_ID = "1111111111111111111111111111111111111111"
 
-# ==============================================================================
 # ELF
-# ==============================================================================
 
 _PT_LOAD = 1
 _PT_DYNAMIC = 2
@@ -78,11 +68,7 @@ def elf_shared_object(
     padding: bytes = b"",
     build_id: str | None = None,
 ) -> bytes:
-    """A 64-bit little-endian ELF carrying a readable dynamic segment.
-
-    With `build_id`, it also carries the note the linker writes -- which is what
-    survives a repair tool rewriting SONAME and RPATH.
-    """
+    """Build a little-endian ELF64 dynamic segment with an optional GNU build-ID note."""
     strings = [b"\0"]  # index 0 is the empty string, per the ELF string-table format
     offsets: dict[str, int] = {}
     cursor = 1
@@ -149,9 +135,7 @@ def elf_shared_object(
     return bytes(image)
 
 
-# ==============================================================================
-# License texts, taken from the same corpus the collector matches against
-# ==============================================================================
+# License texts
 
 
 _LICENSE_DATA: Path | None = None
@@ -176,7 +160,6 @@ FIXTURE_EXCEPTIONS = ("rsync-linking-exception",)
 
 
 def set_license_data(path: Path) -> None:
-    """Point the fixtures at the SPDX json/ directory the build materialized."""
     global _LICENSE_DATA
     _LICENSE_DATA = path
 
@@ -204,9 +187,7 @@ The software is provided as is, without warranty of any kind.
 """
 
 
-# ==============================================================================
 # Workspace
-# ==============================================================================
 
 _DEPS = {
     # key: (remote, license file name, SPDX id whose canonical text it ships)
@@ -294,10 +275,7 @@ class Workspace:
 
 
 def git(root: Path, *args: str) -> str:
-    """Run git in `root` and return its output."""
-    # Fixed identity *and* clock: a commit hashes its timestamp, the collector
-    # records the commit, and the wheel carries that record -- so a drifting
-    # clock makes two builds of the same project differ.
+    # Fix identity and timestamps for reproducible synthetic commits and wheel provenance.
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "synth",
@@ -322,10 +300,9 @@ def _commit_all(root: Path, message: str) -> None:
 
 
 def clone_of(root: Path, remote: str, tag: str, git_dir: Path | None = None) -> str:
-    """Make `root` a checkout of its own, as FetchContent's clone leaves it.
+    """Create a dependency checkout and return its commit ID.
 
-    `git_dir` puts the repository elsewhere behind a `.git` file, the way a
-    submodule's is. Returns the commit.
+    git_dir uses a separate repository behind a .git file, as in a submodule.
     """
     root.mkdir(parents=True, exist_ok=True)
     separate = []
@@ -340,13 +317,7 @@ def clone_of(root: Path, remote: str, tag: str, git_dir: Path | None = None) -> 
 
 
 def _git_checkout(root: Path, initialise: bool = True) -> None:
-    """Make the generated project a real checkout.
-
-    The collector separates repository source from build output by what git
-    tracks, because an install prefix carries no marker saying it is output.
-    `build/` and `dist/` are ignored here for the same reason they are in the
-    real repository.
-    """
+    """Create a real checkout to distinguish tracked sources from build output."""
     write(root / ".gitignore", "build/\ndist/\n")
     if initialise:
         git(root, "init", "-q", "-b", "main")
@@ -375,7 +346,6 @@ def reuse_toml(*annotations: str) -> str:
 
 
 def track(root: Path) -> None:
-    """Commit whatever a test added after the project was generated."""
     _git_checkout(root, initialise=False)
 
 
@@ -468,9 +438,7 @@ def _sdk_tarball(path: Path) -> dict[str, bytes]:
         "libextra.so": elf_shared_object("libextra.so", ("libssl.so.3", "libc.so.6")),
         "include/demo.h": b"#pragma once\n",
     }
-    # Fixed mtimes, on the members and on the gzip stream: "w:gz" stamps the
-    # current time into both, and two archives written a second apart are not
-    # the same input.
+    # Fix member and gzip timestamps for reproducible archive bytes.
     path.parent.mkdir(parents=True, exist_ok=True)
     with (
         gzip.GzipFile(filename=path, mode="wb", mtime=0) as compressed,
@@ -485,7 +453,6 @@ def _sdk_tarball(path: Path) -> dict[str, bytes]:
 
 
 def create(root: Path) -> Workspace:
-    """Generate the project, its build tree, and the staged package."""
     workspace = Workspace(root)
     build = workspace.build
     deps = build / "_deps"
@@ -508,13 +475,12 @@ def create(root: Path) -> Workspace:
         write(source / f"{key}.cpp", f"// {key}\n")
         declare(deps, key, repository=remote, tag="v1.2.3")
 
-    # vendorpy ships Python that the build stages into the wheel.
     write(deps / "vendorpy-src/pkg/mod.py", _VENDOR_MODULE)
     write(deps / "vendorpy-src/pkg/assets/hand.xml", _VENDOR_ASSET_SOURCE)
 
     sdk_members = _sdk_tarball(root / SDK_ARCHIVE)
 
-    # --- build outputs -------------------------------------------------------
+    # Build outputs
     extension = "isaaccapture/_ext.cpython-312-x86_64-linux-gnu.so"
     extension_bytes = elf_shared_object(
         "_ext.cpython-312-x86_64-linux-gnu.so", ("libstdc++.so.6", "libc.so.6")
@@ -524,13 +490,10 @@ def create(root: Path) -> Workspace:
     write(build / "lib/libgamma_renamed.so", gamma_bytes)
     write(build / "lib/libdelta.a", b"!<arch>\ndelta\n")
     write(build / "generated/_generated.py", _GENERATED)
-    # Empty, like the real PEP 561 marker: RECORD states size 0 for it, and the
-    # bytes explain nothing, so it also stands in for any zero-length member.
+    # Empty marker exercises RECORD size 0 and path-only attribution.
     write(build / "generated/stubs/isaaccapture/py.typed", b"")
 
-    # Staged tree: what the wheel is built from.
-    # What a package manager installs into the build tree: upstream headers
-    # carrying their own contributors' copyright lines.
+    # Model a package-manager header installed into the build tree.
     write(
         build / "vcpkg_installed/x64-linux/include/eigen/Core.h",
         b"// Copyright (C) 2008 Gael Guennebaud <gael.guennebaud@inria.fr>\n",
@@ -562,11 +525,7 @@ def create(root: Path) -> Workspace:
 
 
 def _file_api_reply(root: Path, build: Path, extension: str) -> None:
-    """Write the codemodel a `cmake_file_api()` query leaves behind.
-
-    The collector reads CMake's file API rather than scraping generator output,
-    so the fixture has to speak the same thing a real configure produces.
-    """
+    """Write a synthetic CMake file API reply."""
     targets = [
         {
             "name": "ext",
@@ -574,9 +533,7 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
             # The project's own source, compiled against beta's headers, with
             # alpha's source compiled straight in.
             "artifacts": [extension],
-            # The vcpkg port is listed as a source, not just an include: a
-            # package manager installs into the build tree, and the codemodel
-            # cites what it compiled.
+            # List a package-manager header as a source to exercise build-tree exclusion.
             "sources": [
                 "src/cpp/module.cpp",
                 "build/_deps/alpha-src/alpha.cpp",
@@ -632,7 +589,6 @@ def _file_api_reply(root: Path, build: Path, extension: str) -> None:
         "configurations": [{"name": CONFIG, "targets": index}],
     }
     write(reply / "codemodel-v2-fixture.json", json.dumps(codemodel, indent=1))
-    # The collector enters through the index, as a file API client must.
     write(
         reply / "index-2026-01-01T00-00-00-0000.json",
         json.dumps(
@@ -678,13 +634,11 @@ def _target_payload(
 
 
 def _target_entry(name: str) -> dict:
-    """A target's entry in the codemodel's configuration."""
     return {"id": name, "name": name, "jsonFile": f"target-{name}-{CONFIG}.json"}
 
 
 @contextlib.contextmanager
 def _edit_json(path: Path):
-    """Read a reply file, let the caller change it, write it back."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     yield payload
     path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
@@ -775,13 +729,11 @@ def set_toolchains(
 
 
 def add_include(build: Path, target: str, directory: Path) -> None:
-    """Put one more directory on a fixture target's include path."""
     with _edit_target(build, target) as payload:
         payload["compileGroups"][0]["includes"].append({"path": str(directory)})
 
 
 def add_source(build: Path, target: str, path: Path) -> None:
-    """Compile one more source into a fixture target."""
     with _edit_target(build, target) as payload:
         payload["sources"].append(_source(str(path)))
 
@@ -851,19 +803,16 @@ def add_target(
 
 
 def set_directory(build: Path, target: str, directory: str) -> None:
-    """Put a fixture target in a subdirectory of the build tree."""
     with _edit_target(build, target) as payload:
         payload["paths"] = {"build": directory, "source": directory}
 
 
 def set_type(build: Path, target: str, kind: str) -> None:
-    """Change a fixture target's CMake type."""
     with _edit_target(build, target) as payload:
         payload["type"] = kind
 
 
 def set_generator(build: Path, name: str) -> None:
-    """Record the generator in the file API index, as a real configure does."""
     with _edit_index(build) as index:
         index["cmake"] = {"generator": {"name": name, "multiConfig": False}}
 
@@ -986,9 +935,7 @@ def ar_archive(members: dict[str, bytes]) -> bytes:
     return bytes(image)
 
 
-# ==============================================================================
 # Wheel
-# ==============================================================================
 
 METADATA = "\n".join(
     [
@@ -1001,8 +948,7 @@ METADATA = "\n".join(
         "License-Expression: Apache-2.0",
         "License-File: LICENSE.md",
         "Requires-Python: >=3.11",
-        # The transition wheel requires this one and this one requires it back;
-        # a cycle is the shape the real pair has.
+        # Model the cyclic dependency between the main and transition wheels.
         "Requires-Dist: isaacteleop>=0.4.0",
         "Requires-Dist: numpy>=1.23.0",
         "Requires-Dist: pyyaml>=6.0.3",
@@ -1040,15 +986,12 @@ def wheel_payload(workspace: Workspace) -> dict[str, bytes]:
         workspace.root / "LICENSE.md"
     ).read_bytes()
     payload[f"{DIST_INFO}/top_level.txt"] = b"isaaccapture\nvendorpy\n"
-    # auditwheel runs before the collector and writes its own PEP 770 document
-    # for the libraries it vendored. Every fixture carries it so the suite works
-    # on the shape a released wheel actually has.
+    # Include auditwheel's PEP 770 document to test coexistence.
     payload[f"{DIST_INFO}/sboms/{AUDITWHEEL_SBOM}"] = AUDITWHEEL_CDX
     return payload
 
 
 def collect(workspace: Workspace, **options) -> dict:
-    """Run the collector over the workspace's wheel and read back what it wrote."""
     out_dir = workspace.root / "sbom"
     manifest = build_module.build(
         workspace.root, workspace.build, workspace.wheel, out_dir, **options
@@ -1138,8 +1081,7 @@ def write_wheel(path: Path, payload: dict[str, bytes]) -> Path:
         writer.writerow((name, _record_hash(payload[name]), str(len(payload[name]))))
     writer.writerow((record_name, "", ""))
 
-    # Fixed stamps: writestr would otherwise record wall-clock, and two wheels
-    # written either side of a second boundary are not the same input.
+    # Fix ZIP timestamps for reproducible wheel bytes.
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in [*sorted(payload), record_name]:

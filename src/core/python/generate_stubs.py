@@ -28,18 +28,11 @@ def _err(message: str) -> None:
 
 
 def generate_stub(module_name: str, import_dir: Path, output_dir: Path) -> bool:
-    """Generate stub file for a single pybind11 module.
+    """Generate stubs for a fully qualified module imported from the staged package.
 
-    Args:
-        module_name: Fully qualified module name (e.g., "isaaccapture.deviceio._deviceio")
-        import_dir: Staged package tree to import the module from.
-        output_dir: Where to write the .pyi. Kept out of the staged tree so the
-            stub has a build-tree origin like every other generated file.
-
-    Returns:
-        True if successful, False otherwise.
+    Keep output_dir outside staging to preserve a traceable build-tree origin.
+    Return whether generation succeeded.
     """
-    # Import from the staged tree; write somewhere else entirely.
     sys.path.insert(0, str(import_dir))
 
     try:

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Third-party conformance check, so the document is valid SPDX and not just ours."""
+"""Validate generated documents with the third-party SPDX validator."""
 
 from __future__ import annotations
 
@@ -63,6 +63,5 @@ def test_an_identifier_newer_than_the_grammar_still_validates(workspace):
         item["component"]: item
         for item in report["components_with_unidentified_license"]
     }
-    # The id that caused the fallback is named, and its text ships.
     assert "rsync-linking-exception" in gaps["vendored:rsync-folk"]["reason"]
     assert "rsync-linking-exception.txt" in gaps["vendored:rsync-folk"]["evidence"]

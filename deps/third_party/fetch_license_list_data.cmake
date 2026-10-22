@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Narrowed to the JSON the SBOM collector reads: upstream publishes every license
-# in several formats, none of which anything here consumes.
+# Fetch only the JSON corpus used by the SBOM collector.
 
 foreach(_required GIT_EXECUTABLE SPDX_REPOSITORY SPDX_COMMIT SPDX_SOURCE_DIR SPDX_SPARSE_DIR)
     if(NOT DEFINED ${_required})
@@ -19,9 +18,8 @@ if(EXISTS "${SPDX_SOURCE_DIR}/.git")
         RESULT_VARIABLE _rev_parse_result
     )
     if(_rev_parse_result EQUAL 0 AND _current_commit STREQUAL SPDX_COMMIT)
-        # Same commit, but narrowed differently. SPDX_SPARSE_DIR is part of the
-        # download command, so changing it re-runs this. A directory, not files:
-        # cone mode refuses a file path once the checkout holds it.
+        # The download command can change the sparse path without changing the commit.
+        # Cone mode requires a directory, not a file path.
         execute_process(
             COMMAND "${GIT_EXECUTABLE}" sparse-checkout set "${SPDX_SPARSE_DIR}"
             WORKING_DIRECTORY "${SPDX_SOURCE_DIR}"

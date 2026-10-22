@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""What a link line names is a contribution, wherever it came from."""
+"""Static link inputs, linker resolution, and package ownership tests."""
 
 from __future__ import annotations
 
@@ -52,7 +52,6 @@ def _packaged(monkeypatch, package, copyright, **fields) -> None:
 
 
 def _row(collected: dict, key: str) -> dict:
-    """The licence report's row for one component."""
     return next(
         item for item in collected["licenses"]["components"] if item["component"] == key
     )
@@ -225,8 +224,7 @@ def test_a_library_name_resolves_the_way_ld_resolves_it(workspace, tmp_path):
         "-lforced",
     )
 
-    # -lboth takes the shared library, which DT_NEEDED records; after -Bstatic,
-    # -lforced takes the archive.
+    # -Bstatic selects an archive; the earlier shared library belongs to DT_NEEDED.
     assert {name: (item.kind, item.path) for name, item in inputs.items()} == {
         "-lforced": ("archive", searched / "libforced.a"),
         "-lstaticonly": ("archive", searched / "libstaticonly.a"),
@@ -265,8 +263,7 @@ def test_every_spelling_of_a_search_resolves_alike(workspace, tmp_path):
         "-lspaced": joined / "libspaced.a",
         "-llinkerspaced": joined / "liblinkerspaced.a",
         "-lfromsep": separated / "libfromsep.a",
-        # Named outright, so judged by content: an archive without the suffix
-        # is still one, and a shared library is left to DT_NEEDED.
+        # Explicit names are classified by content, regardless of suffix.
         "-l:libarchive.a.1": joined / "libarchive.a.1",
         f"{tmp_path}/xl/libxl.a": tmp_path / "xl" / "libxl.a",
     }
@@ -510,8 +507,7 @@ def test_a_script_naming_itself_says_so(workspace, tmp_path):
 
 @pytest.mark.parametrize("kind", ["EXECUTABLE", "MODULE_LIBRARY"])
 def test_a_build_order_dependency_links_nothing_into_the_member(workspace, kind):
-    """A code generator ext waits for is not linked into it, so neither its line
-    nor a shared library reached only through it is."""
+    """Build-order dependencies contribute no linked bytes, including their transitive libraries."""
     synth.set_type(workspace.build, "unit_tests", kind)
     synth.link_line(workspace.build, "gamma", ("-l:libviagamma.a",))
     synth.link_line(
@@ -1034,7 +1030,6 @@ def test_a_tracked_archive_is_credited_to_the_holder_reuse_names(
 def test_a_tracked_archive_naming_no_other_holder_is_the_projects(
     workspace, monkeypatch
 ):
-    """Every tracked file has REUSE info; one naming nobody else is the project's."""
     archive = _tracked_archive(workspace, monkeypatch)
 
     collected = synth.collect(workspace)
@@ -1257,7 +1252,6 @@ def test_ownership_sees_a_file_registered_after_a_lookup(tmp_path):
     ownership.register_file(include / "b" / "b.h", "port-b", by_directory=False)
     ownership.register_file(include / "c.h", "fetched")
 
-    # Two listed owners under one directory credit neither; each alone does.
     assert ownership.owners_under(include) == {"fetched"}
     assert ownership.owners_under(include / "b") == {"port-b"}
 

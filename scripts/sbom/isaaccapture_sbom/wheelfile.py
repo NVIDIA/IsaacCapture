@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Read a wheel's contents and rewrite it with the evidence it must carry.
+"""Read and rewrite wheels with packaged evidence.
 
-RECORD and METADATA are specified formats, so their own tooling parses them:
-``installer`` (PyPA) owns RECORD's hashing and escaping rules, and ``packaging``
-owns core metadata. Only the zip rewriting is ours, because no library offers it.
+Use installer for RECORD parsing and packaging for core metadata.
 """
 
 from __future__ import annotations
@@ -30,18 +28,14 @@ from pathlib import Path
 
 from . import elf
 
-# Fixed member timestamp for files this tool adds, so two runs over the same
-# inputs produce byte-identical wheels.
+# Deterministic default timestamp for added members.
 _ADDED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
 def _reproducible_timestamp() -> tuple[int, int, int, int, int, int] | None:
-    """SOURCE_DATE_EPOCH as a zip timestamp, when a reproducible build asked for one.
+    """Convert SOURCE_DATE_EPOCH to a ZIP timestamp.
 
-    Zip records a local timestamp per member, so a wheel carries whatever clock
-    its builder had. Under SOURCE_DATE_EPOCH every member gets the same stamp --
-    including ones copied through untouched -- or the rewrite would be
-    reproducible only for an input wheel that already was.
+    Apply it to copied members too, so input timestamps cannot affect reproducibility.
     """
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     if not epoch or not epoch.isdigit():
@@ -75,7 +69,7 @@ class Entry:
     needed: tuple[str, ...] = ()
     machine: str | None = None
     build_id: str | None = None
-    # Enough to find a REUSE tag, kept so nothing re-opens the archive for it.
+    # Retain a prefix for REUSE tags to avoid reopening the archive.
     head: bytes = b""
 
     @property
@@ -93,11 +87,9 @@ class WheelInfo:
 
 
 def sbom_member(dist_info: str, wheel_name: str) -> str:
-    """Where this collector's SPDX document sits inside the wheel.
+    """Name this collector's document in the shared PEP 770 sboms directory.
 
-    PEP 770 makes `.dist-info/sboms/` a shared directory: auditwheel writes
-    `auditwheel.cdx.json` there for the libraries it vendors. Match this exact
-    name, never the directory, or a second tool's document reads as ours.
+    Do not select by directory alone: auditwheel.cdx.json may coexist there.
     """
     return f"{dist_info}/sboms/{wheel_name}.spdx.json"
 
@@ -111,7 +103,6 @@ def record_hash_from_sha256(digest: str) -> str:
 
 
 def record_hash(data: bytes) -> str:
-    """The same field, for bytes in hand."""
     return record_hash_from_sha256(hashlib.sha256(data).hexdigest())
 
 
@@ -131,28 +122,19 @@ def _dist_info(names: list[str]) -> str:
 
 
 def dist_info_of(wheel_path: Path) -> str:
-    """The `.dist-info` directory name, from the archive's index alone.
-
-    For a caller that wants only the metadata: `scan` hashes every member, which
-    over a release's worth of wheels is a full read of each for a name the
-    central directory already states.
-    """
+    """Find .dist-info via the ZIP index without hashing every member."""
     with zipfile.ZipFile(wheel_path) as archive:
         return _dist_info(archive.namelist())
 
 
 def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
-    """Hash every member, and read the dynamic section of ELF members on request.
+    """Hash members, optionally reading ELF metadata for attribution.
 
-    `analyze_elf` is what the inventory needs and what verification does not, so
-    a consumer checking a downloaded wheel never runs a binary parser over it.
+    Consumer verification leaves analyze_elf off to avoid parsing binaries.
     """
     with zipfile.ZipFile(wheel_path) as archive:
         names = archive.namelist()
-        # A zip may hold two members under one name. Reading by name gives the
-        # last of them, so the first is hashed by nothing, compared to RECORD by
-        # nothing, and reported as uncovered by nothing -- while which one a
-        # consumer extracts is up to their unzip. Refuse the archive.
+        # Duplicate names make reads and extraction ambiguous; reject them before hashing.
         repeated = sorted(item for item, seen in Counter(names).items() if seen > 1)
         if repeated:
             raise WheelError(
@@ -173,7 +155,6 @@ def scan(wheel_path: Path, analyze_elf: bool = False) -> WheelInfo:
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            # By handle, not by name: the name is what was just proven ambiguous.
             with archive.open(info) as handle:
                 data = handle.read()
             soname = needed = machine = build_id = None
@@ -246,15 +227,12 @@ def add_license_files(raw_metadata: bytes, relative_paths: list[str]) -> bytes:
     if not additions:
         return raw_metadata
 
-    # email owns RFC 822 header insertion, including keeping the payload (the
-    # long description) intact.
+    # Use the email parser to preserve the long-description payload.
     message = message_from_bytes(raw_metadata, policy=compat32)
     for path in additions:
         message.add_header("License-File", path)
 
-    # maxheaderlen=0 disables RFC 822 folding. A folded value is still valid and
-    # packaging unfolds it, but no other tool wraps paths in METADATA, and a
-    # continuation line defeats anything reading it more simply.
+    # Disable header folding so License-File paths remain on one line.
     buffer = io.BytesIO()
     BytesGenerator(buffer, policy=compat32, maxheaderlen=0).flatten(message)
     return buffer.getvalue()
@@ -266,8 +244,7 @@ def read_record(wheel_path: Path, dist_info: str) -> dict[str, tuple[str, str]]:
         lines = archive.read(f"{dist_info}/RECORD").decode("utf-8").splitlines()
     entries = (RecordEntry.from_elements(*row) for row in parse_record_file(lines))
     return {
-        # `entry.size or ""` would erase a legitimate 0: py.typed and namespace
-        # __init__.py are empty, and RECORD states 0 for them.
+        # Preserve size 0 for empty files; `entry.size or ""` would erase it.
         entry.path: (
             str(entry.hash_) if entry.hash_ else "",
             "" if entry.size is None else str(entry.size),
@@ -289,11 +266,7 @@ def rewrite(
     replacements: dict[str, bytes],
     dist_info: str,
 ) -> None:
-    """Copy the wheel applying replacements and additions, then rebuild RECORD.
-
-    RECORD is regenerated from what the new archive actually holds, so a wrong
-    digest cannot survive the step that writes it.
-    """
+    """Rewrite members and regenerate RECORD from the resulting bytes."""
     record_name = f"{dist_info}/RECORD"
     collisions = sorted(
         set(additions) & {item.filename for item in _members(wheel_path)}

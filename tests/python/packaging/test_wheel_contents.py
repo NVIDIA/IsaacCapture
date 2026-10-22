@@ -138,7 +138,6 @@ def test_capture_license_ships_in_distribution_metadata() -> None:
 
 
 def test_wheel_ships_exactly_the_root_license_files() -> None:
-    """Both wheel builds take their own license texts from the root pyproject.toml."""
     root = repo_root()
     with (root / "pyproject.toml").open("rb") as handle:
         patterns = tomllib.load(handle)["project"]["license-files"]

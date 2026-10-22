@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Licenses are identified from the text a component ships, or not at all."""
+"""License text identification and declaration tests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from isaaccapture_sbom import discovery, document, licensing, report
 
 
 def test_corpus_loads():
-    """The whole SPDX list is available, so no subset has to be maintained."""
     version, entries = licensing.corpus()
 
     assert version.startswith("3.")
@@ -23,8 +22,6 @@ def test_corpus_loads():
 
 
 def test_deprecated_identifiers_are_not_offered():
-    """Naming a component with a withdrawn identifier would be reporting a
-    license SPDX no longer recognises."""
     _, entries = licensing.corpus()
 
     assert "GPL-2.0" not in entries, "superseded by GPL-2.0-only/-or-later"
@@ -32,9 +29,10 @@ def test_deprecated_identifiers_are_not_offered():
 
 
 def test_an_extended_license_is_not_mistaken_for_the_one_it_contains():
-    """ECL-2.0 is Apache-2.0 plus a clause, and CC-BY-NC-4.0 is CC-BY-4.0 plus
-    one. Both clear containment against the shorter licence's own text, so the
-    file has to be resolved to the licence that explains all of it."""
+    """ECL-2.0 contains Apache-2.0; CC-BY-NC-4.0 contains CC-BY-4.0.
+
+    Containment alone cannot distinguish the extended license from its shorter base.
+    """
     apache = [
         license_id
         for license_id, _, _ in licensing.identify(synth.spdx_text("Apache-2.0"))
@@ -49,7 +47,7 @@ def test_an_extended_license_is_not_mistaken_for_the_one_it_contains():
 
 
 def test_the_extended_license_still_wins_when_it_is_the_real_one():
-    """The resolution has to work in both directions, or it is just a bias."""
+    """A longer match must not win solely because it is longer."""
     matches = [
         license_id
         for license_id, _, _ in licensing.identify(synth.spdx_text("ECL-2.0"))
@@ -71,7 +69,6 @@ def test_identifies_a_text_wrapped_in_a_copyright_line():
 
 
 def test_a_longer_license_subsumes_the_shorter_one_it_contains():
-    """A BSD-3 file contains the BSD-2 text; only BSD-3 should be reported."""
     matches = licensing.identify(synth.spdx_text("BSD-3-Clause"))
 
     assert [license_id for license_id, _, _ in matches] == ["BSD-3-Clause"]
@@ -98,7 +95,6 @@ def _varied_prose(word_count: int) -> str:
 
 
 def test_a_license_quoted_in_an_appendix_is_not_the_document_s_license():
-    """Large agreements reproduce whole OSS licenses; that is not their license."""
     agreement = (
         "PROPRIETARY AGREEMENT\n\n"
         + _varied_prose(6000)
@@ -110,7 +106,6 @@ def test_a_license_quoted_in_an_appendix_is_not_the_document_s_license():
 
 
 def test_a_real_license_survives_surrounding_packaging_boilerplate():
-    """A Debian copyright file is mostly the license, wrapped in packaging prose."""
     wrapped = (
         "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n"
         "Upstream-Name: thing\n\n"
@@ -216,7 +211,6 @@ def _share(text: licensing.LicenseEvidence) -> str:
 
 
 def test_a_mostly_unmatched_grant_is_named_and_carried():
-    """The rest of the text may be terms no id names."""
     whole = _grant("demo", "LICENSE", synth.spdx_text("MIT"))
     padded = _grant("demo", "COPYING", synth.spdx_text("MIT") + _varied_prose(300))
     zlib = _grant("demo", "COPYING.zlib", synth.spdx_text("Zlib") + _varied_prose(250))
@@ -486,10 +480,10 @@ def test_a_component_with_no_grant_declares_nothing(tmp_path):
 
 
 def test_a_tag_on_a_documentation_file_is_not_the_package_declaration(tmp_path):
-    """OpenXR's COPYING.adoc is prose about which licences the project uses,
-    tagged CC-BY-4.0 for the prose. Promoting it declared an Apache-2.0 SDK
-    under a documentation licence. The prose matches nothing, so it is carried
-    as the component's LicenseRef."""
+    """OpenXR's COPYING.adoc is tagged CC-BY-4.0 for its prose.
+
+    That tag does not license the SDK; unmatched prose travels as a LicenseRef.
+    """
     (tmp_path / "LICENSE").write_text(synth.spdx_text("Apache-2.0"), encoding="utf-8")
     # REUSE-IgnoreStart
     (tmp_path / "COPYING").write_text(
@@ -517,11 +511,9 @@ def test_a_tag_on_a_documentation_file_is_not_the_package_declaration(tmp_path):
     ],
 )
 def test_two_identified_licenses_combine(files, concluded):
-    """Two identified licences must AND together, not collapse to NOASSERTION.
+    """Combined expression objects reject truth-value testing.
 
-    The combiner returns a parsed expression object, and asking such an object
-    for its truth value raises rather than answering -- so this path has to be
-    exercised with more than one licence.
+    Exercise the combiner with multiple licenses to catch accidental bool checks.
     """
     evidence = [
         _grant("dual", name, "\n\n".join(map(synth.spdx_text, ids)))
@@ -529,7 +521,6 @@ def test_two_identified_licenses_combine(files, concluded):
     ]
 
     assert licensing.expression(evidence, "dual")[0] == concluded
-    # Nothing carried, so every grant is the terms the build evidence states.
     assert licensing.verbatim_terms(evidence) == "\n\n".join(
         item.text for item in evidence
     )
@@ -617,7 +608,6 @@ def test_a_license_suffix_is_a_sidecar_only_beside_what_it_annotates(
 
 
 def test_a_root_sidecar_is_not_a_fetched_tree_s_grant(tmp_path):
-    """Nor is it a README whose licence section the fallback could read."""
     (tmp_path / "README.md").write_text("# Thing\n\nprose\n", encoding="utf-8")
     (tmp_path / "README.md.license").write_text(
         "SPDX-License-Identifier: MIT\n\n## License\nMIT\n", encoding="utf-8"
@@ -651,7 +641,6 @@ def test_an_orphan_license_file_alone_is_a_fetched_tree_s_grant(tmp_path):
 
 
 def test_a_project_title_is_not_a_license_section(tmp_path):
-    """`# License List Data` heads a README; it does not grant anything."""
     (tmp_path / "README.md").write_text(
         "# License List Data\n\nGenerated data.\n", encoding="utf-8"
     )
@@ -671,7 +660,6 @@ def test_a_real_license_section_is_still_found(tmp_path):
 
 
 def test_a_notice_another_already_covers_is_dropped():
-    """One holder stated over several year ranges is one holder."""
     folded = licensing.fold_notices(
         [
             "Copyright (c) 2025 Acme Ltd.",
@@ -699,7 +687,6 @@ def test_folding_does_not_merge_different_holders():
 
 
 def test_a_template_is_not_a_notice():
-    """A reference text names nobody; recording its placeholder would."""
     assert licensing.read_notices("Copyright [yyyy] [name of copyright owner]") == []
     assert licensing.read_notices("Copyright (c) <year> <copyright holders>") == []
     assert licensing.read_notices(
@@ -708,12 +695,9 @@ def test_a_template_is_not_a_notice():
 
 
 def test_a_debian_copyright_field_names_its_holder_either_way(license_data):
-    """Debian states a holder in a field, in two spellings, often with no year.
+    """Debian Copyright fields can omit years and contain prose or None.
 
-    `Copyright: Jane Doe` matches no notice pattern -- the colon breaks it -- and
-    it is the commoner of the two forms, so a system library vendored from such a
-    package was credited to nobody. The field also holds prose and the literal
-    `None`, which are not holders.
+    The colon in Copyright: prevents matching it as an ordinary notice.
     """
     licensing.load_corpus(license_data)
 
@@ -734,11 +718,7 @@ def test_a_debian_copyright_field_names_its_holder_either_way(license_data):
 
 
 def test_every_holder_in_a_text_is_read_not_just_the_first(license_data):
-    """Under MIT, BSD and Zlib the notice is the obligation, so all of it counts.
-
-    Holders run on past a comma, sit on the next line with nothing joining them,
-    and follow a lead-in of any length.
-    """
+    """Notices can span lines or follow long lead-ins; every holder must survive."""
     licensing.load_corpus(license_data)
 
     assert licensing.read_notices(
@@ -767,11 +747,8 @@ def test_every_holder_in_a_text_is_read_not_just_the_first(license_data):
 
 
 def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
-    """`A OR B` is one licence at the reader's choice, not two obligations.
-
-    Rebuilding a component's conclusion from the reference texts its identifiers
-    name loses the operator, and the roll-up that splits an expression into
-    identifiers loses it again.
+    """Preserve OR through matching and roll-up; rebuilding from identifiers would turn
+    a choice into simultaneous obligations.
     """
 
     licensing.load_corpus(license_data)
@@ -787,7 +764,6 @@ def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
 
     assert component.license_concluded == "MIT OR GPL-2.0-or-later"
     assert component.license_declared == "MIT OR GPL-2.0-or-later"
-    # And it survives the roll-up whole, where an AND-only one decomposes.
     assert licensing.operands_of("MIT OR GPL-2.0-or-later") == [
         "(MIT OR GPL-2.0-or-later)"
     ]
@@ -798,10 +774,8 @@ def test_a_choice_of_licences_is_not_published_as_both(license_data, tmp_path):
 
 
 def test_an_exception_is_not_a_licence_needing_its_own_text(license_data):
-    """`X WITH <exception>` must not be unsatisfiable.
-
-    An exception's text ships only where its expression travels as a LicenseRef,
-    so demanding one for every exception blocks such a declaration for nothing.
+    """A WITH exception modifies a license; it is not a separate license operand
+    requiring its own packaged text in this gate.
     """
     licensing.load_corpus(license_data)
 
@@ -868,9 +842,7 @@ def test_the_debian_packaging_stanza_names_no_holder_of_the_library():
 
 
 def test_a_field_paragraph_is_split_into_the_notices_it_states():
-    """A notice wraps, so a line continues the one above unless it opens a
-    notice of its own -- and one line per holder is the common layout, which
-    folding needs to see one at a time."""
+    """A wrapped line continues the preceding notice unless it starts a new one."""
     text = (
         "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\n"
         "Files: *\nCopyright: Copyright © 1980, 1982\n"

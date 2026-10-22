@@ -112,10 +112,7 @@ download_ngc_file() {
         rm -f "$out_path"
         return 1
     fi
-    # Record where this came from. The tarball is fetched, not checked in, so
-    # without this the only evidence of its origin is a shell variable that
-    # stops existing when the script exits -- and the SBOM has to call the
-    # download location unknown.
+    # Preserve the download URL as SBOM provenance.
     printf '%s\n' "$url" > "${out_path}.source"
 }
 

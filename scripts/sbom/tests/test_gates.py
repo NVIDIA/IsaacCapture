@@ -30,7 +30,6 @@ def _rebuild(workspace, payload):
 
 
 def test_a_member_from_nowhere_blocks_the_build(workspace):
-    """A file that no build step and no fetched input explains is a coverage hole."""
     payload = synth.wheel_payload(workspace)
     payload["isaaccapture/mystery/libmystery.so.7"] = synth.elf_shared_object(
         "libmystery.so.7"
@@ -71,9 +70,7 @@ def test_an_empty_license_file_does_not_count_as_evidence(workspace):
 
 
 def test_a_library_the_host_cannot_resolve_is_not_claimed_as_the_host_s(workspace):
-    """Resolving the SONAME is the evidence for "the machine supplied this".
-    Without it the member is unexplained, and must be reported that way rather
-    than attributed to a library nobody found."""
+    """Resolving the SONAME is required evidence for attribution to the build host."""
     payload = synth.wheel_payload(workspace)
     payload["isaaccapture.libs/libunknown-a1b2c3.so"] = synth.elf_shared_object(
         "libunknown.so.1", ("libc.so.6",)
@@ -96,9 +93,7 @@ def test_a_library_the_host_cannot_resolve_is_not_claimed_as_the_host_s(workspac
 
 
 def test_the_build_host_is_the_last_resort_not_a_directory_name(workspace):
-    """A library the build produced must be attributed to the build even when it
-    sits in a repair tool's directory: the host lookup runs only once every other
-    index has failed to explain the bytes."""
+    """Build provenance takes precedence even inside a repair tool's directory."""
     produced = (workspace.build / "lib/libgamma_renamed.so").read_bytes()
     payload = synth.wheel_payload(workspace)
     payload["isaaccapture.libs/libgamma_renamed-abc123.so"] = produced
@@ -141,8 +136,7 @@ def test_a_vendored_library_is_attributed_to_the_package_that_supplied_it(
             "soname": soname,
             "resolved_path": "/usr/lib/libz.so.1.3",
             "package": "zlib1g",
-            # dpkg's maintainer, not the package name: `zlib1g` names the thing,
-            # not whoever supplied it.
+            # The package name identifies the software, not its supplier.
             "supplier": "Organization: Ubuntu Developers (ubuntu-devel@example.com)",
             "copyright": str(copyright_file),
         },
@@ -218,11 +212,7 @@ def test_our_own_document_going_missing_is_rejected(built):
 
 
 def test_one_wheel_described_by_several_builds_merges_to_one_record(tmp_path, built):
-    """A `py3-none-any` wheel is built by every matrix entry.
-
-    Each entry's manifest names it, so a release set sees the filename once per
-    entry. Identical records are one wheel described more than once.
-    """
+    """Matrix entries may produce identical universal wheels; merge their records."""
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     for path in (first, second):
@@ -235,7 +225,6 @@ def test_one_wheel_described_by_several_builds_merges_to_one_record(tmp_path, bu
 
 
 def test_two_wheels_wearing_one_filename_are_refused(tmp_path, built):
-    """Same name, different bytes: the one thing a consumer cannot tell apart."""
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"
     first.write_text(json.dumps(built["manifest"]), encoding="utf-8")
@@ -472,7 +461,6 @@ def test_a_wheel_the_manifest_does_not_list_fails_the_release_set(
 
 
 def test_missing_spdx_license_data_stops_the_build(workspace):
-    """The reference texts come from the build; without them, nothing publishes."""
     shutil.rmtree(workspace.build / "_deps/license-list-data-src")
 
     with pytest.raises(licensing.CorpusError, match="SPDX license list data not found"):
@@ -480,14 +468,12 @@ def test_missing_spdx_license_data_stops_the_build(workspace):
 
 
 def test_a_malformed_reuse_tag_does_not_reach_the_document(workspace):
-    """A hand-written tag can be unparseable; emitting it verbatim would fail
-    the published SBOM's own conformance check with no local signal."""
+    """Reject malformed tags before emitting a document that fails SPDX conformance."""
     payload = synth.wheel_payload(workspace)
     good = "# SPDX-" + "License-Identifier: mit or Apache-2.0\n"
     bad = "# SPDX-" + "License-Identifier: !!! not an expression\n"
     for name, text in (("tagged_ok.py", good), ("tagged_bad.py", bad)):
         payload[f"isaaccapture/{name}"] = text.encode()
-        # Authored sources, staged into the package like any other .py.
         (workspace.root / "src/python/isaaccapture" / name).write_text(text)
         (workspace.staged / "isaaccapture" / name).write_text(text)
     synth.track(workspace.root)
@@ -500,13 +486,11 @@ def test_a_malformed_reuse_tag_does_not_reach_the_document(workspace):
         for item in spdx["files"]
     }
 
-    # Normalised through the SPDX grammar, not passed through as written.
     assert concluded["isaaccapture/tagged_ok.py"] == "MIT OR Apache-2.0"
     assert concluded["isaaccapture/tagged_bad.py"] == "NOASSERTION"
 
 
 def test_building_twice_on_the_same_wheel_is_refused(built):
-    """A second pass would duplicate members rather than replace them."""
     with pytest.raises(build_module.BuildError, match="already carries"):
         build_module.build(
             built["workspace"].root,
@@ -517,17 +501,13 @@ def test_building_twice_on_the_same_wheel_is_refused(built):
 
 
 def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data):
-    """Two SDKs can ship a library under the same file name.
-
-    The patched copy no longer hashes to either, so only the name is left to go
-    on -- and a differing build-id says it is the wrong one. Claiming it would
-    hand this binary the other component's licence.
+    """Patched libraries can lose hash identity while retaining a shared filename.
+    A contradictory build ID must prevent attribution by name.
     """
 
     licensing.load_corpus(license_data)
     payload = synth.wheel_payload(workspace)
-    # Same basename as the member inside the SDK archive, different build-id,
-    # and patched so the content matches nothing.
+    # Match the SDK basename but contradict its build ID and content hash.
     payload["isaaccapture/other_sdk/libdemo.so"] = synth.elf_shared_object(
         "libdemo.so",
         ("libc.so.6", "libm.so.6"),
@@ -545,8 +525,7 @@ def test_a_name_match_a_build_id_contradicts_is_refused(workspace, license_data)
 
 
 def test_an_unreadable_archive_says_so(workspace, license_data):
-    """Only archives this build fetched are indexed, so one that will not open
-    is a broken download -- not a stray file to walk past."""
+    """Only fetched archives are indexed, so an unreadable one indicates a broken input."""
     from isaaccapture_sbom import discovery
 
     licensing.load_corpus(license_data)
@@ -564,11 +543,8 @@ def test_an_unreadable_archive_says_so(workspace, license_data):
 def test_bytes_more_than_one_component_holds_name_no_single_source(
     workspace, license_data
 ):
-    """A stock licence text is the same file in every project that ships one.
-
-    Naming whichever was indexed first would file one project's redistribution
-    obligation under another's. Say the bytes are shared and claim no single
-    source instead.
+    """Identical license bytes can belong to several projects.
+    Do not assign ownership based on index order.
     """
 
     licensing.load_corpus(license_data)
@@ -592,20 +568,16 @@ def test_bytes_more_than_one_component_holds_name_no_single_source(
 
     assert "shared-content" in entry["comment"]
     assert "more than one component" in entry["comment"]
-    # Both candidates named, neither claimed as the source.
     assert "alpha" in entry["comment"] and "beta" in entry["comment"]
 
 
 def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
-    """The list lives in the document being checked.
-
-    Treating it as files to skip lets whoever edits the document exempt anything
-    they add to the wheel from the only coverage check a consumer runs.
+    """The checked document controls its exclusion list; trusting it would let an editor
+    exempt arbitrary added files from coverage checks.
     """
     with zipfile.ZipFile(built["wheel"]) as archive:
         payload = {item: archive.read(item) for item in archive.namelist()}
-    # write_wheel regenerates RECORD; keeping the old one would make a duplicate
-    # member, which is a different finding and now refused outright.
+    # write_wheel regenerates RECORD; remove it here to avoid testing duplicate members.
     payload.pop(f"{DIST_INFO}/RECORD", None)
 
     payload["isaaccapture/_backdoor.py"] = b"import os\n"
@@ -626,10 +598,8 @@ def test_the_excluded_list_cannot_exempt_a_smuggled_file(built):
 
 
 def test_two_members_under_one_name_are_refused(built):
-    """Reading by name yields the last copy, so the first is hashed by nothing.
-
-    Which one a consumer extracts is up to their unzip, so an archive carrying
-    both is not describable and must not be accepted.
+    """Name-based reads select one duplicate; extractors may select another.
+    No single hash can describe both members.
     """
     with zipfile.ZipFile(built["wheel"]) as archive:
         names = [item for item in archive.namelist() if not item.endswith("/")]
@@ -649,13 +619,8 @@ def test_two_members_under_one_name_are_refused(built):
 def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
     workspace, tmp_path
 ):
-    """The build tree is read once for a run; a wheel's own findings are its own.
-
-    `_from_build_host` adds the system libraries a wheel turned out to need. If
-    those land on the shared `Discovery`, the next wheel's evidence inherits
-    components it does not ship; if they land nowhere the evidence reaches, the
-    document names licence texts the evidence cannot account for and the wheel
-    fails its own verification.
+    """Host-library discoveries belong to each wheel's evidence.
+    Mutating shared discovery would leak components into subsequent wheels.
     """
     from isaaccapture_sbom import evidence as evidence_module
 
@@ -704,11 +669,8 @@ def test_one_discovery_serves_every_wheel_without_bleeding_between_them(
 
 
 def test_a_third_partys_licence_does_not_discharge_this_one(workspace, license_data):
-    """The distribution's own terms must be its own.
-
-    A packaged third-party text with a matching basename satisfied the gate, so
-    a wheel that stopped shipping its own LICENSE still passed and the only copy
-    of its terms sat under `third-party/`, attributed to somebody else.
+    """A third-party license with the same basename cannot satisfy the requirement
+    to package the distribution's own terms.
     """
 
     licensing.load_corpus(license_data)
@@ -862,8 +824,7 @@ def test_merge_manifests_refuses_malformed_sidecars(tmp_path):
 
 
 def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
-    """A checked-in header that names no identifier, as Chromium's key table
-    does, under `src/vendor` so the extension that includes it ships it."""
+    """Model an untagged vendored header such as Chromium's key table."""
     synth.write(
         workspace.root / "src/vendor/keys/include/keys/table.h", synth.UNTAGGED_HEADER
     )
@@ -918,9 +879,9 @@ def test_reuse_toml_declares_the_terms_of_an_untagged_vendored_file(workspace):
 def test_each_vendored_file_needs_a_listed_licence_of_its_own(
     workspace, relative, text, key
 ):
-    """`src/vendor/upstream_helper.h` states BSL-1.0 for its holder; a file of
-    another holder, or a second file of theirs, stating nothing or only a
-    LicenseRef with no text, is not covered by it."""
+    """A listed license on upstream_helper.h cannot cover other files that declare
+    no license or a LicenseRef without text.
+    """
     synth.write(workspace.root / relative, text)
     synth.track(workspace.root)
 

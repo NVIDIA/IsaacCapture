@@ -284,10 +284,7 @@ jobs:
         mv install/wheels-repaired/*.whl install/wheels/
         rmdir install/wheels-repaired || true
 
-    # Runs between auditwheel repair and every upload, because the document
-    # describes the finished wheel and the wheel gains files here.
-    # The inventory is discovered from this build tree -- CMake's file API
-    # codemodel, the fetched sources -- so nothing has to be declared anywhere.
+    # Run after auditwheel and before upload so evidence describes the repaired bytes.
     - name: Package licenses and contents SBOM into wheels (Release only)
       if: matrix.build_type == 'Release'
       run: |
@@ -315,7 +312,6 @@ jobs:
             --manifest sbom/manifest.json \
             --build-evidence "sbom/${stem}.build-evidence.json"
         done
-        # Third-party conformance, from the collector's own dev pins.
         for document in sbom/*.spdx.json; do
           uv run --project scripts/sbom --python ${{ matrix.python_version }} \
             --extra dev pyspdxtools -i "${document}"
@@ -327,15 +323,12 @@ jobs:
         set -euo pipefail
         shopt -s nullglob
         wheels=(install/wheels/*.whl)
-        # uv pip install re-checks every RECORD digest, so this doubles as proof
-        # that the rewrite left an installable wheel behind. --find-links resolves
-        # the isaacteleop transition wheel built alongside it; without it uv goes
-        # to PyPI for a dependency this build just produced.
+        # --find-links resolves the sibling transition wheel from this build.
         uv venv --python ${{ matrix.python_version }} .venv-wheel-check
         uv pip install --python .venv-wheel-check \
           --find-links install/wheels "${wheels[@]}"
         .venv-wheel-check/bin/python -c "import isaaccapture; print('imported', isaaccapture.__version__)"
-        # The consumer-side check, run exactly as the published instructions do.
+        # Exercise standalone verification without build evidence or a manifest.
         for wheel in "${wheels[@]}"; do
           uv run --project scripts/sbom --python ${{ matrix.python_version }} \
             isaaccapture-sbom check --wheel "${wheel}"
@@ -1155,9 +1148,7 @@ jobs:
         echo "All wheel dependency jobs completed successfully"
 
   publish-sbom-evidence:  # durable copies attached to the GitHub release
-    # Actions artifacts expire in days; a tagged release is where the evidence a
-    # consumer is told to fetch actually lives. Wheels keep their own copy
-    # embedded either way, so this job publishes, it does not gate.
+    # Attach durable evidence to releases; Actions artifacts expire.
     runs-on: ubuntu-22.04
     needs:
       - wheel-gate
@@ -1167,9 +1158,7 @@ jobs:
     env:
       ARCHIVE: isaaccapture-sbom-${{ github.ref_name }}
 
-    # `!cancelled()` for the reason spelled out on `publish-wheel`: a skip
-    # anywhere upstream of `wheel-gate` reaches here too, and the result check
-    # is what should decide.
+    # !cancelled() lets wheel-gate's result decide despite skipped upstream jobs.
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
@@ -1199,8 +1188,7 @@ jobs:
         pattern: isaaccapture-sbom-*
         path: sbom-sidecars
 
-    # The merged manifest and the archive are stamped with this, so re-running
-    # this job publishes the same bytes.
+    # Fix manifest and archive timestamps for reproducible reruns.
     - name: Pin the build clock to the commit
       run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
 
@@ -1208,26 +1196,23 @@ jobs:
       run: |
         set -euo pipefail
 
-        # A `py3-none-any` wheel arrives from every matrix entry; the merge
-        # refuses one whose copies disagree, and copies only the evidence the
-        # merged manifest binds.
+        # Universal wheels repeat across matrix entries. Reject conflicting copies
+        # and publish only the evidence bound by the merged manifest.
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom merge-manifests \
           --output "${ARCHIVE}/isaaccapture-sbom-manifest.json" \
           --evidence-out "${ARCHIVE}" \
           sbom-sidecars/*/manifest.json
 
-        # One zip, not loose assets: GitHub renames release assets (`!` becomes
-        # `.`), and names inside a zip are kept. Fixed times, modes and order,
-        # and no owner or extra time fields (-X), so a rerun zips the same
-        # bytes; zip stores local time, hence TZ.
+        # ZIP preserves filenames that GitHub renames in loose assets (`!` to `.`).
+        # Fix times, modes, order, and extra fields for reproducibility;
+        # ZIP stores local time, so set TZ too.
         touch -d "@${SOURCE_DATE_EPOCH}" "${ARCHIVE}"/*
         chmod 644 "${ARCHIVE}"/*
         printf '%s\n' "${ARCHIVE}"/* | LC_ALL=C sort \
           | TZ=UTC zip -X -q "${ARCHIVE}.zip" -@
 
-        # Rehearses the published verification instructions on what a consumer
-        # unpacks, and re-checks every advertised digest.
+        # Verify the unpacked release using the published consumer procedure.
         unzip -q "${ARCHIVE}.zip" -d unpacked
         uv run --project scripts/sbom --python 3.12 \
           isaaccapture-sbom check-set \
@@ -1243,9 +1228,8 @@ jobs:
       run: |
         set -euo pipefail
 
-        # release-tag.yml pushes the tag before it creates the draft release, so
-        # this job can start first. Wait for the release rather than creating one,
-        # which would bypass the draft/approval step.
+        # The tag can trigger this job before release-tag.yml creates its draft.
+        # Wait for that release to preserve its draft/approval step.
         deadline=$(( SECONDS + 900 ))
         until gh release view "${TAG}" >/dev/null 2>&1; do
           if (( SECONDS >= deadline )); then
@@ -1256,8 +1240,6 @@ jobs:
           sleep 20
         done
 
-        # --clobber makes a retry idempotent. Draft state and release notes are
-        # left exactly as they were.
         gh release upload "${TAG}" "${ARCHIVE}.zip" --clobber
 
         echo "Attached ${ARCHIVE}.zip to ${TAG}"
@@ -1312,13 +1294,11 @@ jobs:
         pattern: isaaccapture-sbom-*
         path: sbom-sidecars
 
-    # Nothing is published until every variant the matrix produces is here and
-    # still hashes to what its own manifest recorded.
     - name: Verify wheel variant coverage and digests
       run: |
         set -euo pipefail
 
-        # Mirrors the build-ubuntu Release matrix: 2 architectures x 3 Pythons.
+        # Keep platform and ABI lists aligned with the build-ubuntu Release matrix.
         platforms=(x86_64 aarch64)
         abis=(cp311 cp312 cp313)
         expected=$(( ${#platforms[@]} * ${#abis[@]} ))
@@ -1350,8 +1330,7 @@ jobs:
           done < <(jq -r '.wheels[] | [.filename, .sha256] | @tsv' "${manifest}")
         done
 
-        # Every wheel under wheels/ is uploaded below, so one no manifest names
-        # would be published with no evidence checked for it.
+        # Every downloaded wheel is uploaded below, so require evidence for all of them.
         for wheel in wheels/*.whl; do
           name="$(basename "${wheel}")"
           if [[ -z "${named[${name}]:-}" ]]; then

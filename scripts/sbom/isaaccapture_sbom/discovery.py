@@ -1,18 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Find out what went into a build by reading what the build left behind.
+"""Discover components and provenance from build outputs.
 
-There is no dependency list to keep in step with the code. A component exists
-because a source tree was fetched into the build, and it reaches a wheel because
-the link graph or a content hash says so.
-
-Four indexes do the work:
-
-* source trees   ``_deps/*-src`` trees -> identity, from git or the declaration
-* build graph    CMake's file API codemodel -> what links and compiles into what
-* archives       members of tarballs in the repo, by content hash
-* files          repo and build-tree files, by content hash
+Indexes cover fetched trees, the CMake graph, archive members, and repository
+and generated files. See scripts/sbom/README.md for attribution rules.
 """
 
 from __future__ import annotations
@@ -39,7 +31,6 @@ from packageurl import PackageURL
 
 from . import elf, licensing
 
-# Directories that never hold an input worth indexing.
 _SKIP_DIRS = {
     ".git",
     ".venv",
@@ -51,15 +42,12 @@ _SKIP_DIRS = {
 }
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar", ".zip")
 _MAX_ARCHIVE_BYTES = 1 << 31
-# How much of a library nested in an archive is kept, to read its build-id from.
-# An SDK ships its libraries under `lib/`, not at the archive root, so without
-# this the only members with a build-id are the ones nothing links against.
+# Retain ELF prefixes even for nested archive members to read their build IDs.
 _ELF_HEAD_BYTES = 1 << 16
 
 _GITHUB_REMOTE = re.compile(
     r"github\.com[:/](?P<org>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
 )
-# A release asset or a source archive on GitHub names its repository and its ref.
 _GITHUB_REPO = r"(?P<org>[^/]+)/(?P<repo>[^/]+)/"
 _GITHUB_DOWNLOADS = (
     re.compile(
@@ -74,9 +62,8 @@ _GITHUB_DOWNLOADS = (
         r"(?:refs/(?:tags|heads)/)?(?P<ref>.+)$"
     ),
 )
-# Schemes this collector states as a downloadLocation; a local path names only the builder.
+# Local download paths identify only the builder, not a public origin.
 _DOWNLOAD_SCHEMES = ("http", "https", "ftp", "ftps")
-# Transports a published git location may name; a local path names only the builder.
 _GIT_TRANSPORTS = ("http", "https", "ssh", "git")
 # git's scp-like `[user@]host:path`, which SPDX knows only as `ssh://`.
 _SCP_REMOTE = re.compile(r"^(?P<user>[^@/:]+@)?(?P<host>[^@/:]{2,}):(?!//)/?")
@@ -92,12 +79,7 @@ _LOG = logging.getLogger("isaaccapture.sbom.discovery")
 
 
 def component_of(display: str) -> str:
-    """The component a `FileIndex` display path belongs to.
-
-    `add_tree` renders `<tree-name>/<relative>` and a fetched checkout's tree is
-    `<key>-src`, so this is the inverse of how the index was populated. Inverting
-    it at the call site made the convention an undeclared contract.
-    """
+    """Recover the component key from FileIndex's <key>-src/<relative> display path."""
     return display.split("/", 1)[0].removesuffix("-src")
 
 
@@ -128,9 +110,7 @@ def _walk(root: Path):
                 yield Path(entry.path)
 
 
-# ==============================================================================
 # Source trees
-# ==============================================================================
 
 
 @dataclass(frozen=True)
@@ -150,23 +130,18 @@ class Component:
     root: Path | None = None
     license_concluded: str = "NOASSERTION"
     license_declared: str = "NOASSERTION"
-    # The component's own copyright notice, where the build can read one. Naming
-    # a holder and then declaring none would contradict the same document.
     copyright_text: str = "NOASSERTION"
     evidence: tuple[licensing.LicenseEvidence, ...] = ()
-    # (path, reason) for checked-in files whose REUSE info fails the per-file
-    # gate. Pooling a holder's licences would otherwise lend one file the terms
-    # of another, or void them all.
+    # (path, reason) for per-file REUSE failures; a holder's other files cannot
+    # lend their licenses to an unlicensed file.
     unlicensed: tuple[tuple[str, str], ...] = ()
 
 
 def own_git(directory: Path, *args: str) -> str | None:
-    """A read-only git query about the checkout rooted at `directory`.
+    """Query git only when directory is the checkout root.
 
-    git answers for whichever repository encloses a directory, and `build/` sits
-    inside this project's checkout, so a tree fetched as an archive would
-    otherwise be identified as this project. None unless git's toplevel is
-    `directory` itself.
+    An archive extracted beneath the project must not inherit the enclosing
+    repository's identity.
     """
     if not _is_own_checkout(directory.resolve()):
         return None
@@ -181,13 +156,11 @@ def _is_own_checkout(resolved: Path) -> bool:
 
 
 def git(repo: Path, *args: str) -> str | None:
-    """Run a read-only git query about `repo`, or return None if git cannot answer.
+    """Run a read-only git query, returning None on failure.
 
-    git exports GIT_DIR and its kin to the hooks it runs; with them set, git
-    answers for that repository whatever `-C` names, so they are dropped.
-    Configuration passed as GIT_CONFIG_PARAMETERS or GIT_CONFIG_COUNT, such as a
-    container's `safe.directory`, is kept, as git keeps it for a submodule;
-    GIT_CONFIG is not, since it replaces the repository's own configuration.
+    Clear repository-local variables (including GIT_DIR and GIT_CONFIG) that
+    override -C. Preserve GIT_CONFIG_PARAMETERS/COUNT for settings such as
+    safe.directory, following git's submodule behavior.
     """
     local = set(_git_local_variables())
     env = {name: value for name, value in os.environ.items() if name not in local}
@@ -208,16 +181,8 @@ def version_in_name(name: str) -> str | None:
 
 
 def notice_from(evidence) -> str:
-    """The copyright a component's own licence text states, where it states one.
-
-    Permissive licences generally require the notice to travel with the terms,
-    and for MIT and the BSDs it is a line of the same file; this states it
-    where a reader can act on it.
-    """
-    # Grants only, though a pool counts as licence evidence everywhere else: a
-    # pool is a directory of reference texts, and the notice in one is the
-    # licence's own author -- OpenXR ships WTFPL, so reading its pool credited
-    # OpenXR to the person who wrote WTFPL.
+    """Read copyright notices from the component's license grants."""
+    # Pool texts can name the license author (for example WTFPL's), not the component.
     notices = [
         found
         for item in evidence
@@ -240,7 +205,6 @@ class _Identity(NamedTuple):
 
 
 def _github_identity(org: str, repo: str, ref: str | None) -> tuple[str, str, str]:
-    """Supplier, homepage and purl of a GitHub repository at `ref`."""
     purl = PackageURL(type="github", namespace=org, name=repo, version=ref)
     return f"Organization: {org}", f"https://github.com/{org}/{repo}", purl.to_string()
 
@@ -248,8 +212,7 @@ def _github_identity(org: str, repo: str, ref: str | None) -> tuple[str, str, st
 def _identity(
     remote: str | None, name: str, commit: str | None, tag: str | None = None
 ) -> _Identity:
-    """A git source's identity, read off its remote URL, at the commit, else at
-    the declared tag."""
+    """Identify a git source by remote URL and commit, falling back to its declared tag."""
     ref = commit or tag
     version = ref or "NOASSERTION"
     match = _GITHUB_REMOTE.search(remote) if remote else None
@@ -278,8 +241,7 @@ def _identity(
 
 
 def _archive_identity(url: str, digest: str | None, name: str) -> tuple[_Identity, str]:
-    """An archive's identity, read off the URL it was declared with, and how the
-    declaration reads in `sourceInfo`."""
+    """Identify an archive from its declared URL and record its sourceInfo."""
     parsed = urlparse(url)
     file_name = PurePosixPath(parsed.path).name
     downloadable = parsed.scheme.lower() in _DOWNLOAD_SCHEMES
@@ -324,10 +286,7 @@ class _Declaration:
 
 
 def _stamps(deps_dir: Path) -> dict[str, dict[str, dict[str, str]]]:
-    """Each tree's FetchContent stamps, by method.
-
-    scripts/sbom/README.md says where from.
-    """
+    """Index FetchContent stamps by tree and download method."""
     # Under the populate sub-build, or, with CMP0168 NEW, the build's own CMakeFiles.
     roots = (
         (deps_dir, "*-subbuild/*-populate-prefix/src/*-populate-stamp"),
@@ -445,9 +404,7 @@ def discover_source_trees(deps_dir: Path) -> dict[str, Component]:
     return components
 
 
-# ==============================================================================
 # Build graph
-# ==============================================================================
 
 
 @dataclass(frozen=True)
@@ -472,18 +429,14 @@ class _Node:
     # library's own requirements land on its consumers' lines.
     linked: tuple[Path, ...] = ()  # outputs of targets in this graph
     inputs: tuple[LinkInput, ...] = ()  # everything else that can carry code
-    # The sources it compiles, as opposed to merely lists, and the directory
-    # its objects and their dependency output land in.
+    # Sources with compile groups; merely listed sources are not necessarily compiled.
     compiled: tuple[Path, ...] = ()
     objects: Path | None = None
 
 
-# How a path of a component reached an artifact, strongest evidence first. A
-# member made from a file of the component, then the sources compiled into it,
-# then the headers the compiler's dependency output says it read. A target that
-# compiles something but left no such output stands in the sources it lists and
-# its include directories. A linked archive of the component is not a path: its
-# contents are unknowable, so it stands for the whole component.
+# Evidence strength for nested-license reach. Missing compiler records fall
+# back to listed sources and include directories. Prebuilt archives retain
+# the whole component's terms because their source contents are unknown.
 REACH = (
     "copied-file",
     "derived-file",
@@ -496,8 +449,7 @@ PREBUILT = "prebuilt-library"
 
 
 class Reach(NamedTuple):
-    """The evidence that kept a nested text: how, through which path, into
-    which wheel member."""
+    """Evidence retaining a nested license: method, source path, and wheel member."""
 
     how: str
     path: str
@@ -554,11 +506,7 @@ class _Line:
 
 @dataclass(frozen=True)
 class _Search:
-    """Where `-l` looks after the `-L` directories, and the sysroot `=` names.
-
-    The linker's own directories are read under `sysroot`, which a target's
-    CMAKE_SYSROOT replaces.
-    """
+    """Implicit linker search directories and the sysroot used for leading = paths."""
 
     compiler_dirs: list[Path]
     compiler: str | None
@@ -614,12 +562,10 @@ _NO_COMPILER = (
 
 
 def _linker_words(fragments: list[dict]) -> tuple[list[str], list[str]]:
-    """What a link line hands the linker, in order, and fragments that do not parse.
+    """Unpack linker words and retain unparseable fragments.
 
-    Every role is read, because CMake files a path given as a link option
-    under `flags`. Driver options go with their values; `-Wl,` lists and
-    `-Xlinker` words are unpacked, which is how `--whole-archive` wrappers
-    arrive. The driver's `-static` governs the whole line wherever it sits.
+    Read every CMake role: paths passed as link options appear under flags.
+    Unpack -Wl, and -Xlinker, and apply the driver's -static to the whole line.
     """
     stream: list[str] = []
     unparsed: list[str] = []
@@ -702,10 +648,7 @@ def _inspect(path: Path) -> tuple[str | None, int | None, list[str] | None]:
 
 
 def _script_inputs(path: Path) -> list[str] | None:
-    """The files and `-l` names a GNU ld script's INPUT and GROUP commands name.
-
-    None if the file is not such a script.
-    """
+    """Return INPUT/GROUP paths and -l names, or None for a non-linker-script file."""
     try:
         with path.open("rb") as handle:
             head = handle.read(1 << 16)
@@ -750,11 +693,7 @@ def _owner(path: Path, ownership: Ownership | None) -> str | None:
 
 
 def _include_owners(include: Path, ownership: Ownership | None) -> set[str]:
-    """The components an include directory credits.
-
-    Which file in it was used is unknowable, so every component with files
-    there is credited, the same way a fetched include directory is.
-    """
+    """Credit every owner under an include directory when individual headers are unknown."""
     match = _DEPS_SOURCE.search(include.as_posix())
     if match:
         return {match.group("name")}
@@ -774,11 +713,7 @@ class FileApiError(Exception):
 
 
 def _within(repo_root: Path, build_dir: Path):
-    """Predicate: under the checkout, outside its build tree.
-
-    Both roots are resolved by the caller; `--build-dir` is free-form and a
-    relative one compared against absolute paths matches nothing.
-    """
+    """Test checkout membership outside the build tree; both roots must be resolved."""
 
     def check(path: Path) -> bool:
         resolved = path if path.is_absolute() else path.resolve()
@@ -790,14 +725,10 @@ def _within(repo_root: Path, build_dir: Path):
 
 
 def _reply_objects(reply: Path) -> tuple[dict[str, Path], str]:
-    """The current reply's objects by kind, reached through its index, and the generator.
+    """Read objects from the lexicographically latest index.
 
-    Every other reply filename is documented as unspecified and not to be
-    interpreted, and CMake only *attempts* to delete what it did not just
-    write -- so globbing for a codemodel can find one from an earlier configure,
-    and sorting the matches orders content hashes. The index alone carries an
-    order: "the one with the largest name in lexicographic order is the current
-    index file".
+    Other reply filenames contain unordered content hashes, and stale codemodels
+    may survive reconfiguration. Do not select them by glob or filename order.
     """
     indexes = sorted(reply.glob("index-*.json")) if reply.is_dir() else []
     if not indexes:
@@ -809,7 +740,6 @@ def _reply_objects(reply: Path) -> tuple[dict[str, Path], str]:
     for item in index.get("objects", []):
         version = item.get("version") or {}
         if item.get("kind") in wanted and wanted[item["kind"]] == version.get("major"):
-            # Index references are relative to the reply directory.
             found = reply / item["jsonFile"]
             if found.is_file():
                 objects[item["kind"]] = found
@@ -834,12 +764,10 @@ def cmake_cache(build_dir: Path) -> dict[str, str]:
 
 
 def _search_directories(toolchains: Path | None, build_dir: Path) -> dict[str, _Search]:
-    """Where `-l` looks after the `-L` directories, by link language.
+    """Find implicit linker directories by language.
 
-    First the directories the compiler hands the linker: CMake's toolchains
-    reply, or the compiler asked directly for a language the reply does not
-    cover -- CMake records them only for languages the top-level project
-    enables. Then the linker's own built-in SEARCH_DIRs.
+    CMake records only top-level enabled languages; query other compilers directly.
+    Append the linker's built-in SEARCH_DIRs after the compiler's directories.
     """
     compilers = {
         match["language"]: value
@@ -875,7 +803,7 @@ def _search_directories(toolchains: Path | None, build_dir: Path) -> dict[str, _
 
 
 def _ask(*command: str, env: dict[str, str] | None = None) -> str:
-    """A command's standard output, or empty where it cannot run or fails."""
+    """Return command stdout, or an empty string on failure."""
     try:
         result = subprocess.run(
             list(command),
@@ -890,8 +818,7 @@ def _ask(*command: str, env: dict[str, str] | None = None) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-# A make rule as GCC and Clang write a depfile, and CMake's Makefile generators
-# consolidate them into compiler_depend.make.
+# GCC/Clang depfiles and CMake compiler_depend.make use make rule syntax.
 _MAKE_CONTINUATION = re.compile(r"\\\r?\n")
 _MAKE_RULE = re.compile(r"^(?:\\.|[^:\\#])+:(?:\s+(?P<prerequisites>.*))?$")
 _MAKE_WORD = re.compile(r"(?:\\.|[^\s\\])+")
@@ -937,16 +864,15 @@ class DependencyLog:
     def __init__(self, generator: str, build_root: Path) -> None:
         self._ninja_generator = "Ninja" in generator
         self._build_root = build_root
-        # Ninja's records grouped by the objects directory they sit in.
         self._ninja: dict[str, list[list[str]]] | None = None
         self._resolved: dict[str, Path] = {}
         self._read: dict[Path, tuple[set[Path], bool]] = {}
 
     def read(self, objects: Path, compiled: tuple[Path, ...]) -> tuple[set[Path], bool]:
-        """What compiling into `objects` read, and whether every source in
-        `compiled` has a record of its own: a stale object, or a generator
-        that keeps no record, leaves a gap, and a source another object
-        merely includes is not its own record."""
+        """Return source/header prerequisites and whether every compiled source has its own record.
+
+        A source included by another object does not count as its own compile record.
+        """
         if objects not in self._read:
             read: set[Path] = set()
             recorded: set[Path] = set()
@@ -1043,13 +969,9 @@ def _linker_search_dirs(compiler: str, sysroot: str) -> list[Path]:
 
 
 class BuildGraph:
-    """The link and compile graph, read from CMake's own file API.
+    """Read the compile/link graph from CMake's file API.
 
-    The top-level ``CMakeLists.txt`` asks for the codemodel with
-    ``cmake_file_api()`` where that command exists, so a configure by CMake 3.27
-    or newer leaves one behind, under every generator. Scraping ``link.txt``
-    instead would only work for the Makefile generators -- Ninja writes no such
-    file.
+    Do not scrape link.txt: Ninja does not produce it.
     """
 
     def __init__(self, build_dir: Path, config: str | None = None) -> None:
@@ -1064,7 +986,6 @@ class BuildGraph:
         ] = {}
         self._dependencies = DependencyLog("", build_dir)
         self._linked: dict[str, tuple[_Node, ...]] = {}
-        # By (target name, which CMake keeps unique; the ownership asked with).
         self._node_reach: dict[
             tuple[str, Ownership | None], dict[str, dict[Path, str]]
         ] = {}
@@ -1095,10 +1016,7 @@ class BuildGraph:
             (item for item in configurations if item["name"] == (config or "")), None
         )
         if chosen is None:
-            # The caller names the configuration from CMakeCache.txt, and a
-            # reply that does not describe it is a reply for another build --
-            # taking any other credits a wheel to a graph that did not build it.
-            # Unnamed is the single-configuration tree the tests construct.
+            # Do not attribute a wheel to a different build configuration.
             if config:
                 raise FileApiError(
                     f"codemodel under {reply} describes no {config!r} configuration, "
@@ -1112,8 +1030,7 @@ class BuildGraph:
 
         lines: dict[str, tuple[list[str], list[str], Path, _Search | None]] = {}
         for entry in chosen["targets"]:
-            # Relative to the codemodel, which is what the format says, even
-            # though CMake writes it into the reply directory alongside these.
+            # Target JSON paths are relative to the codemodel file.
             target = json.loads(
                 (model_file.parent / entry["jsonFile"]).read_text(encoding="utf-8")
             )
@@ -1160,8 +1077,7 @@ class BuildGraph:
                 self.artifacts[output] = artifact
                 self._by_name.setdefault(output.name, []).append(artifact)
 
-        # Read once every target's outputs are known: an output of this graph
-        # is that target's contribution, whatever its content.
+        # Resolve link inputs after indexing every target output.
         for target_id, (words, unparsed, link_dir, found) in lines.items():
             line = self._read_line(words, link_dir, found)
             line.inputs += [
@@ -1177,12 +1093,9 @@ class BuildGraph:
     def _read_line(
         self, words: list[str], link_dir: Path, search: _Search | None
     ) -> _Line:
-        """What a linker word stream names.
+        """Resolve linker inputs using all -L paths, then implicit search paths.
 
-        ld applies every `-L` to every `-l`, then the compiler's directories,
-        then its own built-in ones -- `search`, or None where the build records
-        no compiler. A `-l` name that ld would satisfy with a shared library
-        adds nothing, since DT_NEEDED records it.
+        Shared libraries are handled separately through DT_NEEDED.
         """
         sysroot = search.sysroot if search else ""
         line = _Line(
@@ -1224,11 +1137,7 @@ class BuildGraph:
     def _classify(
         self, spelling: str, path: Path, line: _Line, static: bool, depth: int = 0
     ) -> None:
-        """Add what one path on a link line brings in, a linker script followed
-        under the `-Bstatic` state in force where the line names it.
-
-        A shared library adds nothing, since DT_NEEDED records it.
-        """
+        """Classify inputs, following linker scripts under the current -Bstatic state."""
         # ld looks beside the name it was given, not beside a symlink's target.
         beside = path.parent
         path = path.resolve()
@@ -1277,14 +1186,10 @@ class BuildGraph:
         return self._by_name.get(name, [])
 
     def repo_inputs(self, repo_root: Path, build_dir: Path) -> set[Path]:
-        """Files this build compiled or included that the checkout itself holds.
+        """Find compiled/included files belonging to the checkout.
 
-        The build tree is not among them, for sources as much as for include
-        directories: `_deps` is the component-source domain and is attributed
-        from its own checkouts, generated headers state no upstream holder, and
-        vcpkg installs its ports under the build directory -- whose headers
-        carry their upstream contributors' copyright lines, which the vendored
-        scan reads as this repository having vendored each of those people.
+        Exclude the build tree: fetched sources and vcpkg headers have separate
+        ownership, and generated headers are not checked-in third-party sources.
         """
         inside = _within(repo_root.resolve(), build_dir.resolve())
         found: set[Path] = set()
@@ -1300,12 +1205,9 @@ class BuildGraph:
         return found
 
     def _reach(self, target_id: str, prune=None) -> tuple[_Node, ...]:
-        """The target and everything it depends on or links, transitively.
+        """Traverse dependencies and linked target outputs, even without declared edges.
 
-        A link line naming another target's output brings that target, whether
-        or not it is also a declared dependency. A node `prune` accepts, other
-        than the target itself, is left out with everything reached only
-        through it.
+        Pruned nodes and paths reachable only through them are excluded; the root remains.
         """
         seen: set[str] = set()
         stack = [target_id]
@@ -1331,11 +1233,9 @@ class BuildGraph:
         return self._closures[target_id]
 
     def static_inputs(self, artifact: Artifact) -> dict[LinkInput, set[str]]:
-        """What the closure links that no target here produced.
+        """Map external static inputs to the targets that link them.
 
-        Maps each to the targets whose link line names it. Another executable
-        or module is a build-order dependency -- a code generator, say -- and
-        nothing links it or what it links.
+        Exclude build-order executables/modules and their dependencies.
         """
         if artifact.target_id not in self._static:
             found: dict[LinkInput, set[str]] = {}
@@ -1357,13 +1257,7 @@ class BuildGraph:
     def contributions(
         self, artifact: Artifact, ownership: Ownership | None = None
     ) -> dict[str, set[str]]:
-        """Which components contributed to an artifact, and in what way.
-
-        Walks the target's dependency closure. Compiled sources name a component
-        outright; include paths are the only trace a header-only dependency
-        leaves in the codemodel; a linked archive or object names whoever holds
-        it.
-        """
+        """Map contributing components to compiled-source, header-include, or prebuilt roles."""
         found: dict[str, set[str]] = {}
 
         def note(key: str, how: str) -> None:
@@ -1449,11 +1343,7 @@ class BuildGraph:
 
 
 class Ownership:
-    """Which component a path belongs to.
-
-    One lookup for every kind of third-party code, so recognising a new kind is
-    registering a root rather than adding a branch wherever paths are matched.
-    """
+    """Resolve ownership across registered component roots and individual files."""
 
     def __init__(self) -> None:
         # path -> (owner, whether an include directory credits it outright)
@@ -1461,7 +1351,7 @@ class Ownership:
         self._roots: list[tuple[Path, str]] = []
         # directory -> (owners credited outright, owners credited if alone)
         self._index: dict[Path, tuple[set[str], set[str]]] | None = None
-        # Every header a compile read is asked about, most of them many times.
+        # Cache repeated header lookups across compilation units.
         self._owners: dict[Path, str | None] = {}
 
     def register_root(self, root: Path, key: str) -> None:
@@ -1473,11 +1363,10 @@ class Ownership:
         return [root for root, owner in self._roots if owner == key]
 
     def register_file(self, path: Path, key: str, *, by_directory: bool = True) -> None:
-        """Record a file's owner.
+        """Register a file's owner.
 
-        An include directory credits every owner of a file under it; one whose
-        files are registered with `by_directory=False` only where it holds every
-        such file there.
+        With by_directory=False, an include directory credits this owner only if
+        it owns every registered file beneath that directory.
         """
         self._files[path.resolve()] = (key, by_directory)
         self._index = None
@@ -1518,7 +1407,6 @@ class Ownership:
         return found
 
     def _by_directory(self) -> dict[Path, tuple[set[str], set[str]]]:
-        """Each registered file's owner under the file and every directory above it."""
         if self._index is None:
             self._index = {}
             for path, (key, outright) in self._files.items():
@@ -1528,16 +1416,9 @@ class Ownership:
         return self._index
 
 
-# ==============================================================================
-# Third-party sources vendored in this repository
-# ==============================================================================
-# Not everything third-party arrives through FetchContent. A file checked in
-# here that someone else wrote says so in its REUSE info, which is the same
-# thing the project states about its own files -- so the copyright holder is
-# what separates them, not the directory it happens to sit in.
+# Vendored sources: identify third parties by copyright holder, not directory.
 
-# REUSE's tag where a file has one, and a plain copyright line where it does
-# not -- upstream files usually carry the latter.
+# Accept REUSE tags and plain upstream copyright notices.
 _COPYRIGHT_TAG = re.compile(
     r"SPDX-FileCopyrightText:\s*(?P<holder>[^\n\r]+)"
     r"|^[^\w\n]*Copyright\b(?P<plain>[^\n\r]+)",
@@ -1549,11 +1430,7 @@ _YEARS = re.compile(r"(copyright|\(c\)|©|\d{4}(\s*-\s*\d{4})?|,|\.)", re.IGNORE
 
 
 def project_authors(repo_root: Path) -> set[str]:
-    """Who the project says it is, read from its own packaging metadata.
-
-    As written, not folded: the same names answer "is this holder ours" and
-    "who supplied this distribution", and only the first wants them lowercased.
-    """
+    """Read author names verbatim; supplier output must retain their casing."""
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
         return set()
@@ -1569,12 +1446,7 @@ def project_authors(repo_root: Path) -> set[str]:
 
 
 def project_supplier(repo_root: Path) -> str:
-    """Who supplied this distribution, as its own packaging metadata states it.
-
-    SPDX takes one supplier. Choosing among several, or publishing a release
-    that names none, is a question for whoever is publishing it -- so it is
-    asked here rather than answered quietly.
-    """
+    """Require exactly one declared author for SPDX's single supplier field."""
     authors = sorted(project_authors(repo_root))
     if len(authors) != 1:
         raise SupplierError(
@@ -1586,13 +1458,10 @@ def project_supplier(repo_root: Path) -> str:
 
 
 def project_copyright(repo_root: Path) -> str:
-    """The notice this project states about itself, from its packaging metadata.
+    """Read the project notice from its packaging file's REUSE header.
 
-    A distribution that ships files of its own is covered by their notices. One
-    that ships only metadata states its copyright nowhere a reader can reach --
-    the reference text its declared licence packages names no holder -- and the
-    REUSE header on the file the distribution is built from is where the project
-    does state it.
+    Metadata-only wheels have no source notice, and reference license texts
+    do not identify the distribution's copyright holder.
     """
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
@@ -1619,7 +1488,6 @@ def _holder_in(text: str) -> str:
 
 
 def _notice_line(text: str) -> str:
-    # The tag introduces the notice; it is not part of it.
     notice = _COMMENT_MARKUP.sub("", " ".join(text.split()))
     return re.sub(r"^SPDX-(?:File|Snippet)CopyrightText:\s*", "", notice)
 
@@ -1757,11 +1625,10 @@ def discover_vendored(
     *,
     tracked: Iterable[str],
 ) -> tuple[dict[str, Component], dict[str, list[Path]]]:
-    """Group checked-in files whose copyright holder is not the project's.
+    """Group third-party files from build inputs and REUSE-covered tracked files.
 
-    Reads the build inputs in `candidates` and the `tracked` files REUSE covers
-    (`_covered`); `tracked` is required, as without it tracked data and Python
-    go unread. Licences are REUSE's; holders are `_held_by`'s.
+    Tracked files include data and Python absent from the compile graph.
+    Licenses follow REUSE precedence; holders follow _held_by.
     """
     # Here, not at module level: only discovery needs reuse, and reuse needs libmagic.
     from reuse.project import Project
@@ -1803,8 +1670,7 @@ def discover_vendored(
     for key, paths in grouped.items():
         concluded, evidence = licensing.declared_terms(key, licences.get(key, set()))
         declared = concluded
-        # What the build read first, so a shortened list names what ships; say
-        # when it is shortened, or it reads as the whole set.
+        # List build inputs first and mark truncation explicitly.
         named = [
             name
             for _, name in sorted(
@@ -1816,18 +1682,11 @@ def discover_vendored(
         )
         components[key] = Component(
             key=key,
-            # Not the bare holder: an organisation in a `name` field reads as a
-            # product, and "Collabora Ltd" is not a package anyone can obtain.
-            # The holder is the only identity this material has, so it is named
-            # for what it is and who holds it; `sourceInfo` lists the files.
             name=f"Vendored source ({names[key]})",
             kind="vendored-source",
             supplier=f"Organization: {names[key]}",
             homepage="NOASSERTION",
-            # No purl: this is third-party material identified by the copyright
-            # holder its REUSE info or header names; there is no package to
-            # locate. Minting `pkg:generic/<holder>` named a package that does
-            # not exist, from an organisation rather than from anything shipped.
+            # A copyright holder is not a package identity; do not mint a purl from it.
             purl="NOASSERTION",
             version="NOASSERTION",
             download_location="NOASSERTION",
@@ -1846,12 +1705,7 @@ def discover_vendored(
     return components, grouped
 
 
-# ==============================================================================
-# vcpkg
-# ==============================================================================
-# vcpkg installs into the build tree, so what it builds is neither a target of
-# this build nor a fetched checkout. Its install records name the port that
-# put each file there, as dpkg's do on the build host.
+# vcpkg install records identify ports whose outputs are outside the CMake graph.
 
 
 def discover_vcpkg(
@@ -1870,8 +1724,6 @@ def discover_vcpkg(
         port, _, rest = listing.stem.partition("_")
         version, _, triplet = rest.rpartition("_")
         key = f"vcpkg:{port}"
-        # A port installed for both the host and the target triplet has a list
-        # for each, and both installs are its files.
         owned.setdefault(key, []).extend(
             installed / line
             for line in listing.read_text(encoding="utf-8").splitlines()
@@ -1959,12 +1811,7 @@ def _vcpkg_component(
     )
 
 
-# ==============================================================================
-# The build host
-# ==============================================================================
-# The last discovery source: a shared library that no index explains, or a
-# static archive linked from outside the tree, was not produced or fetched by
-# this build, so ask the machine that supplied it.
+# Build-host libraries: resolve inputs not explained by build or source indexes.
 
 _SEARCH_ROOTS = (
     "/usr/lib/x86_64-linux-gnu",
@@ -1990,12 +1837,9 @@ def _host_library_paths() -> list[Path]:
 
 @functools.lru_cache(maxsize=1)
 def _host_build_id_index() -> dict[str, str]:
-    """Host libraries by GNU build-id.
+    """Index host libraries by build ID, which survives SONAME/RPATH repair.
 
-    A repair tool rewrites SONAME on the way into the wheel, so the name is no
-    longer a way back to the machine's copy. The build-id is, and it is the same
-    note the linker wrote. Built once; reading it from every library the loader
-    knows costs about a second.
+    Cache the index to avoid rescanning host libraries for every wheel member.
     """
     index: dict[str, str] = {}
     for path in _host_library_paths():
@@ -2012,8 +1856,7 @@ def _host_build_id_index() -> dict[str, str]:
 
 
 def _host_origin(library: Path | None, **known) -> dict:
-    """What the build machine says about a file: where it resolves, and the
-    package that owns it with that package's terms."""
+    """Resolve a host file and identify its supplying package and terms."""
     origin: dict = {**known, "resolved_path": None, "package": None, "copyright": None}
     if library is None:
         return origin
@@ -2040,12 +1883,9 @@ def resolve_system_library(soname: str) -> dict:
 
 
 def resolve_static_archive(archive: Path) -> dict:
-    """Trace an archive or object the build linked to the package or toolkit it came from.
+    """Identify the package or toolkit supplying a linked archive or object.
 
-    A shared library is explained once its SONAME resolves on the machine: that
-    is how the repair tool found the file it vendored. A link line already
-    names a static input's path, so finding it proves nothing; only a package
-    or a toolkit that states its terms explains one.
+    The link line already supplies its path; existence alone proves no ownership.
     """
     if not archive.is_file():
         return _host_origin(None, toolkit_root=None)
@@ -2090,7 +1930,6 @@ def archive_members(path: Path) -> int | None:
 
 
 def _identify_host_package(library: Path, origin: dict) -> dict:
-    """Name the package dpkg says owns a resolved host library."""
     # dpkg names a multiarch package with its architecture, `libc6:i386`, and
     # dpkg-query -W and apt answer for one architecture only when asked so.
     qualified = _dpkg_owner(library)
@@ -2107,7 +1946,6 @@ def _identify_host_package(library: Path, origin: dict) -> dict:
     return origin
 
 
-# A package name as dpkg prints it, with its architecture where it has one.
 _DPKG_PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.-]+(?::[a-z0-9-]+)?$")
 
 
@@ -2129,7 +1967,6 @@ def _dpkg_owner(library: Path) -> str | None:
 
 
 def _package_field(package: str, field: str) -> str | None:
-    """One field of a package's metadata, as dpkg records it."""
     return _ask("dpkg-query", "-W", f"-f=${{{field}}}", package).strip() or None
 
 
@@ -2193,11 +2030,7 @@ def _apt_origin(package: str) -> tuple[str | None, str | None]:
 
 
 def _package_supplier(package: str) -> str | None:
-    """Who ships a package dpkg can name, in the form SPDX wants.
-
-    The package name is not a supplier: `libbsd0` names the thing, not whoever
-    provided it. dpkg records a maintainer, which is the answer.
-    """
+    """Format the package Maintainer as an SPDX supplier; the package name is not one."""
     maintainer = _package_field(package, "Maintainer")
     if not maintainer:
         return None
@@ -2209,7 +2042,6 @@ def _package_supplier(package: str) -> str | None:
 
 
 def _library_roots() -> list[Path]:
-    """Where a pre-built library the build machine supplied can be found."""
     roots = [Path(item) for item in _SEARCH_ROOTS if Path(item).is_dir()]
     return roots + [root / "lib64" for root in _toolkit_roots()]
 
@@ -2234,11 +2066,9 @@ def _toolkit_root(path: Path) -> Path | None:
 
 
 def _license_near(library: Path) -> Path | None:
-    """A toolchain that installs outside the package manager still ships its terms.
+    """Find terms beside a library, searching up to its toolkit root.
 
-    CUDA is the case that matters: its libraries resolve into
-    targets/<arch>/lib with EULA.txt at the toolkit root, and dpkg need know
-    nothing about it. Under a toolkit root the search runs up to that root.
+    CUDA can install outside dpkg, with targets/<arch>/lib below the root EULA.txt.
     """
     root = _toolkit_root(library)
     current = library.resolve().parent
@@ -2256,11 +2086,9 @@ def _license_near(library: Path) -> Path | None:
 
 
 def _system_notice(evidence: list[licensing.LicenseEvidence]) -> str:
-    """The holders a machine-readable Debian copyright file names, or NOASSERTION.
+    """Read holders from machine-readable Debian copyright fields, or NOASSERTION.
 
-    Any other text -- an EULA, a free-form copyright file -- quotes the notices
-    of whatever it bundles, and scraping those names other people's code as the
-    holders of this library. The packaged text still carries all of it.
+    Do not scrape free-form agreements: bundled notices can name other components.
     """
     for item in evidence:
         fields = licensing.dep5_copyright(item.text)
@@ -2291,11 +2119,7 @@ def _system_purl(soname: str, origin: dict) -> str:
 def system_component(
     soname: str, origin: dict, route: str | None = None, key: str | None = None
 ) -> Component:
-    """A pre-built library the build machine supplied, named by what it came from.
-
-    `route` says how it reached the wheel; the default is auditwheel's. `key`
-    defaults to `system:<soname>`.
-    """
+    """Describe a host library; route defaults to auditwheel and key to system:<soname>."""
     evidence: list[licensing.LicenseEvidence] = []
     key = key or f"system:{soname}"
     license_path = origin.get("copyright")
@@ -2308,9 +2132,7 @@ def system_component(
         evidence.append(
             licensing.evidence_for(key, "build-host", license_path, text, "grant")
         )
-    # `key`, not `soname`: the key is what identifies this component everywhere
-    # else, and two components reduced to the same label would mint one LicenseRef
-    # for two different texts.
+    # Use the component key: different libraries can share a SONAME but not terms.
     concluded, declared = licensing.expression(evidence, key)
 
     package = origin.get("package")
@@ -2337,9 +2159,7 @@ def system_component(
     )
 
 
-# ==============================================================================
 # Content indexes
-# ==============================================================================
 
 
 @dataclass(frozen=True)
@@ -2360,8 +2180,7 @@ class ArchiveIndex:
         self.by_hash: dict[str, Member] = {}
         self.all_by_hash: dict[str, list[Member]] = {}
         self.by_name: dict[str, list[Member]] = {}
-        # Survives the RPATH/SONAME rewrite a repair tool applies on the way in,
-        # so a patched wheel member still points at the archive it came from.
+        # Build IDs survive auditwheel/patchelf RPATH and SONAME changes.
         self.all_by_build_id: dict[str, list[Member]] = {}
         self.archives: dict[str, dict] = {}
 
@@ -2382,8 +2201,7 @@ class ArchiveIndex:
             if Path(member.path).parent.as_posix() in {".", ""}
         )
         for member, data in members:
-            # `data` is the whole member only at the archive root; elsewhere it
-            # is the head kept for exactly this, so ask only for the build-id.
+            # Nested members retain only a prefix; read their build ID, not full ELF metadata.
             build_id = elf.build_id_of(data)
             if build_id:
                 member = replace(member, build_id=build_id)
@@ -2400,8 +2218,7 @@ class ArchiveIndex:
         if Path(member.path).parent.as_posix() not in {".", ""}:
             return  # only the archive root states the bundle's own terms
         if name.upper() == "VERSION" and len(data) < 256:
-            # First line only. These files carry more than one, and a newline in
-            # a version breaks every tag-value and table rendering downstream.
+            # Version files may contain extra lines that are not part of the version.
             text = data.decode("utf-8", "replace").strip().splitlines()
             self.archives[display]["version_text"] = text[0].strip() if text else ""
             return
@@ -2411,19 +2228,11 @@ class ArchiveIndex:
 
     @staticmethod
     def _read_members(path: Path, display: str) -> list[tuple[Member, bytes]]:
-        """Hash every member; keep the bytes only of the few worth keeping.
-
-        An SDK tarball expands to far more than it compresses to, so holding
-        every member would size peak memory by the largest archive rather than
-        by what is retained.
-        """
+        """Stream member hashes; retain root files and ELF prefixes only."""
         collected: list[tuple[Member, bytes]] = []
 
         def take(name: str, handle) -> None:
-            # A root member's bytes are kept whole, for its licence text; every
-            # other member streams through the digest, and keeps a head only if
-            # it is a library, for its build-id. Reading every member whole
-            # sizes peak memory by the largest file in the archive.
+            # Retain root license texts and nested ELF prefixes without buffering large members.
             at_root = Path(name).parent.as_posix() in {".", ""}
             digest = hashlib.sha256()
             size = 0
@@ -2459,22 +2268,13 @@ class ArchiveIndex:
                         if handle is not None:
                             take(info.name.removeprefix("./"), handle)
         except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:
-            # Only archives this build deliberately fetched are indexed, so one
-            # that will not open is a broken download, not a stray file. Saying
-            # so beats reporting every file it should have explained as a member
-            # that reached the wheel by an unknown route.
+            # Report unreadable fetched archives directly, before attribution failures obscure them.
             raise ArchiveError(f"{display} cannot be read: {error}") from error
         return collected
 
 
 def tracked_files(repo_root: Path) -> list[str]:
-    """What this repository actually holds, as git records it.
-
-    A working tree also holds whatever was built in it. An install prefix has no
-    marker saying so, so walking the directory cannot tell the two apart, and a
-    wheel member matching a *build output* would be reported as a copy of
-    repository source. Git knows the difference.
-    """
+    """List tracked files; a directory walk would also treat install output as source."""
     listing = git(repo_root, "ls-files", "-z", "--cached")
     if listing is None:
         raise FileApiError(
@@ -2487,27 +2287,21 @@ def tracked_files(repo_root: Path) -> list[str]:
 def discover_archives(
     repo_root: Path, held: frozenset[str], skip: tuple[Path, ...] = ()
 ) -> ArchiveIndex:
-    """Index archives held in the repository, not ones a build unpacked.
+    """Index tracked or explicitly fetched archives, excluding build outputs.
 
-    `held` is what the repository tracks. It has no default: an empty set
-    silently indexes nothing, and a caller that forgot it would see every
-    archive-derived wheel member become unexplainable rather than wrong.
+    Require held explicitly; an omitted tracked-file list silently loses provenance.
     """
     index = ArchiveIndex()
     skipped = tuple(item.resolve() for item in skip)
     for path in _walk(repo_root):
-        # By path segment, not by string prefix: `dist` prefixes `distribution`
-        # and a build directory named `build` prefixes `buildtools`, and an
-        # archive skipped that way goes on to explain nothing.
+        # Compare path segments: skipping dist must not skip distribution.
         if any(path.is_relative_to(item) for item in skipped):
             continue
         name = path.name.lower()
         if not name.endswith(ARCHIVE_SUFFIXES):
             continue
         relative = path.relative_to(repo_root).as_posix()
-        # Held here, or fetched by this build and recorded as such. An archive
-        # anywhere else is output -- staged into an install prefix, say -- and
-        # letting it explain a wheel member is the build explaining itself.
+        # Untracked archives need a download marker; staged copies cannot prove origin.
         if relative not in held and not path.with_name(path.name + ".source").is_file():
             continue
         index.add_archive(path, relative)
@@ -2519,9 +2313,7 @@ class FileIndex:
 
     def __init__(self) -> None:
         self.by_hash: dict[str, str] = {}
-        # Every path sharing a digest, because one is not evidence of origin when
-        # several files hold the same bytes -- a stock licence text, or a module
-        # that is nothing but an SPDX header.
+        # Keep all candidates: identical license texts or source files do not prove ownership.
         self.all_by_hash: dict[str, list[str]] = {}
         self.by_suffix: dict[str, list[str]] = {}
         self._digests: dict[str, str] = {}
@@ -2534,8 +2326,7 @@ class FileIndex:
     def add_tree(
         self, root: Path, display_root: str, skip: tuple[Path, ...] = ()
     ) -> None:
-        # Compare skip entries as paths relative to `root`: `--build-dir` may be
-        # relative, and `_deps/foo-srcx` string-prefixes `_deps/foo-src`.
+        # Resolve relative skip paths and compare segments, not string prefixes.
         inside = []
         for item in skip:
             try:
@@ -2559,8 +2350,7 @@ class FileIndex:
         self._add(root, display_root, (root / item for item in paths))
 
     def _add(self, root: Path, display_root: str, paths) -> None:
-        # One resolve for the tree, not one per file: `_walk` never crosses a
-        # symlink, so the resolved root plus the relative path is the real path.
+        # Resolve once per tree: _walk does not cross symlinks.
         resolved_root = root.resolve()
         for path in paths:
             if not path.is_file() or path.is_symlink():
@@ -2575,7 +2365,7 @@ class FileIndex:
             self.by_hash.setdefault(digest, display)
             self.all_by_hash.setdefault(digest, []).append(display)
             self._by_display[display] = digest
-            # Two trailing segments is enough to disambiguate an __init__.py.
+            # Include the parent directory to distinguish common names such as __init__.py.
             self.by_suffix.setdefault(
                 "/".join(relative.rsplit("/", 2)[-2:]), []
             ).append(display)

@@ -70,7 +70,7 @@ MUJOCO_LOG.TXT
 # Runtime device files injected by MCP server infrastructure
 .mcp.json
 
-# Coverage databases, written beside whichever suite was measured
+# Python coverage databases
 .coverage
 .coverage.*
 

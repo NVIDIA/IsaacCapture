@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Turn a repaired wheel plus its build tree into a wheel that carries both."""
+"""Package a wheel's contents SBOM and license evidence from its build tree."""
 
 from __future__ import annotations
 
@@ -37,15 +37,11 @@ from .document import NOASSERTION
 from .inventory import Attribution
 from .wheelfile import Entry
 
-# Only the namespace this tool mints documents under. Supplier, licence and
-# homepage are read from the wheel's own packaging metadata, so a fork, a rename
-# or a second distribution built from the same tree cannot leave this file
-# stating facts about somebody else's.
+# Only the document namespace is fixed; distribution identity comes from metadata.
 PROJECT = {"document_namespace": "https://github.com/NVIDIA/IsaacCapture/spdx"}
 
 
 def _project_facts(repo_root: Path, metadata: dict) -> dict:
-    """What this distribution says about itself, from its own metadata."""
     urls = metadata.get("project_urls") or {}
     homepage = next(
         (
@@ -55,21 +51,17 @@ def _project_facts(repo_root: Path, metadata: dict) -> dict:
         ),
         metadata.get("home_page") or NOASSERTION,
     )
-    # The wheel's own `Author` first: a second distribution built from this tree
-    # is a different project, and the checkout's `pyproject.toml` describes only
-    # the one it is the root of.
+    # A sibling distribution may have a different author than the root project.
     author = (metadata.get("author") or "").strip()
     return {
         **PROJECT,
         "supplier": f"Organization: {author}"
         if author
         else project_supplier(repo_root),
-        # `license` is the legacy free-text field; only an expression is an
-        # expression, and a wheel declaring neither declares nothing.
+        # The legacy License field is free text, not an SPDX expression.
         "license": metadata.get("license_expression") or NOASSERTION,
         "homepage": homepage,
-        # What the project states about itself, for a distribution whose own
-        # files state nothing -- a metadata-only wheel has no file to carry it.
+        # Metadata-only wheels have no source file carrying the project notice.
         "copyright": project_copyright(repo_root),
     }
 
@@ -78,7 +70,6 @@ class BuildError(Exception):
     """The wheel cannot be published with the evidence available."""
 
 
-# Each evidence-gap error ends with this; the README section holds the remedies.
 _REMEDIES = "\nSee 'What stops the Release build' in scripts/sbom/README.md."
 
 
@@ -97,16 +88,10 @@ def default_license_data(build_dir: Path) -> Path:
 
 
 def _with_reached_nested(inventory, components: dict) -> dict:
-    """Keep nested terms only where what they cover reached this wheel.
-
-    A nested LICENSE states a holder for part of a component -- a bundled
-    library, an asset set -- and dropping it names the wrong holder for those
-    bytes. Keeping all of them names holders for code that never shipped.
-    """
-    # One entry per path and how, under its first member: members linking one
-    # library read the same headers, and every nested text scans these.
+    """Keep nested terms only for files or compiled code that reached this wheel."""
+    # Deduplicate reach shared by several members, retaining the first member as evidence.
     reached: dict[str, dict[tuple[str, str], Reach]] = {}
-    # A linked archive of the component holds what it holds: all of it reached.
+    # A prebuilt archive conservatively retains all nested terms of its component.
     prebuilt: dict[str, str] = {}
     for member, attribution in inventory.attributions.items():
         for key, paths in attribution.read.items():
@@ -156,36 +141,29 @@ def _declared_without_text(declared: str, shipped: set[str]) -> list[str]:
     try:
         identifiers = licensing.identifiers_in(declared)
     except licensing.ExpressionReadError:
-        # An expression nothing can read names nothing that can be checked, and
-        # the document carries it verbatim; say so rather than pass silently.
+        # Malformed declarations must fail the missing-text gate.
         return [declared]
     return sorted(
         item
         for item in identifiers
-        # An exception modifies the licence it is attached to and has no text in
-        # the list this build fetches, so demanding one blocks every
-        # `X WITH <exception>` declaration with an instruction nothing can meet.
+        # Exceptions modify a license; this gate requires texts only for license operands.
         if not licensing.is_exception(item) and f"{item.lower()}.txt" not in shipped
     )
 
 
 def _own_texts(shipped: set[str]) -> set[str]:
-    """The texts a wheel carries as its own, not as a third party's.
+    """Return paths relative to .dist-info/licenses/, excluding third-party terms.
 
-    These are named relative to `.dist-info/licenses/`, so a third party's sits
-    under `third-party/`. Counting those let somebody else's copy discharge this
-    distribution's obligation -- remove that component and the wheel silently
-    loses its own terms.
+    A component's text must not discharge the distribution's own obligation: removing
+    that component would also remove the distribution's license.
     """
     return {item for item in shipped if not item.startswith("third-party/")}
 
 
 def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
-    """Reference texts for the ids this distribution declares and does not ship.
+    """Supply reference texts missing from the distribution's declared licenses.
 
-    The identifiers come from the wheel's own `License-Expression`, so this adds
-    the terms the distribution says apply to itself -- never a third party's,
-    which are packaged from the files those components actually carry.
+    Third-party terms must instead come from the components' own files.
     """
     if declared == NOASSERTION:
         return {}
@@ -199,12 +177,9 @@ def _own_license_texts(declared: str, shipped: set[str]) -> dict[str, str]:
 
 
 def siblings_of(wheels: list[Path], repo_root: Path) -> dict[str, dict]:
-    """What each wheel of this run states about itself, by canonical name.
+    """Read sibling wheel metadata before rendering, indexed by canonical name.
 
-    Read before any of them is described, so a requirement naming one is never
-    reported as an install-time unknown. Two wheels can require each other -- a
-    renamed project and its transition wheel do -- and both can state what the
-    metadata says, because that needs no document.
+    Metadata supports cyclic requirements without cyclic document hashes.
     """
     known: dict[str, dict] = {}
     for wheel in wheels:
@@ -250,16 +225,8 @@ def build(
         wheel, metadata_raw, resolver, discovery.staged_root
     )
 
-    # Two settlements before anything renders, applied to both views of a
-    # component so the document, the reports, the packaged notices and the
-    # evidence sidecar all describe the same thing.
-    #
-    # Terms stated for one subdirectory apply only if something under it
-    # reached this wheel: a test suite's licence is not this wheel's business,
-    # a vendored asset set's or a compiled-in library's is. And components
-    # carrying byte-identical terms share one LicenseRef -- settled here because
-    # deciding it in the renderer left the notices file naming an id the SBOM
-    # beside it did not define.
+    # Resolve nested terms and shared LicenseRefs before rendering any output,
+    # so notices, reports, and evidence use the same terms and identifiers.
     settled = _with_reached_nested(inventory, inventory.components_present)
     present = {**inventory.components_present, **settled}
     renamed = licensing.shared_refs(present.values())
@@ -322,8 +289,7 @@ def build(
             "its README; obtain the terms before publishing it." + _REMEDIES
         )
 
-    # Everything the wheel gains, computed before a byte is written so the
-    # document can describe the wheel it is about to be embedded in.
+    # Compute the final member set before rendering its SBOM.
     additions: dict[str, bytes] = {}
     packaged_paths: list[str] = []
     for key, component in inventory.components_present.items():
@@ -336,10 +302,7 @@ def build(
                 report_module.declared_license_path(wheel.dist_info, target)
             )
 
-    # The distribution's own declared licence is an obligation like any other.
-    # Apache-2.0 asks that recipients get a copy, and the gate above covers only
-    # what the build redistributes -- so a wheel can declare a licence whose
-    # text it does not carry, as a metadata-only wheel does.
+    # Metadata-only wheels still need their own declared license texts.
     declared = _project_facts(repo_root, wheel_metadata)["license"]
     shipped = {
         report_module.declared_license_path(wheel.dist_info, item.name)
@@ -367,8 +330,6 @@ def build(
         report_module.declared_license_path(wheel.dist_info, notices_path)
     )
 
-    # Whatever could not be supplied from the corpus -- a LicenseRef, an id the
-    # pinned list does not carry -- is a declaration with no terms behind it.
     unmet = _declared_without_text(
         declared,
         {Path(item).name.lower() for item in _own_texts(set(packaged_paths) | shipped)},
@@ -386,11 +347,8 @@ def build(
     metadata_declared = patched_metadata != metadata_raw
     replacements = {f"{wheel.dist_info}/METADATA": patched_metadata}
 
-    # Neither file can state its own digest. RECORD hashes every member, this
-    # document included, and the document is rendered before RECORD is
-    # regenerated -- listing either is a fixed point no hash function has. SPDX
-    # 2.3 requires a checksum on every file listed, so they are omitted rather
-    # than listed without one; `check` reads both against the archive instead.
+    # Exclude the SBOM and RECORD to avoid circular digests. SPDX files require
+    # checksums; the verifier checks these excluded members against the archive.
     excluded = [f"{wheel.dist_info}/RECORD", sbom_name]
 
     projected = [item for item in wheel.entries if item.name not in replacements] + [
@@ -398,16 +356,11 @@ def build(
     ]
     projected_wheel = replace(wheel, entries=tuple(projected))
     for name in [*additions, *replacements]:
-        # Only the third-party texts: the notices file and the document below
-        # are this collector's own output, and reading them back would take a
-        # `- Copyright:` bullet of its own summary for a notice.
+        # Do not scrape our generated summaries as upstream copyright notices.
         packaged_text = name in additions and report_module.is_third_party_license(
             wheel.dist_info, name
         )
         body = additions.get(name, b"").decode("utf-8", "replace")
-        # A licence text can state its own terms and carry a notice. The
-        # collector packages these itself, so it reads them here, the way it
-        # reads every member it describes.
         inventory.attributions[name] = Attribution(
             path=name,
             origin="metadata",
@@ -416,17 +369,14 @@ def build(
             if name in additions
             else "distribution metadata, updated to declare the packaged license files",
             spdx_tag=licensing.normalized_tag(body) if packaged_text else None,
-            # Every holder the text names, as the package roll-up does: keeping
-            # the first makes a per-file notice that does not discharge the
-            # obligation -- libbsd's copyright file names forty-six.
+            # Retain all holders, including those in multi-component copyright files.
             copyright_text="\n".join(
                 licensing.fold_notices(licensing.read_notices(body))
             )
             if packaged_text
             else None,
         )
-    # The document is added below, after it has been rendered; record it now so
-    # the evidence accounts for every member of the finished wheel.
+    # Record the SBOM before rendering so the evidence covers the final member set.
     inventory.attributions[sbom_name] = Attribution(
         path=sbom_name,
         origin="metadata",
@@ -485,8 +435,7 @@ def build(
         json.dumps(evidence_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    # The wheel digest is bound here, after the last mutation: a wheel that is
-    # touched again no longer matches its own manifest entry.
+    # Bind the wheel digest only after the final mutation.
     return {
         "schema": "isaaccapture-sbom-manifest/1",
         "generated_at": stamped_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -512,11 +461,7 @@ def build(
 
 
 def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict:
-    """Fold per-variant manifests into the one a release advertises.
-
-    With `evidence_out`, copy there the sidecars it binds, from beside the
-    manifest that named them, and nothing else.
-    """
+    """Merge variant manifests, optionally copying exactly their bound sidecars."""
     found = [
         (path.parent, item)
         for path in sorted(paths)
@@ -526,11 +471,10 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
     if evidence_out is None:
         return merged
 
-    # From beside the very record the merge bound, so the copy cannot follow a
-    # different "first" than the binding did.
+    # Copy from the selected record's directory, not another build of the same wheel.
     beside = {id(item): parent for parent, item in found}
     bound = [(beside[id(record)], record) for record in merged["wheels"]]
-    # Checked before anything is written, so a refused set copies nothing.
+    # Validate the entire set before copying any files.
     failures = [
         f"{record['filename']}: {failure}"
         for parent, record in bound
@@ -540,7 +484,6 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
         raise BuildError("; ".join(failures))
     evidence_out.mkdir(parents=True, exist_ok=True)
     for parent, record in bound:
-        # Already in place, and verified above; copying onto itself would raise.
         if parent.resolve() == evidence_out.resolve():
             continue
         for name in validate_module.bound_names([record]):
@@ -549,12 +492,8 @@ def merge_manifests(paths: list[Path], evidence_out: Path | None = None) -> dict
 
 
 def merge_records(wheels: list[dict]) -> dict:
-    """The manifest for a set of wheels, stamped when the set was complete."""
-    # A `py3-none-any` wheel is built by every matrix entry, so a release set
-    # names it once per entry. The wheel, and whatever is derived from it alone,
-    # must agree, or one filename stands for things a consumer cannot tell apart.
-    # Build evidence describes the build, and every entry built this wheel, so
-    # the first entry's is the one the manifest binds.
+    # Universal wheels repeat across matrix entries. Their bytes and wheel-derived
+    # sidecars must agree; build evidence may differ, so bind the first entry's.
     identity = ("filename", "sha256", "size", "sbom_in_wheel")
     unique: dict[str, dict] = {}
     conflicting: set[str] = set()
@@ -590,7 +529,7 @@ def merge_records(wheels: list[dict]) -> dict:
 
 
 def environment_summary() -> dict:
-    """Recorded so a rerun can tell a cold build from a cache-restored one."""
+    """Record CI/cache context for reproducibility."""
     return {
         "runner_os": os.environ.get("RUNNER_OS"),
         "github_run_id": os.environ.get("GITHUB_RUN_ID"),

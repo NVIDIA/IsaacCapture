@@ -12,8 +12,7 @@ if(NOT EXISTS "${ROBOTIC_GROUNDING_STAGED_DIR}/__init__.py")
 endif()
 message(STATUS "[grounding] bundling robotic_grounding/ from ${ROBOTIC_GROUNDING_STAGED_DIR}")
 
-# project.license-files is stated once, in the root pyproject.toml, and both
-# wheels ship that list: this one through pyproject.toml.in and the staging below.
+# Share the root pyproject.toml's license-file list across both wheel builds.
 set(_root_pyproject "${CMAKE_SOURCE_DIR}/pyproject.toml")
 set(_license_files_script "${CMAKE_CURRENT_SOURCE_DIR}/license_files.py")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -72,8 +71,7 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/MANIFEST.in" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/README.md"
-    # Without these the wheel redistributes the project under a license it does
-    # not carry. A text dropped from the list must not linger from an older build.
+    # Remove stale license texts dropped from the list since the last build.
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
     ${_license_staging_commands}
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
@@ -103,10 +101,7 @@ endif()
 set(STUBGEN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/generate_stubs.py")
 set(STUBGEN_PYPROJECT "${CMAKE_CURRENT_SOURCE_DIR}/stubgen_pyproject.toml")
 set(STUBGEN_PACKAGE_DIR "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>")
-# Stubs are generated here and copied into the staging tree below. Writing them
-# straight into staging would leave them with no build-tree origin, and the file
-# a wheel ships must always be traceable to one -- staging is a copy destination,
-# never the only place a file exists.
+# Generate outside staging so the SBOM can trace each stub to a build-tree origin.
 set(STUBGEN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/stubs/$<CONFIG>")
 set(PY_TYPED_MARKER "${STUBGEN_PACKAGE_DIR}/isaaccapture/py.typed")
 
@@ -158,7 +153,7 @@ add_custom_command(
     # Create py.typed marker file (PEP 561) - also serves as build stamp
     COMMAND ${CMAKE_COMMAND} -E touch "${STUBGEN_OUTPUT_DIR}/isaaccapture/py.typed"
 
-    # Stage what was generated. Last, so PY_TYPED_MARKER stamps a complete copy.
+    # Copy last so PY_TYPED_MARKER stamps a complete staging tree.
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${STUBGEN_OUTPUT_DIR}" "${STUBGEN_PACKAGE_DIR}"
     DEPENDS python_package "${STUBGEN_SCRIPT}" "${STUBGEN_PYPROJECT}"
             $<TARGET_FILE:deviceio_trackers_py>

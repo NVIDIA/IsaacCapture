@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Print the root pyproject.toml's project.license-files for CMake.
 
-The first line is the TOML array, verbatim, for pyproject.toml.in; each line
+The first line is a JSON/TOML array for pyproject.toml.in; each line
 after it is one file those patterns match, relative to the repository root.
 """
 

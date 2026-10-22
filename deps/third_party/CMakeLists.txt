@@ -285,10 +285,8 @@ endif()
 # ==============================================================================
 # SPDX license list data
 # ==============================================================================
-# Reference license texts. The SBOM collector names a dependency's license by
-# matching the text that dependency ships against these; nothing from this
-# checkout is redistributed, and it builds nothing. Pinned by commit, so no tag
-# upstream can move underneath a build.
+# Reference texts for license matching; this checkout builds and ships nothing.
+# Pin by commit because upstream tags can move.
 find_package(Git REQUIRED)
 
 set(SPDX_LICENSE_DATA_COMMIT "31ba1a50e5397e00a304dbadc76531740e89ee48")  # v3.29.0

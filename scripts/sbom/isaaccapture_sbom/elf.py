@@ -1,15 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SONAME, NEEDED and the GNU build-id for the shared libraries a wheel carries.
+"""Read SONAME, NEEDED, and GNU build IDs with pyelftools.
 
-Parsing is pyelftools' job, not ours -- it is the same library auditwheel uses
-to repair these wheels, so the tool that wrote the ELF and the tool that reads
-it agree by construction.
-
-Only the build path needs any of this. Consumer-side verification re-hashes
-files and never parses a binary, which keeps attacker-controlled input out of a
-parser on that path entirely.
+Only collection parses ELF; consumer verification hashes bytes without
+invoking a binary parser.
 """
 
 from __future__ import annotations
@@ -33,9 +28,7 @@ class DynamicInfo:
     soname: str | None
     needed: tuple[str, ...]
     machine: str
-    # Identifies the bytes the linker produced, and patchelf leaves it alone.
-    # So it still matches after a repair tool rewrites SONAME and RPATH, which
-    # is what makes it the only link back to a library's pristine origin.
+    # The linker's build ID survives patchelf SONAME/RPATH rewrites.
     build_id: str | None = None
 
 
@@ -57,12 +50,7 @@ def _build_id_from(elffile: ELFFile) -> str | None:
 
 
 def build_id_of(data: bytes) -> str | None:
-    """The build-id of an in-memory image, which may be only its head.
-
-    The note the linker writes sits with the program headers, so a bounded
-    prefix of a large library answers this without holding the whole file. A
-    prefix too short to reach the note reads as no build-id rather than raising.
-    """
+    """Read a build ID from an ELF prefix; return None if the note lies beyond it."""
     if not is_elf(data):
         return None
     try:
@@ -72,12 +60,9 @@ def build_id_of(data: bytes) -> str | None:
 
 
 def _from_file(path: Path, read):
-    """`read(ELFFile)` over a file on disk, or None if it is not readable ELF.
+    """Apply read to an ELFFile without loading the whole binary.
 
-    pyelftools seeks, so only the headers and what `read` asks for are read --
-    which matters when scanning hundreds of a machine's libraries, some of
-    them hundreds of megabytes. Scanning also meets files that only look like
-    ELF, and a truncated one raises `struct.error` from the parser.
+    Unreadable or truncated ELF returns None, including parser struct.error failures.
     """
     try:
         with path.open("rb") as handle:
@@ -105,8 +90,7 @@ def read_dynamic(data: bytes) -> DynamicInfo:
     soname: str | None = None
     needed: list[str] = []
 
-    # The dynamic segment, not the section: a stripped library keeps its program
-    # headers and loses its section headers, and the loader reads the segment.
+    # Read the dynamic segment: stripped libraries can lack section headers.
     for segment in elffile.iter_segments(type="PT_DYNAMIC"):
         for tag in segment.iter_tags():
             kind = tag.entry.d_tag

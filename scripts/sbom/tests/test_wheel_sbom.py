@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""End to end: a repaired wheel goes in, a publishable wheel comes out."""
+"""End-to-end wheel evidence and verification tests."""
 
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ def _wheel_package(spdx: dict) -> dict:
 
 
 def _release_failures(built) -> list[str]:
-    """What `check` says of the wheel with its build evidence and manifest."""
     return validate_module.check(
         built["wheel"],
         build_evidence=built["evidence_path"],
@@ -95,7 +94,6 @@ def test_every_member_records_where_it_came_from(built):
 
 
 def test_post_processed_files_are_recorded_as_derived_not_as_copies(built):
-    """patchelf and the MJCF rewrite change bytes; the claim has to change too."""
     evidence = json.loads(built["evidence_path"].read_text(encoding="utf-8"))
     origins = {item["path"]: item for item in evidence["attributions"]}
 
@@ -120,10 +118,8 @@ def test_a_dependency_reaching_no_wheel_file_is_recorded_by_the_build(built):
     components = built["build-evidence"]["components"]
 
     assert components["omega"]["in_this_wheel"] is False, "a test-only dependency"
-    # The SPDX reference data is fetched like any other dependency, so it is
-    # inventoried like any other dependency -- and ships nothing for the same reason.
+    # Fetched reference data belongs in build evidence, even though no wheel ships it.
     assert components["license-list-data"]["in_this_wheel"] is False
-    # What ships nothing is the build's to record, not the wheel's.
     assert "omega" not in json.dumps(built["licenses"])
     assert "omega" not in built["md"]
 
@@ -148,8 +144,7 @@ def test_licenses_are_packaged_and_declared(built):
 
     raw, metadata = wheelfile.read_metadata(built["wheel"], DIST_INFO)
     declared = set(metadata.get("license_files") or [])
-    # PEP 639 states these relative to .dist-info/licenses/, so each must
-    # resolve back to a member that is actually in the wheel.
+    # PEP 639 paths resolve relative to .dist-info/licenses/.
     prefix = f"{DIST_INFO}/licenses/"
     assert {name.removeprefix(prefix) for name in third_party} <= declared
     for value in declared:
@@ -160,8 +155,7 @@ def test_licenses_are_packaged_and_declared(built):
         "the project's own license must survive the rewrite"
     )
 
-    # No RFC 822 folding: a wrapped path is valid, and packaging unfolds it, but
-    # nothing else writes one and a continuation line defeats simpler readers.
+    # Avoid RFC 822 folding: simpler metadata readers may not unfold paths.
     assert not [
         line for line in raw.decode().splitlines() if line.startswith((" ", "\t"))
     ]
@@ -171,8 +165,7 @@ def test_an_unidentified_grant_travels_verbatim_in_the_document(built):
     spdx = _embedded(built["wheel"])
     extracted = {item["licenseId"]: item for item in spdx["hasExtractedLicensingInfos"]}
 
-    # The id is minted from the component's key -- its path, here -- not from a
-    # basename two archives in different directories would share.
+    # Use the component path; archive basenames can collide.
     ref = next(item for item in extracted if "demosdk" in item)
     assert "deps" in ref and "vendor" in ref, ref
     assert "DEMO CORP" in extracted[ref]["extractedText"]
@@ -219,8 +212,7 @@ def test_an_unmatched_grant_beside_a_matched_one_is_carried_and_reported(
 
 
 def test_a_component_shipping_only_a_reuse_pool_is_a_reported_gap(workspace):
-    """The pool passes the gate and concludes nothing, so it cannot fall
-    between the lists and leave the summary saying every licence is known."""
+    """A REUSE pool passes the gate without concluding a license; report that gap."""
     source = workspace.build / "_deps" / "alpha-src"
     (source / "LICENSES").mkdir()
     (source / "LICENSE").rename(source / "LICENSES" / "MIT.txt")
@@ -242,7 +234,6 @@ def test_a_component_shipping_only_a_reuse_pool_is_a_reported_gap(workspace):
     assert entry["reason"].startswith("only REUSE pool texts ship (MIT)")
     [record] = built["manifest"]["wheels"]
     assert record["components_with_unresolved_license"] == [entry]
-    # The wheel's own conclusion cannot AND in terms nobody concluded.
     assert _wheel_package(built["spdx"])["licenseConcluded"] == "NOASSERTION"
     assert _release_failures(built) == []
 
@@ -407,10 +398,9 @@ def test_build_is_reproducible_under_source_date_epoch(tmp_path, monkeypatch):
 def test_source_date_epoch_normalizes_timestamps_the_input_wheel_carried(
     workspace, monkeypatch
 ):
-    """A zip records a local timestamp per member, so a wheel carries its
-    builder's clock. Under SOURCE_DATE_EPOCH the rewrite has to normalize the
-    members it copies through as well, or it is reproducible only for an input
-    wheel that already was."""
+    """Normalize copied members too; otherwise reproducibility depends on the input wheel
+    already having reproducible timestamps.
+    """
     import zipfile as zf
 
     stamped = synth.wheel_payload(workspace)
@@ -451,12 +441,7 @@ def shared_text(workspace, license_data):
 
 
 def test_components_sharing_a_licence_text_share_one_entry(shared_text):
-    """A LicenseRef identifies a text, so one text is one entry.
-
-    Two components can carry byte-identical terms -- two builds of one SDK, a
-    vendor licence applied across products -- and minting an id each duplicates
-    the whole text in the document.
-    """
+    """Identical terms shared by several components need only one extracted text entry."""
     spdx = _embedded(shared_text["wheel"])
     bodies = [item["extractedText"] for item in spdx["hasExtractedLicensingInfos"]]
 
@@ -497,14 +482,10 @@ def test_a_shared_id_is_held_to_the_text_it_names(shared_text):
 def test_a_requirement_this_run_also_built_is_not_an_unknown(
     workspace, license_data, tmp_path
 ):
-    """A transition wheel requires the wheel beside it; that is not an unknown.
+    """Use sibling metadata for dependencies built in the same run.
 
-    Left as an ordinary requirement it reads as something an installer resolves,
-    with version, supplier and licence unasserted -- for a distribution this same
-    build produced. Stated from the sibling's own metadata rather than by a
-    digest-bound reference to its document: the two wheels require each other, so
-    only one direction could ever carry such a reference, and a `py3-none-any`
-    wheel pinning one matrix entry's sibling stops being universal.
+    Digest-bound references cannot represent cycles, and a universal wheel must not
+    pin a platform-specific sibling from one matrix entry.
     """
     from isaaccapture_sbom import cli
 
@@ -562,7 +543,6 @@ def test_a_requirement_this_run_also_built_is_not_an_unknown(
         )
         return spdx, row
 
-    # Both directions state the same kind of thing, and neither pins a document.
     forward, isaaccapture = sibling_row(
         "isaacteleop-0.4.0-py3-none-any.spdx.json", "isaaccapture"
     )
@@ -580,12 +560,8 @@ def test_a_requirement_this_run_also_built_is_not_an_unknown(
 
 
 def test_a_wheel_shipping_no_source_still_names_its_licensor(workspace, license_data):
-    """The declared licence's reference text names nobody.
-
-    A metadata-only wheel ships no file carrying a notice, so without this the
-    SPDX package states NOASSERTION and the notices file says nothing about the
-    distribution -- a recipient holding only the wheel cannot tell who licensed
-    it to them, for a wheel that declares one.
+    """A metadata-only wheel has no source notices, and a reference license names no holder.
+    Use distribution metadata to identify its licensor.
     """
     thin = workspace.wheel.parent / "thin-0.4.0-py3-none-any.whl"
     synth.write_wheel(
@@ -625,7 +601,6 @@ def test_a_wheel_shipping_no_source_still_names_its_licensor(workspace, license_
     assert "Example Org" in notices
     # The SPDX spelling of a supplier is not prose.
     assert "distributed by Organization:" not in notices
-    # The only text it ships names no holder, which is why the above matters.
     assert "thin-0.4.0.dist-info/licenses/LICENSES/Apache-2.0.txt" in members
 
 

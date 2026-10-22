@@ -19,14 +19,11 @@ from .inventory import Inventory
 from .wheelfile import WheelInfo
 
 NOASSERTION = "NOASSERTION"
-# How a component reaches the wheel decides the relationship that says so.
 _LINK_HOWS = {"compiled-source", "header-include", "prebuilt-library"}
-# Bytes this component also holds, which is not evidence the wheel carries its
-# file. It states a candidate, so it earns no CONTAINS and no COPY_OF.
+# Shared content identifies candidates, not proven CONTAINS/COPY_OF relationships.
 _AMBIGUOUS_HOWS = {"shared-content"}
 
 
-# The package every document describes: the wheel it is about.
 WHEEL_PACKAGE_ID = "SPDXRef-Package-wheel"
 
 
@@ -40,9 +37,9 @@ def component_package_id(key: str) -> str:
 
 
 def file_id(path: str, dist_info: str) -> str:
-    """The member's id: its path, with the versioned `.dist-info/` and `.data/`
-    read as `dist-info/` and `data/`, and a digest of that path, which keeps
-    apart paths that sanitise alike (`a_b.py`, `a-b.py`).
+    """Derive a stable ID from the path, normalizing versioned .dist-info/.data roots.
+
+    Include a path digest to distinguish names that sanitize alike.
     """
     stem = dist_info.removesuffix(".dist-info")
     hashed = path
@@ -77,8 +74,6 @@ def _attribution_texts(component: Component, dist_info: str) -> list[str]:
                 item.matches, name=_scored, join="; ", lead="identified as "
             )
             if item.matches
-            # The SPDX reference text for an identifier the component's files
-            # declare, which is a substitution and not a reading of the component.
             else f" — the SPDX reference text for {item.identified}, an identifier "
             "REUSE declares for this component's files; not the component's own file"
             if item.origin == licensing.SPDX_REFERENCE
@@ -106,8 +101,6 @@ def _component_package(component: Component, roles: set[str], dist_info: str) ->
         "licenseConcluded": component.license_concluded,
         "licenseDeclared": component.license_declared,
         "copyrightText": component.copyright_text,
-        # Only where there is one. A package identifier a reader cannot resolve
-        # is worse than its absence.
         **(
             {
                 "externalRefs": [
@@ -130,7 +123,7 @@ def _component_package(component: Component, roles: set[str], dist_info: str) ->
 
 
 def _extracted_entries(components: list[Component]) -> list[dict]:
-    """One entry per distinct text, named by the id the components now share."""
+    """One entry per distinct text, using the shared component LicenseRef."""
     entries: dict[str, dict] = {}
     for component in components:
         carried = licensing.carried_texts(component.evidence)
@@ -146,8 +139,7 @@ def _extracted_entries(components: list[Component]) -> list[dict]:
                     f"{ref} was minted for two components with different terms; "
                     "a LicenseRef identifies one text"
                 )
-            # Accumulated, not replaced: the entry names every component sharing
-            # the text and cites all of their files.
+            # A shared text must cite all components and evidence paths that supply it.
             covers = set(entries.get(ref, {}).get("_for", ())) | {component.name}
             cited = sorted(
                 set(entries.get(ref, {}).get("_from", ()))
@@ -179,7 +171,7 @@ _EXTRA_MARKER = re.compile(r"\bextra\s*==")
 def _unanalyzed_package(
     package_id: str, name: str, comment: str, external_refs: list[dict] | None = None
 ) -> dict:
-    """A package this document names but did not open: everything unasserted."""
+    """Describe an external package without asserting its contents."""
     package = {
         "SPDXID": package_id,
         "name": name,
@@ -214,11 +206,9 @@ def _by_version(specifier):
 def _dependency_refs(
     name: str, requirement: Requirement, version: str | None = None
 ) -> list[dict]:
-    """purl for the package, and the constraint as a range rather than prose.
+    """Represent requirements with an unversioned purl and a VERS constraint.
 
-    purl carries one exact version, which a requirement does not have. VERS (the
-    purl project's range notation) does, so the specifier stays machine-readable
-    instead of living only in a sentence.
+    A purl version must be exact; it cannot encode a requirement range.
     """
     refs = [
         {
@@ -229,8 +219,7 @@ def _dependency_refs(
             ).to_string(),
         }
     ]
-    # VERS orders constraints by version, not by the text of the operator: the
-    # string sort put `<1.9` before `>=1.6` and a strict parser rejects that.
+    # VERS requires version ordering; sorting operators puts <1.9 before >=1.6.
     constraints = [
         f"{item.operator}{item.version}" for item in _by_version(requirement.specifier)
     ]
@@ -246,12 +235,9 @@ def _dependency_refs(
 
 
 def _source_info(project: dict, evidence_doc: dict, build: dict, wheel) -> str:
-    """Where this wheel came from, stating only what applies to it.
+    """Describe source and build facts applicable to this wheel.
 
-    One build produces several wheels, so its architecture and configuration are
-    facts about the compilation -- which a pure-python wheel did not have. A
-    placeholder rendered as a noun ("Built from NOASSERTION") is worse than an
-    omitted clause.
+    Universal wheels must not inherit the build matrix's native architecture.
     """
     source = evidence_doc.get("project", {})
     parts = []
@@ -262,11 +248,8 @@ def _source_info(project: dict, evidence_doc: dict, build: dict, wheel) -> str:
         described = source.get("describe") or ""
         parts.append(
             f"at commit {commit}"
-            # A tree with uncommitted changes did not produce what that commit
-            # produces, and a report nothing can reproduce has to say so.
             + (" with uncommitted changes" if described.endswith("-dirty") else "")
         )
-    # `none-any` is the tag for a wheel with nothing compiled in it.
     if "none-any" not in wheel.path.name:
         parts.append(f"arch {build.get('arch')}")
         parts.append(f"CMAKE_BUILD_TYPE {build.get('config')}")
@@ -274,20 +257,14 @@ def _source_info(project: dict, evidence_doc: dict, build: dict, wheel) -> str:
 
 
 def _wheel_conclusion(declared: str, inventory: Inventory) -> str:
-    """The declared licence, AND the terms of everything it redistributes.
+    """Conjoin the distribution's declaration and every redistributed component's terms.
 
-    Every component, not only the ones the build could not name: Apache-2.0 does
-    not cover MIT, Zlib, BSD-3-Clause, Qhull or BSL-1.0, so leaving those out
-    said the wheel carries no code under them. Only a component concluding the
-    declared licence itself adds nothing. One component with unresolved terms
-    leaves the whole wheel's unresolved: NOASSERTION cannot be AND-ed.
+    Any unresolved component makes the result NOASSERTION, which cannot be AND-joined.
     """
     present = inventory.components_present.values()
     if any(item.license_concluded == NOASSERTION for item in present):
         return NOASSERTION
-    # Decomposed, so an id two components share appears once and a compound one
-    # does not arrive nested -- but never through an `OR`, which is one choice
-    # and becomes a claim on both halves if it is split.
+    # Flatten AND operands for deduplication while preserving OR choices.
     operands: set[str] = set()
     for component in present:
         operands.update(licensing.operands_of(component.license_concluded))
@@ -304,22 +281,17 @@ def build_document(
     excluded_files: list[str],
     siblings: dict[str, dict] | None = None,
 ) -> dict:
-    """Assemble the document. Callers validate it; this renders, and refuses
-    two members that would share an SPDXID.
+    """Render SPDX, rejecting file-ID collisions.
 
-    `siblings` are the other distributions of this same run, by canonical name.
-    A requirement naming one is not an install-time unknown: the build made it,
-    and its own document describes it.
+    The caller validates the result. siblings maps canonical distribution names
+    to metadata from other wheels in this run.
     """
     files: list[dict] = []
     file_ids: dict[str, str] = {}
     sha1_digests: list[str] = []
 
-    # What the files themselves state, for the package-level roll-up below.
     stated_in_files: set[str] = set()
-    # Notices stated by files this distribution's own, for the package below. A
-    # file attributed to a component carries that component's notice, which
-    # belongs to that component's package and not to this one.
+    # Only first-party file notices contribute to the wheel package's own copyright.
     stated_copyright: set[str] = set()
     paths_by_id: dict[str, str] = {}
     for entry in sorted(wheel.entries, key=lambda item: item.name):
@@ -345,28 +317,21 @@ def build_document(
                 {"algorithm": "SHA256", "checksumValue": entry.sha256},
             ],
             "licenseConcluded": NOASSERTION,
-            # The notice sits directly above the identifier already parsed, so
-            # declaring none would discard something read and in hand.
             "copyrightText": (attribution.copyright_text if attribution else None)
             or NOASSERTION,
         }
         if attribution and attribution.spdx_tag:
-            # A REUSE tag in the file is upstream stating that file's license.
             record["licenseConcluded"] = attribution.spdx_tag
             record["licenseInfoInFiles"] = [attribution.spdx_tag]
             stated_in_files.add(attribution.spdx_tag)
         else:
-            # A binary states nothing about itself, and most of this wheel is
-            # binaries. Listing only what was found says every file's licence
-            # was determined; NOASSERTION is what the rest of them found.
+            # Missing file declarations must remain visible in the package roll-up.
             stated_in_files.add(NOASSERTION)
         if (
             attribution
             and attribution.copyright_text
             and not attribution.primary
-            # A packaged licence text states its component's notice, or its own
-            # author's -- WTFPL names the person who wrote WTFPL. Neither is a
-            # notice this distribution makes about itself.
+            # Packaged terms may name a component or license author, not this distribution.
             and not report.is_packaged_license(wheel.dist_info, entry.name)
         ):
             stated_copyright.add(attribution.copyright_text)
@@ -387,6 +352,7 @@ def build_document(
     wheel_id = WHEEL_PACKAGE_ID
     build = evidence_doc.get("build", {})
 
+    # The distribution declares its license; the conclusion also includes bundled terms.
     wheel_package = {
         "SPDXID": wheel_id,
         "name": wheel.distribution,
@@ -397,18 +363,10 @@ def build_document(
         "downloadLocation": NOASSERTION,
         "filesAnalyzed": True,
         "homepage": project["homepage"],
-        # Declared is what the distribution says of itself. Concluded is what
-        # this document found in it, and a wheel carrying a component under
-        # other terms is not wholly under the declared licence -- saying so is
-        # the field a compliance tool reads for "what is this artifact".
         "licenseConcluded": _wheel_conclusion(project["license"], inventory),
         "licenseDeclared": project["license"],
         "licenseInfoFromFiles": sorted(stated_in_files) or [NOASSERTION],
-        # The notices its own files carry, or -- for a distribution that ships
-        # no file of its own -- what the project states in the metadata it is
-        # built from. Declaring none beside a supplier and a licence left the
-        # package saying less about itself than anything in it, and left a
-        # recipient of a metadata-only wheel unable to name its licensor at all.
+        # Metadata-only wheels need the project notice as a fallback.
         "copyrightText": "\n".join(licensing.fold_notices(stated_copyright))
         or project.get("copyright", NOASSERTION),
         "packageVerificationCode": {
@@ -445,7 +403,6 @@ def build_document(
         packages.append(package)
         package_id = package["SPDXID"]
 
-        # Linked in, copied in, or both; say whichever the evidence supports.
         if roles & _LINK_HOWS:
             relationships.append(
                 {
@@ -476,9 +433,7 @@ def build_document(
                 }
             )
 
-        # A file whose bytes several components hold names no single source, so
-        # it has no primary and `files_of` does not see it. Stating the candidates
-        # only in prose would leave it attached to nothing any tool reads.
+        # Ambiguous files have no primary owner; encode their candidate relationships too.
         for name in inventory.files_sharing(key):
             if name in file_ids:
                 relationships.append(
@@ -507,9 +462,8 @@ def build_document(
             }
         )
 
-    # One node per package and version range, not per requirement line. A
-    # dependency recurs once per extra that wants it, and the repeats differ
-    # only in a marker the relationship already carries.
+    # Group repeated requirements by package and version range; markers belong
+    # to relationships, not separate package nodes.
     wanted: dict[tuple[str, str], list[Requirement]] = {}
     for requirement in inventory.requires_dist:
         parsed = Requirement(requirement)
@@ -542,11 +496,8 @@ def build_document(
                 )
             )
         else:
-            # Built by this same run: not an install-time unknown, so the facts
-            # its own metadata states are recorded here. Not a digest-bound
-            # reference to that wheel's document: a `py3-none-any` wheel is built
-            # by every matrix entry and must not differ by which one built it,
-            # and in a requirement cycle only one document could carry it.
+            # Use sibling metadata, not document hashes: universal wheels must be identical
+            # across matrix entries, and cyclic requirements cannot have cyclic hashes.
             element = package_id
             comment = (
                 f"{declared} Built by this same build; its own document "
@@ -590,8 +541,6 @@ def build_document(
                 }
             )
 
-    # SOURCE_DATE_EPOCH makes the whole wheel reproducible, which is what lets a
-    # rebuild be compared against a published one byte for byte.
     stamp = stamped_now()
 
     extracted = _extracted_entries(list(inventory.components_present.values()))
@@ -608,9 +557,7 @@ def build_document(
                 f"Tool: {TOOL_NAME}-{TOOL_VERSION}",
                 f"Organization: {project['supplier'].split(': ', 1)[-1]}",
             ],
-            # From the corpus this build identified against, never a default: a
-            # stated version the document was not built against is a false claim
-            # about every identification in it.
+            # Record the corpus actually used for identification, not a default version.
             "licenseListVersion": ".".join(
                 str(evidence_doc["license_list_version"]).split(".")[:2]
             ),

@@ -1,13 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Account for every file in a wheel by where it came from.
-
-Each member is traced to a link step, a fetched source tree, an archive in the
-repo, the working tree, or the build's own generated output. A member that none
-of those explain is an error: it means something reached the wheel by a route
-this collector cannot see, and it stops publication.
-"""
+"""Attribute wheel members to build inputs; unexplained members block publication."""
 
 from __future__ import annotations
 
@@ -37,7 +31,7 @@ from .wheelfile import Entry, WheelInfo
 if TYPE_CHECKING:  # pragma: no cover
     from .evidence import Discovery
 
-# Text-ish members worth reading a REUSE tag out of.
+# File types whose contents may carry REUSE tags.
 _TAGGABLE = {
     ".py",
     ".pyi",
@@ -63,17 +57,11 @@ class Attribution:
     primary: str | None = None
     spdx_tag: str | None = None
     copyright_text: str | None = None
-    # Whether the member is those bytes, as opposed to something made from them.
-    # Kept apart from `origin`, which says where it came from: inferring one from
-    # the other made the same fact answerable two ways depending on which index
-    # happened to hold the bytes.
+    # Byte identity is independent of origin; do not infer it from the attribution route.
     exact: bool = False
-    # Where in the component these bytes came from, where an index named it:
-    # the detail string's fact in a form the evidence JSON can carry.
+    # Path within the component, when known.
     source_path: str | None = None
-    # Each component's paths these bytes were made from -- the file copied, or
-    # what compiling it read -- named as `source_path` names them, with their
-    # `discovery.REACH`.
+    # Component -> source path -> discovery.REACH method.
     read: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def as_json(self) -> dict:
@@ -110,7 +98,7 @@ class Inventory:
         return self._by_component()[1].get(key, [])
 
     def _by_component(self) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-        """One pass over the members, not one per component per caller."""
+        """Cache the component index to avoid rescanning members for each lookup."""
         if self._indexed is None:
             owned: dict[str, list[str]] = {}
             shared: dict[str, list[str]] = {}
@@ -132,16 +120,13 @@ class Resolver:
     def __init__(self, discovery: Discovery, system_resolver=None) -> None:
         self._system_resolver = system_resolver or resolve_system_library
         self.system_libraries: dict[str, dict] = {}
-        # Archives and objects this wheel's members link that no target
-        # produced, by path, with what explains each -- or `explained: False`
-        # for the build to refuse.
+        # External static inputs by path; unexplained entries fail the build gate.
         self.static_inputs: dict[str, dict] = {}
         self._input_keys: dict[str, str] = {}
         self.repo_root = discovery.repo_root
         self.build_dir = discovery.build_dir
         self.graph = discovery.graph
-        # A copy: `_from_build_host` adds the system libraries this wheel turned
-        # out to need, and one `Discovery` is shared by every wheel in a run.
+        # Copy before adding host libraries: Discovery is shared across wheels.
         self.components = dict(discovery.components)
         self.archives = discovery.archives
         self.repo_files = discovery.repo_files
@@ -167,8 +152,6 @@ class Resolver:
                     )
 
     def _from_artifact(self, artifact, path: str, detail: str) -> Attribution:
-        # What a fetched tree, a vcpkg port or vendored material holds is
-        # credited there; what is left is the build machine's, or the gate's.
         contributions = self.graph.contributions(artifact, self.ownership)
         linked = self.graph.static_inputs(artifact)
         for item in sorted(linked, key=lambda item: (item.key, item.named)):
@@ -200,14 +183,10 @@ class Resolver:
     def _displayed(
         self, reached: dict[str, dict[Path, str]]
     ) -> dict[str, dict[str, str]]:
-        """Reached paths as a component's own files are named: `<root name>/<path>`.
+        """Render reached paths as <component-root>/<relative-path>.
 
-        Only a component with a tree of its own has a name for them, and only
-        such a component states terms for part of itself. A file the build
-        copied or generated into another tree registered for the component --
-        its `-build` tree -- stands where it sits relative to that tree, and is
-        also any file of the source tree holding the same bytes. An include
-        directory holding a whole tree stands for the component's root.
+        Build-tree files retain their position and any byte-identical source paths.
+        An include directory enclosing the tree represents the component root.
         """
         shown: dict[str, dict[str, str]] = {}
         for key, paths in reached.items():
@@ -248,7 +227,6 @@ class Resolver:
         return [*same, positional]
 
     def _static_input(self, item: LinkInput, targets: set[str]) -> str | None:
-        """The component a linked archive or object belongs to, if any."""
         record = self.static_inputs.get(item.key)
         if record is None:
             record = self.static_inputs[item.key] = self._input_record(item)
@@ -257,8 +235,7 @@ class Resolver:
         return record["component"]
 
     def _input_record(self, item: LinkInput) -> dict:
-        """What explains one input the ownership index does not: the repository,
-        the host, or nothing -- which the build refuses."""
+        """Resolve an unowned static input against the repository and build host."""
         record: dict = {
             "kind": item.kind,
             "named_as": [],
@@ -286,8 +263,7 @@ class Resolver:
                 "records which component installed it"
             )
         if self.repo_files.digest_of(path):
-            # REUSE names a holder for every tracked file, and the vendored
-            # scan registers one that is not this project.
+            # The vendored scan registers third-party holders; remaining tracked inputs are ours.
             record["outcome"] = "tracked in this repository, held by this project"
             return record
 
@@ -315,10 +291,7 @@ class Resolver:
         return record
 
     def _input_key(self, path: Path) -> str:
-        """`system:<name>`, unless another linked file already holds that name.
-
-        A shared library's key is its SONAME, which no archive or object shares.
-        """
+        """Mint a system key, distinguishing static files with the same basename."""
         key = f"system:{path.name}"
         if self._input_keys.get(key, str(path)) != str(path):
             key += "@" + hashlib.sha256(str(path).encode()).hexdigest()[:8]
@@ -339,17 +312,11 @@ class Resolver:
         patched = False
         if probe is not None and probe.is_file():
             candidate_digest = sha256_file(probe)
-            # The staged file is what the build put there; the member is what the
-            # wheel ships. Tracing from the staged bytes finds the origin, but
-            # the two can differ -- a repair tool rewrites members after staging
-            # -- and saying the member is a copy of something it does not hash to
-            # would describe a file the wheel does not contain.
+            # Staged bytes reveal origin; repaired wheel bytes may differ and must be
+            # reported as derived rather than copied.
             patched = candidate_digest != digest
             relative = probe.relative_to(self.build_dir).as_posix()
-            # The staged path is the staging root plus the member's own path
-            # unless the build renamed the file on the way in. Printing it
-            # whenever it is derivable repeats the member path once per member
-            # and says nothing; where it is not, it is the interesting part.
+            # Show the staged path only when it differs from the wheel member's path.
             source = (
                 "staged"
                 if relative.endswith(f"/{wheel_path}")
@@ -380,11 +347,7 @@ class Resolver:
         soname: str | None,
         build_id: str | None,
     ) -> Attribution | None:
-        """Find what explains these bytes, in order of how much it proves."""
-        # Zero bytes are identical everywhere, so a content match proves nothing:
-        # it would hand an empty marker file to whichever component happened to be
-        # indexed first, and invent that component's license obligation with it.
-        # The path is the only evidence such a file carries.
+        # Empty content matches every empty file; only a path can establish its origin.
         if candidate_digest == EMPTY_SHA256:
             return self._resolve_by_path(wheel_path, source, build_id, candidate_digest)
 
@@ -394,10 +357,8 @@ class Resolver:
                 artifacts[0], wheel_path, f"{source}; exact build output"
             )
 
-        # Identical bytes are not evidence of origin when several components
-        # hold them: a stock Apache-2.0 text is the same file in every project
-        # that ships one. Say so, and let the path decide, rather than naming
-        # whichever happened to be indexed first.
+        # Shared bytes (for example a standard license text) do not prove ownership.
+        # Use the path to disambiguate or retain every candidate.
         shared = self._shared_content(candidate_digest)
         if shared is not None:
             by_path = self._resolve_by_path(
@@ -438,19 +399,13 @@ class Resolver:
 
         build_file = self.build_files.by_hash.get(candidate_digest)
         if build_file:
-            # An empty file hashes the same as every other empty file, so the
-            # first indexed path wins and says nothing. Where the build tree
-            # holds the same bytes under the wheel's own path, that is the
-            # better answer.
+            # Prefer the wheel's path when several build files contain identical bytes.
             if Path(build_file).name != Path(wheel_path).name:
                 by_path = self.build_files.path_suffix_match(wheel_path)
                 if by_path:
                     build_file = by_path
             owner = self._staged_component_of(build_file)
-            # Say which of the two this is. The bytes match the build tree, so
-            # the member is that file; what the build made it from is not
-            # recorded anywhere this can read, and claiming a derivation without
-            # naming its input is the claim the document cannot support.
+            # A build-tree match proves a copy, but does not identify the source it was made from.
             detail = f"{source}; byte-identical to {build_file}"
             if owner:
                 detail += (
@@ -459,18 +414,14 @@ class Resolver:
                 )
             return Attribution(
                 path=wheel_path,
-                # Transforming a component's own file leaves a derivative work,
-                # which carries that component's terms. Only output that owes
-                # nothing to a third party is merely "generated".
+                # Generated output owned by a component still carries that component's terms.
                 origin="derived" if owner else "generated",
                 detail=detail,
                 components={owner: {"derived-file"}} if owner else {},
                 primary=owner,
             )
 
-        # Content no longer matches, so the bytes were patched on the way in.
-        # The build-id is what the linker wrote and patchelf leaves alone, which
-        # makes it evidence where a matching file name is only a coincidence.
+        # Build IDs survive repair and provide stronger evidence than a matching name.
         if build_id:
             by_build_id = self._resolve_by_build_id(wheel_path, source, build_id)
             if by_build_id is not None:
@@ -485,9 +436,7 @@ class Resolver:
             if from_host is not None:
                 return from_host
 
-        # Nothing this build produced or fetched explains these bytes. A shared
-        # library reaching that point came from the machine -- whatever the
-        # repair tool chose to call its directory.
+        # Consult the host last, regardless of the directory auditwheel used.
         if soname:
             return self._from_build_host(wheel_path, soname)
         return None
@@ -495,13 +444,7 @@ class Resolver:
     def _from_repo_file(
         self, wheel_path: str, repo_file: str, lead: str, same: bool
     ) -> Attribution:
-        """A file this repository holds -- and, where it is not ours, whose.
-
-        Checked-in third-party material declares its own copyright holder,
-        which is how the vendored scan found it. Reporting the member as plain
-        repository source would drop that holder, and the component would be
-        reported as contributing nothing to a wheel that ships its file.
-        """
+        """Attribute repository files while retaining any third-party ownership."""
         owner = self.ownership.owner_of(self.repo_root / repo_file.removeprefix("./"))
         return Attribution(
             path=wheel_path,
@@ -522,12 +465,7 @@ class Resolver:
         return None
 
     def _from_build_host(self, wheel_path: str, soname: str) -> Attribution | None:
-        """Claim host origin only if the host actually has this library.
-
-        Resolving the SONAME is the evidence for the claim. Without it there is
-        nothing behind "the machine supplied this", and the member is better
-        reported as unexplained than attributed to a library no one found.
-        """
+        """Require a resolved host library before claiming host origin."""
         origin = self._system_resolver(soname)
         if not origin.get("resolved_path"):
             return None
@@ -549,22 +487,16 @@ class Resolver:
         )
 
     def _shared_content(self, digest: str):
-        """How to describe content that more than one component also holds.
+        """Return an attribution builder for ambiguous content, otherwise None.
 
-        Returns None when the digest names exactly one component, which is the
-        case worth stating as a fact. Otherwise it returns a builder that names
-        every candidate and claims none of them, keeping each component's
-        licence obligation without asserting a copy that did not happen.
+        Retain every candidate's terms without claiming one as the source.
         """
         owners: dict[str, str] = {}
         for display in self.source_files.all_by_hash.get(digest, []):
             owners[component_of(display)] = display
         for member in self.archives.all_by_hash.get(digest, []):
             owners[member.container] = f"{member.path} in {member.container}"
-        # This repository holding the same bytes counts as a candidate too: a
-        # module that is nothing but an SPDX header is identical in every project
-        # that uses the same header, and calling ours a copy of a dependency's
-        # would ship a first-party file as redistributed third-party content.
+        # Include first-party matches so identical headers cannot imply third-party origin.
         ours = self.repo_files.all_by_hash.get(digest, [])
         if len(owners) + bool(ours) < 2:
             return None
@@ -587,10 +519,7 @@ class Resolver:
         self, wheel_path: str, source: str, build_id: str
     ) -> Attribution | None:
         """The pristine bytes this member was patched from, named by build-id."""
-        # The same library can sit in two archives under two sets of terms, and
-        # SDKs in this build do share build-ids. Every neighbouring index refuses
-        # to name one of several candidates; this one must too, or a patched
-        # member takes whichever archive happened to be walked first.
+        # SDK archives can share build IDs under different terms; retain all candidates.
         members = self.archives.all_by_build_id.get(build_id, [])
         containers = {item.container for item in members}
         member = members[0] if len(containers) == 1 else None
@@ -645,15 +574,10 @@ class Resolver:
         build_id: str | None = None,
         digest: str | None = None,
     ) -> Attribution | None:
-        """Post-processing changes bytes; the path still says where they came from.
+        """Use path evidence when content hashes cannot identify an origin.
 
-        patchelf, auditwheel's RPATH rewrite and the MJCF mesh stripping all leave
-        a file that no longer hashes to its origin, so a unique path match is the
-        remaining evidence -- recorded as derived, never as an exact copy.
-
-        A name match is only ever a guess, so a build-id that disagrees overrules
-        it: two libraries called libcloudxr.so from different SDKs are not each
-        other, and claiming they are would hand one the other's licence.
+        Repaired binaries and stripped MJCF assets can differ from their sources.
+        Conflicting known build IDs override a name match; equal bytes remain copies.
         """
         name = Path(wheel_path).name
 
@@ -686,12 +610,8 @@ class Resolver:
                 artifacts[0], wheel_path, f"{source}; modified build output"
             )
 
-        # This repository first. A member matching a file this project tracks is
-        # this project's copy; a dependency whose tree happens to end in the same
-        # two path segments is a coincidence, as when an SDK ships a BSL-1.0
-        # text under the same relative path as our pool's.
-        # A third-party file checked in here still carries its component, because
-        # the repository branch looks its holder up.
+        # Prefer tracked repository paths over coincident dependency suffixes.
+        # Third-party ownership of tracked files is still preserved.
         repo_file = self.repo_files.path_suffix_match(wheel_path)
         if repo_file:
             same = self.repo_files.digest_of_display(repo_file) == digest
@@ -702,10 +622,7 @@ class Resolver:
         if component_file:
             key = component_of(component_file)
             origin_digest = self.source_files.digest_of_display(component_file)
-            # Reaching this branch means the content matched more than one place,
-            # not that anything transformed the file. Where the input's bytes are
-            # these bytes it is a copy, and quoting an origin digest equal to the
-            # member's own would say nothing.
+            # Path disambiguation does not imply modification; compare the bytes.
             same = origin_digest == digest
             return Attribution(
                 path=wheel_path,
@@ -747,7 +664,6 @@ def build(
     resolver: Resolver,
     staged_root: Path | None,
 ) -> Inventory:
-    """Attribute every member, then fold the result into component presence."""
     attributions: dict[str, Attribution] = {}
     unattributed: list[str] = []
     provided_sonames = {entry.soname for entry in wheel.entries if entry.soname}
@@ -803,15 +719,10 @@ def _build_ids_disagree(left: str | None, right: str | None) -> bool:
 
 
 def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
-    """Let a staged directory settle what identical bytes cannot.
+    """Resolve identical content using a staged sibling with one known owner.
 
-    `libcloudxr.so` differs between two SDKs and resolves by build-id, but the
-    libraries beside it are byte-identical in both, and MuJoCo's licence text is
-    the same file every Apache-2.0 project ships. In each case the directory the
-    build staged the member into is already explained by exactly one of the
-    candidates, which is a record of where it came from -- so saying the build
-    kept none would be untrue, and naming every candidate overstates what the
-    others contribute.
+    For example, SDKs may share libraries but have different libcloudxr.so build
+    IDs. The uniquely attributed sibling identifies which SDK was staged.
     """
     settled: dict[str, set[str]] = {}
     for name, item in attributions.items():
@@ -835,11 +746,8 @@ def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
         item.primary = key
 
 
-# What a packaging backend writes, and SBOM documents other tools leave here.
-# `licenses/` is deliberately absent: the project's own texts are copies of files
-# this repository tracks, so they trace like any other copy, and the texts this
-# collector adds are attributed as it adds them. Calling the directory metadata
-# asserted an origin for files that have a real one.
+# Only known backend/tool output is metadata. License files must still trace
+# to their sources or to the collector that added them.
 _DIST_INFO_WRITTEN = re.compile(
     r"^(METADATA|WHEEL|RECORD|INSTALLER|REQUESTED|entry_points\.txt|top_level\.txt"
     r"|direct_url\.json|zip-safe|namespace_packages\.txt)$|^sboms/"
@@ -854,10 +762,7 @@ def _attribute(
 ) -> Attribution | None:
     if entry.name.startswith(f"{wheel.dist_info}/"):
         relative = entry.name[len(wheel.dist_info) + 1 :]
-        # Only what a packaging backend and this collector actually write there.
-        # Treating the whole directory as metadata asserted an origin for
-        # anything placed in it, which is the one route around the gate that
-        # every other member has to pass.
+        # Do not exempt arbitrary .dist-info files from provenance checks.
         if _DIST_INFO_WRITTEN.match(relative):
             return Attribution(
                 path=entry.name,
@@ -873,7 +778,6 @@ def _attribute(
 
 
 def _head_facts(entry: Entry) -> tuple[str | None, str | None]:
-    """The tag and notice a file states about itself: upstream, about that file."""
     if Path(entry.name).suffix.lower() not in _TAGGABLE:
         return None, None
     head = entry.head.decode("utf-8", "replace")

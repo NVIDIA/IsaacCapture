@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Checks that decide whether a wheel may be published.
+"""Verify wheel contents and optional build/release evidence.
 
-`verify_wheel` is the consumer-side half: it needs the wheel and nothing else,
-so the instructions published with a release are the same code that gates it.
+verify_wheel needs only the archive and is shared by CI and consumers.
 """
 
 from __future__ import annotations
@@ -28,11 +27,10 @@ _SIDECAR_KINDS = (*CONTENT_SIDECARS, "build_evidence")
 
 
 class ManifestError(Exception):
-    """A manifest is not shaped the way this tool writes them."""
+    """A manifest lacks the structure required for verification."""
 
 
 def _sidecar(evidence_dir: Path, record: dict, kind: str) -> Path | None:
-    """A named sidecar, or None so the missing-file failure is reported as one."""
     named = record.get("sidecars", {}).get(kind, {}).get("filename")
     if not named:
         return None
@@ -66,7 +64,6 @@ def manifest_records(path: Path) -> list[dict]:
 
 
 def bound_names(records) -> list[str]:
-    """The sidecar file names the records bind."""
     return [
         sidecar["filename"]
         for record in records
@@ -75,7 +72,7 @@ def bound_names(records) -> list[str]:
 
 
 def sidecar_failures(beside: Path, record: dict) -> list[str]:
-    """Each sidecar a checked record binds that is not beside it as bound."""
+    """Return missing-file or digest failures for a checked record's sidecars."""
     failures = []
     for kind, sidecar in record["sidecars"].items():
         path = beside / sidecar["filename"]
@@ -92,7 +89,7 @@ def _is_bare_name(name: str) -> bool:
 
 
 def _record_for(records: list[dict], filename: str) -> dict:
-    """One wheel's record, or a clear error rather than a KeyError traceback."""
+    """Find exactly one record for a wheel, or raise ManifestError."""
     seen = [item for item in records if item.get("filename") == filename]
     if len(seen) > 1:
         raise ManifestError(f"{filename} is advertised {len(seen)} times")
@@ -121,9 +118,7 @@ def checked_record(record: dict) -> dict:
                 f"{filename}: {kind} sidecar {item['filename']!r} is not a bare "
                 "file name"
             )
-    # Every sidecar, not just the ones a record happens to name. An absent entry
-    # is not an absent check: omitting `build_evidence` left `check-set` passing
-    # a wheel the evidence would have failed.
+    # Require every sidecar kind; omissions must not bypass evidence checks.
     missing = sorted(set(_SIDECAR_KINDS) - set(record["sidecars"]))
     if missing:
         raise ManifestError(
@@ -171,10 +166,9 @@ def verify_wheel(
     scanned: wheelfile.WheelInfo | None = None,
     carried: list[dict] | None = None,
 ) -> list[str]:
-    """Verify a wheel against the SBOM it carries. No repository required.
+    """Verify an archive against its embedded SBOM without a repository.
 
-    `carried` collects the parsed document for callers that go on to check it
-    against evidence, so the wheel is opened and the document parsed once.
+    Append the parsed document to carried for reuse by evidence checks.
     """
     failures: list[str] = []
     wheel = scanned or wheelfile.scan(wheel_path)
@@ -204,9 +198,7 @@ def verify_wheel(
     if duplicates:
         failures.append(f"duplicate SPDXIDs: {duplicates}")
     known = set(identifiers)
-    # An element in another document is written `DocumentRef-x:SPDXRef-y`, and
-    # the prefix has to be one this document declares -- otherwise it names a
-    # document no reader can fetch or check.
+    # Cross-document element IDs must name a declared DocumentRef.
     declared_documents = {
         item["externalDocumentId"] for item in spdx.get("externalDocumentRefs", [])
     }
@@ -262,10 +254,8 @@ def verify_wheel(
             "packageVerificationCodeExcludedFiles", []
         )
     }
-    # Exactly these two, not "at least". The list lives in the document being
-    # checked, so treating it as a set of files to skip lets anyone who can edit
-    # the document exempt anything they add to the wheel from the coverage check
-    # below -- which is the whole of what this command promises a consumer.
+    # Do not trust the document to choose exclusions: arbitrary entries here
+    # could hide added files from coverage checks.
     permitted = {f"{wheel.dist_info}/RECORD", sbom_name}
     if excluded != permitted:
         failures.append(
@@ -312,13 +302,9 @@ def verify_wheel(
 
 
 def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
-    """Every text the document describes must be a text the wheel carries.
+    """Check that cited license paths contain the bytes the document describes.
 
-    The document states a digest for each licence it read and carries the
-    verbatim text of each LicenseRef. The wheel packages those same bytes under
-    `licenses/`. Nothing compared the two, so a packaged licence could be
-    swapped for another -- or emptied -- and every per-file digest still agreed,
-    because those describe the replacement.
+    Per-file hashes alone can agree with a substituted or emptied license file.
     """
     failures: list[str] = []
     by_name = {entry.name: entry.sha256 for entry in wheel.entries}
@@ -335,9 +321,7 @@ def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
             match = _EVIDENCE_DIGEST.search(text)
             if not match:
                 continue
-            # The path matters, not just the bytes existing somewhere: two
-            # components can ship an identical text, so a swap inside one of them
-            # survives a check that only asks whether the digest is present.
+            # Check the cited path too: another component can contain identical license bytes.
             where = match.group("where")
             if by_name.get(where) != match.group("digest"):
                 failures.append(
@@ -349,7 +333,6 @@ def _check_license_texts(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
 
 
 def _check_record(wheel_path: Path, wheel: wheelfile.WheelInfo) -> list[str]:
-    """RECORD is what an installer trusts; a wrong entry here is a broken wheel."""
     failures: list[str] = []
     record = wheelfile.read_record(wheel_path, wheel.dist_info)
     record_name = f"{wheel.dist_info}/RECORD"
@@ -360,8 +343,7 @@ def _check_record(wheel_path: Path, wheel: wheelfile.WheelInfo) -> list[str]:
         if row is None:
             failures.append(f"RECORD does not list {entry.name}")
             continue
-        # scan() already hashed every member; RECORD states the same digest in
-        # base64, so re-reading the archive to recompute it is wasted work.
+        # Reuse scan hashes; RECORD encodes the same digest in base64.
         if row[0] != wheelfile.record_hash_from_sha256(entry.sha256):
             failures.append(f"RECORD digest mismatch for {entry.name}")
         if row[1] != str(entry.size):
@@ -374,12 +356,9 @@ def _check_record(wheel_path: Path, wheel: wheelfile.WheelInfo) -> list[str]:
 def _check_attribution(
     evidence_doc: dict, wheel: wheelfile.WheelInfo, spdx: dict | None
 ) -> list[str]:
-    """Every wheel member must name where it came from, and every shipped
-    component must have had a license text to read."""
+    """Require attribution for every member and packaged terms for each component."""
     stated = evidence_doc.get("wheel")
     if stated and stated != wheel.path.name:
-        # Checking a wheel against another wheel's evidence compares two unrelated
-        # member sets; the mismatch it produces describes the wrong problem.
         return [f"build evidence describes {stated}, not {wheel.path.name}"]
 
     failures: list[str] = []
@@ -400,9 +379,7 @@ def _check_attribution(
     for key, component in evidence_doc.get("components", {}).items():
         if not component.get("in_this_wheel"):
             continue
-        # Every kind: the document cites one attributionText per evidence item,
-        # so comparing only the licence-granting ones called a NOTICE the build
-        # plainly read a text it never did.
+        # Include NOTICE and other non-grant evidence cited by attributionTexts.
         recorded.update(item["sha256"] for item in component.get("evidence", []))
         texts = [
             item
@@ -414,11 +391,7 @@ def _check_attribution(
                 f"{key} is redistributed but no license text was found for it"
             )
             continue
-        # Found is not shipped. The build gate asks whether a text existed to
-        # read; this asks whether the wheel in hand still carries it. Without
-        # the second, every statement the document makes about a component --
-        # that it is here, under these terms, with this text -- could be deleted
-        # along with the text and nothing would notice.
+        # Existence at build time is insufficient; the recorded terms must still be packaged.
         if not any(item["sha256"] in packaged for item in texts):
             failures.append(
                 f"{key} is redistributed but the license text recorded for it is "
@@ -434,12 +407,10 @@ def _document_agrees_with_evidence(
     evidence_doc: dict,
     spdx: dict | None,
 ) -> list[str]:
-    """The texts the document names must be the ones the build actually read.
+    """Compare license claims with separately recorded build evidence.
 
-    `_check_license_texts` reads the expected digest out of the document it is
-    checking, so a rewrite consistent with itself is invisible to it. The build
-    evidence was produced before the wheel was published and states the digests
-    independently, so where it is supplied it is the thing to compare against.
+    A self-consistent rewrite of the SBOM and wheel can pass _check_license_texts;
+    the evidence supplies independent digests and conclusions.
     """
     if spdx is None:
         return []
@@ -454,14 +425,10 @@ def _document_agrees_with_evidence(
                     f"(sha256:{match.group('digest')}) the build never read"
                 )
 
-    # A digest is the one thing about a component that cannot change its terms.
-    # Comparing only that left every expression in the document rewritable --
-    # a proprietary EULA could be published as Apache-2.0, with the evidence
-    # beside it still saying otherwise and every gate reporting OK.
+    # Compare expressions as well as text hashes; an unchanged EULA could otherwise
+    # be relabeled Apache-2.0.
     components = evidence_doc.get("components", {})
-    # By the id the document assigns, not by display name: a source tree, a
-    # system library and an archive can all be called the same thing, and a name
-    # join silently drops all but one of them.
+    # Join by component ID: source trees, archives, and libraries can share display names.
     by_id = {
         document_module.component_package_id(key): (key, component)
         for key, component in components.items()
@@ -477,10 +444,7 @@ def _document_agrees_with_evidence(
         ):
             expected = component.get(stated)
             actual = package.get(field)
-            # Exactly, LicenseRef ids included: the build settles shared ids
-            # before it renders either side, and the text check below ties a
-            # shared id to the text it names and a minted one to its owner,
-            # never either to the package naming it.
+            # Shared LicenseRefs are resolved before rendering, so require exact ID agreement.
             if not expected or actual == expected:
                 continue
             failures.append(
@@ -488,11 +452,8 @@ def _document_agrees_with_evidence(
                 f"the build recorded {expected!r}"
             )
 
-    # And the text a LicenseRef stands for has to be the terms the build read
-    # for some component. A component can state its licence across several
-    # files, so the body is a join with no digest of its own -- the evidence
-    # states that digest, which is what makes every entry checkable, shared ids
-    # included. An id minted for one component is held to that component's.
+    # Bind each LicenseRef to the combined terms recorded for its owner, or to
+    # a recorded shared text. Individual file hashes cannot verify a joined body.
     by_ref = {licensing.license_ref(key): key for key in components}
     stated = {
         key: component.get("verbatim_terms_sha256")
@@ -501,13 +462,12 @@ def _document_agrees_with_evidence(
     any_stated = {digest for digest in stated.values() if digest}
     for extracted in spdx.get("hasExtractedLicensingInfos", []):
         ref, text = extracted["licenseId"], extracted.get("extractedText", "")
-        # A shared id names its text, so it is held to that text, not just to
-        # the terms some component has.
+        # A shared ID must match its text hash, not just any component's terms.
         if _SHARED_ID.fullmatch(ref) and ref != licensing.shared_ref(text):
             failures.append(f"{ref}: the text it carries is not the one its id names")
             continue
         if not any_stated:
-            # Evidence written before this digest existed cannot answer.
+            # Legacy evidence without this digest cannot verify the combined text.
             continue
         owner = by_ref.get(ref)
         expected = {stated[owner]} if owner and stated.get(owner) else any_stated
@@ -520,11 +480,7 @@ def _document_agrees_with_evidence(
 
 
 def _refs_in(value) -> set[str]:
-    """LicenseRef identifiers in a field that may hold an expression or a list.
-
-    An expression that cannot be read is reported as such rather than treated as
-    naming nothing.
-    """
+    """Read LicenseRefs from an expression or list, failing on malformed expressions."""
     if value is None:
         return set()
     items = value if isinstance(value, list) else [value]
@@ -541,7 +497,6 @@ def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     if notices not in names:
         failures.append(f"{notices} is not packaged")
 
-    # Every field that can name one, through one parser.
     declared_refs = set()
     for item in spdx.get("files", []):
         for field in ("licenseConcluded", "licenseInfoInFiles"):
@@ -549,7 +504,6 @@ def _check_licenses(wheel: wheelfile.WheelInfo, spdx: dict) -> list[str]:
     for package in spdx["packages"]:
         for field in ("licenseConcluded", "licenseDeclared", "licenseInfoFromFiles"):
             declared_refs.update(_refs_in(package.get(field)))
-    # Every file id a package claims to hold has to be a file this document has.
     file_ids = {item["SPDXID"] for item in spdx.get("files", [])}
     for package in spdx["packages"]:
         for held in package.get("hasFiles", []):
@@ -575,12 +529,7 @@ def check(
     manifest: Path | None = None,
     evidence_dir: Path | None = None,
 ) -> list[str]:
-    """Check a wheel, and as much of its published evidence as you can supply.
-
-    One operation over widening scope rather than three commands: a consumer has
-    only the wheel, a release build also has the evidence it just produced, and a
-    release has the whole set. Each input adds checks; none replaces the others.
-    """
+    """Verify a wheel, adding checks for each supplied evidence or manifest input."""
     scanned = wheelfile.scan(wheel)
     carried: list[dict] = []
     failures = verify_wheel(wheel, scanned, carried)
@@ -620,9 +569,6 @@ def _check_manifest(
     if published.is_file():
         with zipfile.ZipFile(wheel) as archive:
             embedded = record["sbom_in_wheel"]
-            # Reported, not raised: the member name comes out of the manifest,
-            # so one the wheel does not hold is a disagreement between the two
-            # and reads as such, rather than as a KeyError from the zip reader.
             if embedded not in archive.namelist():
                 failures.append(
                     f"the manifest names {embedded} as this wheel's SBOM, and the "
@@ -638,10 +584,8 @@ def _check_manifest(
 def _cross_document_refs(
     spdx: dict, documents: dict[str, bytes], filename: str
 ) -> list[str]:
-    """An external document reference has to resolve to a document in this set.
-
-    Declaring one is not the check: the digest is what binds it, and a wheel
-    rebuilt without its sibling would otherwise carry a stale one and pass.
+    """Resolve external references against this release, checking document hashes
+    and referenced elements to reject stale sibling references.
     """
     failures: list[str] = []
     by_namespace = {
@@ -664,7 +608,6 @@ def _cross_document_refs(
                 f"{filename}: {ref.get('externalDocumentId')} states sha1 {stated} "
                 f"for {name}, which hashes to {actual}"
             )
-    # And the elements those references point at have to be in that document.
     ids = {
         ref["externalDocumentId"]: json.loads(by_namespace[ref["spdxDocument"]][1])
         for ref in spdx.get("externalDocumentRefs", [])
@@ -688,8 +631,7 @@ def _cross_document_refs(
 
 
 def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[str]:
-    """Run :func:`check` over every wheel a merged manifest advertises, and fail
-    any wheel or evidence file here that it does not name."""
+    """Verify the release and reject wheels or evidence omitted from its manifest."""
     failures: list[str] = []
     records = manifest_records(manifest_path)
     for name, seen in sorted(Counter(item["filename"] for item in records).items()):
@@ -697,14 +639,12 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
             raise ManifestError(f"{name} is advertised {seen} times")
     by_name = {item["filename"]: checked_record(item) for item in records}
 
-    # Every wheel here is published with the set, so one the manifest omits
-    # would go out unchecked.
+    # Every downloaded wheel is published, so unlisted wheels cannot be left unchecked.
     for stray in sorted({item.name for item in wheel_dir.glob("*.whl")} - set(by_name)):
         failures.append(
             f"{stray} is in {wheel_dir}, and {manifest_path.name} does not list it"
         )
-    # The same holds for evidence: a file no record binds is never verified.
-    # Wheels sharing the directory are the check above's to judge.
+    # Reject unbound evidence too; the wheel check above handles shared-directory wheels.
     expected = set(bound_names(by_name.values()))
     if manifest_path.parent.resolve() == evidence_dir.resolve():
         expected.add(manifest_path.name)
@@ -716,8 +656,6 @@ def check_set(manifest_path: Path, wheel_dir: Path, evidence_dir: Path) -> list[
             f"{stray} is in {evidence_dir}, and {manifest_path.name} does not bind it"
         )
 
-    # The whole release is here, which is the only place a reference from one
-    # document to another can be resolved rather than merely declared.
     published: dict[str, bytes] = {}
     for record in by_name.values():
         sidecar = _sidecar(evidence_dir, record, "spdx")

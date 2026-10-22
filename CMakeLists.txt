@@ -3,11 +3,9 @@
 
 cmake_minimum_required(VERSION 3.24...3.25)
 
-# The SBOM collector reads this build's link and compile graph, and the
-# directories the compiler hands the linker, from the file API reply. The query
-# is feature-tested rather than required: cmake_file_api() arrived in 3.27, and
-# raising the minimum opts into CMP0148, which removes the FindPythonInterp
-# module pybind11's legacy path still calls through vcpkg's find_package wrapper.
+# SBOM discovery needs the codemodel and toolchains replies (CMake >=3.27).
+# Feature-test the query: raising the policy version would enable CMP0148,
+# removing FindPythonInterp still used by pybind11's legacy path through vcpkg.
 if(COMMAND cmake_file_api)
   cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 TOOLCHAINS 1)
 endif()

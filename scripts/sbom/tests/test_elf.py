@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The ELF reader is how bundled libraries are told apart from external ones."""
+"""ELF metadata reader tests."""
 
 from __future__ import annotations
 
@@ -66,7 +66,6 @@ def test_verification_does_not_parse_binaries(built):
 
     assert not any(entry.is_elf for entry in plain.entries)
     assert any(entry.is_elf for entry in analyzed.entries)
-    # The digests verification relies on are identical either way.
     assert {e.name: e.sha256 for e in plain.entries} == {
         e.name: e.sha256 for e in analyzed.entries
     }

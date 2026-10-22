@@ -26,9 +26,7 @@ _HOW_PROSE = {
 }
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
-# What a row is, so a copyright holder is not read as a package name. A vendored
-# row is named for the holder its REUSE info or header names, the only identity
-# such material has -- there is no package behind it.
+# Distinguish vendored copyright holders from installable packages.
 _KIND_PROSE = {
     "source-tree": "fetched source",
     "archive": "fetched archive",
@@ -40,9 +38,7 @@ _KIND_PROSE = {
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
-# Every list of components whose terms a reader cannot take as identified, with
-# its Markdown heading. The report, its Markdown, the manifest and the CI
-# warnings all read this, so a list added here cannot be left out of one.
+# Shared gap categories for JSON, Markdown, manifests, and CI warnings.
 GAP_LISTS = {
     "components_without_license_evidence": "No license text found for:",
     "components_with_unresolved_license": "No license concluded for:",
@@ -51,11 +47,7 @@ GAP_LISTS = {
 
 
 def _short(version: str) -> str:
-    """Abbreviate a commit; leave anything else whole.
-
-    Truncating to a fixed width turned `1.1.0-2build1.1` into `1.1.0-2build`,
-    which reads as a complete Debian version and is not one.
-    """
+    """Abbreviate commit hashes only; truncating a package version changes its identity."""
     return version[:12] if _COMMIT.match(version) else version
 
 
@@ -65,7 +57,6 @@ def licenses_root(dist_info: str) -> str:
 
 
 def notices_path(dist_info: str) -> str:
-    """The notice file that travels inside the wheel, by name."""
     return f"{licenses_root(dist_info)}THIRD-PARTY-NOTICES.md"
 
 
@@ -74,36 +65,23 @@ def is_packaged_license(dist_info: str, member: str) -> bool:
 
 
 def is_third_party_license(dist_info: str, member: str) -> bool:
-    """A text read out of a component, as against this distribution's own."""
     return member.startswith(f"{licenses_root(dist_info)}third-party/")
 
 
 def declared_license_path(dist_info: str, member: str) -> str:
-    """What METADATA calls a packaged licence file.
-
-    PEP 639 states License-File relative to `.dist-info/licenses/`, which is
-    what setuptools already does for the project's own texts; declaring the
-    member path instead yields an entry that resolves to nothing.
-    """
+    """PEP 639 License-File paths are relative to .dist-info/licenses/."""
     return member.removeprefix(licenses_root(dist_info))
 
 
-# What a nested text is, wherever one is listed. Some restate the component's
-# own grant, so this says only where they apply.
+# Nested texts may repeat the root grant; describe their scope without implying a difference.
 NESTED_ROLE = "terms stated for part of this component"
 
 
 def packaged_license_path(dist_info: str, component_key: str, evidence) -> str:
-    """Where one component's license text lands inside the wheel.
-
-    Named after the evidence's whole path within its component, not its
-    basename: a REUSE pool makes `LICENSE` and `LICENSES/MIT.txt` collide, and
-    dropping one would leave the notices pointing at a text that is not there.
-    """
+    """Place terms under the component's full evidence path to avoid basename collisions."""
     folder = _SAFE_NAME.sub("_", component_key)
     relative = evidence.path.rsplit("!", 1)[-1].split("/", 1)[-1]
-    # Keep the separators: flattening them re-creates the collision this scheme
-    # exists to avoid, and the document would name a text that is not there.
+    # Preserve path separators when sanitizing to avoid flattening distinct paths.
     safe = "/".join(_SAFE_NAME.sub("_", part) for part in relative.split("/"))
     return f"{licenses_root(dist_info)}third-party/{folder}/{safe}"
 
@@ -119,16 +97,12 @@ def notices_markdown(
     wheel_name: str,
     project: dict | None = None,
 ) -> str:
-    """The notice file that travels inside the wheel.
+    """Render notices with the distribution's own license and copyright first.
 
-    It opens with the distribution's own licence and holder. The reference text
-    a declared licence packages names nobody -- Apache-2.0's appendix is a
-    template -- so for a wheel shipping no source file of its own this is the
-    only place a recipient can read who licensed it to them.
+    Reference templates do not name the holder of a metadata-only wheel.
     """
     lines = ["# Notices", ""]
     if project:
-        # `Organization: NVIDIA` is how SPDX spells a supplier; prose does not.
         supplier = project["supplier"].split(": ", 1)[-1]
         lines += [f"`{wheel_name}` is distributed by {supplier}."]
         if project.get("license", NOASSERTION) != NOASSERTION:
@@ -138,8 +112,6 @@ def notices_markdown(
         lines.append("")
     lines += ["## Third-party notices", ""]
     if not inventory.components_present:
-        # Saying where texts live when none were written sends a reader to a
-        # directory the wheel does not contain.
         lines += [
             f"`{wheel_name}` redistributes no third-party component, so no "
             "license text is packaged here.",
@@ -158,11 +130,8 @@ def notices_markdown(
         lines.append("")
         lines.append(f"- License: `{component.license_concluded}`")
         if component.copyright_text != "NOASSERTION":
-            # A reference text names no holder, so for a component that ships no
-            # licence file of its own this is the only notice in the wheel.
-            # Joined with an explicit break: a newline inside a list item is a
-            # lazy continuation, and so is an indented one, so either way a
-            # renderer runs distinct legal notices into one paragraph.
+            # Reference texts omit component holders. Render their notices separately,
+            # with explicit breaks so Markdown does not merge them into one paragraph.
             lines.append(
                 "- Copyright: " + "<br>".join(component.copyright_text.splitlines())
             )
@@ -248,9 +217,6 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                 "evidence": [item.as_json() for item in component.evidence],
             }
         )
-        # Same test as the build gate and the verifier: a REUSE pool is a real
-        # text. Requiring a grant here advertised "no licence evidence" for a
-        # component the gates deliberately accepted on the pool they packaged.
         if not obligations:
             gaps["components_without_license_evidence"].append(
                 {
@@ -259,8 +225,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                 }
             )
         elif component.license_concluded == NOASSERTION:
-            # Texts that pass the gate can still name nothing
-            # (`licensing.why_unresolved`).
+            # Packaged text can satisfy the gate without identifying a license.
             gaps["components_with_unresolved_license"].append(
                 {
                     "component": key,
@@ -269,10 +234,7 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
                 }
             )
         elif carried := licensing.carried_texts(component.evidence):
-            # Not whether anything matched: a text can match and still be
-            # carried (`licensing.carried_texts`), and one beside it can match
-            # and be named. Either way these terms are only readable as the
-            # text this wheel carries.
+            # A partially matched grant still carries unresolved terms.
             gaps["components_with_unidentified_license"].append(
                 {
                     "component": key,
@@ -285,13 +247,11 @@ def report(inventory: Inventory, evidence_doc: dict, wheel_name: str) -> dict:
         "schema": "isaaccapture-license-report/2",
         "wheel": wheel_name,
         "generated_from_commit": evidence_doc.get("project", {}).get("commit"),
-        # The commit alone does not describe a tree that was modified, and this
-        # report is what a reader uses to reproduce the build.
         "source_tree_modified": str(
             evidence_doc.get("project", {}).get("describe") or ""
         ).endswith("-dirty"),
         "spdx_license_list_version": evidence_doc.get("license_list_version"),
-        # Where the build read the list from is the build evidence's to record.
+        # Keep builder-local corpus paths in build evidence only.
         "license_data": {
             key: value
             for key, value in evidence_doc.get("license_data", {}).items()
@@ -331,11 +291,7 @@ def report_markdown(payload: dict) -> str:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for item in payload["components"]:
-        # Grants in full; the REUSE pool summarised. A pool is a directory of
-        # reference texts kept so that per-file tags resolve -- OpenXR's covers
-        # its fonts and spec prose -- so listing all of it buries the two files
-        # the licence was actually read from. Every path is in the JSON report
-        # and in the packaged notices, which is where the paths matter.
+        # Summarize reference pools for readability; JSON and packaged notices retain all paths.
         shown = [record for record in item["evidence"] if record["kind"] != "pool"]
         pooled = [record for record in item["evidence"] if record["kind"] == "pool"]
         parts = [

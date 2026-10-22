@@ -10,11 +10,7 @@ SPDX_VERSION = "SPDX-2.3"
 
 
 def stamped_now():
-    """The time to publish, honouring SOURCE_DATE_EPOCH.
-
-    Every artifact a release advertises uses this; the manifest binds them as one
-    chain, so they must agree on the clock.
-    """
+    """Return the publication time, honoring SOURCE_DATE_EPOCH."""
     import os
     from datetime import datetime, timezone
 
