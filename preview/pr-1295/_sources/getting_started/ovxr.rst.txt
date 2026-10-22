@@ -83,3 +83,40 @@ Replace the wheel path with the file produced by your build. Refresh the
 application's lock file after changing the wheel or dependency selection, then
 run with ``uv run --extra ovxr``. Installing packages with ``uv pip install``
 alone does not update the application's lock file.
+
+Application-specific OVXR versions
+----------------------------------
+
+Isaac Capture pins the tested OVXR build. OVXR's pre-GA API can change between
+builds, as described in its
+`release notes <https://github.com/NVIDIA-Omniverse/ovxr/blob/main/CHANGELOG.md>`__.
+uv respects that pin and reports a conflict if the application requires
+incompatible OVRTX or OVStage versions.
+
+To validate another OVXR build with the same Isaac Capture release, select an
+OVXR release whose declared dependencies match the application's OVRTX/OVStage
+requirements. Add an override in the application's root ``pyproject.toml``:
+
+.. code-block:: toml
+
+   [tool.uv]
+   override-dependencies = ["ovxr==<compatible-version>"]
+
+Replace ``<compatible-version>`` with the selected release. If the application
+already has an ``override-dependencies`` list, append this entry to that list.
+Then refresh the lock file and synchronize the environment using the ``ovxr``
+extra from the example above:
+
+.. code-block:: bash
+
+   uv lock --upgrade-package ovxr
+   uv sync --extra ovxr
+
+An `override <https://docs.astral.sh/uv/concepts/resolution/#dependency-overrides>`__
+changes dependency resolution; it does not establish compatibility with Isaac
+Capture's OVXR integration. Validate the application's XR workflow before
+relying on the selected build.
+
+Applications using different provider versions need separate project
+environments and lock files. Each can install the same Isaac Capture wheel
+with its own OVXR/OVRTX/OVStage combination.
