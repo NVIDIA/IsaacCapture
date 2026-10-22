@@ -123,8 +123,6 @@ def fix_license(project: Project, path: Path) -> bool:
     if expected == EGOPOST_LICENSE and expressions == {"Apache-2.0"}:
         content = path.read_text()
         # Replace only the default header tag, retaining copyright and other notices.
-        # SPDX patterns are data, not license declarations for this file.
-        # REUSE-IgnoreStart
         updated, count = re.subn(
             r"(SPDX-License-Identifier:[ \t]*)Apache-2\.0(?=[ \t]*(?:\*/|-->)?[ \t]*$)",
             rf"\g<1>{EGOPOST_LICENSE}",
@@ -132,7 +130,6 @@ def fix_license(project: Project, path: Path) -> bool:
             count=1,
             flags=re.MULTILINE,
         )
-        # REUSE-IgnoreEnd
         if count:
             path.write_text(updated)
             print(f"{path}: updated default license to {EGOPOST_LICENSE}")
