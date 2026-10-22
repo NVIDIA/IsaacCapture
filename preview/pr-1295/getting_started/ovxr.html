@@ -500,7 +500,7 @@ Vulkan SDK.</p>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">isaaccapture.teleop_session_manager.ovxr_session</span></code> provides <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code>
-and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrSessionHost</span></code> to supply the
+and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> to supply the
 application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.</p>
 <p>For a uv-managed application, declare Isaac Capture with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra and
 select the source-built wheel in the application’s project configuration:</p>
