@@ -2126,14 +2126,12 @@ def test_success_without_xr_submission_does_not_count_render_frame(monkeypatch):
     owner = ovxr_session.OvxrSession(_FakeHost(), config, frame_consumers=(consumer,))
     owner.start()
     worker = consumer
-    try:
+    with owner:
         assert owner.request_render("no-submit") > 0
         _wait_for_operation("submit")
         assert not worker._start_attempted
         assert worker.status.render_thread_fps == 0
         assert worker.status.presented_frames == 0
-    finally:
-        owner.close()
 
 
 def test_three_products_keep_selection_order_and_one_loader_owner(monkeypatch):
