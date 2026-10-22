@@ -926,6 +926,9 @@ prints it in the startup banner. Requests without the token, and WebSocket
 <li><p>WebSocket: <code class="docutils literal notranslate"><span class="pre">&quot;token&quot;</span></code> field in the <code class="docutils literal notranslate"><span class="pre">register</span></code> payload</p></li>
 <li><p>HTTP: <code class="docutils literal notranslate"><span class="pre">?token=&lt;secret&gt;</span></code> query parameter or <code class="docutils literal notranslate"><span class="pre">X-Control-Token</span></code> header</p></li>
 </ul>
+<p>The headset bookmark carries the token as <code class="docutils literal notranslate"><span class="pre">controlToken</span></code> in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (<code class="docutils literal notranslate"><span class="pre">--host-client</span></code>).</p>
 </section>
 <section id="web-client-integration">
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
