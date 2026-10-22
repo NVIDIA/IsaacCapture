@@ -250,22 +250,32 @@ class OvxrFrameConsumer(Protocol):
     retirement is unproved, so rendering providers stay alive.
     """
 
+    @abstractmethod
     def on_session_started(
         self,
         binding: OvxrSessionBinding,
         config: OvxrSessionConfig,
         request_shutdown: Callable[[], None],
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
+    @abstractmethod
     def on_outputs(
         self, renderer: int, outputs: Any, shared: Mapping[str, CameraImage | None]
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
-    def on_frame_submitted(self) -> None: ...
+    @abstractmethod
+    def on_frame_submitted(self) -> None:
+        raise NotImplementedError
 
-    def finish_frame(self) -> None: ...
+    @abstractmethod
+    def finish_frame(self) -> None:
+        raise NotImplementedError
 
-    def close(self) -> None: ...
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
 
 
 def _import_ovxr():
