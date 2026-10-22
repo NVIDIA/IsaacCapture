@@ -86,7 +86,7 @@ class _CadenceSampler:
 
 
 class _InputCopyCompletion:
-    """Fence OVUI 0.2 input uploads, not its unrelated output-streaming API.
+    """Fence OVUI input uploads, not its unrelated output-streaming API.
 
     Both standalone backends copy the input on CUDA's legacy stream. Vulkan
     synchronizes internally, OpenGL only queues map/copy/unmap. An event recorded

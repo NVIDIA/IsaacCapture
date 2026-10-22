@@ -68,7 +68,7 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
-- [OVXR installation and source-built camera support](docs/source/getting_started/ovxr.rst) (optional public packages)
+- [OVXR installation](docs/source/getting_started/ovxr.rst)
 
 
 ### Install & Run Isaac Lab
@@ -89,19 +89,10 @@ The optional `isaaccapture[ovxr]` extra retrieves OVXR and its OVRTX/OVStage
 dependencies. The separate `isaaccapture[desktop-mirror]` extra retrieves OVUI.
 These packages are downloaded separately, rather than bundled in the Isaac Capture
 wheel. Their licenses apply independently of Isaac Capture's Apache-2.0 license.
-OVXR, OVRTX and OVStage are NVIDIA proprietary software. OVUI 0.3.0 is Apache-2.0.
+OVXR, OVRTX and OVStage are NVIDIA proprietary software. OVUI is Apache-2.0.
 See [package sources and license details](docs/source/getting_started/ovxr.rst#optional-packages-and-licenses).
+Review the applicable package licenses and terms before installing or using these
+optional dependencies.
 
-The following notice applies to separately retrieved external materials. Existing
-CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+Existing CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and EULA acceptance.
-
-NOTICE AND DISCLAIMER: This software automatically retrieves, accesses or interacts with external
-materials.  Those retrieved materials are not distributed with this software and are governed solely
-by separate terms, conditions and licenses.  You are solely responsible for finding, reviewing and
-complying with all applicable terms, conditions, and licenses, and for verifying the security,
-integrity and suitability of any retrieved materials for your specific use case. This software is
-provided "AS IS", without warranty of any kind. The author makes no representations or warranties
-regarding any retrieved materials, and assumes no liability for any losses, damages, liabilities or
-legal consequences from your use or inability to use this software or any retrieved materials. Use
-this software and the retrieved materials at your own risk.

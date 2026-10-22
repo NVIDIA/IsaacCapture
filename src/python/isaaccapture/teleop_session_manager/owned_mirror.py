@@ -69,8 +69,7 @@ def _disable_glx_swap_interval() -> bool:
     )(address)
     # OVUI enables vsync during init. Its native swap keeps the GIL, so a
     # sleeping display can stall headset submission even on another thread.
-    # Set this window's interval after init; an environment override alone
-    # did not prevent the stall. The existing max_fps cap still paces the UI.
+    # Set the window's interval after init; max_fps controls the UI cadence.
     swap_interval(display, drawable, 0)
     glx.glXQueryDrawable.argtypes = [
         ctypes.c_void_p,
@@ -208,7 +207,7 @@ class OwnedMirrorMailbox:
             self._in_use = None
 
     def _drain_gpu(self, *, replace_latest: bool = False) -> None:
-        # Only the renderer lane closes maps. No GPU call holds the UI lock.
+        # Only the render thread closes maps. No GPU call holds the UI lock.
         with self._lock:
             if replace_latest and self._latest is not self._in_use:
                 self._latest = None
@@ -247,7 +246,7 @@ class OwnedMirrorMailbox:
             self._error = str(error)
 
     def configure_gpu_destination(self) -> None:
-        """Called on the GUI lane while its newly created GL context is current."""
+        """Called on the GUI thread while its newly created GL context is current."""
         if hasattr(self._gpu_mapper, "configure_opengl_destination"):
             self._gpu_mapper.configure_opengl_destination()
 
@@ -462,7 +461,7 @@ class OwnedDesktopMirrorWorker:
                 try:
                     while not self._stop.is_set():
                         # Status belongs to the application, not to a selected
-                        # image. Update while waiting or paused, on the UI lane.
+                        # image. Update while waiting or paused, on the UI thread.
                         now_ns = time.perf_counter_ns()
                         if now_ns >= next_status_ns:
                             status_label.text = self.status.status_text

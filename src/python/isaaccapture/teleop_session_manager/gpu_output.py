@@ -47,8 +47,7 @@ def _api():
 
 def native_renderer_handle(renderer) -> int:
     """Normalize the borrowed renderer object before calling the OVRTX C API."""
-    # ExternalPresentBinding carries the Renderer object; the former native
-    # callback supplied a raw pointer. Keep that conversion at this boundary.
+    # Accept Renderer objects and raw native pointers at this boundary.
     handle = getattr(renderer, "handle", getattr(renderer, "_handle", renderer))
     value = ctypes.cast(handle, ctypes.c_void_p).value
     if not value:
@@ -370,8 +369,7 @@ def _map_rgba(renderer, handle, max_bytes, *, array):
             raise ValueError("mirror GPU output exceeds bounded image size")
         image.width, image.height, image.pitch = width, height, pitch
         image.pointer = int(dl.data) + int(dl.byte_offset)
-        # Preserve the existing host-wait policy: do not introduce Linux
-        # CUDA/Vulkan stream-wait scheduling changes with this copy change.
+        # Wait for producer completion before reading the mapped image.
         _wait_ready(cuda, mapped.cuda_sync)
         return image
     except BaseException as cause:
