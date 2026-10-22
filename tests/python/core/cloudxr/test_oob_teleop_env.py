@@ -596,17 +596,29 @@ def test_oob_static_dir_rejects_cached_bundle_without_health_protocol(
     bundle.write_bytes(b"old WebXR client")
     monkeypatch.setenv(TELEOP_WEB_CLIENT_STATIC_DIR_ENV, str(tmp_path))
 
-    with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
+    with pytest.raises(RuntimeError, match="lacks required OOB support .*healthProbe"):
         require_web_client_static_dir(require_health_probe=True)
 
-    # Health protocol alone is not enough: the bundle must also read a fragment token.
+    # Health protocol alone is not enough for OOB: the bundle must also read a fragment token.
     bundle.write_bytes(b'"healthProbe" "healthReport"')
-    with pytest.raises(RuntimeError, match="fragment control-token"):
-        require_web_client_static_dir(require_health_probe=True)
+    with pytest.raises(RuntimeError, match="oobControlToken"):
+        require_web_client_static_dir(
+            require_health_probe=True, require_fragment_token=True
+        )
+
+    # Hub-only OOB has no health probe but still delivers the token in the fragment.
+    with pytest.raises(RuntimeError, match="oobControlToken"):
+        require_web_client_static_dir(require_fragment_token=True)
+
+    # Ordinary hosted streaming (no OOB) accepts an older bundle.
+    assert require_web_client_static_dir() == tmp_path.resolve()
 
     bundle.write_bytes(b'"healthProbe" "healthReport" "oobControlToken:"')
     assert (
-        require_web_client_static_dir(require_health_probe=True) == tmp_path.resolve()
+        require_web_client_static_dir(
+            require_health_probe=True, require_fragment_token=True
+        )
+        == tmp_path.resolve()
     )
 
 
