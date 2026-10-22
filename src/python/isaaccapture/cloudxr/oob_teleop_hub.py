@@ -26,6 +26,8 @@ log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub")
 OOB_WS_PATH = "/oob/v1/ws"
 
 # Metrics and status frames are small JSON; anything larger is not a headset.
+# Checked after websockets has received the whole message, so this saves parsing
+# but does not bound receive memory (that needs a transport-level max_size).
 MAX_FRAME_CHARS = 256 * 1024
 
 
