@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from typing import ClassVar
 import pytest
-import isaaccapture.teleop_session_manager.ovxr_session as ovxr_session
+import isaaccapture.ovxr_session_manager.ovxr_session as ovxr_session
 
 
 class _FakeOvxrError(RuntimeError):

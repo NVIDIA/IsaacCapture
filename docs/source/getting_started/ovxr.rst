@@ -44,7 +44,7 @@ to their separate NVIDIA license and CloudXR EULA acceptance.
 Use from another application
 ----------------------------
 
-``isaaccapture.teleop_session_manager.ovxr_session`` provides ``OvxrSession``
+``isaaccapture.ovxr_session_manager.ovxr_session`` provides ``OvxrSession``
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
 
