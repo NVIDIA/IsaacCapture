@@ -42,11 +42,11 @@ from .teleop_state_manager_types import (
     teleop_state_channel,
     teleop_state_manager_output_spec,
 )
-from .external_present import (
-    ExternalPresentBinding,
-    ExternalPresentConfig,
-    ExternalPresentHost,
-    OvxrExternalPresentOwner,
+from .ovxr_session import (
+    OvxrSessionBinding,
+    OvxrSessionConfig,
+    OvxrSessionHost,
+    OvxrSession,
     StageOrdinalLedger,
 )
 
@@ -81,9 +81,9 @@ __all__ = [
     "reset_event_channel",
     "teleop_state_channel",
     "teleop_state_manager_output_spec",
-    "ExternalPresentBinding",
-    "ExternalPresentConfig",
-    "ExternalPresentHost",
-    "OvxrExternalPresentOwner",
+    "OvxrSessionBinding",
+    "OvxrSessionConfig",
+    "OvxrSessionHost",
+    "OvxrSession",
     "StageOrdinalLedger",
 ]

@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from typing import ClassVar
 import pytest
-import isaaccapture.teleop_session_manager.external_present as external_present
+import isaaccapture.teleop_session_manager.ovxr_session as ovxr_session
 
 
 class _FakeOvxrError(RuntimeError):
@@ -184,7 +184,7 @@ class _FakeHost:
         self.attach_thread = threading.get_native_id()
         self.events.append("attach")
         _FakeContext.ordinal_ledger = self.ordinal_ledger
-        return external_present.ExternalPresentBinding(
+        return ovxr_session.OvxrSessionBinding(
             self.renderer, self.stage, self.ordinal_ledger
         )
 
@@ -246,14 +246,14 @@ def _runtime_stubs(monkeypatch):
     _FakeContext.seal_bind_results = {0, 1}
     _FakeContext.last_desc = None
     _FakeContext.selected_products = None
-    monkeypatch.setattr(external_present, "_import_ovxr", _fake_ovxr)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", _fake_ovxr)
     oxr = ModuleType("isaaccapture.oxr")
     oxr.OpenXRSessionHandles = lambda *values: values
     monkeypatch.setitem(__import__("sys").modules, "isaaccapture.oxr", oxr)
 
 
 def _config(**kwargs):
-    return external_present.ExternalPresentConfig(
+    return ovxr_session.OvxrSessionConfig(
         camera_paths=("/left", "/right"), auto_launch_cloudxr=False, **kwargs
     )
 
@@ -313,7 +313,7 @@ def test_bootstrap_timeout_cancels_slow_attach_without_creating_context():
             return super().attach_on_render_thread(capability)
 
     host = SlowHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     start_thread, start_errors = _call_in_thread(lambda: owner.start(timeout_s=0.02))
     close_thread = None
     close_errors = []
@@ -349,7 +349,7 @@ def test_bootstrap_timeout_cancels_slow_attach_without_creating_context():
 )
 def test_invalid_bootstrap_budget_is_rejected_before_owner_transfer(timeout_s):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     with pytest.raises(ValueError, match="bootstrap timeout must be finite"):
         owner.start(timeout_s=timeout_s)
     assert host.offer_thread is None
@@ -371,8 +371,8 @@ def test_scene_publication_is_admitted_once_per_render_demand(monkeypatch):
 
     fake_ovxr = _fake_ovxr()
     fake_ovxr.Context = BlockingSubmitContext
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: fake_ovxr)
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake_ovxr)
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     try:
         first_ordinal = owner.request_render("step-1")
@@ -395,7 +395,7 @@ def test_scene_publication_is_admitted_once_per_render_demand(monkeypatch):
 @pytest.mark.parametrize("force", [False, True])
 def test_shutdown_rejects_late_publication_without_error(force):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     try:
         owner.request_shutdown()
@@ -409,7 +409,7 @@ def test_shutdown_rejects_late_publication_without_error(force):
 
 def test_shutdown_during_publication_does_not_enqueue_a_frame(monkeypatch):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     original_publish = host.publish_complete_scene
 
     def publish_then_shutdown(publication_id):
@@ -433,7 +433,7 @@ def test_shutdown_during_publication_does_not_enqueue_a_frame(monkeypatch):
 @pytest.mark.parametrize("during_publication", [False, True])
 def test_shutdown_does_not_suppress_a_worker_failure(monkeypatch, during_publication):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     failure = RuntimeError("first worker failure")
     if during_publication:
@@ -460,7 +460,7 @@ def test_shutdown_does_not_suppress_a_worker_failure(monkeypatch, during_publica
 
 
 def test_publication_before_start_and_after_close_remains_an_error():
-    owner = external_present.OvxrExternalPresentOwner(_FakeHost(), _config())
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config())
     with pytest.raises(RuntimeError, match="not accepting requests"):
         owner.request_render("before-start")
     owner.start()
@@ -472,7 +472,7 @@ def test_publication_before_start_and_after_close_remains_an_error():
 @pytest.mark.parametrize("timeout_s", [0.2, 300.0])
 def test_non_isaaclab_host_lends_exact_pair_to_one_owner_thread(timeout_s):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     caller_thread = threading.get_native_id()
     owner.start(timeout_s=timeout_s)
     assert host.offer_thread == caller_thread
@@ -514,9 +514,7 @@ def test_non_isaaclab_host_lends_exact_pair_to_one_owner_thread(timeout_s):
 
 def test_host_wait_render_output_is_forwarded_to_ovxr():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(
-        host, _config(host_wait_render_output=True)
-    )
+    owner = ovxr_session.OvxrSession(host, _config(host_wait_render_output=True))
     owner.start()
     try:
         assert owner._context.desc.host_wait_render_output is True
@@ -527,7 +525,7 @@ def test_host_wait_render_output_is_forwarded_to_ovxr():
 def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
     host = _FakeHost()
     _FakeContext.seal_bind_results = {0, 1}
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [1, 0]
     scene_ordinal = owner.request_render("step-1")
@@ -551,9 +549,9 @@ def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
 def test_missing_core_phase_method_still_rejects_before_host_transfer(monkeypatch):
     runtime = _fake_ovxr()
     runtime.Context = type("BrokenContext", (_FakeContext,), {"cancel_frame": None})
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: runtime)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: runtime)
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     with pytest.raises(RuntimeError, match="required Context methods: cancel_frame"):
         owner.start()
     assert host.offer_thread is None
@@ -562,7 +560,7 @@ def test_missing_core_phase_method_still_rejects_before_host_transfer(monkeypatc
 def test_bind_timeout_reconciles_an_unsealed_ordinal_then_reuses_it():
     host = _FakeHost()
     _FakeContext.seal_bind_results = {0}
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [1, 0]
     owner.request_render("step-1")
@@ -584,7 +582,7 @@ def test_bind_timeout_reconciles_an_unsealed_ordinal_then_reuses_it():
 def test_bind_not_ready_without_writes_retries_the_unsealed_ledger_ordinal():
     host = _FakeHost()
     _FakeContext.seal_bind_results = {0}
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [2, 0]
     owner.request_render("step-1")
@@ -607,7 +605,7 @@ def test_bind_not_ready_without_writes_retries_the_unsealed_ledger_ordinal():
 def test_fatal_bind_resolves_publication_before_reporting_failure(sealed):
     host = _FakeHost()
     _FakeContext.seal_bind_results = {0, 3} if sealed else {0}
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     owner._context.bind_results = [3]
     owner.request_render("step-1")
@@ -623,7 +621,7 @@ def test_fatal_bind_resolves_publication_before_reporting_failure(sealed):
 def test_create_failure_does_not_reserve_or_publish_an_ordinal():
     host = _FakeHost()
     _FakeContext.create_error = RuntimeError("create failed")
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     with pytest.raises(RuntimeError, match="create failed"):
         owner.start()
     assert host.ordinal_ledger.issued == []
@@ -636,7 +634,7 @@ def test_shutdown_unblocks_start_while_context_is_still_waiting(
     monkeypatch, before_attach
 ):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     entered = threading.Event()
     resume = threading.Event()
     original = _FakeContext.__init__
@@ -674,7 +672,7 @@ def test_shutdown_unblocks_start_while_context_is_still_waiting(
 
 def test_close_wakes_context_before_releasing_ready_worker():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     caller = threading.get_native_id()
     wakes = []
@@ -695,7 +693,7 @@ def test_close_wakes_context_before_releasing_ready_worker():
 
 def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     waiting = threading.Event()
 
     class ObservedQuiescence(threading.Event):
@@ -730,7 +728,7 @@ def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
 
 def test_close_does_not_block_on_startup_teardown_lock(monkeypatch):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     entered = threading.Event()
     resume = threading.Event()
     destroy = _FakeContext.destroy
@@ -746,7 +744,7 @@ def test_close_does_not_block_on_startup_teardown_lock(monkeypatch):
 
     monkeypatch.setattr(_FakeContext, "destroy", blocked_destroy)
     monkeypatch.setattr(owner, "_bring_up_openxr", fail_start)
-    monkeypatch.setattr(external_present, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
     monkeypatch.setattr(owner, "_interrupt_owned_openxr_runtime", resume.set)
     try:
         with pytest.raises(RuntimeError) as caught:
@@ -767,7 +765,7 @@ def test_worker_thread_start_failure_rolls_back_host_and_preserves_first_error(
     monkeypatch, abort_fails, caplog
 ):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     start_error = RuntimeError("native thread creation failed")
     original_cause = OSError("thread resources unavailable")
     if hasattr(start_error, "add_note"):
@@ -808,7 +806,7 @@ def test_worker_thread_start_failure_rolls_back_host_and_preserves_first_error(
 
 def test_close_before_start_aborts_host_without_creating_context():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.close()
     assert host.events == ["abort"]
     assert _FakeContext.operations == []
@@ -816,7 +814,7 @@ def test_close_before_start_aborts_host_without_creating_context():
 
 def test_binding_rejects_an_incomplete_borrowed_tuple():
     with pytest.raises(ValueError, match="renderer, Stage, and ordinal ledger"):
-        external_present.ExternalPresentBinding(object(), object(), None)
+        ovxr_session.OvxrSessionBinding(object(), object(), None)
 
 
 def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypatch):
@@ -834,14 +832,14 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
             launcher_events.append(("stop", threading.get_native_id()))
 
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: FakeLauncher(),
     )
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     owner.start()
     owner.close()
     assert launcher_events == [
@@ -873,18 +871,18 @@ def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(monke
 
     fake_ovxr = _fake_ovxr()
     fake_ovxr.Context = BlockingContext
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: fake_ovxr)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake_ovxr)
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: FakeLauncher(),
     )
-    monkeypatch.setattr(external_present, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
     _FakeContext.request_exit_error = RuntimeError("request exit failed")
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     owner.start()
     assert owner.request_render("step-1") == 10
     assert frame_wait_entered.wait(timeout=1.0)
@@ -905,15 +903,15 @@ def test_context_teardown_completion_prevents_interrupt_during_cloudxr_stop(
     host = _FakeHost()
     launcher = _ControlledLauncher(block_stop=True)
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: launcher,
     )
-    monkeypatch.setattr(external_present, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     owner.start()
     close_thread, close_errors = _call_in_thread(owner.close)
     try:
@@ -940,7 +938,7 @@ def test_destroy_failure_retains_borrowed_providers_and_forbids_retry(monkeypatc
     host = _FakeHost()
     launcher = _ControlledLauncher()
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: launcher,
     )
@@ -949,7 +947,7 @@ def test_destroy_failure_retains_borrowed_providers_and_forbids_retry(monkeypatc
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     owner.start()
     context, binding = (owner._context, owner._binding)
     with pytest.raises(RuntimeError, match="destroy failed") as error:
@@ -1006,8 +1004,8 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
     runtime = _fake_ovxr()
     runtime.Context = WrappedContext
     runtime.OvxrError = ovxr.OvxrError
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: runtime)
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: runtime)
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     if failure == "success":
         owner.close()
@@ -1041,13 +1039,13 @@ def test_explicit_eula_consent_reaches_generic_cloudxr_launcher(monkeypatch, acc
         "CloudXRLauncher",
         lambda **kwargs: captured.append(kwargs),
     )
-    external_present._create_cloudxr_launcher("profile.env", accept_eula=accepted)
+    ovxr_session._create_cloudxr_launcher("profile.env", accept_eula=accepted)
     assert captured[0]["accept_eula"] is accepted
 
 
 def test_failed_exit_request_does_not_prevent_proven_context_retirement():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     _FakeContext.request_exit_error = RuntimeError("request exit failed")
     with pytest.raises(RuntimeError, match="request exit failed"):
@@ -1063,14 +1061,14 @@ def test_cloudxr_stop_failure_is_reported_without_runtime_interrupt(monkeypatch)
     host = _FakeHost()
     launcher = _ControlledLauncher(stop_error=RuntimeError("cloudxr stop failed"))
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: launcher,
     )
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     owner.start()
     with pytest.raises(RuntimeError, match="cloudxr stop failed"):
         owner.close()
@@ -1083,16 +1081,16 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
     host = _FakeHost()
     launcher = _ControlledLauncher(block_stop=True)
     monkeypatch.setattr(
-        external_present,
+        ovxr_session,
         "_create_cloudxr_launcher",
         lambda _path, *, accept_eula=False: launcher,
     )
-    monkeypatch.setattr(external_present, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
     _FakeContext.create_error = RuntimeError("create failed")
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
-    owner = external_present.OvxrExternalPresentOwner(host, config)
+    owner = ovxr_session.OvxrSession(host, config)
     start_thread, start_errors = _call_in_thread(owner.start)
     assert launcher.stop_started.wait(timeout=1.0)
     assert owner._ovxr_teardown_complete.is_set()
@@ -1116,7 +1114,7 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
 
 def test_render_failure_waits_for_borrowers_and_preserves_first_error(monkeypatch):
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     failure = RuntimeError("bind failed")
     _FakeContext.bind_error = failure
@@ -1163,7 +1161,7 @@ def test_render_failure_waits_for_borrowers_and_preserves_first_error(monkeypatc
 
 def test_bind_failure_remains_primary_when_ordinal_reconciliation_also_fails():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     _FakeContext.bind_error = RuntimeError("bind failed")
     host.ordinal_ledger.resolve_error = RuntimeError("reconciliation failed")
@@ -1180,7 +1178,7 @@ def test_bind_failure_remains_primary_when_ordinal_reconciliation_also_fails():
 
 def test_destroy_failure_remains_primary_when_ordinal_reconciliation_also_fails():
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner.start()
     _FakeContext.destroy_error = RuntimeError("destroy failed")
     host.ordinal_ledger.resolve_error = RuntimeError("reconciliation failed")
@@ -1218,10 +1216,10 @@ def test_paused_frames_use_runtime_pacing_without_an_added_idle_wait(
 
     fake = _fake_ovxr()
     fake.Context = PacedContext
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: fake)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake)
     _FakeContext.request_exit_callback = release_frame.set
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner._worker_condition = ObservedCondition()
     try:
         owner.start()
@@ -1262,9 +1260,9 @@ def test_idle_or_unready_frames_keep_a_wakeable_backoff(monkeypatch, begin_resul
 
     fake = _fake_ovxr()
     fake.Context = UnreadyContext
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: fake)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake)
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(host, _config())
+    owner = ovxr_session.OvxrSession(host, _config())
     owner._worker_condition = ObservedCondition()
     try:
         owner.start()
@@ -1299,11 +1297,9 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
 
     fake = _fake_ovxr()
     fake.Context = LatePeerContext
-    monkeypatch.setattr(external_present, "_import_ovxr", lambda: fake)
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake)
     host = _FakeHost()
-    owner = external_present.OvxrExternalPresentOwner(
-        host, _config(), max_blank_frames=1
-    )
+    owner = ovxr_session.OvxrSession(host, _config(), max_blank_frames=1)
     try:
         owner.start()
         assert missing_observed.wait(1.0)
@@ -1326,9 +1322,7 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
 
 @pytest.mark.parametrize("mode,expected", [("ar", 5), ("vr", 4)])
 def test_session_mode_is_forwarded_to_ovxr(mode, expected):
-    owner = external_present.OvxrExternalPresentOwner(
-        _FakeHost(), _config(session_mode=mode)
-    )
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config(session_mode=mode))
     try:
         owner.start()
         assert owner._context.desc.session_mode == expected
