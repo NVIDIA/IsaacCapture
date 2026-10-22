@@ -228,7 +228,7 @@ Registration (first message)
      "payload": {
        "role": "headset",
        "deviceLabel": "Quest 3",
-       "token": "<optional CONTROL_TOKEN>"
+       "token": "<CONTROL_TOKEN>"
      }
    }
 
@@ -497,8 +497,10 @@ if not connected).
 Authentication
 --------------
 
-Set ``CONTROL_TOKEN=<secret>`` to require a token on all hub operations.
-Pass it as:
+Every hub operation requires a token. Set ``CONTROL_TOKEN=<secret>`` to choose
+it; if it is unset or empty, the hub generates a random token for the session and
+prints it in the startup banner. Requests without the token, and WebSocket
+``register`` frames without it, are rejected. Pass it as:
 
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
@@ -551,7 +553,7 @@ Environment variables
        and signaling share this socket. In ``--usb-local`` mode
        ``adb reverse`` maps it to the headset.
    * - ``CONTROL_TOKEN``
-     - Optional auth token for hub access
+     - Auth token for hub access; a random per-session token is generated if unset
    * - ``TELEOP_STREAM_SERVER_IP``
      - Override the auto-detected LAN IP in hub initial config
    * - ``TELEOP_PROXY_HOST``

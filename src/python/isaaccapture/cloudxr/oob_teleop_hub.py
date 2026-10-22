@@ -13,6 +13,7 @@ HTTP API:  ``GET /api/oob/v1/state``, ``GET /api/oob/v1/config``
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import time
@@ -213,10 +214,16 @@ class OOBControlHub:
             await asyncio.sleep(poll_seconds)
 
     def check_token(self, token: str | None) -> bool:
-        """Return True if token satisfies the hub's auth requirement."""
-        if not self._token:
-            return True
-        return token == self._token
+        """Return True only if *token* matches the hub's control token.
+
+        Fails closed: a hub built without a token rejects every caller.
+        """
+        # No configured token or a non-string payload value (JSON can carry ints,
+        # lists) is never a match; compare_digest would raise on non-str input.
+        if not self._token or not isinstance(token, str):
+            return False
+        # Constant-time compare so response timing does not leak the token.
+        return hmac.compare_digest(token.encode(), self._token.encode())
 
     async def http_oob_set_config(self, payload: dict) -> tuple[int, dict]:
         """Merge stream config; for OOB HTTP ``GET /api/oob/v1/config``."""
@@ -260,7 +267,7 @@ class OOBControlHub:
 
     async def _handle_register(self, ws: Any, client_id: str, payload: dict) -> bool:
         """Validate and register a headset. Returns True on success."""
-        if self._token and payload.get("token") != self._token:
+        if not self.check_token(payload.get("token")):
             await self._send_error(ws, "UNAUTHORIZED", "Invalid or missing token")
             try:
                 await ws.close(1008, "Unauthorized")

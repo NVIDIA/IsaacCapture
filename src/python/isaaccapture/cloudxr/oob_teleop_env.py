@@ -9,9 +9,11 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
@@ -22,6 +24,35 @@ from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
+
+_generated_control_token: str | None = None
+_generated_control_token_lock = threading.Lock()
+
+
+def control_token_is_generated() -> bool:
+    """``True`` when ``CONTROL_TOKEN`` is unset and the hub uses a random token."""
+    return not os.environ.get("CONTROL_TOKEN")
+
+
+def resolve_control_token() -> str:
+    """Return the hub control token: ``CONTROL_TOKEN``, else a per-process random one.
+
+    The hub never runs unauthenticated. Every reader (hub, headset URL, banner)
+    must call this so they agree; it does not modify ``os.environ``.
+    """
+    global _generated_control_token
+    # An empty CONTROL_TOKEN counts as unset: it must never mean "no auth".
+    configured = os.environ.get("CONTROL_TOKEN")
+    if configured:
+        return configured
+    # The proxy runs on a thread, so the lazy generation is lock-guarded to
+    # keep the hub, headset URL and banner on the same token.
+    with _generated_control_token_lock:
+        if _generated_control_token is None:
+            _generated_control_token = secrets.token_urlsafe(32)
+        return _generated_control_token
+
+
 progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.oob-progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
@@ -598,7 +629,7 @@ def print_oob_hub_startup_banner(
     port = wss_proxy_port()
     backend_port = usb_backend_port()
     turn_port = usb_turn_port()
-    token = os.environ.get("CONTROL_TOKEN") or None
+    token = resolve_control_token()
 
     if not lan_host:
         lan_host = resolve_lan_host_for_oob() if not usb_local else "127.0.0.1"
@@ -729,11 +760,10 @@ def print_oob_hub_startup_banner(
     )
     print(f"  State:  {primary_base}/api/oob/v1/state")
     print(f"  Config: {primary_base}/api/oob/v1/config?{cfg_q}")
-    if token:
-        print()
-        print(
-            "  CONTROL_TOKEN is set: add ?token=... or header X-Control-Token on OOB HTTP requests."
-        )
+    print()
+    print("  Add header X-Control-Token (or ?token=...) on OOB HTTP requests.")
+    if control_token_is_generated():
+        print(f"  CONTROL_TOKEN was not set; this session's token is: {token}")
     print(bar)
     print()
 

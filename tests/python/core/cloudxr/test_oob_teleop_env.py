@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from urllib.parse import parse_qs, urlparse
 
 import cloudxr_py_test_ns.oob_teleop_env as oob_teleop_env_under_test
@@ -610,6 +611,47 @@ def test_startup_banner_hides_control_and_turn_credentials(
     assert "turn-canary-456" not in out
     assert "controlToken=<REDACTED>" in out
     assert "turnCredential=<REDACTED>" in out
+
+
+def test_resolve_control_token_prefers_configured(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONTROL_TOKEN", "configured")
+    assert oob_teleop_env_under_test.resolve_control_token() == "configured"
+    assert oob_teleop_env_under_test.control_token_is_generated() is False
+
+
+def test_resolve_control_token_generates_stable_random_token(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    first = oob_teleop_env_under_test.resolve_control_token()
+    assert len(first) >= 32
+    assert oob_teleop_env_under_test.resolve_control_token() == first
+    assert oob_teleop_env_under_test.control_token_is_generated() is True
+    assert "CONTROL_TOKEN" not in os.environ
+
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    assert oob_teleop_env_under_test.resolve_control_token() != first
+
+
+def test_resolve_control_token_treats_empty_env_as_unset(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    monkeypatch.setenv("CONTROL_TOKEN", "")
+    assert oob_teleop_env_under_test.resolve_control_token()
+    assert oob_teleop_env_under_test.control_token_is_generated() is True
+
+
+def test_startup_banner_shows_generated_token_once(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+
+    print_oob_hub_startup_banner(lan_host="127.0.0.1", usb_local=True)
+    out = capsys.readouterr().out
+    assert oob_teleop_env_under_test.resolve_control_token() in out
 
 
 def test_oob_progress_logs_at_info(

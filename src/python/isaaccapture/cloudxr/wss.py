@@ -22,8 +22,10 @@ from ..logging_config._core import DATE_FORMAT, LINE_FORMAT, logging_enabled
 from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
+    control_token_is_generated,
     default_initial_stream_config,
     redact_control_token,
+    resolve_control_token,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -666,7 +668,7 @@ async def run(
         if setup_oob:
             from .oob_teleop_hub import OOBControlHub  # noqa: PLC0415
 
-            control_token = os.environ.get("CONTROL_TOKEN") or None
+            control_token = resolve_control_token()
             initial = {
                 **default_initial_stream_config(resolved_port),
                 **client_ui_fields_from_env(),
@@ -674,7 +676,7 @@ async def run(
             hub = OOBControlHub(control_token=control_token, initial_config=initial)
             log.info(
                 "Teleop control hub enabled (token=%s) OOB_WS=%s initial_stream=%s",
-                "set" if control_token else "none",
+                "generated" if control_token_is_generated() else "set",
                 OOB_WS_PATH,
                 initial,
             )

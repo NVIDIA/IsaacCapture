@@ -48,6 +48,8 @@ if str(_CLOUDXR_PY) not in sys.path:
 
 from oob_teleop_hub import OOBControlHub  # noqa: E402
 
+# controlChannel.test.ts passes the same token.
+TEST_CONTROL_TOKEN = "oob-hub-test-token"
 POLL_INTERVAL_S = 0.05
 _WS_HANDSHAKE_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _OPCODE_TEXT, _OPCODE_CLOSE, _OPCODE_PING, _OPCODE_PONG = 0x1, 0x8, 0x9, 0xA
@@ -178,7 +180,7 @@ def _fingerprint(snapshot: dict) -> tuple:
 
 async def main() -> None:
     """Start the hub, announce readiness, then print a snapshot on every state change."""
-    hub = OOBControlHub()
+    hub = OOBControlHub(control_token=TEST_CONTROL_TOKEN)
 
     async def handle_tcp(
         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
