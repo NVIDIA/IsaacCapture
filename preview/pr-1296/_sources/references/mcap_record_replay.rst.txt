@@ -104,11 +104,6 @@ to add extra trackers that aren't part of the pipeline:
    ``mcap_config`` is **required** when ``mode`` is ``SessionMode.REPLAY``.
    Omitting it raises ``ValueError``.
 
-For hand replay, ``HandTracker.get_replay_record_availability(session)`` reports
-left/right record presence after each update. A present record with a ``None``
-hand payload means tracking loss; a missing record means that channel reached
-EOF. The status is ``None`` before the first update and for live sessions.
-
 Schema compatibility
 ^^^^^^^^^^^^^^^^^^^^
 
