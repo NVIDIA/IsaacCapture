@@ -596,7 +596,7 @@ def test_oob_static_dir_rejects_cached_bundle_without_health_protocol(
     bundle.write_bytes(b"old WebXR client")
     monkeypatch.setenv(TELEOP_WEB_CLIENT_STATIC_DIR_ENV, str(tmp_path))
 
-    with pytest.raises(RuntimeError, match="lacks required OOB support .*healthProbe"):
+    with pytest.raises(RuntimeError, match=r"lacks required OOB support .*healthProbe"):
         require_web_client_static_dir(require_health_probe=True)
 
     # Health protocol alone is not enough for OOB: the bundle must also read a fragment token.
