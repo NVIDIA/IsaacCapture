@@ -18,6 +18,7 @@ from isaaccapture.teleop_session_manager.desktop_mirror import (
     DesktopMirrorConfig,
     DesktopMirrorStatus,
 )
+import isaaccapture.teleop_session_manager.owned_mirror as owned_mirror
 import isaaccapture.teleop_session_manager.ovxr_session as ovxr_session
 
 
@@ -1066,7 +1067,7 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
             mirror_events.append(("close", threading.get_native_id()))
 
     monkeypatch.setattr(
-        ovxr_session,
+        owned_mirror,
         "OwnedDesktopMirrorWorker",
         lambda acquire_frame, config, _on_user_close, *, products=None: (
             mirror_events.append(("create", threading.get_native_id(), config))
@@ -1082,7 +1083,7 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
     assert not getattr(context.desc, "enable_frame_readback", False)
     assert context.desc.render_products == list(config.render_products)
     assert _FakeContext.selected_products == ()
-    assert [p.path for p in owner._mirror_mailbox.view()[0]] == [
+    assert [p.path for p in owner._desktop_mirror._mailbox.view()[0]] == [
         "/OVXR/Render/Products/Left",
         "/OVXR/Render/Products/Right",
     ]
@@ -1134,7 +1135,7 @@ def test_status_mirror_starts_after_cloudxr_context_creation(monkeypatch):
             events.append("cloudxr-stop")
 
     monkeypatch.setattr(
-        ovxr_session,
+        owned_mirror,
         "OwnedDesktopMirrorWorker",
         lambda _acquire_frame, _config, _on_user_close, *, products=None: FakeMirror(),
     )
@@ -1176,7 +1177,7 @@ def test_stuck_mirror_prevents_borrowed_context_teardown(monkeypatch):
 
     mirror = FakeMirror()
     monkeypatch.setattr(
-        ovxr_session,
+        owned_mirror,
         "OwnedDesktopMirrorWorker",
         lambda _context, _config, _on_user_close, *, products=None: mirror,
     )
@@ -1190,7 +1191,7 @@ def test_stuck_mirror_prevents_borrowed_context_teardown(monkeypatch):
         owner.close()
 
     assert owner._context is context
-    assert owner._desktop_mirror is mirror
+    assert owner._desktop_mirror._worker is mirror
     assert not owner.retirement_complete
     with pytest.raises(TimeoutError, match="mirror stuck"):
         owner.close()
@@ -1269,7 +1270,7 @@ def test_user_closing_mirror_requests_application_shutdown_before_owner_teardown
         mirror = FakeMirror(on_user_close)
         return mirror
 
-    monkeypatch.setattr(ovxr_session, "OwnedDesktopMirrorWorker", create_mirror)
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
     config = _config()
     config.desktop_mirror = DesktopMirrorConfig()
     owner = ovxr_session.OvxrSession(host, config)
@@ -1345,7 +1346,7 @@ def test_shutdown_request_exit_wakes_frame_wait_without_runtime_interrupt(
     fake_ovxr = _fake_ovxr()
     fake_ovxr.Context = BlockingContext
     monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake_ovxr)
-    monkeypatch.setattr(ovxr_session, "OwnedDesktopMirrorWorker", create_mirror)
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
     monkeypatch.setattr(
         ovxr_session,
         "_create_cloudxr_launcher",
@@ -1683,7 +1684,7 @@ def test_user_closing_mirror_on_first_submit_retires_created_ovxr(
             pass
 
     monkeypatch.setattr(
-        ovxr_session,
+        owned_mirror,
         "OwnedDesktopMirrorWorker",
         lambda _acquire, _config, on_user_close, *, products=None: FakeMirror(
             on_user_close
@@ -1959,7 +1960,7 @@ def test_success_without_xr_submission_does_not_count_render_frame(monkeypatch):
     try:
         assert owner.request_render("no-submit") > 0
         _wait_for_operation("submit")
-        assert not owner._desktop_mirror_start_attempted
+        assert not worker._start_attempted
         assert worker.status.render_thread_fps == 0
         assert worker.status.presented_frames == 0
     finally:
@@ -2144,7 +2145,7 @@ def test_consumer_retirement_failure_preserves_earlier_publication_error():
 
     host.close_publication = close_publication
     owner = ovxr_session.OvxrSession(host, _config())
-    owner._mirror_mailbox = SimpleNamespace(close=close_map)
+    owner._desktop_mirror = SimpleNamespace(close=close_map)
     with pytest.raises(RuntimeError, match="publication close failed") as error:
         owner._teardown_on_render_thread()
     assert error.value is failure
@@ -2222,30 +2223,3 @@ def test_failed_output_hides_cached_quad_until_successful_refresh(
 def test_world_scale_rejects_nonfinite_or_nonpositive_values(scale):
     with pytest.raises(ValueError):
         _config(meters_per_unit=scale)
-
-
-@pytest.mark.parametrize("level, expected_records", [("WARNING", 0), ("INFO", 1)])
-def test_mirror_retirement_respects_named_logger_level(
-    monkeypatch, caplog, capsys, level, expected_records
-):
-    mirror = SimpleNamespace(
-        status=DesktopMirrorStatus(closed=True), close=lambda: None
-    )
-    monkeypatch.setattr(
-        ovxr_session, "OwnedDesktopMirrorWorker", lambda *args, **kwargs: mirror
-    )
-    with caplog.at_level(level, logger=ovxr_session.__name__):
-        owner = ovxr_session.OvxrSession(
-            _FakeHost(), _config(desktop_mirror=DesktopMirrorConfig())
-        )
-        owner.start()
-        owner.close()
-    records = [
-        record
-        for record in caplog.records
-        if record.name == ovxr_session.__name__
-        and record.getMessage().startswith("OVUI desktop mirror stopped:")
-    ]
-    assert len(records) == expected_records
-    if level == "WARNING":
-        assert "OVUI desktop mirror stopped:" not in capsys.readouterr().out

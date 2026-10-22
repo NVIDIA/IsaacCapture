@@ -6,12 +6,88 @@ import os
 import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
-from isaaccapture.teleop_session_manager.desktop_mirror import DesktopMirrorConfig
+from isaaccapture.teleop_session_manager.desktop_mirror import (
+    DesktopMirrorConfig,
+    DesktopMirrorStatus,
+)
 import isaaccapture.teleop_session_manager.owned_mirror as mirror
+
+
+@pytest.mark.parametrize(
+    "eye_paths",
+    [(), ("/Render/CustomLeft", "/Render/CustomRight")],
+)
+def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
+    captured = []
+
+    def create_worker(_acquire, _config, _on_close, *, products):
+        captured.extend(products.view()[0])
+        return SimpleNamespace(status=DesktopMirrorStatus(), close=lambda: None)
+
+    monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", create_worker)
+    owner = mirror.OwnedDesktopMirror(
+        DesktopMirrorConfig(),
+        lambda: None,
+        render_products=eye_paths,
+        auxiliary_products=(("/Camera/Head", "Head camera"), ("/Camera/Wrist", None)),
+    )
+    try:
+        expected_eyes = eye_paths or (
+            "/OVXR/Render/Products/Left",
+            "/OVXR/Render/Products/Right",
+        )
+        assert [(product.path, product.label) for product in captured] == [
+            (expected_eyes[0], "Left eye"),
+            (expected_eyes[1], "Right eye"),
+            ("/Camera/Head", "Head camera"),
+            ("/Camera/Wrist", "Wrist"),
+        ]
+    finally:
+        owner.close()
+
+
+@pytest.mark.parametrize("failure_site", ["ui", "images"])
+def test_mirror_close_preserves_failed_retirement(monkeypatch, failure_site):
+    events = []
+
+    def close_at(site):
+        events.append(site)
+        if site == failure_site:
+            raise RuntimeError(f"{site} retirement failed")
+
+    worker = SimpleNamespace(
+        status=DesktopMirrorStatus(closed=True), close=lambda: close_at("ui")
+    )
+    monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", lambda *a, **kw: worker)
+    owner = mirror.OwnedDesktopMirror(
+        DesktopMirrorConfig(), lambda: None, render_products=(), auxiliary_products=()
+    )
+    monkeypatch.setattr(owner._mailbox, "close", lambda: close_at("images"))
+    with pytest.raises(RuntimeError, match=f"{failure_site} retirement failed"):
+        owner.close()
+    assert events == (["ui"] if failure_site == "ui" else ["ui", "images"])
+    assert owner.status == worker.status
+
+
+def test_mirror_start_failure_is_optional_and_attempted_once(monkeypatch):
+    worker = Mock(status=DesktopMirrorStatus())
+    worker.start.side_effect = RuntimeError("UI thread unavailable")
+    monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", lambda *a, **kw: worker)
+    owner = mirror.OwnedDesktopMirror(
+        DesktopMirrorConfig(), lambda: None, render_products=(), auxiliary_products=()
+    )
+    try:
+        owner.on_frame_submitted()
+        owner.on_frame_submitted()
+        worker.start.assert_called_once_with()
+        worker.record_render_frame.assert_not_called()
+    finally:
+        owner.close()
 
 
 def test_optional_consumer_error_is_visible_without_invalidating_owned_image():
@@ -368,3 +444,32 @@ def test_rates_measure_host_and_submitted_render_events_not_gui_uploads(monkeypa
     assert worker.status.main_thread_fps == worker.status.render_thread_fps == 0
     assert worker.status.status_text == "Physics 120 Hz / 120 Hz  1.00x"
     worker.close()
+
+
+@pytest.mark.parametrize("level, expected_records", [("WARNING", 0), ("INFO", 1)])
+def test_mirror_retirement_respects_named_logger_level(
+    monkeypatch, caplog, capsys, level, expected_records
+):
+    worker = SimpleNamespace(
+        status=DesktopMirrorStatus(closed=True), close=lambda: None
+    )
+    monkeypatch.setattr(
+        mirror, "OwnedDesktopMirrorWorker", lambda *args, **kwargs: worker
+    )
+    with caplog.at_level(level, logger=mirror.__name__):
+        owner = mirror.OwnedDesktopMirror(
+            DesktopMirrorConfig(),
+            lambda: None,
+            render_products=(),
+            auxiliary_products=(),
+        )
+        owner.close()
+    records = [
+        record
+        for record in caplog.records
+        if record.name == mirror.__name__
+        and record.getMessage().startswith("OVUI desktop mirror stopped:")
+    ]
+    assert len(records) == expected_records
+    if level == "WARNING":
+        assert "OVUI desktop mirror stopped:" not in capsys.readouterr().out

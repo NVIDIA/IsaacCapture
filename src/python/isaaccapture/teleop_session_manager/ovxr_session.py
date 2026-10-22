@@ -27,9 +27,8 @@ from .desktop_mirror import (
 )
 from .camera_mailbox import CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
-from .owned_mirror import MirrorProduct, OwnedDesktopMirrorWorker, OwnedMirrorMailbox
+from .owned_mirror import OwnedDesktopMirror
 from .gpu_output import (
-    OwnedCudaImagePool,
     completed_outputs,
     map_cuda_array_rgba,
     native_renderer_handle,
@@ -271,14 +270,10 @@ class OvxrSession:
         self._pending_plan = None
         self._binding: OvxrSessionBinding | None = None
         self._cloudxr_launcher = None
-        self._desktop_mirror: OwnedDesktopMirrorWorker | None = None
-        self._desktop_mirror_start_attempted = False
-        self._desktop_mirror_started = False
-        self._mirror_mailbox: OwnedMirrorMailbox | None = None
+        self._desktop_mirror: OwnedDesktopMirror | None = None
         self._camera_quad_attached = False
         self._camera_mailboxes: list[CompletedCameraMailbox] = []
         self._camera_quads: list[OpenXRCameraQuad] = []
-        self._desktop_mirror_last_status: DesktopMirrorStatus | None = None
         self._worker: threading.Thread | None = None
         self._worker_native_thread_id: int | None = None
         self._worker_condition = threading.Condition()
@@ -334,10 +329,6 @@ class OvxrSession:
         if missing:
             raise RuntimeError(
                 f"OVXR session is missing required Context methods: {', '.join(missing)}"
-            )
-        if self._config.desktop_mirror is not None:
-            self._mirror_mailbox = OwnedMirrorMailbox(
-                self._config.desktop_mirror.max_fps, gpu_mapper=OwnedCudaImagePool()
             )
         capability = self._host.offer_render_owner_transfer()
 
@@ -638,7 +629,7 @@ class OvxrSession:
         """Return the optional mirror's current best-effort status."""
         if self._desktop_mirror is not None:
             return self._desktop_mirror.status
-        return self._desktop_mirror_last_status
+        return None
 
     def _create_context_on_render_thread(self) -> None:
         assert self._binding is not None
@@ -671,10 +662,6 @@ class OvxrSession:
             )
         )
         with self._host.publication_guard():
-            eye_paths = self._config.render_products or (
-                "/OVXR/Render/Products/Left",
-                "/OVXR/Render/Products/Right",
-            )
             desc = ovxr.ContextDesc(
                 ovrtx_renderer=self._binding.renderer,
                 ovstage=self._binding.stage,
@@ -714,50 +701,25 @@ class OvxrSession:
                         auxiliary_paths, auxiliaries, self._camera_quads, strict=True
                     )
                 ]
-                if self._mirror_mailbox is not None:
-                    products = [MirrorProduct(eye_paths[0], "Left eye")]
-                    products.append(MirrorProduct(eye_paths[1], "Right eye"))
-                    products.extend(
-                        MirrorProduct(path, policy.label or path.rsplit("/", 1)[-1])
-                        for path, policy in zip(
-                            auxiliary_paths, auxiliaries, strict=True
-                        )
-                    )
-                    self._mirror_mailbox.set_products(tuple(products))
-                    self._mirror_mailbox.reset()
-                if auxiliaries or self._mirror_mailbox is not None:
+                if auxiliaries or self._config.desktop_mirror is not None:
                     self._context.set_frame_render_products(list(auxiliary_paths))
-        # Construct the optional mirror only after OVXR context creation. Its
-        # desktop graphics context starts after a successful primary submit,
-        # outside the client's short signaling/first-image admission window.
-        if self._mirror_mailbox is not None:
-            self._desktop_mirror = OwnedDesktopMirrorWorker(
-                self._acquire_desktop_mirror_frame,
+        if self._config.desktop_mirror is not None:
+            self._desktop_mirror = OwnedDesktopMirror(
                 self._config.desktop_mirror,
-                self._request_close_from_desktop_mirror,
-                products=self._mirror_mailbox,
+                self.request_shutdown,
+                render_products=self._config.render_products,
+                auxiliary_products=tuple(
+                    (path, policy.label)
+                    for path, policy in zip(auxiliary_paths, auxiliaries, strict=True)
+                ),
             )
 
     def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
         """Frame-owner copies before result retirement; PiP owns its independent copy."""
-        shared = {}
         for mailbox in self._camera_mailboxes:
             mailbox.on_outputs(user_data, renderer, outputs)
-            image = mailbox.snapshot()
-            if mailbox.error() is not None or (image is not None and image.gpu is None):
-                shared[mailbox.product_path] = image
-            # GPU camera maps remain on the frame owner. A mirror uses its own
-            # selected owned copy, never borrowing a quad's short-lived array.
-        if self._mirror_mailbox is not None:
-            self._mirror_mailbox.on_outputs(renderer, outputs, shared)
-
-    def _acquire_desktop_mirror_frame(self) -> object | None:
-        mailbox = self._mirror_mailbox
-        return None if mailbox is None else mailbox.snapshot()
-
-    def _request_close_from_desktop_mirror(self) -> None:
-        """Ask the application-neutral owner to drain after a user closes OVUI."""
-        self.request_shutdown()
+        if self._desktop_mirror is not None:
+            self._desktop_mirror.on_outputs(renderer, outputs, self._camera_mailboxes)
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -877,7 +839,7 @@ class OvxrSession:
                 return True
             layers = []
             if (
-                self._camera_mailboxes or self._mirror_mailbox is not None
+                self._camera_mailboxes or self._desktop_mirror is not None
             ) and active_plan.step_result:
                 try:
                     renderer = native_renderer_handle(self._binding.renderer)
@@ -925,19 +887,11 @@ class OvxrSession:
                 and _frame.submitted
                 and self._desktop_mirror is not None
             ):
-                # submit has consumed the plan. A failed optional source-copy
-                # must not try to cancel that already retired native plan.
+                # Submit consumed the plan; optional mirror work must not
+                # cancel it even if mirror startup fails.
                 active_plan = None
                 self._pending_plan = None
-                try:
-                    if not self._desktop_mirror_start_attempted:
-                        self._desktop_mirror_start_attempted = True
-                        self._desktop_mirror.start()
-                        self._desktop_mirror_started = True
-                    if self._desktop_mirror_started:
-                        self._desktop_mirror.record_render_frame()
-                except Exception:
-                    _LOGGER.exception("OVUI owned mirror snapshot failed")
+                self._desktop_mirror.on_frame_submitted()
             active_plan = None
             self._pending_plan = None
         except BaseException as error:
@@ -960,8 +914,8 @@ class OvxrSession:
     def _finish_frame_outputs(self) -> None:
         for mailbox in self._camera_mailboxes:
             mailbox.close()
-        if self._mirror_mailbox is not None:
-            self._mirror_mailbox.finish_frame()
+        if self._desktop_mirror is not None:
+            self._desktop_mirror.finish_frame()
 
     def _render_reused_scene(self) -> bool:
         if self._worker_last_ordinal is None:
@@ -975,35 +929,11 @@ class OvxrSession:
                 self._host.close_publication()
         except BaseException as exc:
             first_error = exc
-        if self._desktop_mirror is not None:
-            mirror = self._desktop_mirror
-            mirror_stopped = False
-            try:
-                mirror.close()
-                mirror_stopped = True
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-            finally:
-                self._desktop_mirror_last_status = mirror.status
-                _LOGGER.info(
-                    "OVUI desktop mirror stopped: %s", self._desktop_mirror_last_status
-                )
-            if not mirror_stopped:
-                # The worker owns its image bytes, but an undrained UI thread
-                # still prevents orderly OVUI/session shutdown.
-                with self._worker_condition:
-                    if first_error is not None and self._worker_error is None:
-                        self._worker_error = first_error
-                    self._closed = True
-                    self._worker_condition.notify_all()
-                return
-            self._desktop_mirror = None
         try:
-            if self._mirror_mailbox is not None:
+            if self._desktop_mirror is not None:
                 # A failed completion/unmap must keep the renderer alive: never
                 # destroy storage that an optional consumer might still access.
-                self._mirror_mailbox.close()
+                self._desktop_mirror.close()
             for mailbox in self._camera_mailboxes:
                 mailbox.close()
             if self._pending_plan is not None:

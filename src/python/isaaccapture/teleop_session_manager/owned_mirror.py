@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import logging
 import os
 import sys
 import threading
@@ -16,8 +17,17 @@ from typing import Any, Callable
 
 import numpy as np
 
-from .camera_mailbox import _copy_host_rgba, _latest_color_handle
-from .gpu_output import MappedGpuImage, OutputMapCleanupError, OwnedGpuImage
+from .camera_mailbox import (
+    CompletedCameraMailbox,
+    _copy_host_rgba,
+    _latest_color_handle,
+)
+from .gpu_output import (
+    MappedGpuImage,
+    OutputMapCleanupError,
+    OwnedCudaImagePool,
+    OwnedGpuImage,
+)
 from .desktop_mirror import (
     DesktopMirrorConfig,
     DesktopMirrorStatus,
@@ -26,6 +36,94 @@ from .desktop_mirror import (
 )
 
 _MAX_MIRROR_IMAGE_BYTES = 64 * 1024 * 1024
+_LOGGER = logging.getLogger(__name__)
+
+
+class OwnedDesktopMirror:
+    """Own the mirror's product selection, image copies, and UI worker."""
+
+    def __init__(
+        self,
+        config: DesktopMirrorConfig,
+        on_user_close: Callable[[], None],
+        *,
+        render_products: tuple[str, ...],
+        auxiliary_products: tuple[tuple[str, str | None], ...],
+    ) -> None:
+        eye_paths = render_products or (
+            "/OVXR/Render/Products/Left",
+            "/OVXR/Render/Products/Right",
+        )
+        products = (
+            MirrorProduct(eye_paths[0], "Left eye"),
+            MirrorProduct(eye_paths[1], "Right eye"),
+            *(
+                MirrorProduct(path, label or path.rsplit("/", 1)[-1])
+                for path, label in auxiliary_products
+            ),
+        )
+        self._mailbox = OwnedMirrorMailbox(
+            config.max_fps, gpu_mapper=OwnedCudaImagePool()
+        )
+        self._mailbox.set_products(products)
+        self._worker = OwnedDesktopMirrorWorker(
+            self._mailbox.snapshot, config, on_user_close, products=self._mailbox
+        )
+        self._start_attempted = False
+        self._started = False
+        self._last_status: DesktopMirrorStatus | None = None
+
+    def on_outputs(
+        self,
+        renderer: int,
+        outputs: Any,
+        camera_mailboxes: list[CompletedCameraMailbox],
+    ) -> None:
+        shared = {}
+        for mailbox in camera_mailboxes:
+            image = mailbox.snapshot()
+            if mailbox.error() is not None or (image is not None and image.gpu is None):
+                shared[mailbox.product_path] = image
+        # GPU camera maps expire with the frame; the mirror owns a separate copy.
+        self._mailbox.on_outputs(renderer, outputs, shared)
+
+    def on_frame_submitted(self) -> None:
+        # Delay desktop graphics initialization until the first primary image
+        # has cleared the client's signaling/first-image admission window.
+        try:
+            if not self._start_attempted:
+                self._start_attempted = True
+                self._worker.start()
+                self._started = True
+            if self._started:
+                self._worker.record_render_frame()
+        except Exception:
+            _LOGGER.exception("OVUI desktop mirror update failed")
+
+    def finish_frame(self) -> None:
+        self._mailbox.finish_frame()
+
+    def record_host_frame(self) -> None:
+        self._worker.record_host_frame()
+
+    def set_status_text(self, text: str) -> None:
+        self._worker.set_status_text(text)
+
+    @property
+    def status(self) -> DesktopMirrorStatus:
+        return (
+            self._last_status if self._last_status is not None else self._worker.status
+        )
+
+    def close(self) -> None:
+        """Stop the UI, then retire image storage on the renderer owner thread."""
+        try:
+            self._worker.close()
+        finally:
+            _LOGGER.info("OVUI desktop mirror stopped: %s", self.status)
+        self._last_status = self._worker.status
+        # A failed UI join must retain its image storage and borrowed providers.
+        self._mailbox.close()
 
 
 def _disable_glx_swap_interval() -> bool:
