@@ -150,7 +150,6 @@ def test_gpu_camera_retains_cadence_gaps_and_retires_on_owner():
         return image
 
     mailbox = CompletedCameraMailbox("/Render/Left", 64, gpu_mapper=mapper)
-    # The shared fixture uses /Render/Left and can omit the camera on a step.
     mailbox.product_path = "/Camera"
     mailbox.on_outputs(None, 1, outputs(Left=1))
     first = mailbox.snapshot()
