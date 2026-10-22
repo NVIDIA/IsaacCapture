@@ -348,6 +348,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -388,7 +392,6 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -478,7 +481,8 @@ bundled.</p></li>
 </section>
 <section id="evidence-published-with-a-release">
 <h2>Evidence published with a release<a class="headerlink" href="#evidence-published-with-a-release" title="Link to this heading">#</a></h2>
-<p>Each tagged GitHub release carries, for every wheel:</p>
+<p>Each tagged GitHub release carries one archive, <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;.zip</span></code>. Unpacked,
+its <code class="docutils literal notranslate"><span class="pre">isaaccapture-sbom-&lt;tag&gt;/</span></code> directory holds, for every wheel:</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">&lt;wheel&gt;.spdx.json</span></code></dt><dd><p>An exact copy of the document embedded in the wheel.</p>
 </dd>
@@ -506,11 +510,13 @@ uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> <
 <span class="w">  </span>--wheel<span class="w"> </span>isaaccapture-&lt;version&gt;-&lt;abi&gt;-&lt;platform&gt;.whl
 </pre></div>
 </div>
-<p>To check a whole release, put its wheels and evidence files in a directory of their own;
-any other file there fails the check:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check-set<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--manifest<span class="w"> </span>release/isaaccapture-sbom-manifest.json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--wheel-dir<span class="w"> </span>release<span class="w"> </span>--evidence-dir<span class="w"> </span>release
+<p>To check a whole release, unpack its archive and put every wheel its manifest lists, for
+each Python version and architecture, in a directory of their own. A wheel or evidence file
+the manifest does not name fails the check:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>unzip<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;.zip
+uv<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>IsaacCapture/scripts/sbom<span class="w"> </span>isaaccapture-sbom<span class="w"> </span>check-set<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--manifest<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;/isaaccapture-sbom-manifest.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--wheel-dir<span class="w"> </span>wheels<span class="w"> </span>--evidence-dir<span class="w"> </span>isaaccapture-sbom-&lt;tag&gt;
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">check</span></code> confirms the SBOM accounts for every file, its digests match the wheel and its
@@ -659,7 +665,7 @@ file’s <code class="docutils literal notranslate"><span class="pre">SPDXID</sp
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 21, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
       <br/>
     
   </p>

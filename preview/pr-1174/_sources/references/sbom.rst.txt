@@ -43,7 +43,8 @@ What a wheel carries
 Evidence published with a release
 ---------------------------------
 
-Each tagged GitHub release carries, for every wheel:
+Each tagged GitHub release carries one archive, ``isaaccapture-sbom-<tag>.zip``. Unpacked,
+its ``isaaccapture-sbom-<tag>/`` directory holds, for every wheel:
 
 ``<wheel>.spdx.json``
    An exact copy of the document embedded in the wheel.
@@ -75,14 +76,16 @@ You need ``uv`` and a clone of this repository:
    uv run --project IsaacCapture/scripts/sbom isaaccapture-sbom check \
      --wheel isaaccapture-<version>-<abi>-<platform>.whl
 
-To check a whole release, put its wheels and evidence files in a directory of their own;
-any other file there fails the check:
+To check a whole release, unpack its archive and put every wheel its manifest lists, for
+each Python version and architecture, in a directory of their own. A wheel or evidence file
+the manifest does not name fails the check:
 
 .. code-block:: bash
 
+   unzip isaaccapture-sbom-<tag>.zip
    uv run --project IsaacCapture/scripts/sbom isaaccapture-sbom check-set \
-     --manifest release/isaaccapture-sbom-manifest.json \
-     --wheel-dir release --evidence-dir release
+     --manifest isaaccapture-sbom-<tag>/isaaccapture-sbom-manifest.json \
+     --wheel-dir wheels --evidence-dir isaaccapture-sbom-<tag>
 
 ``check`` confirms the SBOM accounts for every file, its digests match the wheel and its
 ``RECORD``, each license text it cites is packaged where it says, and every
