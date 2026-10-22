@@ -46,7 +46,7 @@ from .ovxr_session import (
     AuxiliaryRasterConfig,
     OvxrSessionBinding,
     OvxrSessionConfig,
-    OvxrSessionHost,
+    OvxrApplicationInterface,
     OvxrSession,
     StageOrdinalLedger,
 )
@@ -85,7 +85,7 @@ __all__ = [
     "OvxrSessionBinding",
     "AuxiliaryRasterConfig",
     "OvxrSessionConfig",
-    "OvxrSessionHost",
+    "OvxrApplicationInterface",
     "OvxrSession",
     "StageOrdinalLedger",
 ]
