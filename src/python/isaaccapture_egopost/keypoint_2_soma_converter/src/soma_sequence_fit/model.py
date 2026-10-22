@@ -8,6 +8,7 @@ import json
 import numpy as np
 import torch
 from torch import nn
+from .data import sha256_file
 from .geometry import DEFAULT_JOINT_MAP, rotvec_matrix
 
 
@@ -25,6 +26,20 @@ MHR_ASSET_FILES = (
 )
 
 
+def verify_assets(directory, files):
+    """Reject assets whose SHA-256 differs from assets.json (SOMA-X v0.3.0)."""
+    expected = json.loads(Path(__file__).with_name("assets.json").read_text())
+    for name in files:
+        if name not in expected:
+            raise ValueError(f"No expected SHA-256 for native asset {name!r}.")
+        actual = sha256_file(Path(directory) / name)
+        if actual != expected[name]:
+            raise ValueError(
+                f"SHA-256 mismatch for native asset {name!r}: expected "
+                f"{expected[name]}, got {actual}. Use SOMA-X v0.3.0 assets."
+            )
+
+
 def fetch_assets(destination, revision="v0.3.0", identity_backend="soma"):
     """Download the requested native identity assets; never download MANO assets."""
     from huggingface_hub import hf_hub_download
@@ -36,6 +51,7 @@ def fetch_assets(destination, revision="v0.3.0", identity_backend="soma"):
     files = ASSET_FILES + (MHR_ASSET_FILES if identity_backend == "mhr" else ())
     for name in files:
         hf_hub_download("nvidia/SOMA-X", name, revision=revision, local_dir=destination)
+    verify_assets(destination, files)
     return destination
 
 
@@ -63,6 +79,7 @@ class NativeHand(nn.Module):
             raise FileNotFoundError(
                 f"Missing native assets: {missing}. Run the assets command first."
             )
+        verify_assets(assets, self.asset_files)
         try:
             from soma import SOMAHandLayer
         except ImportError as e:
