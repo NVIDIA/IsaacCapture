@@ -86,11 +86,6 @@ if(BUILD_VIZ AND NOT (Vulkan_FOUND AND CUDAToolkit_FOUND))
                     "may fail. Install the deps or pass -DBUILD_VIZ=OFF.")
 endif()
 message(STATUS "BUILD_VIZ: ${BUILD_VIZ} (Vulkan=${Vulkan_FOUND} CUDAToolkit=${CUDAToolkit_FOUND})")
-# Keep Televiz defaults based on host SDKs, before PiP-only SDK acquisition.
-if(BUILD_OVXR_CAMERA_QUADS AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
-        AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
-    include(cmake/SetupOVXRCameraDependencies.cmake)
-endif()
 option(ENABLE_EXPERIMENTAL_WINDOWS_BUILD "Enable experimental Windows build support (source code only)" OFF)
 
 # Note: This is used to check if the CloudXR bundle is available to be bundled with Isaac Teleop.

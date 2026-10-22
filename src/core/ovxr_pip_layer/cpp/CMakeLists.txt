@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-if(NOT Vulkan_FOUND)
-    message(FATAL_ERROR "The OVXR camera layer needs the installed Vulkan SDK")
+find_package(Vulkan REQUIRED)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(CUDAToolkit REQUIRED)
 endif()
 
 add_library(ovxr_pip_layer SHARED pip_layer.cpp)
@@ -20,15 +21,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 if(CUDAToolkit_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(ovxr_pip_layer PRIVATE ISAAC_TELEOP_PIP_CUDA)
-    target_link_libraries(ovxr_pip_layer PRIVATE CUDA::cudart)
+    target_link_libraries(ovxr_pip_layer PRIVATE CUDA::cudart_static)
 endif()
 set_target_properties(ovxr_pip_layer PROPERTIES
     OUTPUT_NAME XrApiLayer_isaacteleop_pip
-    # A packaged helper must not depend on the build host's CUDA SDK path.
-    # The CloudXR bundle supplies the matched CUDA runtime beside this package.
-    BUILD_WITH_INSTALL_RPATH TRUE
-    INSTALL_RPATH "$ORIGIN/../../cloudxr/native"
-    INSTALL_RPATH_USE_LINK_PATH FALSE
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/isaaccapture/ovxr_session_manager/openxr_layer")
 
 set(OVXR_PIP_LAYER_DIR
