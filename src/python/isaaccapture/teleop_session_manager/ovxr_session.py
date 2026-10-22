@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Application-neutral ownership of an OVXR external-present session.
+"""Application-neutral ownership of an OVXR session.
 
 The application keeps ownership of simulation publication and lends one exact
-renderer/Stage/ordinal-ledger tuple through :class:`ExternalPresentHost`.  This
+renderer/Stage/ordinal-ledger tuple through :class:`OvxrSessionHost`.  This
 module owns the OVXR context, its sole render thread, CloudXR, frame
 cancellation, recovery, and ordered teardown.  It intentionally has no
 dependency on Isaac Lab or on any simulation type.
@@ -31,12 +31,12 @@ _WORKER_SHUTDOWN_GRACE_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
 
 
-class ExternalPresentHost(Protocol):
-    """Simulation-host operations needed by the external-present owner."""
+class OvxrSessionHost(Protocol):
+    """Simulation-host operations needed by the OVXR session."""
 
     def offer_render_owner_transfer(self) -> object: ...
 
-    def attach_on_render_thread(self, capability: object) -> ExternalPresentBinding: ...
+    def attach_on_render_thread(self, capability: object) -> OvxrSessionBinding: ...
 
     def owner_lane(self) -> AbstractContextManager[None]: ...
 
@@ -70,7 +70,7 @@ class StageOrdinalLedger(Protocol):
 
 
 @dataclass(frozen=True)
-class ExternalPresentBinding:
+class OvxrSessionBinding:
     """Exact application-owned objects borrowed by one OVXR context."""
 
     renderer: object
@@ -83,7 +83,7 @@ class ExternalPresentBinding:
     def __post_init__(self) -> None:
         if self.renderer is None or self.stage is None or self.ordinal_ledger is None:
             raise ValueError(
-                "external present requires renderer, Stage, and ordinal ledger"
+                "OVXR session requires renderer, Stage, and ordinal ledger"
             )
         paths = self.selected_auxiliary_paths
         if (
@@ -155,10 +155,10 @@ class AuxiliaryRasterConfig:
 
 
 @dataclass
-class ExternalPresentConfig:
+class OvxrSessionConfig:
     """Configure XR presentation with optional completed-camera panels."""
 
-    application_name: str = "isaacteleop-external-present"
+    application_name: str = "isaacteleop-ovxr-session"
     session_mode: Literal["ar", "vr"] = "vr"
     cloudxr_env_file: str | None = None
     auto_launch_cloudxr: bool = True
@@ -198,7 +198,7 @@ class ExternalPresentConfig:
         )
         if missing:
             raise ValueError(
-                f"external present is missing required OpenXR extensions: {sorted(missing)}"
+                f"OVXR session is missing required OpenXR extensions: {sorted(missing)}"
             )
         if not math.isfinite(self.meters_per_unit) or self.meters_per_unit <= 0:
             raise ValueError("meters_per_unit must be finite and positive")
@@ -212,9 +212,7 @@ class ExternalPresentConfig:
                 "depth_near_z and depth_far_z must both be zero or finite with 0 < near < far"
             )
         if len(self.camera_paths) != 2 or any((not path for path in self.camera_paths)):
-            raise ValueError(
-                "external-present stereo requires exactly two non-empty camera paths"
-            )
+            raise ValueError("OVXR stereo requires exactly two non-empty camera paths")
 
 
 def _import_ovxr():
@@ -234,13 +232,13 @@ def _create_cloudxr_launcher(env_config: str, *, accept_eula: bool = False):
     )
 
 
-class OvxrExternalPresentOwner:
+class OvxrSession:
     """Own one OVXR/CloudXR frame pump over an application-supplied pair."""
 
     def __init__(
         self,
-        host: ExternalPresentHost,
-        config: ExternalPresentConfig,
+        host: OvxrSessionHost,
+        config: OvxrSessionConfig,
         *,
         required_openxr_extensions: Iterable[str] = (),
         max_blank_frames: int = 1,
@@ -253,7 +251,7 @@ class OvxrExternalPresentOwner:
         self._max_blank_frames = max_blank_frames
         self._context = None
         self._pending_plan = None
-        self._binding: ExternalPresentBinding | None = None
+        self._binding: OvxrSessionBinding | None = None
         self._cloudxr_launcher = None
         self._camera_quad_attached = False
         self._camera_mailboxes: list[CompletedCameraMailbox] = []
@@ -291,7 +289,7 @@ class OvxrExternalPresentOwner:
         """
         self._require_open()
         if self._worker is not None:
-            raise RuntimeError("OVXR external-present owner is already started")
+            raise RuntimeError("OVXR session is already started")
         if not math.isfinite(timeout_s) or not 0 < timeout_s <= threading.TIMEOUT_MAX:
             raise ValueError(
                 "OVXR bootstrap timeout must be finite, positive and within threading.TIMEOUT_MAX"
@@ -312,7 +310,7 @@ class OvxrExternalPresentOwner:
         ]
         if missing:
             raise RuntimeError(
-                f"OVXR external present is missing required Context methods: {', '.join(missing)}"
+                f"OVXR session is missing required Context methods: {', '.join(missing)}"
             )
         capability = self._host.offer_render_owner_transfer()
 
@@ -418,9 +416,7 @@ class OvxrExternalPresentOwner:
             if not bootstrap_ready:
                 # Expiry must set the same cancellation event checked after slow attach.
                 self._request_worker_shutdown()
-                raise TimeoutError(
-                    "OVXR external-present worker bootstrap did not become ready"
-                )
+                raise TimeoutError("OVXR session worker bootstrap did not become ready")
             self._raise_worker_error()
             self._worker_condition.wait_for(
                 lambda: (
@@ -454,9 +450,7 @@ class OvxrExternalPresentOwner:
             if self._shutdown_requested.is_set():
                 return None
             if self._worker is None or self._worker_closing:
-                raise RuntimeError(
-                    "OVXR external-present owner is not accepting requests"
-                )
+                raise RuntimeError("OVXR session is not accepting requests")
             if (
                 not force
                 and self._worker_last_published_ordinal is not None
@@ -474,7 +468,7 @@ class OvxrExternalPresentOwner:
                         if self._shutdown_requested.is_set():
                             return None
                         raise RuntimeError(
-                            "OVXR external-present owner closed during scene publication"
+                            "OVXR session closed during scene publication"
                         )
                     self._worker_pending_ordinal = ordinal
                     self._worker_condition.notify_all()
@@ -540,9 +534,7 @@ class OvxrExternalPresentOwner:
                 not self._cloudxr_stop_complete.is_set()
             ):
                 raise TimeoutError("CloudXR launcher did not stop") from wake_error
-            raise TimeoutError(
-                "OVXR external-present worker did not stop"
-            ) from wake_error
+            raise TimeoutError("OVXR session worker did not stop") from wake_error
         worker_error: BaseException | None = None
         try:
             self._raise_worker_error()
@@ -977,9 +969,9 @@ class OvxrExternalPresentOwner:
 
     def _require_open(self) -> None:
         if self._closed:
-            raise RuntimeError("OVXR external-present owner is closed")
+            raise RuntimeError("OVXR session is closed")
 
-    def __enter__(self) -> OvxrExternalPresentOwner:
+    def __enter__(self) -> OvxrSession:
         self._require_open()
         return self
 
