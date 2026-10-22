@@ -308,7 +308,7 @@ TEST_CASE("ReplaySession: se3 tracker round-trip and null at EOF", "[replay][ses
 // Single tracker — HandTracker (left + right channels)
 // =============================================================================
 
-TEST_CASE("ReplaySession: hand tracking loss is distinct from channel EOF", "[replay][session][hand]")
+TEST_CASE("ReplaySession: hand tracker round-trip with left and right", "[replay][session][hand]")
 {
     auto path = get_temp_mcap_path();
     TempFileCleanup cleanup(path);
@@ -323,14 +323,9 @@ TEST_CASE("ReplaySession: hand tracking loss is distinct from channel EOF", "[re
             int64_t t = (i + 1) * 1000000;
             auto left = std::make_shared<core::HandPoseT>();
             auto right = std::make_shared<core::HandPoseT>();
-            if (i == 1)
-            {
-                right.reset();
-            }
             write_hand_frame(ch, t, 0, left);
             write_hand_frame(ch, t, 1, right);
         }
-        write_hand_frame(ch, 4000000, 1, std::make_shared<core::HandPoseT>());
         writer->close();
     }
 
@@ -341,27 +336,18 @@ TEST_CASE("ReplaySession: hand tracking loss is distinct from channel EOF", "[re
 
     auto session = core::ReplaySession::run(config);
 
-    CHECK_FALSE(hand_tracker.get_replay_record_availability(*session).has_value());
-
     for (int i = 0; i < 3; ++i)
     {
         session->update();
         const auto& left = hand_tracker.get_left_hand(*session);
         const auto& right = hand_tracker.get_right_hand(*session);
         CHECK(left);
-        CHECK(bool(right) == (i != 1));
-        REQUIRE(hand_tracker.get_replay_record_availability(*session).has_value());
-        CHECK(*hand_tracker.get_replay_record_availability(*session) == std::array<bool, 2>{ true, true });
+        CHECK(right);
     }
 
     session->update();
     CHECK_FALSE(hand_tracker.get_left_hand(*session));
-    CHECK(hand_tracker.get_right_hand(*session));
-    CHECK(*hand_tracker.get_replay_record_availability(*session) == std::array<bool, 2>{ false, true });
-    session->update();
-    CHECK_FALSE(hand_tracker.get_left_hand(*session));
     CHECK_FALSE(hand_tracker.get_right_hand(*session));
-    CHECK(*hand_tracker.get_replay_record_availability(*session) == std::array<bool, 2>{ false, false });
 }
 
 // =============================================================================

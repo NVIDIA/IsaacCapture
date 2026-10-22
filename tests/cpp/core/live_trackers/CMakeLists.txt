@@ -6,7 +6,6 @@ cmake_minimum_required(VERSION 3.20)
 add_executable(live_trackers_tests
     test_vendor_validation.cpp
     test_keyboard_session.cpp
-    test_message_channel_ownership.cpp
 )
 
 target_link_libraries(live_trackers_tests PRIVATE

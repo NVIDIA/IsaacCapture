@@ -3,8 +3,6 @@
 
 #include "live_hand_tracker_impl.hpp"
 
-#include "xdev_hand_tracker_selection.hpp"
-
 #include <mcap/recording_traits.hpp>
 #include <oxr_utils/oxr_funcs.hpp>
 #include <schema/hand_bfbs_generated.h>
@@ -13,6 +11,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <stdexcept>
 #include <utility>
 
@@ -27,6 +26,31 @@ std::string bounded_string(const char (&value)[N])
 {
     const char* end = std::find(value, value + N, '\0');
     return std::string(value, end);
+}
+
+std::string ascii_lower(std::string value)
+{
+    std::transform(
+        value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool contains_case_insensitive(const std::string& haystack, const char* needle)
+{
+    return ascii_lower(haystack).find(needle) != std::string::npos;
+}
+
+bool is_display_device_xdev(const XrXDevPropertiesMNDX& properties)
+{
+    const std::string name = bounded_string(properties.name);
+    const std::string serial = bounded_string(properties.serial);
+
+    auto logger = isaaccapture::Logger::get("isaaccapture.core.LiveHandTrackerImpl");
+    logger->debug("candidate XDev name: {}, serial: {}", name, serial);
+
+    return contains_case_insensitive(name, "displaydevice") || contains_case_insensitive(name, "display device") ||
+           contains_case_insensitive(serial, "displaydevice") || contains_case_insensitive(serial, "display device") ||
+           contains_case_insensitive(name, "head device") || contains_case_insensitive(serial, "head device");
 }
 
 } // namespace
@@ -52,7 +76,6 @@ LiveHandTrackerImpl::LiveHandTrackerImpl(const OpenXRSessionHandles& handles,
                                          std::unique_ptr<HandMcapChannels> mcap_channels)
     : time_converter_(handles),
       base_space_(handles.space),
-      session_(handles.session),
       xdev_list_(XR_NULL_HANDLE),
       pfn_create_hand_tracker_(nullptr),
       pfn_destroy_hand_tracker_(nullptr),
@@ -105,16 +128,25 @@ LiveHandTrackerImpl::LiveHandTrackerImpl(const OpenXRSessionHandles& handles,
     {
         initialize_xdev_hand_trackers(handles);
 
-        // Plain session trackers follow the explicitly named hand/display sources.
-        // Unknown XDevs are probed only if none of these supplies active joints.
+        // Keep the plain session hand trackers wired as the final fallback candidate.
+        //
+        // Current deployments are expected to use the XDev-backed candidates above because
+        // XR_MNDX_xdev_space is now a required extension for live hand tracking. In that
+        // normal path these default trackers should not be the data source selected by
+        // update_hand(); they sit after every XDev tracker in the priority list and only win
+        // if all XDev candidates fail to create or return inactive data.
+        //
+        // We intentionally keep this path alive instead of deleting it because future runtime
+        // modes may use the default/display hand tracker as a real fallback source once the
+        // source-priority policy is expanded beyond today's XDev-first behavior.
         try_create_default_hand_tracker(handles.session, XR_HAND_LEFT_EXT, left_hand_trackers_);
         try_create_default_hand_tracker(handles.session, XR_HAND_RIGHT_EXT, right_hand_trackers_);
 
-        if (left_hand_trackers_.empty() && left_fallback_xdevs_.empty())
+        if (left_hand_trackers_.empty())
         {
             throw std::runtime_error("Failed to create any left hand tracker");
         }
-        if (right_hand_trackers_.empty() && right_fallback_xdevs_.empty())
+        if (right_hand_trackers_.empty())
         {
             throw std::runtime_error("Failed to create any right hand tracker");
         }
@@ -150,8 +182,8 @@ void LiveHandTrackerImpl::update(int64_t monotonic_time_ns)
     const XrTime xr_time = time_converter_.convert_monotonic_ns_to_xrtime(monotonic_time_ns);
     std::optional<HandPoseT> left_native;
     std::optional<HandPoseT> right_native;
-    update_hand(left_hand_trackers_, left_fallback_xdevs_, XR_HAND_LEFT_EXT, xr_time, left_native);
-    update_hand(right_hand_trackers_, right_fallback_xdevs_, XR_HAND_RIGHT_EXT, xr_time, right_native);
+    update_hand(left_hand_trackers_, xr_time, left_native);
+    update_hand(right_hand_trackers_, xr_time, right_native);
 
     const DeviceDataTimestamp timestamp(last_update_time_, last_update_time_, xr_time);
     left_tracked_ = publish_and_record(mcap_channels_.get(), 0, timestamp, value_ptr(left_native));
@@ -212,15 +244,8 @@ void LiveHandTrackerImpl::initialize_xdev_hand_trackers(const OpenXRSessionHandl
         return;
     }
 
-    struct Candidate
-    {
-        XrXDevIdMNDX id;
-        detail::XDevHandTrackerSelection selection;
-    };
-
-    std::vector<Candidate> preferred_candidates;
-    std::vector<Candidate> display_candidates;
-    std::vector<Candidate> unclassified_candidates;
+    std::vector<XrXDevIdMNDX> preferred_xdev_ids;
+    std::vector<XrXDevIdMNDX> display_xdev_ids;
     for (const XrXDevIdMNDX xdev_id : xdev_ids)
     {
         XrGetXDevInfoMNDX get_info{ XR_TYPE_GET_XDEV_INFO_MNDX };
@@ -233,58 +258,29 @@ void LiveHandTrackerImpl::initialize_xdev_hand_trackers(const OpenXRSessionHandl
             continue;
         }
 
-        const auto selection =
-            detail::classify_xdev_hand_tracker(bounded_string(properties.name), bounded_string(properties.serial));
-        Candidate candidate{ xdev_id, selection };
-        switch (selection.priority)
+        if (is_display_device_xdev(properties))
         {
-        case detail::XDevHandTrackerPriority::preferred:
-            preferred_candidates.push_back(candidate);
-            break;
-        case detail::XDevHandTrackerPriority::display_fallback:
-            display_candidates.push_back(candidate);
-            break;
-        case detail::XDevHandTrackerPriority::unclassified_fallback:
-            unclassified_candidates.push_back(candidate);
-            break;
+            display_xdev_ids.push_back(xdev_id);
+        }
+        else
+        {
+            preferred_xdev_ids.push_back(xdev_id);
         }
     }
 
-    auto add_xdev_candidates = [this, &handles](const std::vector<Candidate>& candidates)
+    auto add_xdev_candidates = [this, &handles](const std::vector<XrXDevIdMNDX>& xdev_ids_to_add)
     {
-        for (const Candidate& candidate : candidates)
+        for (const XrXDevIdMNDX xdev_id : xdev_ids_to_add)
         {
-            if (candidate.selection.left)
-            {
-                try_create_xdev_hand_tracker(handles.session, candidate.id, XR_HAND_LEFT_EXT, left_hand_trackers_);
-            }
-            if (candidate.selection.right)
-            {
-                try_create_xdev_hand_tracker(handles.session, candidate.id, XR_HAND_RIGHT_EXT, right_hand_trackers_);
-            }
+            try_create_xdev_hand_tracker(handles.session, xdev_id, XR_HAND_LEFT_EXT, left_hand_trackers_);
+            try_create_xdev_hand_tracker(handles.session, xdev_id, XR_HAND_RIGHT_EXT, right_hand_trackers_);
         }
     };
 
-    add_xdev_candidates(preferred_candidates);
-    add_xdev_candidates(display_candidates);
+    add_xdev_candidates(preferred_xdev_ids);
+    add_xdev_candidates(display_xdev_ids);
 
-    // Creation does not prove active joints, and XDev names are not a capability contract.
-    // Defer unknown-device probing until existing trackers actually fail to supply that hand.
-    // Keep the list alive and try every unknown candidate once, not just the first created handle.
-    for (const Candidate& candidate : unclassified_candidates)
-    {
-        if (candidate.selection.left)
-        {
-            left_fallback_xdevs_.push_back(candidate.id);
-        }
-        if (candidate.selection.right)
-        {
-            right_fallback_xdevs_.push_back(candidate.id);
-        }
-    }
-
-    if (left_hand_trackers_.empty() && right_hand_trackers_.empty() && left_fallback_xdevs_.empty() &&
-        right_fallback_xdevs_.empty())
+    if (left_hand_trackers_.empty() && right_hand_trackers_.empty())
     {
         destroy_xdev_list();
     }
@@ -367,9 +363,7 @@ void LiveHandTrackerImpl::destroy_xdev_list()
     }
 }
 
-void LiveHandTrackerImpl::update_hand(std::vector<XrHandTrackerEXT>& trackers,
-                                      std::vector<XrXDevIdMNDX>& fallback_xdevs,
-                                      XrHandEXT hand,
+void LiveHandTrackerImpl::update_hand(const std::vector<XrHandTrackerEXT>& trackers,
                                       XrTime time,
                                       std::optional<HandPoseT>& tracked)
 {
@@ -383,21 +377,6 @@ void LiveHandTrackerImpl::update_hand(std::vector<XrHandTrackerEXT>& trackers,
         }
     }
 
-    const size_t first_fallback = trackers.size();
-    for (XrXDevIdMNDX id : fallback_xdevs)
-    {
-        try_create_xdev_hand_tracker(session_, id, hand, trackers);
-    }
-    fallback_xdevs.clear();
-    for (size_t i = first_fallback; i < trackers.size(); ++i)
-    {
-        std::optional<HandPoseT> candidate;
-        if (try_update_hand(trackers[i], time, candidate))
-        {
-            tracked = std::move(candidate);
-            return;
-        }
-    }
     tracked.reset();
 }
 

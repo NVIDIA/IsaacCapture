@@ -8,10 +8,8 @@
 #include <mcap/tracker_channels.hpp>
 #include <schema/hand_generated.h>
 
-#include <array>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 namespace core
@@ -34,15 +32,10 @@ public:
     void update(int64_t monotonic_time_ns) override;
     const Serialized<HandPose>& get_left_hand() const override;
     const Serialized<HandPose>& get_right_hand() const override;
-    std::optional<std::array<bool, 2>> get_replay_record_availability() const override
-    {
-        return record_availability_;
-    }
 
 private:
     Serialized<HandPose> left_tracked_;
     Serialized<HandPose> right_tracked_;
-    std::optional<std::array<bool, 2>> record_availability_;
     std::unique_ptr<HandMcapViewers> mcap_viewers_;
     std::shared_ptr<spdlog::logger> logger_;
     bool warned_no_left_data_ = false;

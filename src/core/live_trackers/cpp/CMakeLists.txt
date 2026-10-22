@@ -9,7 +9,6 @@ add_library(live_trackers STATIC
     live_deviceio_factory.cpp
     live_head_tracker_impl.cpp
     live_hand_tracker_impl.cpp
-    xdev_hand_tracker_selection.cpp
     live_controller_tracker_impl.cpp
     live_message_channel_tracker_impl.cpp
     live_full_body_tracker_pico_impl.cpp
@@ -25,7 +24,6 @@ add_library(live_trackers STATIC
     inc/live_trackers/live_deviceio_factory.hpp
     live_head_tracker_impl.hpp
     live_hand_tracker_impl.hpp
-    xdev_hand_tracker_selection.hpp
     live_controller_tracker_impl.hpp
     live_message_channel_tracker_impl.hpp
     live_full_body_tracker_pico_impl.hpp

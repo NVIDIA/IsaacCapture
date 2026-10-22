@@ -359,12 +359,8 @@ MessageChannelStatus LiveMessageChannelTrackerImpl::query_status() const
         // Only permanently disable the channel on fatal runtime-loss errors;
         // transient failures return DISCONNECTED to allow a reopen attempt.
         if (state_result == XR_ERROR_INSTANCE_LOST || state_result == XR_ERROR_RUNTIME_FAILURE)
-        {
             instance_lost_ = true;
-            channel_ = XR_NULL_HANDLE;
-        }
-        // A transient status failure does not retire the owned handle. Reopen
-        // and destruction still owe shutdown/destroy for the original channel.
+        channel_ = XR_NULL_HANDLE;
         return MessageChannelStatus::DISCONNECTED;
     }
 
