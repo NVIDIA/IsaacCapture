@@ -82,7 +82,7 @@ Table of Contents
    device/tactile/index
    device/spatial_controllers/index
    device/gamepads/index
-   Spatial trackers <device/trackers>
+   Spatial trackers <device/trackers/index>
    device/add_device
 
 .. toctree::
