@@ -433,6 +433,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -516,7 +517,8 @@ are imported from their original source and are licensed under the
 <a class="reference external" href="https://reuse.software/" rel="noopener noreferrer" target="_blank">REUSE</a>. It selects <code class="docutils literal notranslate"><span class="pre">Apache-2.0</span></code> by default and
 <code class="docutils literal notranslate"><span class="pre">LicenseRef-OpenMDW-1.1</span></code> for EgoPost, preserving existing attribution and
 explicit third-party exceptions. Review and stage any automatic edits before
-committing.</p>
+committing. Checked-in third-party files record upstream’s terms; see <em>What stops
+the Release build</em> in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/scripts/sbom/README.md" rel="noopener noreferrer" target="_blank">scripts/sbom/README.md</a>.</p>
 <p>You can also run <code class="docutils literal notranslate"><span class="pre">reuse</span> <span class="pre">spdx</span> <span class="pre">-o</span> <span class="pre">project.spdx</span></code> to generate an SPDX report for the project.</p>
 </section>
 </section>
