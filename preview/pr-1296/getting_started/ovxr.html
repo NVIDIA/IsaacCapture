@@ -533,11 +533,9 @@ alone does not update the application’s lock file.</p>
 </section>
 <section id="application-specific-ovxr-versions">
 <h2>Application-specific OVXR versions<a class="headerlink" href="#application-specific-ovxr-versions" title="Link to this heading">#</a></h2>
-<p>Isaac Capture pins the tested OVXR build. OVXR’s pre-GA API can change between
-builds, as described in its
-<a class="reference external" href="https://github.com/NVIDIA-Omniverse/ovxr/blob/main/CHANGELOG.md" rel="noopener noreferrer" target="_blank">release notes</a>.
-uv respects that pin and reports a conflict if the application requires
-incompatible OVRTX or OVStage versions.</p>
+<p>Isaac Capture pins the OVXR version used for compatibility testing. uv respects
+that pin and reports a conflict if the application requires incompatible OVRTX
+or OVStage versions.</p>
 <p>To validate another OVXR build with the same Isaac Capture release, select an
 OVXR release whose declared dependencies match the application’s OVRTX/OVStage
 requirements. Add an override in the application’s root <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code>:</p>
