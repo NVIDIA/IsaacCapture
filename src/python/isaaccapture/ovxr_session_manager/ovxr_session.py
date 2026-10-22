@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from abc import abstractmethod
 from collections.abc import Callable, Hashable, Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -27,39 +28,67 @@ _LOGGER = logging.getLogger(__name__)
 class OvxrApplicationInterface(Protocol):
     """Application operations required by the OVXR session."""
 
-    def offer_render_owner_transfer(self) -> object: ...
+    @abstractmethod
+    def offer_render_owner_transfer(self) -> object:
+        raise NotImplementedError
 
-    def attach_on_render_thread(self, capability: object) -> OvxrSessionBinding: ...
+    @abstractmethod
+    def attach_on_render_thread(self, capability: object) -> OvxrSessionBinding:
+        raise NotImplementedError
 
-    def owner_lane(self) -> AbstractContextManager[None]: ...
+    @abstractmethod
+    def owner_lane(self) -> AbstractContextManager[None]:
+        raise NotImplementedError
 
-    def publication_guard(self) -> AbstractContextManager[None]: ...
+    @abstractmethod
+    def publication_guard(self) -> AbstractContextManager[None]:
+        raise NotImplementedError
 
-    def publish_complete_scene(self, publication_id: Hashable) -> int: ...
+    @abstractmethod
+    def publish_complete_scene(self, publication_id: Hashable) -> int:
+        raise NotImplementedError
 
-    def validate_first_published_scene(self, ordinal: int) -> None: ...
+    @abstractmethod
+    def validate_first_published_scene(self, ordinal: int) -> None:
+        raise NotImplementedError
 
-    def get_target_frame_T_world(self, prim_path: str) -> Any: ...
+    @abstractmethod
+    def get_target_frame_T_world(self, prim_path: str) -> Any:
+        raise NotImplementedError
 
-    def close_publication(self) -> None: ...
+    @abstractmethod
+    def close_publication(self) -> None:
+        raise NotImplementedError
 
-    def close_on_render_thread(self) -> None: ...
+    @abstractmethod
+    def close_on_render_thread(self) -> None:
+        raise NotImplementedError
 
-    def close_environment_on_render_thread(self) -> None: ...
+    @abstractmethod
+    def close_environment_on_render_thread(self) -> None:
+        raise NotImplementedError
 
-    def abort(self) -> None: ...
+    @abstractmethod
+    def abort(self) -> None:
+        raise NotImplementedError
 
 
 class StageOrdinalLedger(Protocol):
     """Application-owned reservations for explicit OVXR Stage writes."""
 
-    def reserve(self) -> int: ...
+    @abstractmethod
+    def reserve(self) -> int:
+        raise NotImplementedError
 
+    @abstractmethod
     def resolve_external(
         self, ordinal: int, *, expected_published: bool | None
-    ) -> bool: ...
+    ) -> bool:
+        raise NotImplementedError
 
-    def abandon(self, ordinal: int) -> None: ...
+    @abstractmethod
+    def abandon(self, ordinal: int) -> None:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
