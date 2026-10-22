@@ -12,13 +12,14 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
 from .camera_mailbox import (
-    CompletedCameraMailbox,
+    CameraImage,
     _copy_host_rgba,
     _latest_color_handle,
 )
@@ -38,19 +39,30 @@ from .desktop_mirror import (
 _MAX_MIRROR_IMAGE_BYTES = 64 * 1024 * 1024
 _LOGGER = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .ovxr_session import OvxrSessionBinding, OvxrSessionConfig
+
 
 class OwnedDesktopMirror:
     """Own the mirror's product selection, image copies, and UI worker."""
 
-    def __init__(
+    def __init__(self, config: DesktopMirrorConfig) -> None:
+        self._config = config
+        self._mailbox = OwnedMirrorMailbox(
+            config.max_fps, gpu_mapper=OwnedCudaImagePool()
+        )
+        self._worker: OwnedDesktopMirrorWorker | None = None
+        self._start_attempted = False
+        self._started = False
+        self._last_status = DesktopMirrorStatus(status_text=config.initial_status_text)
+
+    def on_session_started(
         self,
-        config: DesktopMirrorConfig,
-        on_user_close: Callable[[], None],
-        *,
-        render_products: tuple[str, ...],
-        auxiliary_products: tuple[tuple[str, str | None], ...],
+        binding: OvxrSessionBinding,
+        config: OvxrSessionConfig,
+        request_shutdown: Callable[[], None],
     ) -> None:
-        eye_paths = render_products or (
+        eye_paths = config.render_products or (
             "/OVXR/Render/Products/Left",
             "/OVXR/Render/Products/Right",
         )
@@ -58,36 +70,34 @@ class OwnedDesktopMirror:
             MirrorProduct(eye_paths[0], "Left eye"),
             MirrorProduct(eye_paths[1], "Right eye"),
             *(
-                MirrorProduct(path, label or path.rsplit("/", 1)[-1])
-                for path, label in auxiliary_products
+                MirrorProduct(path, policy.label or path.rsplit("/", 1)[-1])
+                for path, policy in zip(
+                    binding.selected_auxiliary_paths,
+                    config.selected_auxiliary_rasters,
+                    strict=True,
+                )
             ),
-        )
-        self._mailbox = OwnedMirrorMailbox(
-            config.max_fps, gpu_mapper=OwnedCudaImagePool()
         )
         self._mailbox.set_products(products)
         self._worker = OwnedDesktopMirrorWorker(
-            self._mailbox.snapshot, config, on_user_close, products=self._mailbox
+            self._mailbox.snapshot,
+            self._config,
+            request_shutdown,
+            products=self._mailbox,
         )
-        self._start_attempted = False
-        self._started = False
-        self._last_status: DesktopMirrorStatus | None = None
 
     def on_outputs(
         self,
         renderer: int,
         outputs: Any,
-        camera_mailboxes: list[CompletedCameraMailbox],
+        shared: Mapping[str, CameraImage | None],
     ) -> None:
-        shared = {}
-        for mailbox in camera_mailboxes:
-            image = mailbox.snapshot()
-            if mailbox.error() is not None or (image is not None and image.gpu is None):
-                shared[mailbox.product_path] = image
         # GPU camera maps expire with the frame; the mirror owns a separate copy.
         self._mailbox.on_outputs(renderer, outputs, shared)
 
     def on_frame_submitted(self) -> None:
+        if self._worker is None:
+            return
         # Delay desktop graphics initialization until the first primary image
         # has cleared the client's signaling/first-image admission window.
         try:
@@ -104,24 +114,26 @@ class OwnedDesktopMirror:
         self._mailbox.finish_frame()
 
     def record_host_frame(self) -> None:
-        self._worker.record_host_frame()
+        if self._worker is not None:
+            self._worker.record_host_frame()
 
     def set_status_text(self, text: str) -> None:
-        self._worker.set_status_text(text)
+        if self._worker is not None:
+            self._worker.set_status_text(text)
 
     @property
     def status(self) -> DesktopMirrorStatus:
-        return (
-            self._last_status if self._last_status is not None else self._worker.status
-        )
+        return self._worker.status if self._worker is not None else self._last_status
 
     def close(self) -> None:
         """Stop the UI, then retire image storage on the renderer owner thread."""
-        try:
-            self._worker.close()
-        finally:
-            _LOGGER.info("OVUI desktop mirror stopped: %s", self.status)
-        self._last_status = self._worker.status
+        if self._worker is not None:
+            try:
+                self._worker.close()
+            finally:
+                self._last_status = self._worker.status
+                _LOGGER.info("OVUI desktop mirror stopped: %s", self._last_status)
+            self._worker = None
         # A failed UI join must retain its image storage and borrowed providers.
         self._mailbox.close()
 

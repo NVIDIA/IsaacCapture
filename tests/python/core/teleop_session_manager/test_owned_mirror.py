@@ -18,6 +18,21 @@ from isaaccapture.teleop_session_manager.desktop_mirror import (
 import isaaccapture.teleop_session_manager.owned_mirror as mirror
 
 
+def _prepared_mirror(*, render_products=(), auxiliary_products=()):
+    owner = mirror.OwnedDesktopMirror(DesktopMirrorConfig())
+    binding = SimpleNamespace(
+        selected_auxiliary_paths=tuple(path for path, _ in auxiliary_products)
+    )
+    config = SimpleNamespace(
+        render_products=render_products,
+        selected_auxiliary_rasters=tuple(
+            SimpleNamespace(label=label) for _, label in auxiliary_products
+        ),
+    )
+    owner.on_session_started(binding, config, lambda: None)
+    return owner
+
+
 @pytest.mark.parametrize(
     "eye_paths",
     [(), ("/Render/CustomLeft", "/Render/CustomRight")],
@@ -30,9 +45,7 @@ def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
         return SimpleNamespace(status=DesktopMirrorStatus(), close=lambda: None)
 
     monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", create_worker)
-    owner = mirror.OwnedDesktopMirror(
-        DesktopMirrorConfig(),
-        lambda: None,
+    owner = _prepared_mirror(
         render_products=eye_paths,
         auxiliary_products=(("/Camera/Head", "Head camera"), ("/Camera/Wrist", None)),
     )
@@ -64,9 +77,7 @@ def test_mirror_close_preserves_failed_retirement(monkeypatch, failure_site):
         status=DesktopMirrorStatus(closed=True), close=lambda: close_at("ui")
     )
     monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", lambda *a, **kw: worker)
-    owner = mirror.OwnedDesktopMirror(
-        DesktopMirrorConfig(), lambda: None, render_products=(), auxiliary_products=()
-    )
+    owner = _prepared_mirror(render_products=(), auxiliary_products=())
     monkeypatch.setattr(owner._mailbox, "close", lambda: close_at("images"))
     with pytest.raises(RuntimeError, match=f"{failure_site} retirement failed"):
         owner.close()
@@ -78,9 +89,7 @@ def test_mirror_start_failure_is_optional_and_attempted_once(monkeypatch):
     worker = Mock(status=DesktopMirrorStatus())
     worker.start.side_effect = RuntimeError("UI thread unavailable")
     monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", lambda *a, **kw: worker)
-    owner = mirror.OwnedDesktopMirror(
-        DesktopMirrorConfig(), lambda: None, render_products=(), auxiliary_products=()
-    )
+    owner = _prepared_mirror(render_products=(), auxiliary_products=())
     try:
         owner.on_frame_submitted()
         owner.on_frame_submitted()
@@ -457,12 +466,7 @@ def test_mirror_retirement_respects_named_logger_level(
         mirror, "OwnedDesktopMirrorWorker", lambda *args, **kwargs: worker
     )
     with caplog.at_level(level, logger=mirror.__name__):
-        owner = mirror.OwnedDesktopMirror(
-            DesktopMirrorConfig(),
-            lambda: None,
-            render_products=(),
-            auxiliary_products=(),
-        )
+        owner = _prepared_mirror(render_products=(), auxiliary_products=())
         owner.close()
     records = [
         record

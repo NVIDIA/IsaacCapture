@@ -15,19 +15,14 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .desktop_mirror import (
-    DesktopMirrorConfig,
-    DesktopMirrorStatus,
-)
-from .camera_mailbox import CompletedCameraMailbox
+from .camera_mailbox import CameraImage, CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
-from .owned_mirror import OwnedDesktopMirror
 from .gpu_output import (
     completed_outputs,
     map_cuda_array_rgba,
@@ -167,7 +162,7 @@ class OvxrSessionConfig:
     """Application-neutral OVXR and CloudXR configuration.
 
     The supported OVXR package supplies bound-frame outputs. Optional PiP and
-    mirror consumers copy those outputs on the sole frame owner before retirement.
+    output consumers copy those outputs on the sole frame owner before retirement.
     """
 
     application_name: str = "isaacteleop-ovxr-session"
@@ -184,7 +179,6 @@ class OvxrSessionConfig:
     tracking_anchor_path: str = ""
     floor_aligned_anchor: bool | None = None
     host_wait_render_output: bool = False
-    desktop_mirror: DesktopMirrorConfig | None = None
     auxiliary_raster: AuxiliaryRasterConfig | None = None
     auxiliary_rasters: tuple[AuxiliaryRasterConfig, ...] = ()
     extra_openxr_extensions: tuple[str, ...] = ()
@@ -219,6 +213,32 @@ class OvxrSessionConfig:
             raise ValueError("OVXR stereo requires exactly two non-empty camera paths")
 
 
+class OvxrFrameConsumer(Protocol):
+    """Frame-owner callbacks for an optional completed-output consumer.
+
+    Initialize after context creation. ``finish_frame`` releases borrowed outputs
+    before submit/cancel. ``close`` must tolerate incomplete startup and raise if
+    retirement is unproved, so rendering providers stay alive.
+    """
+
+    def on_session_started(
+        self,
+        binding: OvxrSessionBinding,
+        config: OvxrSessionConfig,
+        request_shutdown: Callable[[], None],
+    ) -> None: ...
+
+    def on_outputs(
+        self, renderer: int, outputs: Any, shared: Mapping[str, CameraImage | None]
+    ) -> None: ...
+
+    def on_frame_submitted(self) -> None: ...
+
+    def finish_frame(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
 def _import_ovxr():
     import ovxr
 
@@ -246,6 +266,7 @@ class OvxrSession:
         *,
         required_openxr_extensions: Iterable[str] = (),
         max_blank_frames: int = 1,
+        frame_consumers: Iterable[OvxrFrameConsumer] = (),
     ) -> None:
         if max_blank_frames < 0:
             raise ValueError("max_blank_frames must be non-negative")
@@ -253,11 +274,11 @@ class OvxrSession:
         self._config = config
         self._required_openxr_extensions = tuple(required_openxr_extensions)
         self._max_blank_frames = max_blank_frames
+        self._frame_consumers = tuple(frame_consumers)
         self._context = None
         self._pending_plan = None
         self._binding: OvxrSessionBinding | None = None
         self._cloudxr_launcher = None
-        self._desktop_mirror: OwnedDesktopMirror | None = None
         self._camera_quad_attached = False
         self._camera_mailboxes: list[CompletedCameraMailbox] = []
         self._camera_quads: list[OpenXRCameraQuad] = []
@@ -489,16 +510,6 @@ class OvxrSession:
                 self._worker_condition.notify_all()
             raise
 
-    def report_host_timing(self) -> None:
-        """Report one host-loop sample for optional desktop-mirror telemetry."""
-        if self._desktop_mirror is not None:
-            self._desktop_mirror.record_host_frame()
-
-    def set_desktop_mirror_status_text(self, text: str) -> None:
-        """Set opaque desktop-mirror text owned and formatted by the application."""
-        if self._desktop_mirror is not None:
-            self._desktop_mirror.set_status_text(text)
-
     def external_oxr_handles(self):
         """Return typed handles after peer-gated context startup, otherwise ``None``."""
         with self._worker_condition:
@@ -591,7 +602,7 @@ class OvxrSession:
         self._request_worker_shutdown()
 
     def wait_for_shutdown(self, timeout_s: float) -> bool:
-        """Wait interruptibly on the same event used by signals and mirror close."""
+        """Wait interruptibly for a shutdown request."""
         return self._shutdown_requested.wait(timeout_s)
 
     @property
@@ -610,13 +621,6 @@ class OvxrSession:
     def render_worker_native_thread_id(self) -> int | None:
         """Native ID of the sole OVXR owner thread, when started."""
         return self._worker_native_thread_id
-
-    @property
-    def desktop_mirror_status(self) -> DesktopMirrorStatus | None:
-        """Return the optional mirror's current best-effort status."""
-        if self._desktop_mirror is not None:
-            return self._desktop_mirror.status
-        return None
 
     def _create_context_on_render_thread(self) -> None:
         assert self._binding is not None
@@ -688,25 +692,26 @@ class OvxrSession:
                         auxiliary_paths, auxiliaries, self._camera_quads, strict=True
                     )
                 ]
-                if auxiliaries or self._config.desktop_mirror is not None:
+                if auxiliaries or self._frame_consumers:
                     self._context.set_frame_render_products(list(auxiliary_paths))
-        if self._config.desktop_mirror is not None:
-            self._desktop_mirror = OwnedDesktopMirror(
-                self._config.desktop_mirror,
-                self.request_shutdown,
-                render_products=self._config.render_products,
-                auxiliary_products=tuple(
-                    (path, policy.label)
-                    for path, policy in zip(auxiliary_paths, auxiliaries, strict=True)
-                ),
+        for consumer in self._frame_consumers:
+            consumer.on_session_started(
+                self._binding, self._config, self.request_shutdown
             )
 
     def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
         """Frame-owner copies before result retirement; PiP owns its independent copy."""
+        shared = {}
         for mailbox in self._camera_mailboxes:
             mailbox.on_outputs(user_data, renderer, outputs)
-        if self._desktop_mirror is not None:
-            self._desktop_mirror.on_outputs(renderer, outputs, self._camera_mailboxes)
+            if self._frame_consumers:
+                image = mailbox.snapshot()
+                if mailbox.error() is not None or (
+                    image is not None and image.gpu is None
+                ):
+                    shared[mailbox.product_path] = image
+        for consumer in self._frame_consumers:
+            consumer.on_outputs(renderer, outputs, shared)
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -826,7 +831,7 @@ class OvxrSession:
                 return True
             layers = []
             if (
-                self._camera_mailboxes or self._desktop_mirror is not None
+                self._camera_mailboxes or self._frame_consumers
             ) and active_plan.step_result:
                 try:
                     renderer = native_renderer_handle(self._binding.renderer)
@@ -872,13 +877,14 @@ class OvxrSession:
             if (
                 result == ovxr.Result.SUCCESS
                 and _frame.submitted
-                and self._desktop_mirror is not None
+                and self._frame_consumers
             ):
-                # Submit consumed the plan; optional mirror work must not
-                # cancel it even if mirror startup fails.
+                # Submit consumed the plan; consumer callbacks must not
+                # cancel it even if a callback fails.
                 active_plan = None
                 self._pending_plan = None
-                self._desktop_mirror.on_frame_submitted()
+                for consumer in self._frame_consumers:
+                    consumer.on_frame_submitted()
             active_plan = None
             self._pending_plan = None
         except BaseException as error:
@@ -901,8 +907,8 @@ class OvxrSession:
     def _finish_frame_outputs(self) -> None:
         for mailbox in self._camera_mailboxes:
             mailbox.close()
-        if self._desktop_mirror is not None:
-            self._desktop_mirror.finish_frame()
+        for consumer in self._frame_consumers:
+            consumer.finish_frame()
 
     def _render_reused_scene(self) -> bool:
         if self._worker_last_ordinal is None:
@@ -917,10 +923,10 @@ class OvxrSession:
         except BaseException as exc:
             first_error = exc
         try:
-            if self._desktop_mirror is not None:
+            for consumer in reversed(self._frame_consumers):
                 # A failed completion/unmap must keep the renderer alive: never
                 # destroy storage that an optional consumer might still access.
-                self._desktop_mirror.close()
+                consumer.close()
             for mailbox in self._camera_mailboxes:
                 mailbox.close()
             if self._pending_plan is not None:

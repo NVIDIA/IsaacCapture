@@ -47,6 +47,7 @@ from .ovxr_session import (
     OvxrSessionBinding,
     OvxrSessionConfig,
     OvxrApplicationInterface,
+    OvxrFrameConsumer,
     OvxrSession,
     StageOrdinalLedger,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "AuxiliaryRasterConfig",
     "OvxrSessionConfig",
     "OvxrApplicationInterface",
+    "OvxrFrameConsumer",
     "OvxrSession",
     "StageOrdinalLedger",
     "DesktopMirrorConfig",
