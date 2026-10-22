@@ -16,17 +16,13 @@ import math
 import threading
 from collections.abc import Callable, Hashable, Iterable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from .camera_mailbox import CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
 from .gpu_output import completed_outputs, map_cuda_array_rgba, native_renderer_handle
 
-_REQUIRED_OPENXR_EXTENSIONS = (
-    "XR_KHR_convert_timespec_time",
-    "XR_NV_opaque_data_channel",
-)
 _WORKER_SHUTDOWN_GRACE_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
 
@@ -174,9 +170,7 @@ class OvxrSessionConfig:
     host_wait_render_output: bool = False
     auxiliary_raster: AuxiliaryRasterConfig | None = None
     auxiliary_rasters: tuple[AuxiliaryRasterConfig, ...] = ()
-    extra_openxr_extensions: tuple[str, ...] = field(
-        default_factory=lambda: _REQUIRED_OPENXR_EXTENSIONS
-    )
+    extra_openxr_extensions: tuple[str, ...] = ()
 
     @property
     def selected_auxiliary_rasters(self) -> tuple[AuxiliaryRasterConfig, ...]:
@@ -193,13 +187,6 @@ class OvxrSessionConfig:
             raise ValueError("at most three auxiliary camera quads are supported")
         if self.session_mode not in ("ar", "vr"):
             raise ValueError("session_mode must be 'ar' or 'vr'")
-        missing = set(_REQUIRED_OPENXR_EXTENSIONS).difference(
-            self.extra_openxr_extensions
-        )
-        if missing:
-            raise ValueError(
-                f"OVXR session is missing required OpenXR extensions: {sorted(missing)}"
-            )
         if not math.isfinite(self.meters_per_unit) or self.meters_per_unit <= 0:
             raise ValueError("meters_per_unit must be finite and positive")
         if (self.depth_near_z, self.depth_far_z) != (0.0, 0.0) and (
