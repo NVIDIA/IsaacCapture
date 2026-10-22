@@ -86,11 +86,11 @@ You should see output confirming the hub is running:
 If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with **all three** required query
 parameters — ``oobEnable``, ``serverIP``, and ``port`` — plus the hub's
-``controlToken``:
+``controlToken`` in the URL fragment:
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
+   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322#?controlToken=<CONTROL_TOKEN>
 
 Replace ``<HOST_IP>`` with the streaming host's LAN IP. The ``port`` must
 match the proxy port (default 48322). ``<CONTROL_TOKEN>`` is the value of
@@ -509,9 +509,20 @@ prints it in the startup banner. Requests without the token, and WebSocket
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
 
-The headset bookmark carries the token as ``controlToken`` in the URL query, so
-the hosting server and any proxy logs can see it. Treat bookmark URLs as
-secrets and prefer a client served from the streaming host (``--host-client``).
+The headset bookmark carries the token in the URL fragment
+(``#<route>?controlToken=<secret>``), which the browser never sends in a
+request or ``Referer``. The web client moves it into ``sessionStorage`` for that
+tab and removes it from the address bar, so reloads keep working. Treat bookmark
+URLs as secrets anyway: the fragment is visible to the page, to ``adb`` command
+arguments and to anyone who sees the URL.
+
+A client build older than this change only reads ``?controlToken=`` from the
+query and will not authenticate against a fragment bookmark. With
+``--host-client`` the host refuses a cached ``bundle.js`` that lacks fragment
+support; rebuild ``deps/cloudxr/webxr_client`` and point
+``TELEOP_WEB_CLIENT_STATIC_DIR`` at the build output. A hand-built
+``?controlToken=`` query link still works, but that URL has already been sent in
+the request.
 
 Web client integration
 ----------------------
@@ -521,7 +532,7 @@ The web client connects to the hub when the page URL contains
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
+   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322#?controlToken=<CONTROL_TOKEN>
 
 The client builds ``wss://{serverIP}:{port}/oob/v1/ws`` and:
 
