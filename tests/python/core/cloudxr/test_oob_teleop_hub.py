@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from oob_teleop_hub import MAX_FRAME_CHARS, OOBControlHub
+from oob_teleop_hub import MAX_FRAME_BYTES, OOBControlHub
 
 TOKEN = "test-control-token"
 
@@ -542,8 +542,21 @@ async def test_oversized_frame_closes_connection() -> None:
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
 
-    await ws.inject("x" * (MAX_FRAME_CHARS + 1))
+    await ws.inject("x" * (MAX_FRAME_BYTES + 1))
     await task
 
     assert json.loads(ws.sent[0])["payload"]["message"] == "Frame too large"
+    assert ws.close_calls == [(1009, "Frame too large")]
+
+
+@pytest.mark.asyncio
+async def test_multibyte_frame_over_byte_limit_is_rejected() -> None:
+    hub = OOBControlHub(control_token="test-control-token")
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+
+    # Fewer characters than the limit, more UTF-8 bytes (4 per character).
+    await ws.inject("\U0001f600" * (MAX_FRAME_BYTES // 4 + 1))
+    await task
+
     assert ws.close_calls == [(1009, "Frame too large")]
