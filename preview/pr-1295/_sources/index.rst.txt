@@ -4,9 +4,16 @@
 Welcome to Isaac Capture
 ========================
 
-.. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
+|default-license| |egopost-license|
+
+.. |default-license| image:: https://img.shields.io/badge/Default-Apache--2.0-blue.svg
    :target: development/license.html
-   :alt: License
+   :alt: Default: Apache-2.0
+   :class: license-badge
+
+.. |egopost-license| image:: https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg
+   :target: https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt
+   :alt: EgoPost: OpenMDW-1.1
    :class: license-badge
 
 **NVIDIA Isaac Capture** is a shared library for teleoperation and egocentric data

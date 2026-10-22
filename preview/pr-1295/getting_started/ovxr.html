@@ -442,125 +442,72 @@
                   
   <section id="ovxr-installation">
 <h1>OVXR installation<a class="headerlink" href="#ovxr-installation" title="Link to this heading">#</a></h1>
-<p>OVXR is an optional presentation dependency. Build Isaac Capture from source and
-select its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra only for applications that need XR presentation.
-The optional packages are available publicly; no internal package index, GitHub
-Actions artifact or local Kit build is needed.</p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p>OVXR 0.1.0.5842 requires OVRTX 0.6.0.1791947691 and OVStage 0.3.0.1791986420.
-Applications pinning OVRTX 0.5.x or OVStage 0.2.x, including the current
-Isaac Lab main dependency set, need a coordinated provider upgrade first.
-This package selection prepares the Isaac Capture PRs; compatibility and
-runtime/headset validation with the public providers remain pending.</p>
+<p>OVXR provides optional XR presentation for applications that use Isaac Capture
+for teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra when installing Isaac Capture
+to include OVXR and its rendering dependencies.</p>
+<section id="install-xr-support">
+<h2>Install XR support<a class="headerlink" href="#install-xr-support" title="Link to this heading">#</a></h2>
+<p>Follow <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> to build Isaac Capture and
+select a Python environment matching the generated wheel. Include <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> in
+the installation requirement:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[ovxr]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/
+uv<span class="w"> </span>pip<span class="w"> </span>check
+</pre></div>
 </div>
+<p>Replace <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> with the version of your source build, as described in the build
+guide. Base installations and imports do not require OVXR.</p>
+<p>OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
+The consuming application’s dependency constraints must accept those versions.
+See the package pages below for supported Python versions and platforms.</p>
+</section>
 <section id="optional-packages-and-licenses">
 <h2>Optional packages and licenses<a class="headerlink" href="#optional-packages-and-licenses" title="Link to this heading">#</a></h2>
-<p>The <code class="docutils literal notranslate"><span class="pre">isaaccapture[ovxr]</span></code> extra retrieves OVXR and its declared OVRTX/OVStage
-dependencies. Base Isaac Capture installation/import does not request or load
-OVXR. These OV packages are downloaded separately, rather than bundled in the
-Isaac Capture wheel, and retain their own licenses.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra installs OVXR and its OVRTX/OVStage dependencies separately
+from the Isaac Capture wheel. These packages retain their own licenses:</p>
 <ul class="simple">
-<li><p><strong>OVXR 0.1.0.5842, OVRTX and OVStage:</strong> NVIDIA proprietary software; review the
-license included with each selected distribution. Package information is at
-<a class="reference external" href="https://pypi.org/project/ovxr/0.1.0.5842/" rel="noopener noreferrer" target="_blank">OVXR</a>,
-<a class="reference external" href="https://pypi.org/project/ovrtx/0.6.0.1791947691/" rel="noopener noreferrer" target="_blank">OVRTX</a> and
-<a class="reference external" href="https://pypi.org/project/ovstage/0.3.0.1791986420/" rel="noopener noreferrer" target="_blank">OVStage</a>.
-OVXR and OVStage come from PyPI; OVRTX’s PyPI installer retrieves its native
-wheel from <a class="reference external" href="https://pypi.nvidia.com" rel="noopener noreferrer" target="_blank">NVIDIA’s public Python index</a>.</p></li>
+<li><p><a class="reference external" href="https://pypi.org/project/ovxr/" rel="noopener noreferrer" target="_blank">OVXR</a>,
+<a class="reference external" href="https://pypi.org/project/ovrtx/" rel="noopener noreferrer" target="_blank">OVRTX</a> and
+<a class="reference external" href="https://pypi.org/project/ovstage/" rel="noopener noreferrer" target="_blank">OVStage</a> are NVIDIA proprietary software.
+Review the license included with each distribution before use.</p></li>
 </ul>
-<p>The README’s <strong>Separately retrieved optional materials</strong> section contains the
-external-materials notice. Existing CloudXR native libraries are bundled in
-Isaac Capture wheels and remain subject to their separate NVIDIA license and
-CloudXR EULA acceptance.</p>
+<p>CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and CloudXR EULA acceptance.</p>
 </section>
-<section id="install-ovxr">
-<h2>Install OVXR<a class="headerlink" href="#install-ovxr" title="Link to this heading">#</a></h2>
-<p>With the application’s Python environment selected, run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="nv">ovxr</span><span class="o">==</span><span class="m">0</span>.1.0.5842<span class="w"> </span>--index<span class="w"> </span>https://pypi.org/simple
-uv<span class="w"> </span>pip<span class="w"> </span>check
+<section id="optional-camera-panels">
+<h2>Optional camera panels<a class="headerlink" href="#optional-camera-panels" title="Link to this heading">#</a></h2>
+<p>Camera picture-in-picture panels require the native camera helper. Follow the
+source-build guide to configure a build for your application’s Python version,
+then enable camera support and rebuild the wheel:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_OVXR_CAMERA_QUADS<span class="o">=</span>ON
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>python_package<span class="w"> </span>python_stubs<span class="w"> </span>python_wheel<span class="w"> </span>--parallel
 </pre></div>
 </div>
-<p>Use <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">/path/to/environment/bin/python</span></code> when that environment is not
-selected. This installs OVXR and its exact OVRTX/OVStage dependencies; the
-consuming application’s other constraints must accept that provider set.
-Successful installation is not runtime, streaming or headset qualification.</p>
-<p>The Linux x86_64 OVXR wheel has SHA256
-<code class="docutils literal notranslate"><span class="pre">146c90f1130456e836e120bff77e2f4f27bf387b67258e8b5c8641a0c0633854</span></code>.
-A Windows wheel is also published; package availability is not platform runtime
-verification. OVXR 0.1.0.5842 has no Linux aarch64 wheel.</p>
+<p>Install the generated wheel with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra using the instructions
+above. The extra includes the CUDA Python bindings used for GPU camera output;
+<code class="docutils literal notranslate"><span class="pre">BUILD_OVXR_CAMERA_QUADS</span></code> controls whether the wheel contains the native helper.
+The helper is disabled by default.</p>
+<p>Camera support requires Vulkan and CUDA development files. On Linux x86-64,
+CMake uses installed SDKs when available and downloads missing development files
+into the build directory. The GPU driver and Vulkan runtime loader must be
+installed on the host. Other platforms require installed development SDKs.
+Use <code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select a CUDA SDK and <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code> to help locate a
+Vulkan SDK.</p>
 </section>
-<section id="build-capture-and-optional-camera-support">
-<h2>Build Capture and optional camera support<a class="headerlink" href="#build-capture-and-optional-camera-support" title="Link to this heading">#</a></h2>
-<p>Follow <a class="reference internal" href="build_from_source/index.html"><span class="doc">Build from Source</span></a> for build tools, managed Python, CloudXR and
-the normal CMake dependency setup. On Linux x86-64, enabling camera quads reuses
-available Vulkan/CUDA development SDKs. When they are absent, CMake acquires
-hash-pinned Khronos Vulkan headers and NVIDIA CUDA 12 runtime/compiler SDK
-archives inside the existing build’s <code class="docutils literal notranslate"><span class="pre">_deps</span></code> directory. Downloads are about
-45 MB plus the Vulkan headers and are reused on subsequent configurations.
-The platform GPU driver and Vulkan runtime (<code class="docutils literal notranslate"><span class="pre">libvulkan.so.1</span></code>) remain host
-prerequisites; the build does not install system packages. Base builds with
-camera quads OFF do not acquire these development SDKs.
-The headers are development input only; their vendor CMake project is not added
-to the build. Camera SDK acquisition does not change Televiz’s host-SDK-based
-<code class="docutils literal notranslate"><span class="pre">BUILD_VIZ</span></code> default; explicit <code class="docutils literal notranslate"><span class="pre">BUILD_VIZ=ON/OFF</span></code> selection is preserved.</p>
-<p>Other platforms still require discoverable external development SDKs. Use
-<code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select an existing CUDA SDK. On Linux x86-64, when camera
-support needs build-managed CUDA acquisition, an invalid explicit root fails
-configuration. <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code> remains a hint for normal FindVulkan discovery.
-See NVIDIA’s <a class="reference external" href="https://docs.nvidia.com/cuda/archive/12.0.0/cuda-installation-guide-linux/index.html#importing-tarballs-into-cmake" rel="noopener noreferrer" target="_blank">archive-to-CMake SDK workflow</a>.
-Reuse a compatible existing build directory:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-DISAAC_TELEOP_PYTHON_VERSION<span class="o">=</span><span class="m">3</span>.12<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-DBUILD_PYTHON_BINDINGS<span class="o">=</span>ON<span class="w"> </span>-DBUILD_OVXR_CAMERA_QUADS<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-DBUILD_TESTING<span class="o">=</span>ON
-cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>python_package<span class="w"> </span>python_stubs<span class="w"> </span>python_wheel<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>ovxr_pip_layer_contract_test<span class="w"> </span>--parallel<span class="w"> </span><span class="m">2</span>
-ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class="w"> </span>-C<span class="w"> </span>Release<span class="w"> </span>-R<span class="w"> </span><span class="s1">'^ovxr_pip_layer_contract_test$'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output-on-failure
-uv<span class="w"> </span>run<span class="w"> </span>--no-project<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12<span class="w"> </span>python<span class="w"> </span>scripts/check_camera_quad_wheel.py<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>build/wheels/&lt;local-wheel&gt;.whl<span class="w"> </span>--camera-quads
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'build/wheels/&lt;local-wheel&gt;.whl[ovxr]'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--index<span class="w"> </span>https://pypi.org/simple
-uv<span class="w"> </span>pip<span class="w"> </span>check
-</pre></div>
-</div>
-<p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;local-wheel&gt;</span></code> with the wheel produced by this build.
-The check uses managed Python without requiring a system <code class="docutils literal notranslate"><span class="pre">python</span></code> alias;
-<code class="docutils literal notranslate"><span class="pre">--no-project</span></code> avoids a second source build. The helper uses
-the repository’s pinned OpenXR SDK and discovered Vulkan/CUDA inputs, not an OVXR
-SDK archive. It borrows public OVXR native handles at runtime; it does not link
-against a local OVXR or Kit build. CMake packages the helper with its relative
-CloudXR CUDA-runtime lookup. The source build and installed native helper still
-need validation on each destination.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra supplies OVXR and CUDA Python bindings for GPU camera output;
-it does not enable the native helper build flag or install the desktop mirror.
-Plain <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">build/wheels/&lt;local-wheel&gt;.whl</span></code> does not request OVXR or
-its providers. Default source builds leave <code class="docutils literal notranslate"><span class="pre">BUILD_OVXR_CAMERA_QUADS=OFF</span></code> and
-do not require OVXR to be installed. Importing base Capture does not load OVXR.</p>
-</section>
-<section id="keep-ordinary-uv-run-resolution-consistent">
-<h2>Keep ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> resolution consistent<a class="headerlink" href="#keep-ordinary-uv-run-resolution-consistent" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> updates an environment, not an application’s <code class="docutils literal notranslate"><span class="pre">uv.lock</span></code>.
-Declare the local source-built Isaac Capture wheel in the consuming application’s
-optional dependency set, then refresh its lock through the normal workflow.
-Do not use permanent <code class="docutils literal notranslate"><span class="pre">--no-sync</span></code> to bypass incompatible application pins.</p>
-<p>For example, a Linux x86_64 application can select:</p>
+<section id="use-from-another-application">
+<h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
+<p>For a uv-managed application, declare Isaac Capture with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra and
+select the source-built wheel in the application’s project configuration:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[project.optional-dependencies]</span>
-<span class="n">ovxr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
-<span class="w">  </span><span class="s2">"isaaccapture[ovxr]; platform_system == 'Linux' and platform_machine == 'x86_64'"</span><span class="p">,</span>
-<span class="p">]</span>
+<span class="n">ovxr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"isaaccapture[ovxr]"</span><span class="p">]</span>
 
 <span class="k">[tool.uv.sources]</span>
 <span class="n">isaaccapture</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"path/to/your/local-wheel.whl"</span><span class="p">,</span><span class="w"> </span><span class="n">extra</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"ovxr"</span><span class="w"> </span><span class="p">}</span>
 </pre></div>
 </div>
-<p>OVXR and its dependencies resolve from their public package metadata. No internal
-index or credentials are required. Preserve any existing source selections for
-other optional dependencies. OVXR’s exact OVRTX/OVStage pins must agree with the
-application; regenerate its lock and use ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> with its OVXR extra
-selected. Base Isaac Capture and other teleoperation paths should not request
-the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra.</p>
+<p>Replace the wheel path with the file produced by your build. Refresh the
+application’s lock file after changing the wheel or dependency selection, then
+run with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span> <span class="pre">--extra</span> <span class="pre">ovxr</span></code>. Installing packages with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code>
+alone does not update the application’s lock file.</p>
 </section>
 </section>
 
@@ -613,10 +560,10 @@ the <code class="docutils literal notranslate"><span class="pre">ovxr</span></co
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-xr-support">Install XR support</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-packages-and-licenses">Optional packages and licenses</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-ovxr">Install OVXR</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#build-capture-and-optional-camera-support">Build Capture and optional camera support</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#keep-ordinary-uv-run-resolution-consistent">Keep ordinary <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> resolution consistent</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-camera-panels">Optional camera panels</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-from-another-application">Use from another application</a></li>
 </ul>
   </nav></div>
 
@@ -699,7 +646,7 @@ the <code class="docutils literal notranslate"><span class="pre">ovxr</span></co
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 21, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
       <br/>
     
   </p>
