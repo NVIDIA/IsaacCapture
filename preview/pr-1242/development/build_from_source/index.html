@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Build WebXR Client" href="webxr.html" />
-    <link rel="prev" title="Teleop Control State Machine" href="../../teleop/control_state_machine.html" />
+    <link rel="prev" title="EgoHand" href="../../ego_post_processing/egohand.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -348,6 +348,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Build from Source</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -375,13 +379,14 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -390,7 +395,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -468,7 +472,8 @@ examples. The instructions align with the project’s CMake configuration and th
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
 <ul class="simple">
 <li><p><strong>CMake</strong> 3.24 or higher (Ubuntu 22.04’s apt <code class="docutils literal notranslate"><span class="pre">cmake</span></code> is 3.22 — install a newer one
-from <a class="reference external" href="https://apt.kitware.com/" rel="noopener noreferrer" target="_blank">Kitware’s APT repository</a> or with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cmake</span></code>)</p></li>
+from <a class="reference external" href="https://apt.kitware.com/" rel="noopener noreferrer" target="_blank">Kitware’s APT repository</a> or with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cmake</span></code>).
+A Release wheel with its contents SBOM needs 3.27, which added <code class="docutils literal notranslate"><span class="pre">cmake_file_api()</span></code>.</p></li>
 <li><p><strong>C++20</strong> compatible compiler</p></li>
 <li><p><strong>Python</strong> 3.11, 3.12, or 3.13 (default 3.11; see <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code> in root <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>)</p></li>
 <li><p><strong>uv</strong> for Python dependency management and managed Python</p></li>
@@ -896,12 +901,12 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../../teleop/control_state_machine.html"
+       href="../../ego_post_processing/egohand.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Teleop Control State Machine</p>
+        <p class="prev-next-title">EgoHand</p>
       </div>
     </a>
     <a class="right-next"

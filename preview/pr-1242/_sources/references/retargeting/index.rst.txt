@@ -21,7 +21,7 @@ Source Nodes
   ``SomaBodyJointPoses`` payload from a configured publisher collection. It
   runs upstream FK for rotations or directly maps evaluated poses, then emits
   an optional ``SomaBodyInput`` containing the 77 global SOMA joint poses.
-  See :doc:`/device/trackers` and :code-file:`examples/deviceio_live_view/README.md`.
+  See :doc:`/device/trackers/index` and :code-file:`examples/deviceio_live_view/README.md`.
 
 Available Retargeters
 ---------------------

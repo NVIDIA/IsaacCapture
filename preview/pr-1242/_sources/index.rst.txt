@@ -59,6 +59,12 @@ Table of Contents
 
 .. toctree::
    :maxdepth: 2
+   :caption: Ego Post Processing
+
+   ego_post_processing/egohand
+
+.. toctree::
+   :maxdepth: 2
    :caption: Development
 
    development/build_from_source/index
@@ -89,7 +95,7 @@ Table of Contents
    device/tactile/index
    device/spatial_controllers/index
    device/gamepads/index
-   Spatial trackers <device/trackers>
+   Spatial trackers <device/trackers/index>
    device/add_device
 
 .. toctree::
@@ -98,6 +104,7 @@ Table of Contents
 
    references/requirements
    references/build
+   references/sbom
    references/generated_trackers
    references/retargeting/index
    references/device_provider_monitoring
@@ -106,7 +113,6 @@ Table of Contents
    references/cloudxr
    references/oob_teleop_control
    references/haptic_feedback
-   references/egocentric_hand_reconstruction
 
 Indices and tables
 ------------------
