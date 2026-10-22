@@ -8,7 +8,6 @@ import pytest
 
 from isaaccapture.ovxr_session_manager.camera_mailbox import CameraImage
 from isaaccapture.ovxr_session_manager.ovxr_session import AuxiliaryRasterConfig
-from isaaccapture.ovxr_session_manager.openxr_quad import OpenXRCameraQuad
 import isaaccapture.ovxr_session_manager.openxr_quad as quad_module
 
 
@@ -46,7 +45,7 @@ def _quad(tmp_path, monkeypatch):
         isaacteleop_pip_publish_cuda_array_v2=_Function(),
     )
     monkeypatch.setattr(quad_module.ctypes, "CDLL", lambda _path: native)
-    return OpenXRCameraQuad(str(manifest)), native
+    return quad_module.OpenXRCameraQuad(str(manifest)), native
 
 
 def test_default_config_is_accepted_by_native_quad(tmp_path, monkeypatch):
@@ -138,8 +137,8 @@ def test_explicit_binding_preserves_loader_and_retains_failed_cleanup(
 
 def test_three_quad_wrappers_keep_independent_revisions(tmp_path, monkeypatch):
     first, native = _quad(tmp_path, monkeypatch)
-    second = OpenXRCameraQuad(str(tmp_path / "layer.json"), camera_index=1)
-    third = OpenXRCameraQuad(str(tmp_path / "layer.json"), camera_index=2)
+    second = quad_module.OpenXRCameraQuad(str(tmp_path / "layer.json"), camera_index=1)
+    third = quad_module.OpenXRCameraQuad(str(tmp_path / "layer.json"), camera_index=2)
     for quad in (first, second, third):
         quad.configure(AuxiliaryRasterConfig(space="head_locked"))
         assert quad.publish(CameraImage(1, 1, b"abcd", 1.0, 1))
@@ -158,7 +157,7 @@ def test_old_native_layer_is_rejected_before_upload(tmp_path, monkeypatch):
     _quad(tmp_path, monkeypatch)
     monkeypatch.setattr(quad_module.ctypes, "CDLL", lambda _path: SimpleNamespace())
     with pytest.raises(AttributeError, match="isaacteleop_pip_configure_v2"):
-        OpenXRCameraQuad(str(tmp_path / "layer.json"))
+        quad_module.OpenXRCameraQuad(str(tmp_path / "layer.json"))
 
 
 @pytest.mark.parametrize("result", [0, -6, -7])
