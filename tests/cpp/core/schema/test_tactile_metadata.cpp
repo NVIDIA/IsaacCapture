@@ -3,9 +3,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <flatbuffers/flatbuffers.h>
+#include <schema/metadata_validation.hpp>
 #include <schema/serialized.hpp>
 #include <schema/tactile_metadata_generated.h>
-#include <schema/tactile_metadata_validation.hpp>
 
 #include <array>
 #include <cstdint>
@@ -82,7 +82,7 @@ TEST_CASE("TactileMetadata verifies and retains nested union views", "[unit][tac
 TEST_CASE("TactileMetadata semantic verification accepts valid metadata", "[unit][tactile_metadata]")
 {
     const auto metadata = core::pack<core::TactileMetadata>(make_metadata());
-    CHECK(core::verify_tactile_metadata(*metadata));
+    CHECK(core::verify_metadata(*metadata));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", "[unit][tactile_metadata]")
@@ -108,7 +108,7 @@ TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", 
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+    CHECK_FALSE(core::verify_metadata(*metadata));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joints", "[unit][tactile_metadata]")
@@ -130,7 +130,7 @@ TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joi
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+    CHECK_FALSE(core::verify_metadata(*metadata));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects out-of-range segment indices", "[unit][tactile_metadata]")
@@ -150,7 +150,7 @@ TEST_CASE("TactileMetadata semantic verification rejects out-of-range segment in
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_tactile_metadata(*metadata));
+    CHECK_FALSE(core::verify_metadata(*metadata));
 }
 
 TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "[unit][tactile_metadata]")
@@ -195,5 +195,6 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK(core::verify_tactile_metadata(*metadata) == valid);
+    CHECK(core::verify_metadata(*metadata) == valid);
+    CHECK(core::verify_metadata<core::TactileMetadata>(*metadata) == valid);
 }

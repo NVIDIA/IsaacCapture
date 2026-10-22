@@ -9,15 +9,14 @@
 #include <log_bridge/logger.hpp>
 #include <mcap/tracker_channels.hpp>
 #include <oxr_utils/oxr_session_handles.hpp>
+#include <schema/metadata_validation.hpp>
 #include <schema/serialized.hpp>
-#include <schema/tactile_metadata_validation.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 namespace core
@@ -102,12 +101,11 @@ private:
                                      MetadataT::GetFullyQualifiedName());
         }
 
-        if constexpr (std::is_same_v<MetadataT, TactileMetadata>)
+        // Schema-specific dispatch belongs to the schema layer, not this generic reader.
+        if (!verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data())))
         {
-            if (!verify_tactile_metadata(*flatbuffers::GetRoot<TactileMetadata>(sample.buffer.data())))
-            {
-                throw std::runtime_error(collection_id + ": tactile metadata failed semantic verification");
-            }
+            throw std::runtime_error(collection_id + ": metadata failed semantic verification for " +
+                                     MetadataT::GetFullyQualifiedName());
         }
 
         if (!metadata_)
