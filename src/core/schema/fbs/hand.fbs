@@ -44,9 +44,15 @@ enum HandJoint : uint8 {
     NUM_JOINTS = 26,
 }
 
-// Describe a HandJoint pose.
+// OpenXR joint-local axes: +Z follows the bone away from the fingertip; +Y
+// points toward the nail/back of the open hand; +X = +Y cross +Z.
+// At WRIST, +Z follows the wrist-to-middle-metacarpal line toward the forearm;
+// at PALM, it follows the middle metacarpal toward the wrist.
+// Both hands use right-handed axes, meters, and unit quaternions (x, y, z, w).
+// https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#convention-of-hand-joints
 struct HandJointPose {
-    // The concrete pose data
+    // Joint-local to the shared tracking reference frame (the session base space
+    // for live HandTracker), not parent-local or automatically wrist-relative.
     pose: Pose;
 
     // Whether the hand pose data is valid

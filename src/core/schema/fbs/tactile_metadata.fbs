@@ -6,11 +6,15 @@ include "pose.fbs";
 
 namespace core;
 
+// The skeleton root is WRIST, with the OpenXR axes from hand.fbs: +Y toward
+// the back of the hand, +Z toward the forearm, +X = +Y cross +Z.
+// Both hands use these right-handed rules. Hand side and source hand stream
+// are associated by the application; this table does not imply mirroring.
 table HandSkeletonRef {
   // Ordered, unique HandJoint identifiers; NUM_JOINTS is not a joint.
   // Segment indices address this vector, not HandJoint ordinals. Bind and current
   // segment poses map joint-local coordinates into the same hand-root frame.
-  joint_ids: [HandJoint] (id: 0, required);
+  joint_ids: [HandJoint] (id: 0, required); // src/core/schema/fbs/hand.fbs
 }
 
 union SegmentSource {
@@ -26,12 +30,17 @@ struct Float4 {
 }
 
 table LBS {
-  // Segment-to-source-frame bind poses, in SegmentSource order. Positions are in
-  // meters and orientations are unit quaternions (x, y, z, w).
+  // Segment-local-to-skeleton-root bind poses, in SegmentSource order.
+  // For HandSkeletonRef the root is the WRIST frame at bind, not a joint's
+  // parent or the session/world frame. Joint-local axes follow hand.fbs.
+  // Positions are in meters; orientations are unit quaternions (x, y, z, w).
   segment_bind_poses: [Pose] (id: 0, required);
 
-  // Taxel-local-to-source-frame bind poses, in TactileDataArray.taxel_forces order.
-  // Uses the same units and quaternion convention as segment_bind_poses.
+  // Taxel-local-to-skeleton-root bind poses, in TactileDataArray.taxel_forces order.
+  // The origin is the sensing location. +Z is the outward unit surface normal N;
+  // +X is a calibrated unit tangent T orthogonal to N; +Y = N cross T.
+  // These axes are right-handed for either hand; T is stored by the orientation,
+  // not inferred from hand side. Units and root match segment_bind_poses.
   taxel_bind_poses: [Pose] (id: 1, required);
 
   // One four-slot row per taxel; all taxel_* vectors have the same length.
