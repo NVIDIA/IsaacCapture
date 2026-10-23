@@ -66,8 +66,7 @@ def mock_metadata(joint_ids: list[HandJoint], num_taxels: int) -> TactileMetadat
     # LBS indices address joint_ids rows, not HandJoint ordinals.
     segment_by_joint = {int(joint): segment for segment, joint in enumerate(joint_ids)}
     positions = np.zeros((num_segments, 3), np.float32)
-    if int(HandJoint.PALM) in segment_by_joint:
-        positions[segment_by_joint[int(HandJoint.PALM)]] = (0.0, 0.05, 0.0)
+    positions[segment_by_joint[int(HandJoint.PALM)]] = (0.0, 0.05, 0.0)
 
     taxel_segments = []
     for finger, first in enumerate(FINGER_FIRST_JOINTS):
@@ -93,7 +92,7 @@ def mock_metadata(joint_ids: list[HandJoint], num_taxels: int) -> TactileMetadat
         taxel_segments.append(segment_by_joint[joint])
 
     if not taxel_segments:
-        taxel_segments.append(segment_by_joint.get(WRIST, 0))
+        taxel_segments.append(segment_by_joint[WRIST])
 
     taxel_positions = np.zeros((num_taxels, 3), np.float32)
     taxel_segment_indices = np.zeros((num_taxels, 4), np.uint32)
