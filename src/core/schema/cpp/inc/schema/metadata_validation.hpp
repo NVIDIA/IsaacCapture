@@ -8,17 +8,16 @@
 namespace core
 {
 
-//! Semantic verification after FlatBuffers verification; schemas without extra rules pass.
+//! Throws on invalid semantics after FlatBuffers verification; schemas without extra rules are a no-op.
 template <typename MetadataT>
-[[nodiscard]] inline bool verify_metadata(const MetadataT&)
+inline void verify_metadata(const MetadataT&)
 {
-    return true;
 }
 
 template <>
-[[nodiscard]] inline bool verify_metadata<TactileMetadata>(const TactileMetadata& metadata)
+inline void verify_metadata<TactileMetadata>(const TactileMetadata& metadata)
 {
-    return verify_tactile_metadata(metadata);
+    verify_tactile_metadata(metadata);
 }
 
 } // namespace core

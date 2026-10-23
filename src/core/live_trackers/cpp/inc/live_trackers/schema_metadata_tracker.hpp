@@ -104,18 +104,21 @@ private:
         if (!verifier.VerifyBuffer<MetadataT>(nullptr))
         {
             throw std::runtime_error(collection_id + ": metadata sample is not a valid " +
-                                    MetadataT::GetFullyQualifiedName());
+                                     MetadataT::GetFullyQualifiedName());
         }
 
         if (!metadata_)
         {
             // Schema-specific dispatch belongs to the schema layer, not this generic reader.
-            if (!verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data())))
+            try
             {
-                throw std::runtime_error(collection_id + ": metadata failed semantic verification for " +
-                                        MetadataT::GetFullyQualifiedName());
+                verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data()));
             }
-            
+            catch (const std::runtime_error& error)
+            {
+                throw std::runtime_error(collection_id + ": " + error.what());
+            }
+
             const int64_t log_time_ns = sample.timestamp.available_time_local_common_clock();
             metadata_ = Serialized<MetadataT>::adopt(std::move(sample.buffer));
             if (mcap_channels_ != nullptr)

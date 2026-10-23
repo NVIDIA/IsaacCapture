@@ -28,10 +28,16 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapRe
         std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()), recorded);
     auto metadata = viewers.read(0);
     // MCAP verifies structure; apply the same schema semantics as live ingestion.
-    if (metadata && !verify_metadata(*metadata))
+    if (metadata)
     {
-        throw std::runtime_error(std::string(base_name) + ": metadata failed semantic verification for " +
-                                 @METADATA@::GetFullyQualifiedName());
+        try
+        {
+            verify_metadata(*metadata);
+        }
+        catch (const std::runtime_error& error)
+        {
+            throw std::runtime_error(std::string(base_name) + ": " + error.what());
+        }
     }
     return metadata;
 }

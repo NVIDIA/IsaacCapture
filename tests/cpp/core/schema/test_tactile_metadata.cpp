@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <flatbuffers/flatbuffers.h>
 #include <schema/metadata_validation.hpp>
 #include <schema/serialized.hpp>
@@ -82,39 +83,46 @@ TEST_CASE("TactileMetadata verifies and retains nested union views", "[unit][tac
 TEST_CASE("TactileMetadata semantic verification accepts valid metadata", "[unit][tactile_metadata]")
 {
     const auto metadata = core::pack<core::TactileMetadata>(make_metadata());
-    CHECK(core::verify_metadata(*metadata));
+    CHECK_NOTHROW(core::verify_metadata(*metadata));
+    CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", "[unit][tactile_metadata]")
 {
     auto native = make_metadata();
     auto& lbs = *native.geometry_mapping.AsLBS();
+    std::string reason;
     SECTION("taxel bind poses")
     {
         lbs.taxel_bind_poses.push_back(lbs.taxel_bind_poses.front());
+        reason = "taxel_segment_indices: expected 2 rows to match taxel_bind_poses, got 1";
     }
     SECTION("taxel segment indices")
     {
         lbs.taxel_segment_indices.clear();
+        reason = "taxel_segment_indices: expected 1 rows to match taxel_bind_poses, got 0";
     }
     SECTION("taxel segment weights")
     {
         lbs.taxel_segment_weights.clear();
+        reason = "taxel_segment_weights: expected 1 rows to match taxel_bind_poses, got 0";
     }
     SECTION("joint identifiers and segment bind poses")
     {
         native.segment_source.AsHandSkeletonRef()->joint_ids.pop_back();
+        reason = "segment_bind_poses: expected 1 poses to match segment_source.joint_ids, got 2";
     }
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_metadata(*metadata));
+    CHECK_THROWS_WITH(core::verify_metadata(*metadata), "TactileMetadata." + reason);
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joints", "[unit][tactile_metadata]")
 {
     auto native = make_metadata();
     auto& joint_ids = native.segment_source.AsHandSkeletonRef()->joint_ids;
+    std::string reason = "invalid HandJoint identifier";
     SECTION("sentinel")
     {
         joint_ids[1] = core::HandJoint_NUM_JOINTS;
@@ -126,11 +134,13 @@ TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joi
     SECTION("duplicate identifier")
     {
         joint_ids[1] = joint_ids[0];
+        reason = "duplicate HandJoint identifier";
     }
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_metadata(*metadata));
+    CHECK_THROWS_WITH(core::verify_metadata(*metadata),
+                      Catch::Matchers::ContainsSubstring("TactileMetadata.joint_ids[1]: " + reason));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects out-of-range segment indices", "[unit][tactile_metadata]")
@@ -138,19 +148,23 @@ TEST_CASE("TactileMetadata semantic verification rejects out-of-range segment in
     auto native = make_metadata();
     auto& lbs = *native.geometry_mapping.AsLBS();
     std::array<uint32_t, 4> indices = { 1, 0, 0, 0 };
+    std::string slot;
     SECTION("nonzero-weight slot")
     {
         indices[0] = 2;
+        slot = "0";
     }
     SECTION("zero-weight slot")
     {
         indices[3] = 2;
+        slot = "3";
     }
     lbs.taxel_segment_indices[0] = core::UInt4(flatbuffers::span<const uint32_t, 4>(indices.data(), 4));
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK_FALSE(core::verify_metadata(*metadata));
+    CHECK_THROWS_WITH(core::verify_metadata(*metadata), "TactileMetadata.taxel_segment_indices[0][" + slot +
+                                                            "]: segment index 2 is outside segment_bind_poses (size 2)");
 }
 
 TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "[unit][tactile_metadata]")
@@ -159,9 +173,11 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
     auto& lbs = *native.geometry_mapping.AsLBS();
     std::array<float, 4> weights = { 0.75f, 0.25f, 0.0f, 0.0f };
     bool valid = false;
+    std::string reason = "taxel_segment_weights[1]: weights must sum to one";
     SECTION("negative weight with sum one")
     {
         weights = { 1.25f, -0.25f, 0.0f, 0.0f };
+        reason = "taxel_segment_weights[1][1]: weights must be finite and nonnegative";
     }
     SECTION("sum below one")
     {
@@ -174,10 +190,12 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
     SECTION("NaN")
     {
         weights[3] = std::numeric_limits<float>::quiet_NaN();
+        reason = "taxel_segment_weights[1][3]: weights must be finite and nonnegative";
     }
     SECTION("infinity")
     {
         weights[3] = std::numeric_limits<float>::infinity();
+        reason = "taxel_segment_weights[1][3]: weights must be finite and nonnegative";
     }
     SECTION("rounding within tolerance")
     {
@@ -195,6 +213,16 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
     const auto metadata = core::pack<core::TactileMetadata>(native);
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
-    CHECK(core::verify_metadata(*metadata) == valid);
-    CHECK(core::verify_metadata<core::TactileMetadata>(*metadata) == valid);
+    if (valid)
+    {
+        CHECK_NOTHROW(core::verify_metadata(*metadata));
+        CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata));
+    }
+    else
+    {
+        CHECK_THROWS_WITH(
+            core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
+        CHECK_THROWS_WITH(core::verify_metadata<core::TactileMetadata>(*metadata),
+                          Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
+    }
 }
