@@ -209,6 +209,16 @@ interface CloudXRComponentProps {
   onServerAddress?: (address: string) => void;
 
   /**
+   * Callback fired with the reference space poses are actually streamed in: the one
+   * `config.referenceSpaceType` resolved to (including the 'auto' fallback order and the
+   * WebXRManager last resort), with `config.xrOffset*` already applied. Anything that
+   * needs to express poses in the same frame as the stream should take this rather than
+   * request its own space, which would miss the offset and could resolve differently.
+   * Fired on each session creation; not fired when no space could be resolved.
+   */
+  onReferenceSpace?: (space: XRReferenceSpace) => void;
+
+  /**
    * Callback fired with render performance metrics ({@link CloudXR.MetricsCadence.PerRender}).
    * Payloads are partial - only the fields sampled on this tick are present.
    */
@@ -303,6 +313,7 @@ export default function CloudXRComponent({
   warmupBeginTimeoutMs,
   warmupEndTimeoutMs,
   onServerAddress,
+  onReferenceSpace,
   onRenderPerformanceMetrics,
   onStreamingPerformanceMetrics,
   onNetworkPerformanceMetrics,
@@ -720,6 +731,11 @@ export default function CloudXRComponent({
             referenceSpace = referenceSpace.getOffsetReferenceSpace(offsetTransform);
           }
 
+          // Resolved only now: this is the space the session streams in, after both
+          // the fallback chain and the offset. Published per CloudXR session rather
+          // than here, so a reconnect does not leave the parent without one.
+          const streamingReferenceSpace = referenceSpace;
+
           // Fill in CloudXR session options.
           const cloudXROptions: CloudXR.SessionOptions = {
             serverAddress: connectionConfig.serverIP,
@@ -1085,6 +1101,9 @@ export default function CloudXRComponent({
 
             // Notify parent that session is ready
             onSessionReady?.(cxrSession);
+            // Republished on every attempt, reconnects included: the parent drops its
+            // copy whenever onSessionReady(null) fires, so the two have to stay paired.
+            onReferenceSpace?.(streamingReferenceSpace);
 
             // Start session (synchronous call that initiates connection)
             try {
