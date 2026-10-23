@@ -119,7 +119,11 @@ protected:
     //! Runtime identity of the discovered collection, distinct from its reusable list index.
     std::optional<XrTensorCollectionIDNV> collection_instance_id() const
     {
-        return m_target_collection_index.has_value() ? m_target_collection_id : std::nullopt;
+        if (!m_target_collection)
+        {
+            return std::nullopt;
+        }
+        return m_target_collection->id;
     }
 
 private:
@@ -143,8 +147,12 @@ private:
     PFN_xrUpdateTensorListNV m_update_list_fn{ nullptr };
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };
 
-    std::optional<uint32_t> m_target_collection_index;
-    std::optional<XrTensorCollectionIDNV> m_target_collection_id;
+    struct TargetCollection
+    {
+        uint32_t index;
+        XrTensorCollectionIDNV id;
+    };
+    std::optional<TargetCollection> m_target_collection;
     uint32_t m_sample_batch_stride{ 0 };
     uint32_t m_sample_size{ 0 };
 
