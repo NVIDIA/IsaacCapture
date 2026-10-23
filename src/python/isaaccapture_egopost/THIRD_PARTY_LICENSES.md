@@ -913,7 +913,7 @@ The following packages are installed via `requirements.txt` and
 | scipy | 1.15.3 | BSD-3-Clause | https://pypi.org/project/scipy/ |
 | Pillow | >=13.0.0 | HPND (PIL) | https://pypi.org/project/pillow/ |
 | pyyaml | 6.0.3 | MIT | https://pypi.org/project/pyyaml/ |
-| setuptools | 82.0.1 | MIT | https://pypi.org/project/setuptools/ |
+| setuptools | >=83.0.0 | MIT | https://pypi.org/project/setuptools/ |
 | opencv-python | 4.11.0.86 | Apache-2.0 | https://pypi.org/project/opencv-python/ |
 | ffmpeg-python | 0.2.0 | Apache-2.0 | https://pypi.org/project/ffmpeg-python/ |
 | einops | 0.8.2 | MIT | https://pypi.org/project/einops/ |
@@ -935,9 +935,10 @@ The following packages are installed via `requirements.txt` and
 
 The converter uses a separate environment described by
 [requirements.txt](keypoint_2_soma_converter/requirements.txt) and
-[pyproject.toml](keypoint_2_soma_converter/pyproject.toml). Exact versions below
-come from the requirements file; remaining constraints come from the package
-manifest. These are declared inputs, not a resolved transitive lock file.
+[pyproject.toml](keypoint_2_soma_converter/pyproject.toml). Versions and constraints
+below come from the requirements file where specified; remaining constraints
+come from the package manifest. These are declared inputs, not a resolved
+transitive lock file.
 Installing the package manifest alone permits broader versions for several
 components, including optional `triton>=3.0`.
 
@@ -952,7 +953,7 @@ version's accompanying license when resolving the environment.
 |-----------|----------------------|-----------------|--------|-------------------------|
 | py-soma-x | `0.3.0` | Apache-2.0 | [Package](https://pypi.org/project/py-soma-x/0.3.0/) | [Upstream license](https://github.com/NVlabs/SOMA-X/blob/v0.3.0/LICENSE) |
 | cholespy | `2.2.0` | BSD-3-Clause | [Package](https://pypi.org/project/cholespy/2.2.0/) | [Upstream license](https://github.com/rgl-epfl/cholespy/blob/v2.2.0/LICENSE) |
-| torch | `2.7.1+cu128` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/torch/2.7.1/) | [Upstream license](https://github.com/pytorch/pytorch/blob/v2.7.1/LICENSE) |
+| torch | `>=2.13.0` | BSD-3-Clause; bundled components have additional terms; check selected version | [Package](https://pypi.org/project/torch/) | [Upstream license](https://github.com/pytorch/pytorch/blob/main/LICENSE) |
 | torchvision | `0.22.1+cu128` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/torchvision/0.22.1/) | [Upstream license](https://github.com/pytorch/vision/blob/v0.22.1/LICENSE) |
 | triton | `3.3.1` | MIT | [Package](https://pypi.org/project/triton/3.3.1/) | [Upstream license](https://github.com/triton-lang/triton/blob/v3.3.1/LICENSE) |
 | transformers | `5.18.0` | Apache-2.0 | [Package](https://pypi.org/project/transformers/5.18.0/) | [Upstream license](https://github.com/huggingface/transformers/blob/v5.18.0/LICENSE) |
