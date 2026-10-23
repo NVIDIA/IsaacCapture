@@ -61,6 +61,16 @@ SomaBodyInputIndex: Any = _create_index_enum(
 )
 
 
+class TactileLBSLayoutIndex(IntEnum):
+    """Positions of the arrays in a :func:`TactileLBSLayout` group."""
+
+    SEGMENT_JOINT_IDS = 0
+    SEGMENT_BIND_POSES = 1
+    TAXEL_BIND_POSES = 2
+    TAXEL_SEGMENT_INDICES = 3
+    TAXEL_SEGMENT_WEIGHTS = 4
+
+
 class HandJointIndex(IntEnum):
     """Indices for OpenXR hand joints (XR_HAND_JOINT_COUNT_EXT = 26)."""
 

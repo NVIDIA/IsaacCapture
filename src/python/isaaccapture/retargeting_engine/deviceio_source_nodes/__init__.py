@@ -42,10 +42,7 @@ from .message_channel_config import (
     messageChannelConfig,
 )
 from .haptic_sink import HapticSink
-from .tactile_source import (
-    TactileLBSLayoutIndex,
-    TactileSource,
-)
+from .tactile_source import TactileSource
 from .deviceio_tensor_types import (
     HeadPoseTrackedType,
     HandPoseTrackedType,
@@ -118,7 +115,6 @@ __all__ = [
     "messageChannelConfig",
     "HapticSink",
     "TactileSource",
-    "TactileLBSLayoutIndex",
     "HeadPoseTrackedType",
     "HandPoseTrackedType",
     "ControllerSnapshotTrackedType",

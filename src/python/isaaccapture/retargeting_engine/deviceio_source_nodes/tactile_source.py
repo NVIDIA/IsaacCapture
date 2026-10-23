@@ -10,7 +10,6 @@ fixed at construction so the retargeting graph has a static spec.
 
 from __future__ import annotations
 
-from enum import IntEnum
 from typing import Any, Optional, TYPE_CHECKING
 
 import numpy as np
@@ -25,16 +24,6 @@ from .deviceio_tensor_types import DeviceIOTactileTracked
 if TYPE_CHECKING:
     from isaaccapture.deviceio_trackers import ITracker
     from isaaccapture.schema import TactileDataArray, TactileMetadata
-
-
-class TactileLBSLayoutIndex(IntEnum):
-    """Positions of the arrays in a :func:`TactileLBSLayout` group."""
-
-    SEGMENT_JOINT_IDS = 0
-    SEGMENT_BIND_POSES = 1
-    TAXEL_BIND_POSES = 2
-    TAXEL_SEGMENT_INDICES = 3
-    TAXEL_SEGMENT_WEIGHTS = 4
 
 
 class TactileSource(IDeviceIOSource):
