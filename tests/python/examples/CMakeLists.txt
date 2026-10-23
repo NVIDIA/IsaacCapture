@@ -3,5 +3,6 @@
 
 add_subdirectory(camera_viz)
 add_subdirectory(deviceio_live_view)
+add_subdirectory(mcap_record_replay)
 add_subdirectory(soma_body_publisher)
 add_subdirectory(soma_hand_publisher)

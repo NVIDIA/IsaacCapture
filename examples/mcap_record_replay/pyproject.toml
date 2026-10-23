@@ -18,6 +18,7 @@ dependencies = [
     "isaaccapture[cloudxr]",
     "mcap>=1.2.0",
     "numpy>=1.23.0",
+    "py-soma-x==0.3.1",
     "viser>=0.2.0",
 ]
 
@@ -32,5 +33,5 @@ sources = ["python"]
 [tool.uv.sources]
 # Editable, so edits under src/python/ need no rebuild. Dropped from the
 # installed copy, which has no repo above it.
-# TODO(#880): nothing runs this example in CI; neither path is covered.
+# TODO(#880): the example install paths are not covered in CI.
 isaaccapture = { path = "../..", editable = true }
