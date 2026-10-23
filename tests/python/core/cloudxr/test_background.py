@@ -29,7 +29,7 @@ def stand_in_service(tmp_path, monkeypatch):
     (tmp_path / "stand_in_service.py").write_text(
         "import sys, time\ntime.sleep(float(sys.argv[-1]))\n"
     )
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path), prepend=os.pathsep)
     monkeypatch.setattr(background, "_MODULE", "stand_in_service")
 
 
@@ -218,15 +218,18 @@ class TestTerminate:
         logs_dir = tmp_path / "logs"
 
         pid, _ = background.spawn(["30"], run_dir, logs_dir)
-        assert _poll_read_pid(run_dir) == pid
+        try:
+            assert _poll_read_pid(run_dir) == pid
 
-        assert background.terminate(run_dir, timeout_sec=10) is True
-        assert not background.pid_path(run_dir).exists()
-        # Not `os.kill(pid, 0)`: this process is still the child's parent and
-        # has not reaped it, so the pid survives as a zombie and signalling it
-        # succeeds.  A zombie's /proc/<pid>/cmdline is empty, which is why the
-        # liveness check reports it gone — that is the contract that matters.
-        assert background._is_our_service(pid) is False
+            assert background.terminate(run_dir, timeout_sec=10) is True
+            assert not background.pid_path(run_dir).exists()
+            # Not `os.kill(pid, 0)`: this process is still the child's parent and
+            # has not reaped it, so the pid survives as a zombie and signalling it
+            # succeeds.  A zombie's /proc/<pid>/cmdline is empty, which is why the
+            # liveness check reports it gone — that is the contract that matters.
+            assert background._is_our_service(pid) is False
+        finally:
+            os.kill(pid, signal.SIGKILL)
 
     def test_never_escalates_to_sigkill(self, tmp_path, monkeypatch):
         """SIGKILL would orphan the runtime, which leads its own session."""
