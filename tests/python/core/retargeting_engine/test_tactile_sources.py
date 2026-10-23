@@ -12,6 +12,7 @@ import pytest
 
 from isaaccapture.retargeting_engine.deviceio_source_nodes import TactileSource
 from isaaccapture.retargeting_engine.tensor_types import (
+    DeviceIOTactileIndex,
     TactileLBSLayout,
     TactileLBSLayoutIndex,
 )
@@ -39,8 +40,8 @@ def _source(**kwargs) -> TactileSource:
 
 def _inputs(source, data, metadata) -> dict:
     tg = TensorGroup(source.input_spec()["deviceio_tactile"])
-    tg[0] = data
-    tg[1] = metadata
+    tg[DeviceIOTactileIndex.DATA] = data
+    tg[DeviceIOTactileIndex.METADATA] = metadata
     return {"deviceio_tactile": tg}
 
 

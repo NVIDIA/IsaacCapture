@@ -61,6 +61,13 @@ SomaBodyInputIndex: Any = _create_index_enum(
 )
 
 
+class DeviceIOTactileIndex(IntEnum):
+    """Data and metadata slots in a :func:`DeviceIOTactileTracked` group."""
+
+    DATA = 0
+    METADATA = 1
+
+
 class TactileLBSLayoutIndex(IntEnum):
     """Positions of the arrays in a :func:`TactileLBSLayout` group."""
 
