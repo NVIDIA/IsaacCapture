@@ -73,15 +73,6 @@ def test_nested_views_and_arrays_retain_the_buffer():
     np.testing.assert_array_equal(rows, lbs_arrays()["taxel_bind_poses"])
 
 
-def test_metadata_revalidates_existing_geometry_mapping():
-    geometry_mapping = LBS(**lbs_arrays())
-    geometry_mapping.taxel_segment_weights[0] = 0
-    with pytest.raises(ValueError, match="taxel_segment_weights"):
-        TactileMetadata(
-            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
-        )
-
-
 @pytest.mark.parametrize(
     "field", ["taxel_bind_poses", "taxel_segment_indices", "taxel_segment_weights"]
 )
@@ -110,7 +101,7 @@ def test_rejects_out_of_range_zero_weight_slot():
         )
 
 
-@pytest.mark.parametrize("weight", [-1.0, np.inf, np.nan, 0.5])
+@pytest.mark.parametrize("weight", [-1.0, np.inf, np.nan, 0.5, 0.0])
 def test_rejects_invalid_weights(weight):
     arrays = lbs_arrays()
     arrays["taxel_segment_weights"][0, 0] = weight

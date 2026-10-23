@@ -3,9 +3,10 @@
 
 """Tests for the TactileSource DeviceIO converter.
 
-Payloads are built through the real schema bindings; no OpenXR device is involved.
-Session-backed tracker reads are covered in tests/cpp/core/replay_deviceio_session.
+Payloads use real schema bindings; polling uses a mock tracker.
 """
+
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -49,7 +50,10 @@ def _outputs(source) -> dict:
 
 
 def _metadata(
-    num_segments: int = NUM_SEGMENTS, num_taxels: int = NUM_TAXELS
+    num_segments: int = NUM_SEGMENTS,
+    num_taxels: int = NUM_TAXELS,
+    *,
+    taxel_x: float = 0.01,
 ) -> TactileMetadata:
     indices = np.zeros((num_taxels, 4), np.uint32)
     weights = np.zeros((num_taxels, 4), np.float32)
@@ -57,7 +61,7 @@ def _metadata(
     segment_poses = np.zeros((num_segments, 7), np.float32)
     segment_poses[:, 6] = 1
     taxel_poses = np.zeros((num_taxels, 7), np.float32)
-    taxel_poses[:, :3] = 0.01
+    taxel_poses[:, :3] = (taxel_x, 0.01, 0.01)
     taxel_poses[:, 6] = 1
     return TactileMetadata(
         LBS(segment_poses, taxel_poses, indices, weights),
@@ -68,6 +72,23 @@ def _metadata(
 class TestTactileSource:
     def test_creation_and_tracker(self):
         assert _source().get_tracker().get_name() == "TactileTracker"
+
+    def test_poll_reads_data_and_metadata_from_one_tracker(self):
+        src = _source()
+        data = TactileDataArray(np.zeros((NUM_TAXELS, 3), np.float32))
+        metadata = _metadata()
+        tracker = MagicMock()
+        tracker.get_data.return_value = data
+        tracker.get_metadata.return_value = metadata
+        src._tracker = tracker
+        session = object()
+
+        inputs = src.poll_tracker(session)
+
+        tracker.get_data.assert_called_once_with(session)
+        tracker.get_metadata.assert_called_once_with(session)
+        assert inputs["deviceio_tactile"][DeviceIOTactileIndex.TRACKED] is data
+        assert inputs["deviceio_tactile"][DeviceIOTactileIndex.METADATA] is metadata
 
     def test_specs(self):
         src = _source()
@@ -164,8 +185,7 @@ class TestTactileSource:
         src = _source()
         metadata = _metadata()
         first = src(_inputs(src, None, metadata))
-        replacement = _metadata()
-        replacement.geometry_mapping.taxel_bind_poses[:, 0] = 0.02
+        replacement = _metadata(taxel_x=0.02)
         second = src(_inputs(src, None, replacement))
 
         for index in TactileLBSLayoutIndex:

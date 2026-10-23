@@ -86,9 +86,7 @@ TEST_CASE("TactileMetadata semantic verification accepts valid metadata", "[unit
 {
     const auto metadata = core::pack<core::TactileMetadata>(make_metadata());
     CHECK_NOTHROW(core::verify_metadata(*metadata));
-    CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata));
     CHECK_NOTHROW(core::verify_metadata(*metadata, "tactile/right"));
-    CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata, "tactile/right"));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", "[unit][tactile_metadata]")
@@ -221,14 +219,11 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
     if (valid)
     {
         CHECK_NOTHROW(core::verify_metadata(*metadata));
-        CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata));
     }
     else
     {
         CHECK_THROWS_WITH(
             core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
-        CHECK_THROWS_WITH(core::verify_metadata<core::TactileMetadata>(*metadata),
-                          Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
     }
 }
 
