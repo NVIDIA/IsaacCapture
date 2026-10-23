@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+# Optional media and rendering tools for the full installation.
+opencv-python==4.11.0.86
+ffmpeg-python==0.2.0
+av==13.1.0
+pyrender==0.1.45
