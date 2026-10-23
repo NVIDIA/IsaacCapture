@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="System Requirements" href="../references/requirements.html" />
-    <link rel="prev" title="Spatial Trackers and Device Data" href="trackers.html" />
+    <link rel="prev" title="VIVE Ultimate Tracker" href="trackers/vive_ultimate_tracker.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -348,6 +348,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -372,13 +376,14 @@
 <li class="toctree-l1"><a class="reference internal" href="tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Add a New Device</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -387,7 +392,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -618,12 +622,12 @@ samples, writes each of them to MCAP when channels are attached, and publishes t
 one. A tick with no new samples leaves the last-known handle in place; an absent
 collection empties it.</p></li>
 <li><p><strong>get_data()</strong> — Return the published handle. See
-<a class="reference internal" href="trackers.html#data-schema-convention"><span class="std std-ref">Reading a payload</span></a> for what a consumer may assume about it.</p></li>
+<a class="reference internal" href="trackers/index.html#data-schema-convention"><span class="std std-ref">Reading a payload</span></a> for what a consumer may assume about it.</p></li>
 </ul>
 <p>Recording needs no per-tracker serialization code: <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> writes through
 <code class="docutils literal notranslate"><span class="pre">McapTrackerChannels</span></code>, which wraps the payload in the Record type with its
 <code class="docutils literal notranslate"><span class="pre">DeviceDataTimestamp</span></code>. It writes two sub-channels, and replay reads only the
-second – see <a class="reference internal" href="trackers.html#tracked-sub-channel"><span class="std std-ref">The _tracked recording sub-channel</span></a> before overriding <code class="docutils literal notranslate"><span class="pre">mcap_channels</span></code> in a
+second – see <a class="reference internal" href="trackers/index.html#tracked-sub-channel"><span class="std std-ref">The _tracked recording sub-channel</span></a> before overriding <code class="docutils literal notranslate"><span class="pre">mcap_channels</span></code> in a
 manifest entry.</p>
 <p>Reference implementation — generated <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> reader and a hand-written OpenXR
 locate tracker:</p>
@@ -725,12 +729,12 @@ trackers during the update loop.</p></li>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="trackers.html"
+       href="trackers/vive_ultimate_tracker.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Spatial Trackers and Device Data</p>
+        <p class="prev-next-title">VIVE Ultimate Tracker</p>
       </div>
     </a>
     <a class="right-next"
