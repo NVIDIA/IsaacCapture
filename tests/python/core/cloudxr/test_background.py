@@ -19,6 +19,30 @@ _posix_only = pytest.mark.skipif(
 )
 
 
+@pytest.fixture
+def stand_in_service(tmp_path, monkeypatch):
+    """Have spawn() run a module that sleeps for its last argument.
+
+    Stands in for the real service, which needs a GPU.  Not ``-m time``: a
+    builtin has no code object, so that child exits within milliseconds.
+    """
+    (tmp_path / "stand_in_service.py").write_text(
+        "import sys, time\ntime.sleep(float(sys.argv[-1]))\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setattr(background, "_MODULE", "stand_in_service")
+
+
+def _poll_read_pid(run_dir: str) -> int | None:
+    """read_pid(), polled: a new child's cmdline can be empty when Popen() returns."""
+    deadline = time.monotonic() + 2.0
+    pid = background.read_pid(run_dir)
+    while pid is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+        pid = background.read_pid(run_dir)
+    return pid
+
+
 @_posix_only
 class TestReadPid:
     """A pid file outlives its process, and pids get reused."""
@@ -58,15 +82,7 @@ class TestReadPid:
         )
         try:
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
-            # A freshly spawned pid's /proc/<pid>/cmdline isn't guaranteed to be
-            # populated the instant Popen() returns, especially on a loaded CI
-            # runner - poll briefly instead of asserting on the very first read.
-            deadline = time.monotonic() + 2.0
-            pid = background.read_pid(str(tmp_path))
-            while pid is None and time.monotonic() < deadline:
-                time.sleep(0.05)
-                pid = background.read_pid(str(tmp_path))
-            assert pid == proc.pid
+            assert _poll_read_pid(str(tmp_path)) == proc.pid
         finally:
             proc.kill()
             proc.wait()
@@ -94,13 +110,11 @@ class TestReadPid:
 class TestSpawn:
     """Tests for the detached spawn itself."""
 
-    def test_child_leads_its_own_session(self, tmp_path, monkeypatch):
+    def test_child_leads_its_own_session(self, tmp_path, stand_in_service):
         """The whole point: a signal aimed at our process group must miss it."""
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
 
-        # Stand in for `-m isaaccapture.cloudxr.service run`, which needs a GPU.
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, log = background.spawn(["30"], run_dir, logs_dir)
         try:
             assert os.getsid(pid) == pid  # session leader
@@ -139,14 +153,13 @@ class TestSpawn:
         assert "ISAACCAPTURE_LOG_SOCKET" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
 
-    def test_log_is_appended_not_truncated(self, tmp_path, monkeypatch):
+    def test_log_is_appended_not_truncated(self, tmp_path, stand_in_service):
         """A restart must not erase the log that explains the last crash."""
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir(parents=True)
         background.log_path(logs_dir).write_text("earlier run\n")
 
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, log = background.spawn(["30"], run_dir, logs_dir)
         try:
             assert log.read_text().startswith("earlier run")
@@ -200,12 +213,12 @@ class TestTerminate:
         assert background.terminate(str(tmp_path)) is False
         assert not background.pid_path(str(tmp_path)).exists()
 
-    def test_sigterm_and_clears_the_pid_file(self, tmp_path, monkeypatch):
+    def test_sigterm_and_clears_the_pid_file(self, tmp_path, stand_in_service):
         run_dir = str(tmp_path / "run")
         logs_dir = tmp_path / "logs"
 
-        monkeypatch.setattr(background, "_MODULE", "time")
         pid, _ = background.spawn(["30"], run_dir, logs_dir)
+        assert _poll_read_pid(run_dir) == pid
 
         assert background.terminate(run_dir, timeout_sec=10) is True
         assert not background.pid_path(run_dir).exists()
