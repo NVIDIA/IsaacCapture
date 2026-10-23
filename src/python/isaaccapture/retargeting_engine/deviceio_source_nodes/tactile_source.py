@@ -81,6 +81,7 @@ class TactileSource(IDeviceIOSource):
           until the tracker holds the device's metadata. The tracker publishes no forces before then.
 
     A frame or metadata whose counts differ from the constructor's raises ``ValueError``.
+    Layout arrays are reused across frames; copy them before modifying them.
     """
 
     FORCES = "taxel_forces"
@@ -112,6 +113,8 @@ class TactileSource(IDeviceIOSource):
         )
         self._num_segments = int(num_segments)
         self._num_taxels = int(num_taxels)
+        self._layout: tuple[np.ndarray, ...] | None = None
+        self._layout_bind_poses: np.ndarray | None = None
         super().__init__(name)
 
     def get_tracker(self) -> "ITracker":
@@ -139,7 +142,7 @@ class TactileSource(IDeviceIOSource):
         }
 
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
-        """Publish forces and a copied LBS layout; mark absent outputs with ``set_none()``."""
+        """Publish forces and a cached LBS layout; mark absent outputs with ``set_none()``."""
         data: "TactileDataArray | None" = inputs["deviceio_tactile"][0]
         metadata: "TactileMetadata | None" = inputs["deviceio_tactile"][1]
 
@@ -164,26 +167,38 @@ class TactileSource(IDeviceIOSource):
             raise ValueError(
                 f"{self.name}: metadata must specify geometry_mapping and segment_source"
             )
-        num_segments, num_taxels = (
-            len(segment_source.joint_ids),
-            len(geometry_mapping.taxel_bind_poses),
-        )
-        if (num_segments, num_taxels) != (self._num_segments, self._num_taxels):
-            raise ValueError(
-                f"{self.name}: metadata has {num_segments} segments and {num_taxels} taxels, "
-                f"source expects {self._num_segments} and {self._num_taxels}"
+        # Normalize the schema stub's array type without copying its storage.
+        segment_bind_poses = np.asarray(geometry_mapping.segment_bind_poses)
+        if (
+            self._layout is None
+            or self._layout_bind_poses is None
+            or not np.shares_memory(segment_bind_poses, self._layout_bind_poses)
+        ):
+            num_segments, num_taxels = (
+                len(segment_source.joint_ids),
+                len(geometry_mapping.taxel_bind_poses),
             )
-        values = (
-            np.asarray(segment_source.joint_ids, dtype=np.int32),
-            geometry_mapping.segment_bind_poses,
-            geometry_mapping.taxel_bind_poses,
-            geometry_mapping.taxel_segment_indices,
-            geometry_mapping.taxel_segment_weights,
-        )
-        for index, value in enumerate(values):
-            # Schema stubs have mixed array types; normalize before NumPy operations.
-            array = np.asarray(value)
-            # Copied: the views alias the metadata the tracker holds and compares later pushes to.
-            layout_out[index] = array.astype(
-                np.int32 if array.dtype == np.uint32 else array.dtype
+            if (num_segments, num_taxels) != (self._num_segments, self._num_taxels):
+                raise ValueError(
+                    f"{self.name}: metadata has {num_segments} segments and {num_taxels} taxels, "
+                    f"source expects {self._num_segments} and {self._num_taxels}"
+                )
+            values = (
+                np.asarray(segment_source.joint_ids, dtype=np.int32),
+                segment_bind_poses,
+                geometry_mapping.taxel_bind_poses,
+                geometry_mapping.taxel_segment_indices,
+                geometry_mapping.taxel_segment_weights,
             )
+            arrays = []
+            for value in values:
+                # Copy once: graph consumers must not alter the tracker's metadata baseline.
+                array = np.asarray(value)
+                arrays.append(
+                    array.astype(np.int32 if array.dtype == np.uint32 else array.dtype)
+                )
+            self._layout = tuple(arrays)
+            # Views keep the buffer alive and identify it across fresh Python wrappers.
+            self._layout_bind_poses = segment_bind_poses
+        for index, array in enumerate(self._layout):
+            layout_out[index] = array

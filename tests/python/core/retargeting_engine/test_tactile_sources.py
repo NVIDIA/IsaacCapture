@@ -165,3 +165,59 @@ class TestTactileSource:
         src = _source(num_segments=NUM_SEGMENTS + 1)
         with pytest.raises(ValueError, match="2 segments"):
             src.compute(_inputs(src, None, _metadata()), _outputs(src))
+
+    def test_layout_arrays_are_reused_while_forces_update(self):
+        src = _source()
+        metadata = _metadata()
+        first = src(
+            _inputs(
+                src, TactileDataArray(np.zeros((NUM_TAXELS, 3), np.float32)), metadata
+            )
+        )
+        second = src(
+            _inputs(
+                src, TactileDataArray(np.ones((NUM_TAXELS, 3), np.float32)), metadata
+            )
+        )
+
+        assert first[TactileSource.LAYOUT] is not second[TactileSource.LAYOUT]
+        for index in TactileLBSLayoutIndex:
+            array = first[TactileSource.LAYOUT][index]
+            assert second[TactileSource.LAYOUT][index] is array
+            np.testing.assert_array_equal(np.from_dlpack(array), array)
+        np.testing.assert_array_equal(first[TactileSource.FORCES][0], 0)
+        np.testing.assert_array_equal(second[TactileSource.FORCES][0], 1)
+
+    def test_layout_cache_follows_the_metadata_buffer(self):
+        src = _source()
+        metadata = _metadata()
+        first = src(_inputs(src, None, metadata))
+        replacement = _metadata()
+        replacement.geometry_mapping.taxel_bind_poses[:, 0] = 0.02
+        second = src(_inputs(src, None, replacement))
+
+        for index in TactileLBSLayoutIndex:
+            assert (
+                second[TactileSource.LAYOUT][index]
+                is not first[TactileSource.LAYOUT][index]
+            )
+        taxel_poses = TactileLBSLayoutIndex.TAXEL_BIND_POSES
+        np.testing.assert_array_equal(
+            first[TactileSource.LAYOUT][taxel_poses][:, 0], np.float32(0.01)
+        )
+        np.testing.assert_array_equal(
+            second[TactileSource.LAYOUT][taxel_poses][:, 0], np.float32(0.02)
+        )
+
+        with pytest.raises(ValueError, match="4 taxels"):
+            src(_inputs(src, None, _metadata(num_taxels=NUM_TAXELS + 1)))
+
+        outputs = _outputs(src)
+        src.compute(_inputs(src, None, None), outputs)
+        assert outputs[TactileSource.LAYOUT].is_none
+        src.compute(_inputs(src, None, replacement), outputs)
+        for index in TactileLBSLayoutIndex:
+            assert (
+                outputs[TactileSource.LAYOUT][index]
+                is second[TactileSource.LAYOUT][index]
+            )
