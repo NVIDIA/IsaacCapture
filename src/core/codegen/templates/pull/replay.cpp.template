@@ -5,10 +5,13 @@
 
 #include <mcap/recording_traits.hpp>
 #if @HAS_METADATA@
+#include <schema/metadata_validation.hpp>
 #include <schema/@METADATA_SCHEMA@_bfbs_generated.h>
 #endif
 #include <schema/@SCHEMA@_bfbs_generated.h>
 
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -23,7 +26,14 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapRe
     McapTrackerViewers<@METADATA@> viewers(
         std::move(reader), base_name,
         std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()), recorded);
-    return viewers.read(0);
+    auto metadata = viewers.read(0);
+    // MCAP verifies structure; apply the same schema semantics as live ingestion.
+    if (metadata && !verify_metadata(*metadata))
+    {
+        throw std::runtime_error(std::string(base_name) + ": metadata failed semantic verification for " +
+                                 @METADATA@::GetFullyQualifiedName());
+    }
+    return metadata;
 }
 @REPLAY_IMPL@::@REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
                              std::string_view base_name,
