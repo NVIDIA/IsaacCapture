@@ -489,6 +489,12 @@ and is <strong>not compatible with</strong> <code class="docutils literal notran
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TELEOP_OOB_HUB_ONLY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob
 </pre></div>
 </div>
+<p>Hub-only mode does not launch the headset or deliver a bookmark, so build the
+headset URL yourself (Quick start, Step 2 — manual fallback) with the
+session token. With <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code>
+unset, the generated token is printed in the startup banner on the service’s
+stdout; under <code class="docutils literal notranslate"><span class="pre">service</span> <span class="pre">start</span></code> that is <code class="docutils literal notranslate"><span class="pre">service.log</span></code> in the logs directory.
+Set <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code> yourself to avoid looking it up there.</p>
 <p>You should see output confirming the hub is running:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>CloudXR WSS proxy: running, log file: /home/&lt;user&gt;/.cloudxr/logs/wss.2026-04-13T202133Z.log
         oob:       enabled  (hub + USB adb automation — see OOB TELEOP block)
