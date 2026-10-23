@@ -520,9 +520,10 @@ class TestWssProxyStartup:
             finally:
                 service._stop_wss_proxy()
 
+    @pytest.mark.parametrize("hub_only", [False, True])
     @pytest.mark.parametrize("configured", ["operator-chosen", None])
     def test_control_token_is_the_one_the_hub_enforces(
-        self, tmp_path, monkeypatch, configured
+        self, tmp_path, monkeypatch, configured, hub_only
     ):
         from isaaccapture.cloudxr.oob_teleop_hub import OOBControlHub
 
@@ -537,6 +538,10 @@ class TestWssProxyStartup:
             monkeypatch.setenv("CONTROL_TOKEN", configured)
         else:
             monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+        if hub_only:
+            monkeypatch.setenv("TELEOP_OOB_HUB_ONLY", "1")
+        else:
+            monkeypatch.delenv("TELEOP_OOB_HUB_ONLY", raising=False)
         with (
             mock_service_deps(tmp_path, wss=False),
             _stub_wss(proxy),
