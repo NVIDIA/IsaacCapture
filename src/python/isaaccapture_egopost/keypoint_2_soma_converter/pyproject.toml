@@ -16,7 +16,7 @@ dependencies = [
   "py-soma-x==0.3.0",
   "numpy>=1.26",
   "scipy>=1.11",
-  "torch>=2.6",
+  "torch>=2.13.0",
   "torchvision>=0.22",
   "transformers==5.18.0",
   "opencv-python-headless>=4.9",
