@@ -322,8 +322,7 @@ TEST_CASE("Replay tactile metadata is semantically verified before force data is
     {
         REQUIRE_THROWS_WITH(core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring(reason));
         CHECK_THROWS_WITH(core::ReplayTactileTrackerImpl::read_metadata(open_reader(path), base_name, recorded),
-                          Catch::Matchers::ContainsSubstring("TactileMetadata." + reason) &&
-                              Catch::Matchers::ContainsSubstring(std::string(base_name)));
+                          Catch::Matchers::StartsWith(std::string(base_name) + ": TactileMetadata." + reason));
         return;
     }
 
@@ -368,7 +367,7 @@ TEST_CASE("Live tactile metadata is semantically verified before adoption and re
 
         runtime.push(METADATA_COLLECTION, invalid.buffer(), 1);
         CHECK_THROWS_WITH(tracker.update(),
-                          Catch::Matchers::ContainsSubstring(METADATA_COLLECTION + ": TactileMetadata.") &&
+                          Catch::Matchers::StartsWith(METADATA_COLLECTION + ": TactileMetadata.") &&
                               Catch::Matchers::ContainsSubstring("taxel_segment_weights[0]: weights must sum to one"));
         CHECK_FALSE(tracker.get());
 

@@ -110,14 +110,7 @@ private:
         if (!metadata_)
         {
             // Schema-specific dispatch belongs to the schema layer, not this generic reader.
-            try
-            {
-                verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data()));
-            }
-            catch (const std::runtime_error& error)
-            {
-                throw std::runtime_error(collection_id + ": " + error.what());
-            }
+            verify_metadata(*flatbuffers::GetRoot<MetadataT>(sample.buffer.data()), collection_id);
 
             const int64_t log_time_ns = sample.timestamp.available_time_local_common_clock();
             metadata_ = Serialized<MetadataT>::adopt(std::move(sample.buffer));

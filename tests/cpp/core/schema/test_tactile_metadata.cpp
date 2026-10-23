@@ -87,6 +87,8 @@ TEST_CASE("TactileMetadata semantic verification accepts valid metadata", "[unit
     const auto metadata = core::pack<core::TactileMetadata>(make_metadata());
     CHECK_NOTHROW(core::verify_metadata(*metadata));
     CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata));
+    CHECK_NOTHROW(core::verify_metadata(*metadata, "tactile/right"));
+    CHECK_NOTHROW(core::verify_metadata<core::TactileMetadata>(*metadata, "tactile/right"));
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", "[unit][tactile_metadata]")
@@ -118,6 +120,7 @@ TEST_CASE("TactileMetadata semantic verification rejects inconsistent lengths", 
     flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
     REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
     CHECK_THROWS_WITH(core::verify_metadata(*metadata), "TactileMetadata." + reason);
+    CHECK_THROWS_WITH(core::verify_metadata(*metadata, "tactile/right"), "tactile/right: TactileMetadata." + reason);
 }
 
 TEST_CASE("TactileMetadata semantic verification rejects invalid or repeated joints", "[unit][tactile_metadata]")

@@ -10,7 +10,6 @@
 #endif
 #include <schema/@SCHEMA@_bfbs_generated.h>
 
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,14 +29,7 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapRe
     // MCAP verifies structure; apply the same schema semantics as live ingestion.
     if (metadata)
     {
-        try
-        {
-            verify_metadata(*metadata);
-        }
-        catch (const std::runtime_error& error)
-        {
-            throw std::runtime_error(std::string(base_name) + ": " + error.what());
-        }
+        verify_metadata(*metadata, base_name);
     }
     return metadata;
 }
