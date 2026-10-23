@@ -1441,9 +1441,10 @@ def test_a_link_read_as_its_target_takes_the_targets_precedence(tmp_path):
     ("name", "head"),
     [
         ("icon.svg", "<!-- Copyright 2020 Bar Ltd -->\n<svg/>\n"),
+        ("bang.svg", "<!-- Copyright 2020 Bar Ltd --!>\n<svg/>\n"),
         ("x.c", "/* Copyright 2020 Bar Ltd */\nint x;\n"),
     ],
-    ids=["html", "c"],
+    ids=["html", "html-bang-end", "c"],
 )
 def test_comment_markup_is_not_part_of_a_scraped_holder(tmp_path, name, head):
     component = _vendored(tmp_path, {f"src/{name}": head})["vendored:bar-ltd"]
