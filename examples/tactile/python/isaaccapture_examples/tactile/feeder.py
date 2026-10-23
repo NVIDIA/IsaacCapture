@@ -48,47 +48,58 @@ FINGER_FIRST_JOINTS = (2, 6, 11, 16, 21)
 FINGER_DISTAL_JOINTS = (4, 9, 14, 19, 24)
 
 
-def mock_metadata(num_joints: int, num_taxels: int) -> TactileMetadata:
+def mock_metadata(joint_ids: list[HandJoint], num_taxels: int) -> TactileMetadata:
     """Build metadata for a flat hand with taxels on its distal segments."""
-    positions = np.zeros((num_joints, 3), np.float32)
-    positions[0] = (0.0, 0.05, 0.0)
+    num_segments = len(joint_ids)
+    # LBS indices address joint_ids rows, not HandJoint ordinals.
+    segment_by_joint = {int(joint): segment for segment, joint in enumerate(joint_ids)}
+    positions = np.zeros((num_segments, 3), np.float32)
+    if int(HandJoint.PALM) in segment_by_joint:
+        positions[segment_by_joint[int(HandJoint.PALM)]] = (0.0, 0.05, 0.0)
 
-    taxel_joint_ids = []
+    taxel_segments = []
     for finger, first in enumerate(FINGER_FIRST_JOINTS):
-        if first >= num_joints:
-            break
         finger_end = (
-            FINGER_FIRST_JOINTS[finger + 1] - 1 if finger < 4 else MAX_NUM_JOINTS - 1
+            FINGER_FIRST_JOINTS[finger + 1]
+            if finger < len(FINGER_FIRST_JOINTS) - 1
+            else int(HandJoint.NUM_JOINTS)
         )
-        last = min(finger_end, num_joints - 1)
-        for joint in range(first, last + 1):
-            positions[joint] = (
+        finger_joints = [
+            joint for joint in range(first, finger_end) if joint in segment_by_joint
+        ]
+        if not finger_joints:
+            continue
+        for joint in finger_joints:
+            positions[segment_by_joint[joint]] = (
                 -0.04 + 0.02 * finger,
                 0.02 + 0.025 * (joint - first),
                 0.0,
             )
-        taxel_joint_ids.append(min(FINGER_DISTAL_JOINTS[finger], last))
+        joint = min(
+            finger_joints, key=lambda joint: abs(joint - FINGER_DISTAL_JOINTS[finger])
+        )
+        taxel_segments.append(segment_by_joint[joint])
 
-    if not taxel_joint_ids:
-        taxel_joint_ids.append(WRIST)
+    if not taxel_segments:
+        taxel_segments.append(segment_by_joint.get(WRIST, 0))
 
     taxel_positions = np.zeros((num_taxels, 3), np.float32)
     taxel_segment_indices = np.zeros((num_taxels, 4), np.uint32)
     taxel_segment_weights = np.zeros((num_taxels, 4), np.float32)
-    per_segment = math.ceil(num_taxels / len(taxel_joint_ids))
+    per_segment = math.ceil(num_taxels / len(taxel_segments))
     for taxel in range(num_taxels):
-        segment, slot = taxel % len(taxel_joint_ids), taxel // len(taxel_joint_ids)
-        joint = taxel_joint_ids[segment]
-        taxel_positions[taxel] = positions[joint] + (
+        segment_index = taxel_segments[taxel % len(taxel_segments)]
+        slot = taxel // len(taxel_segments)
+        taxel_positions[taxel] = positions[segment_index] + (
             0.0,
             0.02 * slot / per_segment,
             -0.005,
         )
-        taxel_segment_indices[taxel] = joint
+        taxel_segment_indices[taxel] = segment_index
         taxel_segment_weights[taxel, 0] = 1.0
 
     segment_poses = np.column_stack(
-        (positions, np.tile([0.0, 0.0, 0.0, 1.0], (num_joints, 1)))
+        (positions, np.tile([0.0, 0.0, 0.0, 1.0], (num_segments, 1)))
     )
     taxel_poses = np.column_stack(
         (taxel_positions, np.tile([1.0, 0.0, 0.0, 0.0], (num_taxels, 1)))
@@ -97,7 +108,7 @@ def mock_metadata(num_joints: int, num_taxels: int) -> TactileMetadata:
         geometry_mapping=LBS(
             segment_poses, taxel_poses, taxel_segment_indices, taxel_segment_weights
         ),
-        segment_source=HandSkeletonRef([HandJoint(i) for i in range(num_joints)]),
+        segment_source=HandSkeletonRef(joint_ids),
     )
 
 
@@ -139,7 +150,8 @@ def main(argv: list[str]) -> int:
     if not math.isfinite(args.metadata_interval) or args.metadata_interval <= 0:
         parser.error("--metadata-interval must be finite and positive")
 
-    metadata_bytes = mock_metadata(args.joints, args.taxels).to_bytes()
+    joint_ids = [HandJoint(i) for i in range(args.joints)]
+    metadata_bytes = mock_metadata(joint_ids, args.taxels).to_bytes()
     if len(metadata_bytes) > TRACKER_METADATA_MAX_SIZE:
         parser.error(
             f"{args.joints} joints and {args.taxels} taxels make a {len(metadata_bytes)} B TactileMetadata; "
