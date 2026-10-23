@@ -657,9 +657,8 @@ discover it. Publish the same encoded metadata throughout the tracker session.
 and exposes it through <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code>. It withholds force data until metadata
 is confirmed. Different or invalid metadata causes an error; after a producer
 restart, its metadata must be confirmed again. See <a class="reference internal" href="../../references/generated_trackers.html#tracker-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
-<p>The default force-buffer size is 16,384 bytes; larger frames require a matching
-<code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code> on the producer and consumer. Metadata has its own
-<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> limit of 68,864 bytes, including FlatBuffer overhead.
+<p>The force-buffer size is defined by <code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code>. Metadata has its own
+<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> limit, including FlatBuffer overhead.
 The data array length must match the metadata’s taxel count.</p>
 <p>Applications can read <code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> directly for live or replay data.
 Retargeting graphs can instead use <code class="docutils literal notranslate"><span class="pre">TactileSource(name,</span> <span class="pre">collection_id,</span>
