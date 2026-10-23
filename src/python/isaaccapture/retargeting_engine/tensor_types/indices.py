@@ -25,6 +25,7 @@ from .standard_types import (
     FullBodyInput,
     SomaBodyInput,
 )
+from .tactile_types import TactileLBSLayout
 
 
 def _create_index_enum(name: str, group_type, prefix: str = "") -> IntEnum:
@@ -59,6 +60,9 @@ FullBodyInputIndex: Any = _create_index_enum(
 SomaBodyInputIndex: Any = _create_index_enum(
     "SomaBodyInputIndex", SomaBodyInput(), "soma_body_"
 )
+TactileLBSLayoutIndex: Any = _create_index_enum(
+    "TactileLBSLayoutIndex", TactileLBSLayout(0, 0)
+)
 
 
 class DeviceIOTactileIndex(IntEnum):
@@ -66,16 +70,6 @@ class DeviceIOTactileIndex(IntEnum):
 
     DATA = 0
     METADATA = 1
-
-
-class TactileLBSLayoutIndex(IntEnum):
-    """Positions of the arrays in a :func:`TactileLBSLayout` group."""
-
-    SEGMENT_JOINT_IDS = 0
-    SEGMENT_BIND_POSES = 1
-    TAXEL_BIND_POSES = 2
-    TAXEL_SEGMENT_INDICES = 3
-    TAXEL_SEGMENT_WEIGHTS = 4
 
 
 class HandJointIndex(IntEnum):

@@ -13,7 +13,6 @@ import pytest
 from isaaccapture.retargeting_engine.deviceio_source_nodes import TactileSource
 from isaaccapture.retargeting_engine.tensor_types import (
     DeviceIOTactileIndex,
-    TactileLBSLayout,
     TactileLBSLayoutIndex,
 )
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
@@ -77,10 +76,6 @@ class TestTactileSource:
         assert forces.is_optional
         assert forces.inner_type.types[0].shape == (NUM_TAXELS, 3)
         assert src.output_spec()[TactileSource.LAYOUT].is_optional
-
-    def test_index_matches_layout_order(self):
-        names = [t.name for t in TactileLBSLayout(NUM_SEGMENTS, NUM_TAXELS).types]
-        assert names == [member.name.lower() for member in TactileLBSLayoutIndex]
 
     def test_active_conversion(self):
         src = _source()
