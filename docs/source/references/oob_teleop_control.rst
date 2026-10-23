@@ -64,7 +64,8 @@ and is **not compatible with** ``--usb-local``:
    TELEOP_OOB_HUB_ONLY=1 python -m isaaccapture.cloudxr.service run --accept-eula --setup-oob
 
 Hub-only mode does not launch the headset or deliver a bookmark, so build the
-headset URL yourself (see below) with the session token. With ``CONTROL_TOKEN``
+headset URL yourself (Quick start, Step 2 — manual fallback) with the
+session token. With ``CONTROL_TOKEN``
 unset, the generated token is printed in the startup banner on the service's
 stdout; under ``service start`` that is ``service.log`` in the logs directory.
 Set ``CONTROL_TOKEN`` yourself to avoid looking it up there.
