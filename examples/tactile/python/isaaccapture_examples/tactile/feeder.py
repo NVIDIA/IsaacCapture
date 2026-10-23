@@ -13,7 +13,6 @@ import logging
 import math
 import sys
 import time
-from contextlib import ExitStack
 
 import numpy as np
 
@@ -167,26 +166,22 @@ def main(argv: list[str]) -> int:
 
     frames = 0
     last_metadata_push = -math.inf
-    with ExitStack() as stack:
-        stack.enter_context(CloudXRLauncher.launch_context(args))
-        data_tracker = TensorPushTracker(
-            args.collection_id, "tactile", TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE
-        )
-        metadata_tracker = TensorPushTracker(
-            tracker_metadata_collection_id(args.collection_id),
-            TRACKER_METADATA_TENSOR_IDENTIFIER,
-            len(metadata_bytes),
-        )
-        trackers = [data_tracker, metadata_tracker]
-        oxr_session = stack.enter_context(
-            OpenXRSession(
-                "TactileFeeder", DeviceIOSession.get_required_extensions(trackers)
-            )
-        )
-        session = stack.enter_context(
-            DeviceIOSession.run(trackers, oxr_session.get_handles())
-        )
-
+    data_tracker = TensorPushTracker(
+        args.collection_id, "tactile", TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE
+    )
+    metadata_tracker = TensorPushTracker(
+        tracker_metadata_collection_id(args.collection_id),
+        TRACKER_METADATA_TENSOR_IDENTIFIER,
+        len(metadata_bytes),
+    )
+    trackers = [data_tracker, metadata_tracker]
+    with (
+        CloudXRLauncher.launch_context(args),
+        OpenXRSession(
+            "TactileFeeder", DeviceIOSession.get_required_extensions(trackers)
+        ) as oxr_session,
+        DeviceIOSession.run(trackers, oxr_session.get_handles()) as session,
+    ):
         start = time.monotonic()
         try:
             while args.duration <= 0 or time.monotonic() - start < args.duration:
