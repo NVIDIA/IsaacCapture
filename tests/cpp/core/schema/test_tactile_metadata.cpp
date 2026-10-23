@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <flatbuffers/flatbuffers.h>
 #include <schema/metadata_validation.hpp>
@@ -9,6 +10,7 @@
 #include <schema/tactile_metadata_generated.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -224,5 +226,83 @@ TEST_CASE("TactileMetadata semantic verification checks each taxel's weights", "
             core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
         CHECK_THROWS_WITH(core::verify_metadata<core::TactileMetadata>(*metadata),
                           Catch::Matchers::ContainsSubstring("TactileMetadata." + reason));
+    }
+}
+
+TEST_CASE("TactileMetadata semantic verification rejects nonfinite bind poses", "[unit][tactile_metadata]")
+{
+    const bool segment = GENERATE(true, false);
+    const auto component = GENERATE(0, 1, 2, 3, 4, 5, 6);
+    const auto value = GENERATE(std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                -std::numeric_limits<float>::infinity());
+    const std::string field = segment ? "segment_bind_poses" : "taxel_bind_poses";
+    CAPTURE(field, component, value);
+    auto native = make_metadata();
+    auto& lbs = *native.geometry_mapping.AsLBS();
+    auto& poses = segment ? lbs.segment_bind_poses : lbs.taxel_bind_poses;
+    std::array<float, 7> row = { 0, 0, 0, 0, 0, 0, 1 };
+    row[component] = value;
+    poses.back() = core::Pose(core::Point(row[0], row[1], row[2]), core::Quaternion(row[3], row[4], row[5], row[6]));
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    CHECK_THROWS_WITH(
+        core::verify_metadata(*metadata),
+        Catch::Matchers::ContainsSubstring(field + "[" + std::to_string(poses.size() - 1) + "]: poses must be finite"));
+}
+
+TEST_CASE("TactileMetadata semantic verification checks bind quaternion norms", "[unit][tactile_metadata]")
+{
+    const bool segment = GENERATE(true, false);
+    const std::string field = segment ? "segment_bind_poses" : "taxel_bind_poses";
+    CAPTURE(field);
+    auto native = make_metadata();
+    auto& lbs = *native.geometry_mapping.AsLBS();
+    auto& poses = segment ? lbs.segment_bind_poses : lbs.taxel_bind_poses;
+    core::Quaternion orientation;
+    bool valid = false;
+    SECTION("zero quaternion")
+    {
+    }
+    SECTION("scaled quaternion")
+    {
+        orientation = core::Quaternion(0, 0, 0, 2);
+    }
+    SECTION("finite components with overflowing squared norm")
+    {
+        orientation = core::Quaternion(std::numeric_limits<float>::max(), 0, 0, 0);
+    }
+    SECTION("rotation with all components nonzero")
+    {
+        orientation = core::Quaternion(0.5f, 0.5f, 0.5f, 0.5f);
+        valid = true;
+    }
+    SECTION("negative unit quaternion")
+    {
+        orientation = core::Quaternion(0, 0, 0, -1);
+        valid = true;
+    }
+    SECTION("rounding within squared-norm tolerance")
+    {
+        orientation = core::Quaternion(0, 0, 0, std::sqrt(1.0f + 0.5e-4f));
+        valid = true;
+    }
+    SECTION("rounding outside squared-norm tolerance")
+    {
+        orientation = core::Quaternion(0, 0, 0, std::sqrt(1.0f + 2e-4f));
+    }
+    poses.back() = core::Pose(poses.back().position(), orientation);
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+    if (valid)
+    {
+        CHECK_NOTHROW(core::verify_metadata(*metadata));
+    }
+    else
+    {
+        CHECK_THROWS_WITH(core::verify_metadata(*metadata),
+                          Catch::Matchers::ContainsSubstring(field + "[" + std::to_string(poses.size() - 1) +
+                                                             "]: orientations must be unit quaternions"));
     }
 }

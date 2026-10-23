@@ -103,16 +103,37 @@ def test_rejects_invalid_weights(weight):
 
 
 @pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
-def test_rejects_nonunit_quaternions(field):
+@pytest.mark.parametrize(
+    "qw", [0, 2, np.finfo(np.float32).max, np.sqrt(np.float32(1 + 2e-4))]
+)
+def test_rejects_nonunit_quaternions(field, qw):
     arrays = lbs_arrays()
-    arrays[field][0, 6] = 0
+    arrays[field][-1, 6] = qw
     with pytest.raises(ValueError, match="unit quaternions"):
         LBS(**arrays)
 
 
-def test_rejects_nonfinite_bind_positions():
+@pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
+@pytest.mark.parametrize(
+    "quaternion",
+    [
+        [0.5, 0.5, 0.5, 0.5],
+        [0, 0, 0, -1],
+        [0, 0, 0, np.sqrt(np.float32(1 + 0.5e-4))],
+    ],
+)
+def test_accepts_unit_quaternions_with_rounding_tolerance(field, quaternion):
     arrays = lbs_arrays()
-    arrays["segment_bind_poses"][0, 0] = np.nan
+    arrays[field][-1, 3:] = quaternion
+    LBS(**arrays)
+
+
+@pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
+@pytest.mark.parametrize("component", range(7))
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_rejects_nonfinite_bind_poses(field, component, value):
+    arrays = lbs_arrays()
+    arrays[field][-1, component] = value
     with pytest.raises(ValueError, match="finite"):
         LBS(**arrays)
 

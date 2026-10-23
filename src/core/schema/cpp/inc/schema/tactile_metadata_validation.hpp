@@ -15,6 +15,7 @@ namespace core
 
 //! Checks the semantics of the supported LBS/HandSkeletonRef layout after FlatBuffers verification.
 //! Weight sums may differ from one by at most 1e-5 to allow floating-point rounding.
+//! Squared quaternion norms use the Python constructor's tolerance of 1e-4.
 //! Throws std::runtime_error naming the invalid field and the violated constraint.
 inline void verify_tactile_metadata(const TactileMetadata& metadata)
 {
@@ -102,6 +103,33 @@ inline void verify_tactile_metadata(const TactileMetadata& metadata)
                                      "]: weights must sum to one, got " + std::to_string(sum));
         }
     }
+
+    const auto verify_poses = [](const flatbuffers::Vector<const Pose*>* poses, const char* field)
+    {
+        for (flatbuffers::uoffset_t i = 0; i < poses->size(); ++i)
+        {
+            const auto& position = poses->Get(i)->position();
+            const auto& orientation = poses->Get(i)->orientation();
+            for (const float component : std::array{ position.x(), position.y(), position.z(), orientation.x(),
+                                                     orientation.y(), orientation.z(), orientation.w() })
+            {
+                if (!std::isfinite(component))
+                {
+                    throw std::runtime_error("TactileMetadata." + std::string(field) + "[" + std::to_string(i) +
+                                             "]: poses must be finite");
+                }
+            }
+            const float norm2 = orientation.x() * orientation.x() + orientation.y() * orientation.y() +
+                                orientation.z() * orientation.z() + orientation.w() * orientation.w();
+            if (std::abs(norm2 - 1.0f) > 1e-4f)
+            {
+                throw std::runtime_error("TactileMetadata." + std::string(field) + "[" + std::to_string(i) +
+                                         "]: orientations must be unit quaternions (x, y, z, w)");
+            }
+        }
+    };
+    verify_poses(lbs->segment_bind_poses(), "segment_bind_poses");
+    verify_poses(lbs->taxel_bind_poses(), "taxel_bind_poses");
 }
 
 } // namespace core
