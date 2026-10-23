@@ -919,3 +919,16 @@ def test_print_hosted_client_line_hides_credentials() -> None:
     assert "controlToken=<REDACTED>" in out
     assert "turnCredential=<REDACTED>" in out
     assert "port=48322" in out
+
+
+def test_hub_only_banner_shows_generated_token(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """Hub-only delivers no bookmark; the banner is where operators get the token."""
+    monkeypatch.setenv("TELEOP_OOB_HUB_ONLY", "1")
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+
+    print_oob_hub_startup_banner(lan_host="10.0.0.1")
+    out = capsys.readouterr().out
+    token = oob_teleop_env_under_test.resolve_control_token()
+    assert f"this session's token is: {token}" in out
