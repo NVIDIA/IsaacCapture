@@ -9,7 +9,7 @@ rich==14.3.3
 # Common utilities
 numpy==2.4.4
 scipy==1.15.3
-Pillow>=13.0.0
+pillow>=13.0.0
 pyyaml==6.0.3
 setuptools==82.0.1
 opencv-python==4.11.0.86
