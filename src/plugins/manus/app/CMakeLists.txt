@@ -8,6 +8,7 @@ add_executable(manus_hand_plugin
 target_link_libraries(manus_hand_plugin
   PRIVATE
     manus_plugin_core
+    Teleop::plugin_utils
 )
 
 set_target_properties(manus_hand_plugin PROPERTIES

@@ -36,6 +36,12 @@ PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(const core::OpenXRSessi
 {
 }
 
+PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(core::IPluginSession& session, const std::string& plugin_root_id)
+    : collection_id_(make_collection_id(plugin_root_id)),
+      pusher_(std::make_unique<core::SchemaPusher>(session.create_schema_push_channel(make_pusher_config(collection_id_))))
+{
+}
+
 PluginDeviceStatusPublisher::PluginDeviceStatusPublisher(const std::string& plugin_root_id, PushBufferFunction push_buffer)
     : collection_id_(make_collection_id(plugin_root_id)), push_buffer_(std::move(push_buffer))
 {

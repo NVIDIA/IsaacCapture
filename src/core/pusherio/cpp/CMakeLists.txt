@@ -5,6 +5,13 @@ cmake_minimum_required(VERSION 3.20)
 
 # PusherIO library (static; consumed in-tree via pusherio::pusherio)
 add_library(pusherio STATIC
+    hand_tracking_pusher.cpp
+    openxr_schema_push_channel.cpp
+    inc/pusherio/hand_tracking_push_channel.hpp
+    inc/pusherio/hand_tracking_pusher.hpp
+    inc/pusherio/openxr_schema_push_channel.hpp
+    inc/pusherio/plugin_session.hpp
+    inc/pusherio/wrist_tracking_source.hpp
     schema_pusher.cpp
     inc/pusherio/schema_pusher.hpp
 )
@@ -16,6 +23,8 @@ target_include_directories(pusherio
 
 target_link_libraries(pusherio
     PUBLIC
+        deviceio::deviceio_base
+
         # oxr_utils is header-only and provides OpenXRSessionHandles struct
         # It also brings in OpenXR headers for base types without linking to OpenXR loader
         oxr::oxr_utils
