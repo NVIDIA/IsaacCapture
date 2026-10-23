@@ -520,6 +520,48 @@ class TestWssProxyStartup:
             finally:
                 service._stop_wss_proxy()
 
+    @pytest.mark.parametrize("configured", ["operator-chosen", None])
+    def test_control_token_is_the_one_the_hub_enforces(
+        self, tmp_path, monkeypatch, configured
+    ):
+        from isaaccapture.cloudxr.oob_teleop_hub import OOBControlHub
+
+        hubs = []
+
+        async def proxy(*, stop_future, on_listening, control_token, **kwargs):
+            hubs.append(OOBControlHub(control_token=control_token))
+            on_listening()
+            await stop_future
+
+        if configured:
+            monkeypatch.setenv("CONTROL_TOKEN", configured)
+        else:
+            monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+        with (
+            mock_service_deps(tmp_path, wss=False),
+            _stub_wss(proxy),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        ):
+            service = CloudXRService(setup_oob=True)
+            try:
+                token = service.control_token
+                assert token and hubs[0].check_token(token)
+                if configured:
+                    assert token == configured
+                # The hub keeps its start-up token whatever the environment does.
+                monkeypatch.setenv("CONTROL_TOKEN", "changed-later")
+                assert service.control_token == token
+                monkeypatch.delenv("CONTROL_TOKEN")
+                assert service.control_token == token
+                assert hubs[0].check_token(token)
+            finally:
+                service._stop_wss_proxy()
+
+    def test_control_token_is_none_without_oob(self, tmp_path):
+        with mock_service_deps(tmp_path):
+            service = CloudXRService()
+            assert service.control_token is None
+
     def test_stopping_before_connect_does_not_launch_headset(self, tmp_path):
         from cloudxr_py_test_ns.wss import _wait_for_connect
 

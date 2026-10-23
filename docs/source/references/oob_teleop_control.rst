@@ -509,6 +509,10 @@ prints it in the startup banner. Requests without the token, and WebSocket
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
 
+An application that embeds ``CloudXRService(setup_oob=True)`` has no startup
+banner. Read the token from ``service.control_token`` (``None`` without
+``setup_oob``); it is never written to the logs.
+
 The headset bookmark carries the token in the URL fragment
 (``#<route>?controlToken=<secret>``), which the browser never sends in a
 request or ``Referer``. The web client moves it into ``sessionStorage`` for that
