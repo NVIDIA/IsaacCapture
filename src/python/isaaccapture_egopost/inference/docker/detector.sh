@@ -25,7 +25,8 @@ usage: inference/docker/detector.sh <build|run> [args]
 
   build <image> [--weight <path>]
       Build the named Docker image from inference/docker/Dockerfile.detector,
-      with inference/hand_detector_2d baked in. No EgoHand source, no torch usage --
+      with inference/hand_detector_2d and the shared inference/media utilities baked in.
+      No other EgoHand source, no torch usage --
       only numpy/opencv/pillow/pyyaml/onnxruntime-gpu.
 
       <image>            Docker image name/tag to build. Required.
@@ -99,6 +100,7 @@ case "$cmd" in
     echo "=== staging build context -> $BUILD_CTX ==="
     mkdir -p "$BUILD_CTX/inference"
     cp -r "$REPO_ROOT/inference/hand_detector_2d" "$BUILD_CTX/inference/hand_detector_2d"
+    cp -r "$REPO_ROOT/inference/media" "$BUILD_CTX/inference/media"
 
     # Always create weights/ so the Dockerfile COPY is valid even without a weight.
     mkdir -p "$BUILD_CTX/weights"

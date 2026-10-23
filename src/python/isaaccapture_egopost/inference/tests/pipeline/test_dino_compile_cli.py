@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import sys
 
-from inference.scripts.run_egohand_inference_pipeline import parse_args
+from inference.cli import parse_args
 
 
 def _parse(monkeypatch, *extra: str):
+    monkeypatch.setenv("EGOHAND_RUNTIME_PROFILE", "full")
     monkeypatch.setattr(
         sys,
         "argv",

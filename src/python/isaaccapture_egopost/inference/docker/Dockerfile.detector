@@ -19,8 +19,10 @@ RUN pip install --no-cache-dir --break-system-packages \
         numpy==2.4.4 pillow==12.1.1 pyyaml==6.0.3 opencv-python==4.11.0.86 onnxruntime-gpu==1.28.0 huggingface_hub
 
 # Self-contained by design (see inference/hand_detector_2d/scripts/run_hand_detector.py's
-# module docstring): only this folder is baked in, not the rest of the EgoHand repo.
+# module docstring): only this folder and the shared inference/media utilities are baked in,
+# not the rest of the EgoHand repo.
 COPY inference/hand_detector_2d /workspace/inference/hand_detector_2d
+COPY inference/media /workspace/inference/media
 
 # Optional bundled weight. Populated by detector.sh build --weight /...; detector.sh run
 # falls back to this path when --weight is omitted at run time. Always created so the

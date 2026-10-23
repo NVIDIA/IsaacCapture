@@ -1,37 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
 
-"""Video discovery and batched frame decoding for the standalone bbox detector.
-
-``find_videos``, ``get_video_meta`` and ``read_video_frames_batched`` are copies
-of the identically-named helpers in ``inference/scripts/run_egohand_inference_pipeline.py``,
-not imports of them. This folder is meant to be copied out and run on its own,
-so it may not import from the rest of the repo, and the pipeline is left
-untouched rather than made to depend inward on a detector folder.
-
-That makes these a deliberate duplicate, with the usual cost: if the pipeline
-changes how it batches or where ``max_frames`` cuts, change it here too. What
-must not drift is the frame numbering. Indices are the decode order from the
-start of the video, zero-based; the pipeline turns them into ``f"{idx:06d}"``
-image IDs, and ``SavedBBoxDetector`` looks boxes up by that exact string. A
-mismatch here does not raise -- it silently finds no boxes.
-
-Depends on opencv only.
-"""
+"""OpenCV implementation of the batched video API."""
 
 from math import isfinite
-from pathlib import Path
 
 import cv2
 
 FPS_FALLBACK = 30.0
-
-
-def find_videos(input_path: Path) -> list[Path]:
-    """A single MP4, or every MP4 directly under a folder, in sorted order."""
-    if input_path.is_file():
-        return [input_path]
-    return sorted(input_path.glob("*.mp4"))
 
 
 def get_video_meta(video_path: str) -> dict:

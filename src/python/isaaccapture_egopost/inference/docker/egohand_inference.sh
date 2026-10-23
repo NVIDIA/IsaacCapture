@@ -19,6 +19,7 @@ CONTEXT_PATHS=(
   inference
   requirements.txt
   requirements-dinov3.txt
+  requirements
 )
 
 # Fixed container-side paths for bundled and volume-mounted weights.
