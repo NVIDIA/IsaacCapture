@@ -390,6 +390,41 @@ TEST_CASE("A restarted producer's data waits for its metadata, however it is pad
     CHECK(live.step() == 0.3f);
 }
 
+TEST_CASE("A recreated metadata collection is rechecked at the same list index", "[unit][tracker_metadata]")
+{
+    LiveSession live;
+    live.start_data();
+    live.start_metadata();
+    live.push_metadata(make_metadata("glove"));
+    live.push_data(0.1f);
+    REQUIRE(live.step() == 0.1f);
+    const auto first = live.impl->get_metadata();
+
+    // No polling between destruction and recreation: the list position is reused.
+    live.runtime.destroy(METADATA_COLLECTION);
+    live.start_metadata();
+    live.push_data(0.2f);
+
+    SECTION("the original metadata is accepted")
+    {
+        live.push_metadata(make_metadata("glove"));
+        CHECK(live.step() == 0.2f);
+        CHECK(live.impl->get_metadata().buffer().data() == first.buffer().data());
+    }
+    SECTION("data waits for the recreated collection's sample")
+    {
+        CHECK_FALSE(live.step());
+        live.push_metadata(make_metadata("glove"));
+        live.push_data(0.3f);
+        CHECK(live.step() == 0.3f);
+    }
+    SECTION("different metadata is rejected")
+    {
+        live.push_metadata(make_metadata("other"));
+        CHECK_THROWS_WITH(live.step(), Catch::Matchers::ContainsSubstring("differs"));
+    }
+}
+
 TEST_CASE("Different metadata is an error naming its collection", "[unit][tracker_metadata]")
 {
     using Catch::Matchers::ContainsSubstring;

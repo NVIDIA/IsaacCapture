@@ -115,6 +115,13 @@ public:
      */
     const SchemaTrackerConfig& config() const;
 
+protected:
+    //! Runtime identity of the discovered collection, distinct from its reusable list index.
+    std::optional<XrTensorCollectionIDNV> collection_instance_id() const
+    {
+        return m_target_collection_index.has_value() ? m_target_collection_id : std::nullopt;
+    }
+
 private:
     void initialize_tensor_data_functions();
     void create_tensor_list();
@@ -137,6 +144,7 @@ private:
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };
 
     std::optional<uint32_t> m_target_collection_index;
+    std::optional<XrTensorCollectionIDNV> m_target_collection_id;
     uint32_t m_sample_batch_stride{ 0 };
     uint32_t m_sample_size{ 0 };
 

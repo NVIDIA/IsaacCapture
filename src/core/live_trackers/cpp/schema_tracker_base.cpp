@@ -143,12 +143,14 @@ bool SchemaTrackerBase::ensure_collection()
         m_sample_batch_stride = coll_props.sampleBatchStride;
         m_sample_size = coll_props.data.totalSampleSize;
 
-        if (i != m_target_collection_index)
+        // A recreated collection can reuse its list index, but never its runtime ID.
+        if (i != m_target_collection_index || coll_props.tensorCollectionId != m_target_collection_id)
         {
             m_last_sample_index.reset();
             m_logger->info("Found target collection at index {}", i);
         }
         m_target_collection_index = i;
+        m_target_collection_id = coll_props.tensorCollectionId;
         return true;
     }
 

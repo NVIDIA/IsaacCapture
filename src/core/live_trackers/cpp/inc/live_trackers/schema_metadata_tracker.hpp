@@ -64,8 +64,14 @@ public:
      */
     bool update()
     {
+        const auto previous_collection = collection_instance_id();
         std::vector<SampleResult> samples;
         const bool present = read_all_samples(samples);
+        if (collection_instance_id() != previous_collection)
+        {
+            // Recreated collections must confirm their own sample, even without an observed gap.
+            confirmed_ = false;
+        }
         for (auto& sample : samples)
         {
             accept(sample);
