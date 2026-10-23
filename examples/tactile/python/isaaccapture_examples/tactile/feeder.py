@@ -33,18 +33,31 @@ from isaaccapture.schema import (
 
 from .common import (
     DEFAULT_COLLECTION_ID,
-    DEFAULT_NUM_JOINTS,
-    DEFAULT_NUM_TAXELS,
-    MAX_NUM_JOINTS,
-    MIN_NUM_JOINTS,
 )
 
 logger = logging.getLogger("isaaccapture.examples.tactile.feeder")
 
-WRIST = 1
+MIN_NUM_JOINTS = 2
+MAX_NUM_JOINTS = int(HandJoint.NUM_JOINTS)
+DEFAULT_NUM_JOINTS = MAX_NUM_JOINTS
+DEFAULT_NUM_TAXELS = 200
+
+WRIST = int(HandJoint.WRIST)
 # First and distal joint of each finger, thumb to little, as XrHandJointEXT ordinals.
-FINGER_FIRST_JOINTS = (2, 6, 11, 16, 21)
-FINGER_DISTAL_JOINTS = (4, 9, 14, 19, 24)
+FINGER_FIRST_JOINTS = (
+    int(HandJoint.THUMB_METACARPAL),
+    int(HandJoint.INDEX_METACARPAL),
+    int(HandJoint.MIDDLE_METACARPAL),
+    int(HandJoint.RING_METACARPAL),
+    int(HandJoint.LITTLE_METACARPAL),
+)
+FINGER_DISTAL_JOINTS = (
+    int(HandJoint.THUMB_DISTAL),
+    int(HandJoint.INDEX_DISTAL),
+    int(HandJoint.MIDDLE_DISTAL),
+    int(HandJoint.RING_DISTAL),
+    int(HandJoint.LITTLE_DISTAL),
+)
 
 
 def mock_metadata(joint_ids: list[HandJoint], num_taxels: int) -> TactileMetadata:

@@ -130,7 +130,7 @@ def main(argv: list[str]) -> int:
         "--print-interval",
         type=float,
         default=0.5,
-        help="Seconds between live prints; replay prints every 30 records",
+        help=f"Seconds between live prints; replay prints every {REPLAY_PRINT_EVERY_RECORDS} records",
     )
     parser.add_argument(
         "--output",

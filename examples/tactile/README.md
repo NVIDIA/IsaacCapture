@@ -47,8 +47,8 @@ python -m isaaccapture_examples.tactile.printer --replay recordings/tactile_<tim
 ```
 
 Use feeder options `--joints` and `--taxels` to change the shape; the printer discovers both
-counts from metadata. The `TactileMetadata` must fit `TRACKER_METADATA_MAX_SIZE`, which holds 26
-joints and 1000 taxels. The two processes need only agree on `--collection-id`.
+counts from metadata. The `TactileMetadata` must fit `TRACKER_METADATA_MAX_SIZE`.
+The two processes need only agree on `--collection-id`.
 
 Metadata contains an ordered `HandSkeletonRef` and an `LBS` binding. Segment indices address
 that joint list, not OpenXR ordinals. Python pose arrays have seven columns: position XYZ in

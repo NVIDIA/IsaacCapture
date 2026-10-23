@@ -196,9 +196,8 @@ and exposes it through ``get_metadata()``. It withholds force data until metadat
 is confirmed. Different or invalid metadata causes an error; after a producer
 restart, its metadata must be confirmed again. See :ref:`tracker-metadata`.
 
-The default force-buffer size is 16,384 bytes; larger frames require a matching
-``max_flatbuffer_size`` on the producer and consumer. Metadata has its own
-``TRACKER_METADATA_MAX_SIZE`` limit of 68,864 bytes, including FlatBuffer overhead.
+The force-buffer size is defined by ``max_flatbuffer_size``. Metadata has its own
+``TRACKER_METADATA_MAX_SIZE`` limit, including FlatBuffer overhead.
 The data array length must match the metadata's taxel count.
 
 Applications can read ``TactileTracker`` directly for live or replay data.
