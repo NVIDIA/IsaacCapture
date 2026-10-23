@@ -22,6 +22,8 @@ jobs:
   build-windows:
     # Pin to windows-2025 (VS 2022) until VS 2026 is validated.
     runs-on: windows-2025
+    permissions:
+      contents: read
 
     env:
       SCCACHE_GHA_ENABLED: "true"
