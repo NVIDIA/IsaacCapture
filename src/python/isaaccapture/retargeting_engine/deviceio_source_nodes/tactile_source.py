@@ -18,7 +18,12 @@ from .interface import IDeviceIOSource
 from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
 from ..interface.tensor_group import TensorGroup
 from ..interface.tensor_group_type import OptionalType
-from ..tensor_types import DeviceIOTactileIndex, TactileForces, TactileLBSLayout
+from ..tensor_types import (
+    DeviceIOTactileIndex,
+    TactileForces,
+    TactileLBSLayout,
+    TactileLBSLayoutIndex,
+)
 from .deviceio_tensor_types import DeviceIOTactileTracked
 
 if TYPE_CHECKING:
@@ -68,7 +73,7 @@ class TactileSource(IDeviceIOSource):
         )
         self._num_segments = int(num_segments)
         self._num_taxels = int(num_taxels)
-        self._layout: tuple[np.ndarray, ...] | None = None
+        self._layout: dict[TactileLBSLayoutIndex, np.ndarray] | None = None
         self._layout_bind_poses: np.ndarray | None = None
         super().__init__(name)
 
@@ -142,22 +147,24 @@ class TactileSource(IDeviceIOSource):
                     f"{self.name}: metadata has {num_segments} segments and {num_taxels} taxels, "
                     f"source expects {self._num_segments} and {self._num_taxels}"
                 )
-            values = (
-                np.asarray(segment_source.joint_ids, dtype=np.int32),
-                segment_bind_poses,
-                geometry_mapping.taxel_bind_poses,
-                geometry_mapping.taxel_segment_indices,
-                geometry_mapping.taxel_segment_weights,
-            )
-            arrays = []
-            for value in values:
+            values = {
+                TactileLBSLayoutIndex.SEGMENT_JOINT_IDS: np.asarray(
+                    segment_source.joint_ids, dtype=np.int32
+                ),
+                TactileLBSLayoutIndex.SEGMENT_BIND_POSES: segment_bind_poses,
+                TactileLBSLayoutIndex.TAXEL_BIND_POSES: geometry_mapping.taxel_bind_poses,
+                TactileLBSLayoutIndex.TAXEL_SEGMENT_INDICES: geometry_mapping.taxel_segment_indices,
+                TactileLBSLayoutIndex.TAXEL_SEGMENT_WEIGHTS: geometry_mapping.taxel_segment_weights,
+            }
+            arrays = {}
+            for index, value in values.items():
                 # Copy once: graph consumers must not alter the tracker's metadata baseline.
                 array = np.asarray(value)
-                arrays.append(
-                    array.astype(np.int32 if array.dtype == np.uint32 else array.dtype)
+                arrays[index] = array.astype(
+                    np.int32 if array.dtype == np.uint32 else array.dtype
                 )
-            self._layout = tuple(arrays)
+            self._layout = arrays
             # Views keep the buffer alive and identify it across fresh Python wrappers.
             self._layout_bind_poses = segment_bind_poses
-        for index, array in enumerate(self._layout):
+        for index, array in self._layout.items():
             layout_out[index] = array
