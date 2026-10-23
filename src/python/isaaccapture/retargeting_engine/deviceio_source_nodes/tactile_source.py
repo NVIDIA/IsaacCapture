@@ -73,8 +73,9 @@ class TactileSource(IDeviceIOSource):
         )
         self._num_segments = int(num_segments)
         self._num_taxels = int(num_taxels)
-        self._layout: dict[TactileLBSLayoutIndex, np.ndarray] | None = None
-        self._layout_bind_poses: np.ndarray | None = None
+        self._layout_cache: (
+            tuple[dict[TactileLBSLayoutIndex, np.ndarray], np.ndarray] | None
+        ) = None
         super().__init__(name)
 
     def get_tracker(self) -> "ITracker":
@@ -133,10 +134,8 @@ class TactileSource(IDeviceIOSource):
             )
         # Normalize the schema stub's array type without copying its storage.
         segment_bind_poses = np.asarray(geometry_mapping.segment_bind_poses)
-        if (
-            self._layout is None
-            or self._layout_bind_poses is None
-            or not np.shares_memory(segment_bind_poses, self._layout_bind_poses)
+        if self._layout_cache is None or not np.shares_memory(
+            segment_bind_poses, self._layout_cache[1]
         ):
             num_segments, num_taxels = (
                 len(segment_source.joint_ids),
@@ -163,8 +162,8 @@ class TactileSource(IDeviceIOSource):
                 arrays[index] = array.astype(
                     np.int32 if array.dtype == np.uint32 else array.dtype
                 )
-            self._layout = arrays
             # Views keep the buffer alive and identify it across fresh Python wrappers.
-            self._layout_bind_poses = segment_bind_poses
-        for index, array in self._layout.items():
+            self._layout_cache = (arrays, segment_bind_poses)
+        layout, _ = self._layout_cache
+        for index, array in layout.items():
             layout_out[index] = array
