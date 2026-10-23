@@ -389,9 +389,6 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
             const RigJointSpec& spec = kRigJoints[side][finger][slot];
             out.bend[slot - 1] = std::clamp(spec.sign * (raw.joint[finger][slot] - spec.zero), 0.0f, limit[slot - 1]);
         }
-
-        angles.metacarpal_frame[finger] =
-            std::string("link_") + side_prefix(hand) + "Skeleton" + kRigFingers[finger].links[0];
     }
 
     angles.valid = true;

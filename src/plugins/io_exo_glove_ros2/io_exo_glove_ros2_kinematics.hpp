@@ -151,8 +151,6 @@ struct HandAngles
 {
     std::array<FingerAngles, 5> fingers{};
     bool valid = false;
-    //! Names the mechanism did resolve, for the one-time startup log.
-    std::array<std::string, 5> metacarpal_frame;
 };
 
 //! Reads the mechanism's articulation out of one link message. False when the mechanism's root is

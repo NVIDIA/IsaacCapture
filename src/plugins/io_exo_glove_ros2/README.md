@@ -180,10 +180,10 @@ if thumb is not None:
 ## Hand tracking (devices `/hand/left`, `/hand/right`)
 
 The same link poses are injected as the **OpenXR hand skeleton**, one push device per hand
-(`plugin_utils::HandInjector`). This is the output the device conformance suite records: it reads
+(`plugin_utils::HandInjector`). This is the output a hand-tracking consumer records: it reads
 Isaac Teleop's OpenXR hand tracker (`core.HandPoseRecord`, 26 joints per hand), not a tensor
-collection of the plugin's own, so a glove that publishes only joint angles or fingertips cannot be
-conformance tested. OpenXR requires every one of the 26 joints to be valid while a hand is active, so
+collection of the plugin's own, so a glove that publishes only joint angles or fingertips has nothing
+this device can drive. OpenXR requires every one of the 26 joints to be valid while a hand is active, so
 all 26 are filled -- `PALM` and the four non-thumb metacarpals included.
 
 The exoskeleton's links are a **linkage mechanism**, not a hand: in the vendor's own URDF its finger
@@ -210,8 +210,8 @@ mechanism root it bound to.
 The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
 is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,
 the preference under the default `auto`), `controller` (aim pose, the fallback), or `auto`.
-`$IO_EXO_GLOVE_ROS2_WRIST_SOURCE` overrides the setting -- the conformance capture's `--wrist-source`
-only labels the take, so set the variable to match. A controller aim pose is not the wrist joint, so
+`$IO_EXO_GLOVE_ROS2_WRIST_SOURCE` overrides the setting; set it to match how the capture was
+configured. A controller aim pose is not the wrist joint, so
 `left_aim_to_wrist` / `right_aim_to_wrist` carry the rigid offset per hand (`x,y,z,qx,qy,qz,qw`,
 identity by default); the plugin cannot know a controller's mounting, so it is configuration.
 With no wrist source tracked the skeleton is still injected, at the origin and flagged untracked:
@@ -227,7 +227,7 @@ noisy -- and a glove in front of the headset makes it noisier -- while the glove
 is not, so only the anchor is filtered.
 
 Poses are metres in the session's base space, as OpenXR requires, and the injected rate follows the
-glove's 120 Hz TF stream -- above the 30 Hz the conformance suite asks for. A hand with no data for
+glove's 120 Hz TF stream, well above the 30 Hz a hand-tracking consumer may expect. A hand with no data for
 200 ms has its push device dropped, so the runtime reports it inactive instead of holding a stale pose.
 
 ## Usage
