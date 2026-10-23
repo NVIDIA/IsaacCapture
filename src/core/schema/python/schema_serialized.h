@@ -156,12 +156,17 @@ std::vector<std::shared_ptr<typename DataT::NativeTableType>> to_native_vector(c
 
 //! Binds a `Record` wrapper (an MCAP payload: data plus its capture timestamp).
 template <typename RecordT, typename DataT>
-void bind_record(py::module& m, const char* name, const char* data_name)
+void bind_record(py::module& m, const char* name, const char* data_name, bool data_required = false)
 {
     serialized_class<RecordT>(m, name, "Encoded MCAP record: a payload plus the timestamp it was captured at.")
         .def(py::init(
-                 [](const Serialized<DataT>* data, const DeviceDataTimestamp& timestamp)
+                 [data_required](const Serialized<DataT>* data, const DeviceDataTimestamp& timestamp)
                  {
+                     // Reject absent required data before the generated Pack asserts on it.
+                     if (data_required && (data == nullptr || !*data))
+                     {
+                         throw py::value_error("data: a payload is required");
+                     }
                      typename RecordT::NativeTableType native;
                      if (data != nullptr && *data)
                      {
@@ -171,13 +176,14 @@ void bind_record(py::module& m, const char* name, const char* data_name)
                      native.timestamp = std::make_shared<DeviceDataTimestamp>(timestamp);
                      return pack<RecordT>(native);
                  }),
-             py::arg("data").none(true), py::arg("timestamp"),
-             "Encode a record from a payload and its timestamp. `data` may be None: MCAP "
-             "carries payload-less records, such as the message channel's frame sentinel.")
+             py::arg("data").none(!data_required), py::arg("timestamp"),
+             data_required ? "Encode a record from a required payload and its timestamp." :
+                             "Encode a record from a payload and its timestamp. `data` may be None: MCAP "
+                             "carries payload-less records, such as the message channel's frame sentinel.")
 
         // No no-arg form: `timestamp` is a struct with no meaningful default, and a record
-        // without one is not a thing MCAP stores. A payload-less record -- the message
-        // channel's frame sentinel -- is spelled `Record(None, timestamp)`.
+        // without one is not a thing MCAP stores. For optional data fields, a payload-less
+        // record -- the message channel's frame sentinel -- is spelled `Record(None, timestamp)`.
         .def_property_readonly(
             "data",
             [](const Serialized<RecordT>& self) -> py::object
@@ -185,7 +191,7 @@ void bind_record(py::module& m, const char* name, const char* data_name)
                 const DataT* data = self->data();
                 return data != nullptr ? py::cast(self.narrow(data)) : py::none();
             },
-            "The recorded payload, or None when absent.")
+            data_required ? "The recorded payload." : "The recorded payload, or None when absent.")
         .def_property_readonly(
             "timestamp", [](const Serialized<RecordT>& self) { return self->timestamp(); },
             py::return_value_policy::reference_internal, "Capture timestamp, or None when absent.")

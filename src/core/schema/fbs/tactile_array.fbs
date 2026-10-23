@@ -13,12 +13,12 @@ table TactileDataArray {
   // define these axes at bind; the vector length equals the metadata taxel count.
   // +X is the calibrated tangent T, +Z is the outward normal N, +Y = N cross T.
   // Component signs follow these axes for both hands, without a side-based flip.
-  taxel_forces: [Point] (id: 0);
+  taxel_forces: [Point] (id: 0, required);
 }
 
 // MCAP recording wrapper for TactileDataArray.
 table TactileDataArrayRecord {
-  data: TactileDataArray (id: 0);
+  data: TactileDataArray (id: 0, required);
   timestamp: DeviceDataTimestamp (id: 1);
 }
 

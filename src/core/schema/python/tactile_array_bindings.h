@@ -14,7 +14,6 @@
 #include <pybind11/stl.h>
 #include <schema/tactile_array_generated.h>
 
-#include <optional>
 #include <string>
 
 namespace py = pybind11;
@@ -28,16 +27,13 @@ inline void bind_tactile_array(py::module& m)
 
     serialized_class<TactileDataArray>(m, "TactileDataArray", "Encoded per-frame tactile reading.")
         .def(py::init(
-                 [](const std::optional<FloatRows>& taxel_forces)
+                 [](const FloatRows& taxel_forces)
                  {
                      TactileDataArrayT native;
-                     if (taxel_forces.has_value())
-                     {
-                         native.taxel_forces = structs_from_rows<Point, float, 3>(*taxel_forces, "taxel_forces");
-                     }
+                     native.taxel_forces = structs_from_rows<Point, float, 3>(taxel_forces, "taxel_forces");
                      return pack<TactileDataArray>(native);
                  }),
-             py::arg("taxel_forces") = py::none(), "Encode a tactile frame. taxel_forces is an (N, 3) array.")
+             py::arg("taxel_forces").none(false), "Encode a tactile frame. taxel_forces is an (N, 3) array.")
         .def_property_readonly(
             "taxel_forces",
             [](py::object self)
@@ -53,7 +49,8 @@ inline void bind_tactile_array(py::module& m)
                  return "TactileDataArray(taxels=" + std::to_string(forces != nullptr ? forces->size() : 0) + ")";
              });
 
-    bind_record<TactileDataArrayRecord, TactileDataArray>(m, "TactileDataArrayRecord", "TactileDataArray");
+    bind_record<TactileDataArrayRecord, TactileDataArray>(
+        m, "TactileDataArrayRecord", "TactileDataArray", /* data_required = */ true);
 }
 
 } // namespace core

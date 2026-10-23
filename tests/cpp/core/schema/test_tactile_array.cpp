@@ -46,12 +46,32 @@ TEST_CASE("TactileDataArray round-trips every field", "[unit][tactile]")
     CHECK(data->taxel_forces()->Get(1)->z() == 2.0f);
 }
 
-TEST_CASE("TactileDataArray leaves an empty frame's vector absent", "[unit][tactile]")
+TEST_CASE("TactileDataArray keeps its required vector present for an empty frame", "[unit][tactile]")
 {
     const auto data = core::pack<core::TactileDataArray>(core::TactileDataArrayT{});
 
     REQUIRE(data);
-    CHECK(data->taxel_forces() == nullptr);
+    REQUIRE(data->taxel_forces() != nullptr);
+    CHECK(data->taxel_forces()->size() == 0);
+    flatbuffers::Verifier verifier(data.buffer().data(), data.buffer().size());
+    CHECK(verifier.VerifyBuffer<core::TactileDataArray>());
+}
+
+TEST_CASE("Tactile verification rejects missing required fields", "[unit][tactile]")
+{
+    flatbuffers::FlatBufferBuilder builder;
+    // Build an unchecked empty table to test verification without required-field builder assertions.
+    const auto start = builder.StartTable();
+    builder.Finish(flatbuffers::Offset<core::TactileDataArrayRecord>(builder.EndTable(start)));
+    flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
+    SECTION("taxel_forces")
+    {
+        CHECK_FALSE(verifier.VerifyBuffer<core::TactileDataArray>());
+    }
+    SECTION("record data")
+    {
+        CHECK_FALSE(core::VerifyTactileDataArrayRecordBuffer(verifier));
+    }
 }
 
 TEST_CASE("TactileDataArrayRecord verifies and carries its timestamp", "[unit][tactile]")

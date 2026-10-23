@@ -18,9 +18,16 @@ FORCES = np.array([[0.0, 0.0, 1.0], [0.5, -0.5, 2.0], [0.0, 0.1, 0.0]], np.float
 
 
 class TestTactileDataArray:
-    def test_default_construction(self):
-        data = TactileDataArray()
+    @pytest.mark.parametrize("args", [(), (None,)])
+    def test_requires_force_array(self, args):
+        with pytest.raises(TypeError, match="taxel_forces"):
+            TactileDataArray(*args)
+
+    def test_explicit_empty_force_array(self):
+        data = TactileDataArray(np.empty((0, 3), np.float32))
         assert data.taxel_forces.shape == (0, 3)
+        record = TactileDataArrayRecord(data, DeviceDataTimestamp(1, 2, 3))
+        assert record.data.taxel_forces.shape == (0, 3)
 
     def test_round_trip(self):
         data = TactileDataArray(FORCES)
@@ -52,6 +59,6 @@ class TestTactileDataArrayRecord:
         np.testing.assert_array_equal(record.data.taxel_forces, FORCES)
         assert record.timestamp.sample_time_raw_device_clock == 3
 
-    def test_payload_less_record(self):
-        record = TactileDataArrayRecord(None, DeviceDataTimestamp(1, 2, 3))
-        assert record.data is None
+    def test_rejects_missing_payload(self):
+        with pytest.raises(TypeError, match="data"):
+            TactileDataArrayRecord(None, DeviceDataTimestamp(1, 2, 3))
