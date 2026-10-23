@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 j-mex. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: jmex
+description: "j-mex AgileMaster motion capture: the operator's body pose as FullBodyPose"
+command: "./jmex_plugin"
+version: "1.0.0"
+args:
+  - "--channel=1"
+  - "--collection-id=jmex_full_body"
+devices:
+  - path: "/mocap/jmex"
+    type: "full_body"
+    description: "MOXI Player channel as a 24-slot body pose, OpenXR axes (published on <collection-id>)"

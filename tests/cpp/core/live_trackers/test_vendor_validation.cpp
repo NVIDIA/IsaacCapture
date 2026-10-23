@@ -112,10 +112,26 @@ TEST_CASE("vendor validation: accepted configurations resolve extensions", "[liv
         REQUIRE_FALSE(contains(extensions, "XR_BD_body_tracking"));
     }
 
+    SECTION("j-mex vendor selects tensor data extensions")
+    {
+        VendorList vendors{ { body.get(), core::TrackerVendor{ "body.jmex" } } };
+        const auto extensions = core::DeviceIOSession::get_required_extensions(trackers, core::VendorConfig{ vendors });
+        REQUIRE(contains(extensions, "XR_NVX1_tensor_data"));
+        REQUIRE_FALSE(contains(extensions, "XR_BD_body_tracking"));
+    }
+
     SECTION("Xsens vendor accepts collection and sample-size parameters")
     {
         VendorList vendors{ { body.get(), core::TrackerVendor{ "body.xsens",
                                                                { { "collection_id", "custom_xsens" },
+                                                                 { "max_flatbuffer_size", "32768" } } } } };
+        REQUIRE_NOTHROW(core::DeviceIOSession::get_required_extensions(trackers, core::VendorConfig{ vendors }));
+    }
+
+    SECTION("j-mex vendor accepts collection and sample-size parameters")
+    {
+        VendorList vendors{ { body.get(), core::TrackerVendor{ "body.jmex",
+                                                               { { "collection_id", "custom_jmex" },
                                                                  { "max_flatbuffer_size", "32768" } } } } };
         REQUIRE_NOTHROW(core::DeviceIOSession::get_required_extensions(trackers, core::VendorConfig{ vendors }));
     }
@@ -180,10 +196,26 @@ TEST_CASE("vendor validation: invalid configurations are rejected", "[live_track
         REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("does not support parameter"));
     }
 
+    SECTION("an unsupported j-mex vendor parameter is rejected")
+    {
+        VendorList vendors{
+            { body.get(), core::TrackerVendor{ "body.jmex", { { "unsupported", "value" } } } },
+        };
+        REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("does not support parameter"));
+    }
+
     SECTION("an invalid Xsens max flatbuffer size is rejected")
     {
         VendorList vendors{
             { body.get(), core::TrackerVendor{ "body.xsens", { { "max_flatbuffer_size", "0" } } } },
+        };
+        REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("must be a positive integer"));
+    }
+
+    SECTION("an invalid j-mex max flatbuffer size is rejected")
+    {
+        VendorList vendors{
+            { body.get(), core::TrackerVendor{ "body.jmex", { { "max_flatbuffer_size", "0" } } } },
         };
         REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("must be a positive integer"));
     }
@@ -194,6 +226,14 @@ TEST_CASE("vendor validation: invalid configurations are rejected", "[live_track
         // forever. An empty one is always a configuration error and must be caught up front.
         VendorList vendors{
             { body.get(), core::TrackerVendor{ "body.xsens", { { "collection_id", "" } } } },
+        };
+        REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("must not be empty"));
+    }
+
+    SECTION("an empty j-mex collection_id is rejected rather than silently never connecting")
+    {
+        VendorList vendors{
+            { body.get(), core::TrackerVendor{ "body.jmex", { { "collection_id", "" } } } },
         };
         REQUIRE_THAT(vendor_validation_error(trackers, vendors), ContainsSubstring("must not be empty"));
     }
