@@ -9,6 +9,3 @@ MIN_NUM_JOINTS = 2
 MAX_NUM_JOINTS = 26
 DEFAULT_NUM_JOINTS = MAX_NUM_JOINTS
 DEFAULT_NUM_TAXELS = 200
-
-# TactileTracker's default max_flatbuffer_size: the reader rejects a larger collection.
-TACTILE_MAX_FRAME_SIZE = 16384

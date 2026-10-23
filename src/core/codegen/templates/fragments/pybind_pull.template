@@ -1,4 +1,7 @@
-    py::class_<core::@CLASS@, core::ITracker, std::shared_ptr<core::@CLASS@>>(m, "@CLASS@")
+    py::class_<core::@CLASS@, core::ITracker, std::shared_ptr<core::@CLASS@>> @NAME@_pull(m, "@CLASS@");
+    @NAME@_pull.attr("DEFAULT_MAX_FLATBUFFER_SIZE") =
+        static_cast<std::size_t>(core::@CLASS@::DEFAULT_MAX_FLATBUFFER_SIZE);
+    @NAME@_pull
         .def(py::init<const std::string&, size_t>(), py::arg("collection_id"),
              py::arg("max_flatbuffer_size") = core::@CLASS@::DEFAULT_MAX_FLATBUFFER_SIZE)
         .def(

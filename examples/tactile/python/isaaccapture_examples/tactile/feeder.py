@@ -19,7 +19,7 @@ import numpy as np
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.deviceio_session import DeviceIOSession
-from isaaccapture.deviceio_trackers import TensorPushTracker
+from isaaccapture.deviceio_trackers import TactileTracker, TensorPushTracker
 from isaaccapture.oxr import OpenXRSession
 from isaaccapture.schema import (
     TRACKER_METADATA_MAX_SIZE,
@@ -38,7 +38,6 @@ from .common import (
     DEFAULT_NUM_TAXELS,
     MAX_NUM_JOINTS,
     MIN_NUM_JOINTS,
-    TACTILE_MAX_FRAME_SIZE,
 )
 
 logger = logging.getLogger("isaaccapture.examples.tactile.feeder")
@@ -159,7 +158,7 @@ def main(argv: list[str]) -> int:
     with ExitStack() as stack:
         stack.enter_context(CloudXRLauncher.launch_context(args))
         data_tracker = TensorPushTracker(
-            args.collection_id, "tactile", TACTILE_MAX_FRAME_SIZE
+            args.collection_id, "tactile", TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE
         )
         metadata_tracker = TensorPushTracker(
             tracker_metadata_collection_id(args.collection_id),
