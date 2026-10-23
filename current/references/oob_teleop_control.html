@@ -512,10 +512,14 @@ page access and CloudXR streaming)</p></li>
 <p><strong>Step 2 — (Manual fallback) Open the web client on the headset</strong></p>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
-parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322</pre>
+parameters — <code class="docutils literal notranslate"><span class="pre">oobEnable</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code> — plus the hub’s
+<code class="docutils literal notranslate"><span class="pre">controlToken</span></code>:</p>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;controlToken=&lt;CONTROL_TOKEN&gt;</pre>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">&lt;HOST_IP&gt;</span></code> with the streaming host’s LAN IP. The <code class="docutils literal notranslate"><span class="pre">port</span></code> must
-match the proxy port (default 48322).</p>
+match the proxy port (default 48322). <code class="docutils literal notranslate"><span class="pre">&lt;CONTROL_TOKEN&gt;</span></code> is the value of
+<code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code>, or the generated token printed in the startup banner; the
+banner’s bookmark shows it as <code class="docutils literal notranslate"><span class="pre">&lt;REDACTED&gt;</span></code>, so substitute it before pasting.
+Without the token the hub rejects the headset and the client does not retry.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>All three parameters are required. If <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> or <code class="docutils literal notranslate"><span class="pre">port</span></code> is missing,
@@ -525,7 +529,7 @@ streaming but will not register with the hub or report metrics.</p>
 <p><strong>Step 3 — Verify the headset registered with the hub</strong></p>
 <p>From a PC on the same network, query the hub state API (<code class="docutils literal notranslate"><span class="pre">-k</span></code> skips the
 self-signed certificate check):</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>https://&lt;HOST_IP&gt;:48322/api/oob/v1/state
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span>https://&lt;HOST_IP&gt;:48322/api/oob/v1/state
 </pre></div>
 </div>
 <p>You should see the headset listed under <code class="docutils literal notranslate"><span class="pre">&quot;headsets&quot;</span></code> with
@@ -555,7 +559,7 @@ network.</p>
 <p><strong>Step 4 — (Optional) Push config to the headset</strong></p>
 <p>Before or after the headset connects to the CloudXR stream, you can push
 configuration overrides via the HTTP config API:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span><span class="s2">"https://&lt;HOST_IP&gt;:48322/api/oob/v1/config?serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;codec=av1"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span><span class="s2">"https://&lt;HOST_IP&gt;:48322/api/oob/v1/config?serverIP=&lt;HOST_IP&gt;&amp;port=48322&amp;codec=av1"</span>
 </pre></div>
 </div>
 <p>See <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/config</span></code> below for all supported keys.</p>
@@ -565,7 +569,7 @@ without it, press <strong>CONNECT</strong> on the headset manually.  Once stream
 the headset reports metrics to the hub every 500 ms.  Poll the state endpoint
 from a PC to collect them:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Poll every 2 seconds (adjust to taste)</span>
-watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="s1">'curl -sk https://&lt;HOST_IP&gt;:48322/api/oob/v1/state | python3 -m json.tool'</span>
+watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="s1">'curl -sk -H "X-Control-Token: &lt;CONTROL_TOKEN&gt;" https://&lt;HOST_IP&gt;:48322/api/oob/v1/state | python3 -m json.tool'</span>
 </pre></div>
 </div>
 <p>The <code class="docutils literal notranslate"><span class="pre">metricsByCadence</span></code> field on each headset entry will now contain live streaming metrics.</p>
@@ -640,7 +644,7 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"headset"</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"deviceLabel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Quest 3"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"token"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;optional CONTROL_TOKEN&gt;"</span>
+<span class="w">    </span><span class="nt">"token"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;CONTROL_TOKEN&gt;"</span>
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
@@ -870,7 +874,7 @@ session’s last known values.</p>
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/state</span></code><a class="headerlink" href="#get-api-oob-v1-state" title="Link to this heading">#</a></h3>
 <p>Returns the current hub state: connected headsets, latest metrics, and config
 version.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>https://localhost:48322/api/oob/v1/state
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span>https://localhost:48322/api/oob/v1/state
 </pre></div>
 </div>
 <p>Example response:</p>
@@ -899,7 +903,7 @@ version.</p>
 <section id="get-api-oob-v1-config">
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/config</span></code><a class="headerlink" href="#get-api-oob-v1-config" title="Link to this heading">#</a></h3>
 <p>Push config to connected headsets via query parameters:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span><span class="s2">"https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&amp;port=48322"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span><span class="s2">"https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&amp;port=48322"</span>
 </pre></div>
 </div>
 <p>Example response:</p>
@@ -918,18 +922,23 @@ if not connected).</p>
 </section>
 <section id="authentication">
 <h2>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">#</a></h2>
-<p>Set <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN=&lt;secret&gt;</span></code> to require a token on all hub operations.
-Pass it as:</p>
+<p>Every hub operation requires a token. Set <code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN=&lt;secret&gt;</span></code> to choose
+it; if it is unset or empty, the hub generates a random token for the session and
+prints it in the startup banner. Requests without the token, and WebSocket
+<code class="docutils literal notranslate"><span class="pre">register</span></code> frames without it, are rejected. Pass it as:</p>
 <ul class="simple">
 <li><p>WebSocket: <code class="docutils literal notranslate"><span class="pre">&quot;token&quot;</span></code> field in the <code class="docutils literal notranslate"><span class="pre">register</span></code> payload</p></li>
 <li><p>HTTP: <code class="docutils literal notranslate"><span class="pre">?token=&lt;secret&gt;</span></code> query parameter or <code class="docutils literal notranslate"><span class="pre">X-Control-Token</span></code> header</p></li>
 </ul>
+<p>The headset bookmark carries the token as <code class="docutils literal notranslate"><span class="pre">controlToken</span></code> in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (<code class="docutils literal notranslate"><span class="pre">--host-client</span></code>).</p>
 </section>
 <section id="web-client-integration">
 <h2>Web client integration<a class="headerlink" href="#web-client-integration" title="Link to this heading">#</a></h2>
 <p>The web client connects to the hub when the page URL contains
 <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code> plus <code class="docutils literal notranslate"><span class="pre">serverIP</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>:</p>
-<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322</pre>
+<pre class="literal-block"><a class="reference external" href="https://nvidia.github.io/IsaacCapture/client/main/" rel="noopener noreferrer" target="_blank">https://nvidia.github.io/IsaacCapture/client/main/</a>?oobEnable=1&amp;serverIP=10.0.0.1&amp;port=48322&amp;controlToken=&lt;CONTROL_TOKEN&gt;</pre>
 <p>The client builds <code class="docutils literal notranslate"><span class="pre">wss://{serverIP}:{port}/oob/v1/ws</span></code> and:</p>
 <ol class="arabic simple">
 <li><p>Registers as role <code class="docutils literal notranslate"><span class="pre">&quot;headset&quot;</span></code></p></li>
@@ -973,7 +982,7 @@ and signaling share this socket. In <code class="docutils literal notranslate"><
 <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">reverse</span></code> maps it to the headset.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONTROL_TOKEN</span></code></p></td>
-<td><p>Optional auth token for hub access</p></td>
+<td><p>Auth token for hub access; a random per-session token is generated if unset</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_STREAM_SERVER_IP</span></code></p></td>
 <td><p>Override the auto-detected LAN IP in hub initial config</p></td>
@@ -1356,7 +1365,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
       <br/>
     
   </p>
