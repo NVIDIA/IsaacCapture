@@ -196,7 +196,11 @@ and exposes it through ``get_metadata()``. It withholds force data until metadat
 is confirmed. Different or invalid metadata causes an error; after a producer
 restart, its metadata must be confirmed again. See :ref:`tracker-metadata`.
 
-The force-buffer size is defined by ``max_flatbuffer_size``. Metadata has its own
+The consumer's ``max_flatbuffer_size`` must be at least the producer's declared
+sample size, including FlatBuffer overhead. The default is
+``TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE``; pass a larger
+``max_flatbuffer_size`` to ``TactileTracker`` when the producer uses larger force
+samples. Metadata has its own
 ``TRACKER_METADATA_MAX_SIZE`` limit, including FlatBuffer overhead.
 The data array length must match the metadata's taxel count.
 
