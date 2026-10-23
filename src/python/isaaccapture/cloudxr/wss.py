@@ -598,8 +598,12 @@ async def run(
     on_oob_status: Callable[[dict], object] | None = None,
     on_oob_fatal: Callable[[Exception], object] | None = None,
     connect_requested: asyncio.Event | None = None,
+    control_token: str | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
+
+    *control_token* is the hub token a service already resolved; when ``None``
+    the hub resolves ``CONTROL_TOKEN`` (or a generated one) itself.
 
     *on_listening* is called once the socket is bound and accepting, which is
     the only point a caller in another thread can distinguish a proxy that is
@@ -668,7 +672,7 @@ async def run(
         if setup_oob:
             from .oob_teleop_hub import OOBControlHub  # noqa: PLC0415
 
-            control_token = resolve_control_token()
+            control_token = control_token or resolve_control_token()
             initial = {
                 **default_initial_stream_config(resolved_port),
                 **client_ui_fields_from_env(),
