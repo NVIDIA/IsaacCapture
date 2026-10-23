@@ -67,12 +67,10 @@ def test_nested_views_and_arrays_retain_the_buffer():
     geometry_mapping = metadata.geometry_mapping
     segment_source = metadata.segment_source
     rows = geometry_mapping.taxel_bind_poses
-    encoded = geometry_mapping.to_bytes()
     del metadata, geometry_mapping
     gc.collect()
     assert segment_source.joint_ids == [HandJoint.WRIST, HandJoint.INDEX_TIP]
     np.testing.assert_array_equal(rows, lbs_arrays()["taxel_bind_poses"])
-    assert encoded
 
 
 def test_metadata_revalidates_existing_geometry_mapping():

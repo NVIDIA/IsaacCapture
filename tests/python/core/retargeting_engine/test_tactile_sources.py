@@ -4,6 +4,7 @@
 """Tests for the TactileSource DeviceIO converter.
 
 Payloads are built through the real schema bindings; no OpenXR device is involved.
+Session-backed tracker reads are covered in tests/cpp/core/replay_deviceio_session.
 """
 
 import numpy as np
@@ -64,20 +65,6 @@ def _metadata(
     )
 
 
-class _FakeTracker:
-    """Stands in for a TactileTracker: fixed data and metadata."""
-
-    def __init__(self, data, metadata):
-        self._data = data
-        self._metadata = metadata
-
-    def get_data(self, _session):
-        return self._data
-
-    def get_metadata(self, _session):
-        return self._metadata
-
-
 class TestTactileSource:
     def test_creation_and_tracker(self):
         assert _source().get_tracker().get_name() == "TactileTracker"
@@ -93,17 +80,6 @@ class TestTactileSource:
     def test_index_matches_layout_order(self):
         names = [t.name for t in TactileLBSLayout(NUM_SEGMENTS, NUM_TAXELS).types]
         assert names == [member.name.lower() for member in TactileLBSLayoutIndex]
-
-    def test_poll_reads_data_and_metadata_from_one_tracker(self):
-        src = _source()
-        data = TactileDataArray(np.zeros((NUM_TAXELS, 3), np.float32))
-        metadata = _metadata()
-        src._tracker = _FakeTracker(data, metadata)
-
-        polled = src.poll_tracker(None)["deviceio_tactile"]
-
-        assert polled[0] is data
-        assert polled[1] is metadata
 
     def test_active_conversion(self):
         src = _source()
