@@ -18,29 +18,13 @@ import numpy as np
 from .interface import IDeviceIOSource
 from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
 from ..interface.tensor_group import TensorGroup
-from ..interface.tensor_group_type import OptionalType, TensorGroupType
-from ..tensor_types import DLDataType, NDArrayType
+from ..interface.tensor_group_type import OptionalType
+from ..tensor_types import TactileForces, TactileLBSLayout
 from .deviceio_tensor_types import DeviceIOTactileTracked
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio_trackers import ITracker
     from isaaccapture.schema import TactileDataArray, TactileMetadata
-
-
-def _float_array(name: str, rows: int, width: int) -> NDArrayType:
-    return NDArrayType(name, shape=(rows, width), dtype=DLDataType.FLOAT, dtype_bits=32)
-
-
-def _int_array(name: str, shape: tuple[int, ...]) -> NDArrayType:
-    return NDArrayType(name, shape=shape, dtype=DLDataType.INT, dtype_bits=32)
-
-
-def TactileForces(num_taxels: int) -> TensorGroupType:
-    """Per-taxel force vectors: one ``(num_taxels, 3)`` float32 array."""
-    return TensorGroupType(
-        f"tactile_forces_{num_taxels}",
-        [_float_array("taxel_forces", num_taxels, 3)],
-    )
 
 
 class TactileLBSLayoutIndex(IntEnum):
@@ -51,24 +35,6 @@ class TactileLBSLayoutIndex(IntEnum):
     TAXEL_BIND_POSES = 2
     TAXEL_SEGMENT_INDICES = 3
     TAXEL_SEGMENT_WEIGHTS = 4
-
-
-def TactileLBSLayout(num_segments: int, num_taxels: int) -> TensorGroupType:
-    """LBS and HandSkeletonRef arrays, ordered by :class:`TactileLBSLayoutIndex`.
-
-    HandJoint identifiers and segment indices are int32. Pose rows contain
-    position XYZ followed by quaternion XYZW, all in hand-root space.
-    """
-    return TensorGroupType(
-        f"tactile_lbs_layout_{num_segments}x{num_taxels}",
-        [
-            _int_array("segment_joint_ids", (num_segments,)),
-            _float_array("segment_bind_poses", num_segments, 7),
-            _float_array("taxel_bind_poses", num_taxels, 7),
-            _int_array("taxel_segment_indices", (num_taxels, 4)),
-            _float_array("taxel_segment_weights", num_taxels, 4),
-        ],
-    )
 
 
 class TactileSource(IDeviceIOSource):

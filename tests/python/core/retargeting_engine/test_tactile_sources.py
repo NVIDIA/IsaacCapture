@@ -12,9 +12,9 @@ import pytest
 
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     TactileLBSLayoutIndex,
-    TactileLBSLayout,
     TactileSource,
 )
+from isaaccapture.retargeting_engine.tensor_types import TactileLBSLayout
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
 from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
 from isaaccapture.schema import (
