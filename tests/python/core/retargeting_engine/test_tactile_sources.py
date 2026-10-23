@@ -10,11 +10,11 @@ Session-backed tracker reads are covered in tests/cpp/core/replay_deviceio_sessi
 import numpy as np
 import pytest
 
-from isaaccapture.retargeting_engine.deviceio_source_nodes import TactileSource
-from isaaccapture.retargeting_engine.tensor_types import (
+from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     DeviceIOTactileIndex,
-    TactileLBSLayoutIndex,
+    TactileSource,
 )
+from isaaccapture.retargeting_engine.tensor_types import TactileLBSLayoutIndex
 from isaaccapture.retargeting_engine.interface.base_retargeter import _make_output_group
 from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
 from isaaccapture.schema import (
@@ -39,7 +39,7 @@ def _source(**kwargs) -> TactileSource:
 
 def _inputs(source, data, metadata) -> dict:
     tg = TensorGroup(source.input_spec()["deviceio_tactile"])
-    tg[DeviceIOTactileIndex.DATA] = data
+    tg[DeviceIOTactileIndex.TRACKED] = data
     tg[DeviceIOTactileIndex.METADATA] = metadata
     return {"deviceio_tactile": tg}
 

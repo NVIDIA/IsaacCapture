@@ -65,13 +65,6 @@ TactileLBSLayoutIndex: Any = _create_index_enum(
 )
 
 
-class DeviceIOTactileIndex(IntEnum):
-    """Data and metadata slots in a :func:`DeviceIOTactileTracked` group."""
-
-    DATA = 0
-    METADATA = 1
-
-
 class HandJointIndex(IntEnum):
     """Indices for OpenXR hand joints (XR_HAND_JOINT_COUNT_EXT = 26)."""
 

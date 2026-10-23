@@ -14,6 +14,7 @@ from enum import IntEnum
 from typing import Any
 from ..interface.tensor_type import TensorType
 from ..interface.tensor_group_type import TensorGroupType
+from ..tensor_types.indices import _create_index_enum
 from isaaccapture.schema import (
     HeadPose,
     HandPose,
@@ -341,6 +342,11 @@ def DeviceIOTactileTracked() -> TensorGroupType:
             TactileMetadataTrackedType("tactile_metadata"),
         ],
     )
+
+
+DeviceIOTactileIndex: Any = _create_index_enum(
+    "DeviceIOTactileIndex", DeviceIOTactileTracked(), "tactile_"
+)
 
 
 def DeviceIOMessageChannelMessagesTracked() -> TensorGroupType:

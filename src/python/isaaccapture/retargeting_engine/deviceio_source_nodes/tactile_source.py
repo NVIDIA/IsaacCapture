@@ -19,12 +19,11 @@ from ..interface.retargeter_core_types import RetargeterIO, RetargeterIOType
 from ..interface.tensor_group import TensorGroup
 from ..interface.tensor_group_type import OptionalType
 from ..tensor_types import (
-    DeviceIOTactileIndex,
     TactileForces,
     TactileLBSLayout,
     TactileLBSLayoutIndex,
 )
-from .deviceio_tensor_types import DeviceIOTactileTracked
+from .deviceio_tensor_types import DeviceIOTactileIndex, DeviceIOTactileTracked
 
 if TYPE_CHECKING:
     from isaaccapture.deviceio_trackers import ITracker
@@ -85,7 +84,7 @@ class TactileSource(IDeviceIOSource):
     def poll_tracker(self, deviceio_session: Any) -> RetargeterIO:
         """Poll the tracker's frame and metadata for the compute step."""
         tg = TensorGroup(DeviceIOTactileTracked())
-        tg[DeviceIOTactileIndex.DATA] = self._tracker.get_data(deviceio_session)
+        tg[DeviceIOTactileIndex.TRACKED] = self._tracker.get_data(deviceio_session)
         tg[DeviceIOTactileIndex.METADATA] = self._tracker.get_metadata(deviceio_session)
         return {"deviceio_tactile": tg}
 
@@ -105,7 +104,7 @@ class TactileSource(IDeviceIOSource):
     def _compute_fn(self, inputs: RetargeterIO, outputs: RetargeterIO, context) -> None:
         """Publish forces and a cached LBS layout; mark absent outputs with ``set_none()``."""
         data: "TactileDataArray | None" = inputs["deviceio_tactile"][
-            DeviceIOTactileIndex.DATA
+            DeviceIOTactileIndex.TRACKED
         ]
         metadata: "TactileMetadata | None" = inputs["deviceio_tactile"][
             DeviceIOTactileIndex.METADATA
