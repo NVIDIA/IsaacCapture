@@ -926,6 +926,9 @@ prints it in the startup banner. Requests without the token, and WebSocket
 <li><p>WebSocket: <code class="docutils literal notranslate"><span class="pre">&quot;token&quot;</span></code> field in the <code class="docutils literal notranslate"><span class="pre">register</span></code> payload</p></li>
 <li><p>HTTP: <code class="docutils literal notranslate"><span class="pre">?token=&lt;secret&gt;</span></code> query parameter or <code class="docutils literal notranslate"><span class="pre">X-Control-Token</span></code> header</p></li>
 </ul>
+<p>An application that embeds <code class="docutils literal notranslate"><span class="pre">CloudXRService(setup_oob=True)</span></code> has no startup
+banner. Read the token from <code class="docutils literal notranslate"><span class="pre">service.control_token</span></code> (<code class="docutils literal notranslate"><span class="pre">None</span></code> without
+<code class="docutils literal notranslate"><span class="pre">setup_oob</span></code>); it is never written to the logs.</p>
 <p>The headset bookmark carries the token in the URL fragment
 (<code class="docutils literal notranslate"><span class="pre">#&lt;route&gt;?controlToken=&lt;secret&gt;</span></code>), which the browser never sends in a
 request or <code class="docutils literal notranslate"><span class="pre">Referer</span></code>. The web client moves it into <code class="docutils literal notranslate"><span class="pre">sessionStorage</span></code> for that
@@ -1371,7 +1374,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
       <br/>
     
   </p>
