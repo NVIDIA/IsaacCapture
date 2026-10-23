@@ -35,7 +35,6 @@ build-sonar:
     - if: $CI_COMMIT_BRANCH == 'main'
     - if: $CI_COMMIT_BRANCH == 'develop'
     - if: '$CI_COMMIT_BRANCH =~ /^release\/.*/'
-    - if: '$CI_COMMIT_BRANCH =~ /^ego4robo\/.*/'
 
 sonarqube-vulnerability-report:
   stage: sonarqube-vulnerability-report
@@ -52,7 +51,6 @@ sonarqube-vulnerability-report:
     - if: $CI_COMMIT_BRANCH == 'main'
     - if: $CI_COMMIT_BRANCH == 'develop'
     - if: '$CI_COMMIT_BRANCH =~ /^release\/.*/'
-    - if: '$CI_COMMIT_BRANCH =~ /^ego4robo\/.*/'
   artifacts:
     expire_in: 1 day
     reports:
