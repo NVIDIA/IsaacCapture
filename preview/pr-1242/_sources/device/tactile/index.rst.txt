@@ -44,7 +44,6 @@ The contract is defined by
        and weights per taxel. An index addresses the ordered segment list,
        rather than a ``HandJoint`` ordinal.
 
-
 Python pose arrays have shape ``(count, 7)``: position ``(x, y, z)`` in meters,
 then a unit quaternion ``(x, y, z, w)``. Identity orientation is ``(0, 0, 0, 1)``.
 All frames are right-handed. A pose maps coordinates from its local frame into
