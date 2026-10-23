@@ -284,6 +284,11 @@ def _decode_command(
         "-fps_mode",
         "passthrough",
     ]
+    if decoder_name.endswith("_cuvid"):
+        # NVDEC returns NV12, which swscale converts to RGB differently from the
+        # software decoders' yuv420p. The decoded YUV is identical, so convert to
+        # yuv420p first: the RGB frames then match the software path bit for bit.
+        command.extend(["-vf", "format=yuv420p"])
     if frame_limit is not None:
         command.extend(["-frames:v", str(frame_limit)])
     command.extend(["-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"])
