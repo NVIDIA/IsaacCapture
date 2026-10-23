@@ -28,12 +28,14 @@ namespace
 //! fails loudly instead of silently leaving the built-in default in place.
 constexpr std::string_view kKnownKeys[] = { "joints_topic",
                                             "links_topic",
-                                            "joints_collection_id",
+                                            "joints_left_collection_id",
+                                            "joints_right_collection_id",
                                             "tips_left_collection_id",
                                             "tips_right_collection_id",
                                             "tips_reference_frame",
                                             "wrist_source",
-                                            "wrist_alignment",
+                                            "left_aim_to_wrist",
+                                            "right_aim_to_wrist",
                                             "wrist_smoothing_ms" };
 
 std::string known_keys_as_text()
@@ -189,12 +191,14 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     validate_keys(root, path);
     assign(root, "joints_topic", options.joints_topic, path);
     assign(root, "links_topic", options.links_topic, path);
-    assign(root, "joints_collection_id", options.joints_collection_id, path);
+    assign(root, "joints_left_collection_id", options.joints_left_collection_id, path);
+    assign(root, "joints_right_collection_id", options.joints_right_collection_id, path);
     assign(root, "tips_left_collection_id", options.tips_left_collection_id, path);
     assign(root, "tips_right_collection_id", options.tips_right_collection_id, path);
     assign(root, "tips_reference_frame", options.tips_reference_frame, path);
     assign(root, "wrist_source", options.wrist_source, path);
-    assign(root, "wrist_alignment", options.wrist_alignment, path);
+    assign(root, "left_aim_to_wrist", options.left_aim_to_wrist, path);
+    assign(root, "right_aim_to_wrist", options.right_aim_to_wrist, path);
     assign_number(root, "wrist_smoothing_ms", options.wrist_smoothing_ms, path);
 
     resolution.loaded_path = path;

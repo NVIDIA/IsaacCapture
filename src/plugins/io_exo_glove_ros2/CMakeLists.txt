@@ -19,6 +19,7 @@ add_executable(io_exo_glove_ros2_plugin
     main.cpp
     io_exo_glove_ros2_config.cpp
     io_exo_glove_ros2_hand.cpp
+    io_exo_glove_ros2_kinematics.cpp
     io_exo_glove_ros2_pack.cpp
     io_exo_glove_ros2_plugin.cpp
 )

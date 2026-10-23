@@ -24,12 +24,14 @@ struct CliOverrides
 {
     std::optional<std::string> joints_topic;
     std::optional<std::string> links_topic;
-    std::optional<std::string> joints_collection_id;
+    std::optional<std::string> joints_left_collection_id;
+    std::optional<std::string> joints_right_collection_id;
     std::optional<std::string> tips_left_collection_id;
     std::optional<std::string> tips_right_collection_id;
     std::optional<std::string> tips_reference_frame;
     std::optional<std::string> wrist_source;
-    std::optional<std::string> wrist_alignment;
+    std::optional<std::string> left_aim_to_wrist;
+    std::optional<std::string> right_aim_to_wrist;
     std::optional<double> wrist_smoothing_ms;
 };
 
@@ -43,14 +45,17 @@ void print_usage(const char* prog)
               << kConfigEnvVar << ")\n"
               << "  --joints-topic=TOPIC           Override the glove joint angles topic (sensor_msgs/JointState)\n"
               << "  --links-topic=TOPIC            Override the exoskeleton link poses topic (tf2_msgs/TFMessage)\n"
-              << "  --joints-collection-id=ID      Override the joint angles tensor collection id\n"
+              << "  --joints-left-collection-id=ID Override the left hand's joint angles collection id\n"
+              << "  --joints-right-collection-id=ID\n"
+              << "                                 Override the right hand's joint angles collection id\n"
               << "  --tips-left-collection-id=ID   Override the left fingertip poses collection id\n"
               << "  --tips-right-collection-id=ID  Override the right fingertip poses collection id\n"
               << "  --tips-reference-frame=FRAME   Override the frame the fingertip poses are expressed in\n"
               << "  --wrist-source=SOURCE          Override where the injected hand's wrist pose comes from\n"
               << "                                 (auto | hand_tracking | controller)\n"
-              << "  --wrist-alignment=ROTATION     Override how the glove's wrist frame is aligned with it\n"
-              << "                                 (auto | identity | x,y,z,w)\n"
+              << "  --left-aim-to-wrist=POSE       Override the controller aim -> wrist offset, left hand\n"
+              << "  --right-aim-to-wrist=POSE      Override it for the right hand\n"
+              << "                                 (POSE is x,y,z,qx,qy,qz,qw)\n"
               << "  --wrist-smoothing-ms=MS        Override the tracked wrist's low-pass time constant (0 = off)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
@@ -151,13 +156,21 @@ try
             }
             cli.links_topic = *value;
         }
-        else if (const auto value = flag_value(arg, "joints-collection-id"))
+        else if (const auto value = flag_value(arg, "joints-left-collection-id"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "joints-collection-id");
+                return fail_empty_flag(argv[0], "joints-left-collection-id");
             }
-            cli.joints_collection_id = *value;
+            cli.joints_left_collection_id = *value;
+        }
+        else if (const auto value = flag_value(arg, "joints-right-collection-id"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "joints-right-collection-id");
+            }
+            cli.joints_right_collection_id = *value;
         }
         else if (const auto value = flag_value(arg, "tips-left-collection-id"))
         {
@@ -191,13 +204,21 @@ try
             }
             cli.wrist_source = *value;
         }
-        else if (const auto value = flag_value(arg, "wrist-alignment"))
+        else if (const auto value = flag_value(arg, "left-aim-to-wrist"))
         {
             if (value->empty())
             {
-                return fail_empty_flag(argv[0], "wrist-alignment");
+                return fail_empty_flag(argv[0], "left-aim-to-wrist");
             }
-            cli.wrist_alignment = *value;
+            cli.left_aim_to_wrist = *value;
+        }
+        else if (const auto value = flag_value(arg, "right-aim-to-wrist"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "right-aim-to-wrist");
+            }
+            cli.right_aim_to_wrist = *value;
         }
         else if (const auto value = flag_value(arg, "wrist-smoothing-ms"))
         {
@@ -240,9 +261,13 @@ try
     {
         options.links_topic = *cli.links_topic;
     }
-    if (cli.joints_collection_id)
+    if (cli.joints_left_collection_id)
     {
-        options.joints_collection_id = *cli.joints_collection_id;
+        options.joints_left_collection_id = *cli.joints_left_collection_id;
+    }
+    if (cli.joints_right_collection_id)
+    {
+        options.joints_right_collection_id = *cli.joints_right_collection_id;
     }
     if (cli.tips_left_collection_id)
     {
@@ -260,9 +285,13 @@ try
     {
         options.wrist_source = *cli.wrist_source;
     }
-    if (cli.wrist_alignment)
+    if (cli.left_aim_to_wrist)
     {
-        options.wrist_alignment = *cli.wrist_alignment;
+        options.left_aim_to_wrist = *cli.left_aim_to_wrist;
+    }
+    if (cli.right_aim_to_wrist)
+    {
+        options.right_aim_to_wrist = *cli.right_aim_to_wrist;
     }
     if (cli.wrist_smoothing_ms)
     {
@@ -280,12 +309,14 @@ try
         }
         std::cout << "joints_topic            = " << options.joints_topic << "\n"
                   << "links_topic             = " << options.links_topic << "\n"
-                  << "joints_collection_id    = " << options.joints_collection_id << "\n"
+                  << "joints_left_collection_id  = " << options.joints_left_collection_id << "\n"
+                  << "joints_right_collection_id = " << options.joints_right_collection_id << "\n"
                   << "tips_left_collection_id = " << options.tips_left_collection_id << "\n"
                   << "tips_right_collection_id= " << options.tips_right_collection_id << "\n"
                   << "tips_reference_frame    = " << options.tips_reference_frame << "\n"
                   << "wrist_source            = " << options.wrist_source << "\n"
-                  << "wrist_alignment         = " << options.wrist_alignment << "\n"
+                  << "left_aim_to_wrist       = " << options.left_aim_to_wrist << "\n"
+                  << "right_aim_to_wrist      = " << options.right_aim_to_wrist << "\n"
                   << "wrist_smoothing_ms      = " << options.wrist_smoothing_ms << "\n"
                   << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
                   << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
@@ -311,9 +342,9 @@ try
     ros_argv.push_back(nullptr);
     rclcpp::init(static_cast<int>(ros_args.size()), ros_argv.data());
 
-    std::cout << "IoExoGloveRos2Plugin (joints: " << options.joints_topic << " -> " << options.joints_collection_id
-              << ", tips: " << options.links_topic << " -> " << options.tips_left_collection_id << " / "
-              << options.tips_right_collection_id << ")" << std::endl;
+    std::cout << "IoExoGloveRos2Plugin (joints: " << options.joints_topic << " -> " << options.joints_left_collection_id
+              << ", " << options.joints_right_collection_id << ", tips: " << options.links_topic << " -> "
+              << options.tips_left_collection_id << " / " << options.tips_right_collection_id << ")" << std::endl;
 
     auto node = std::make_shared<IoExoGloveRos2Plugin>(options);
     rclcpp::spin(node);

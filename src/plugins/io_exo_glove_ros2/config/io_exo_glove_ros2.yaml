@@ -9,9 +9,10 @@
 # Precedence, lowest to highest:
 #   1. built-in defaults in io_exo_glove_ros2_plugin.hpp
 #   2. this file
-#   3. command-line flags (--joints-topic=..., --links-topic=..., --joints-collection-id=...,
-#      --tips-left-collection-id=..., --tips-right-collection-id=..., --tips-reference-frame=...,
-#      --wrist-source=..., --wrist-alignment=..., --wrist-smoothing-ms=...)
+#   3. command-line flags (--joints-topic=..., --links-topic=..., --joints-left-collection-id=...,
+#      --joints-right-collection-id=..., --tips-left-collection-id=..., --tips-right-collection-id=...,
+#      --tips-reference-frame=..., --wrist-source=..., --left-aim-to-wrist=...,
+#      --right-aim-to-wrist=..., --wrist-smoothing-ms=...)
 #
 # Run the plugin with --print-config to see which file was loaded and the effective values.
 
@@ -37,10 +38,13 @@ tips_reference_frame: "base_link"
 # --wrist-source label is read from $IO_EXO_GLOVE_ROS2_WRIST_SOURCE, so set that too (or instead).
 wrist_source: "auto"
 
-# How the glove's wrist frame is aligned with that pose: "auto" captures the rotation from the first
-# frame where both are tracked and logs it (a good default, and the log line gives you the value to
-# paste here), "identity" when the frames already agree, or an explicit "x,y,z,w" rotation.
-wrist_alignment: "auto"
+# Rigid transform from a controller's aim pose to the wrist joint, per hand, as
+# "x,y,z,qx,qy,qz,qw" (metres and a unit quaternion). It depends on the controller and how it is
+# mounted on the glove, which the plugin cannot know, so it is configuration; the identity keeps the
+# hand on the raw aim pose, which puts it roughly a hand's width off. Only used when the wrist pose
+# comes from a controller ("controller", or "auto" falling back to it).
+left_aim_to_wrist: "0,0,0,0,0,0,1"
+right_aim_to_wrist: "0,0,0,0,0,0,1"
 
 # Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is noisy (and a
 # glove in front of the headset makes it worse) while the glove's own articulation is not, so the
@@ -51,6 +55,11 @@ wrist_smoothing_ms: 60
 # OpenXR tensor collection ids this plugin pushes to. These must match the collection_id used by the
 # consumer side (JointStateTracker / JointSe3PoseTracker), so changing them means changing the
 # consumer configuration too.
-joints_collection_id: "exo_glove_joints"
+#
+# The glove reports both hands in one JointState message; the plugin splits it by joint name
+# (joint_Left* / joint_Right*) so each hand has its own collection. That way a glove that drops out is
+# a collection that goes quiet, instead of that hand reading as 0.0 radians in a merged one.
+joints_left_collection_id: "exo_glove_joints_left"
+joints_right_collection_id: "exo_glove_joints_right"
 tips_left_collection_id: "exo_glove_tips_left"
 tips_right_collection_id: "exo_glove_tips_right"

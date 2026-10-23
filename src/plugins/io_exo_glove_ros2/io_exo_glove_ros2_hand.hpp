@@ -10,7 +10,6 @@
 
 #include <array>
 #include <cstddef>
-#include <optional>
 #include <string>
 
 namespace plugins
@@ -18,7 +17,7 @@ namespace plugins
 namespace io_exo_glove_ros2
 {
 
-//! OpenXR hand joints, including the optional ones this bridge leaves untracked.
+//! OpenXR hand joints; all of them are filled while a hand is active.
 inline constexpr std::size_t kOpenXrHandJointCount = XR_HAND_JOINT_COUNT_EXT;
 
 //! Radius the injected joints carry, in metres. The exoskeleton reports poses, not joint sizes.
@@ -30,47 +29,18 @@ inline constexpr XrSpaceLocationFlags kPoseValidFlags =
 inline constexpr XrSpaceLocationFlags kPoseTrackedFlags =
     kPoseValidFlags | XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
 
-//! Joints the exoskeleton carries per hand: exactly the 21 OpenXR hand joints the conformance
-//! suite judges. PALM and the four non-thumb metacarpals are optional in OpenXR, so a 21-joint
-//! glove can pass, and the exoskeleton's own kinematic chain stops at the fingertips.
-inline constexpr std::size_t kHandJointSlotCount = 21;
-
-//! One OpenXR joint and the exoskeleton frames that can carry it, best candidate first. The
-//! exoskeleton publishes a frame per skeletal link plus one per fingertip, so a slot resolves by
-//! exact ``child_frame_id`` match; an empty candidate ends the list.
-struct HandJointSlot
-{
-    XrHandJointEXT joint;
-    std::array<const char*, 3> frames;
-};
-
-//! Slots for one hand, in OpenXR joint order. Static storage: the returned array only borrows names.
-std::array<HandJointSlot, kHandJointSlotCount> make_hand_joint_slots(Hand hand);
-
-//! One hand's skeleton as read from one TF message.
+//! One hand's skeleton, expressed in the OpenXR wrist frame: the wrist is the identity pose and every
+//! other joint is an anatomical landmark placed from the glove's articulation. All 26 joints are
+//! filled, because OpenXR requires every joint of an active hand to be valid.
 struct HandSkeleton
 {
-    //! Wrist-relative joints, indexed by ``XrHandJointEXT``. Every entry starts invalid, and the
-    //! slots the message does not carry stay that way: absence is not a pose at the origin.
     std::array<XrHandJointLocationEXT, kOpenXrHandJointCount> joints{};
 
-    //! Slots resolved from this message, including the wrist.
+    //! Joints filled, for the startup log.
     std::size_t filled = 0;
 
-    //! Glove frame the wrist came from (the rig's anchor); empty when this hand is absent.
+    //! Mechanism root frame the articulation was read from; empty when this hand is absent.
     std::string wrist_frame;
-
-    //! Anchor -> wrist offset, in the anchor's own axes. A rig constant: the wrist is a fixed point on
-    //! the glove, so the caller freezes the first one it sees and passes it back, which keeps the
-    //! wrist still while the fingers move. Filled when @c wrist_offset_valid.
-    XrVector3f wrist_offset{ 0.0f, 0.0f, 0.0f };
-    bool wrist_offset_valid = false;
-
-    //! Wrist pose in the glove's own frame, for the one-time alignment onto the tracked wrist.
-    XrPosef wrist_pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-
-    //! Frame each slot resolved to, for the one-time startup log; empty when unresolved.
-    std::array<std::string, kHandJointSlotCount> resolved;
 
     bool tracked() const
     {
@@ -78,17 +48,9 @@ struct HandSkeleton
     }
 };
 
-//! Reads one hand's skeleton out of @p msg, expressed relative to that hand's wrist (the wrist itself
-//! is the identity pose, and every orientation is built from the bones so it carries OpenXR's joint
-//! axes rather than the rig's). Returning a skeleton whose @c wrist_frame is empty means the hand is
-//! absent: the exoskeleton publishes it only while the glove streams.
-//!
-//! @p frozen_wrist_offset is the anchor -> wrist offset a previous frame reported; pass it to keep
-//! the wrist at a fixed point on the glove. With no value the offset is derived from this frame's
-//! fingertip geometry and reported back in @c HandSkeleton::wrist_offset, for the caller to freeze.
-HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg,
-                                 Hand hand,
-                                 const std::optional<XrVector3f>& frozen_wrist_offset = std::nullopt);
+//! Reads one hand's anatomy from the glove's articulation in @p msg. A skeleton whose
+//! @c wrist_frame is empty means the mechanism was absent, i.e. that glove is not streaming.
+HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
 //! Composes @p rotation onto @p pose: the rotation is applied to the pose's orientation and to its
 //! position, i.e. the pose is re-expressed one frame further out.
@@ -96,6 +58,10 @@ XrPosef rotate_pose(const XrQuaternionf& rotation, const XrPosef& pose);
 
 //! Inverse of a rigid pose, for the wrist-relative step.
 XrPosef invert_pose(const XrPosef& pose);
+
+//! Rotation whose -Z axis is @p forward (OpenXR's joint convention: -Z runs along the bone) and whose
+//! roll is pinned by @p up_hint.
+XrQuaternionf orientation_along(const XrVector3f& forward, const XrVector3f& up_hint);
 
 //! Spherical interpolation between two unit quaternions, for smoothing a tracked wrist.
 XrQuaternionf slerp_quaternions(const XrQuaternionf& from, const XrQuaternionf& to, float t);
