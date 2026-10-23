@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
 
 # DINOv3 is installed separately with --no-deps from requirements-dinov3.txt.
-hydra-core==1.3.5
+hydra-core>=1.3.7
 hydra-colorlog==1.2.0
 rich==14.3.3
 
 # Common utilities
 numpy==2.4.4
 scipy==1.15.3
-pillow==12.3.0
+Pillow>=13.0.0
 pyyaml==6.0.3
 setuptools==82.0.1
 opencv-python==4.11.0.86
