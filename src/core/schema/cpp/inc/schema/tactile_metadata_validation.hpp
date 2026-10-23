@@ -15,7 +15,7 @@ namespace core
 
 //! Checks the semantics of the supported LBS/HandSkeletonRef layout after FlatBuffers verification.
 //! Weight sums may differ from one by at most 1e-5 to allow floating-point rounding.
-//! Squared quaternion norms use the Python constructor's tolerance of 1e-4.
+//! Squared quaternion norms may differ from one by at most 1e-4.
 //! Throws std::runtime_error naming the invalid field and the violated constraint.
 inline void verify_tactile_metadata(const TactileMetadata& metadata)
 {

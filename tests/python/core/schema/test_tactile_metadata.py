@@ -75,31 +75,52 @@ def test_nested_views_and_arrays_retain_the_buffer():
     assert encoded
 
 
-def test_rejects_mismatched_taxel_lengths():
+def test_metadata_revalidates_existing_geometry_mapping():
+    geometry_mapping = LBS(**lbs_arrays())
+    geometry_mapping.taxel_segment_weights[0] = 0
+    with pytest.raises(ValueError, match="taxel_segment_weights"):
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["taxel_bind_poses", "taxel_segment_indices", "taxel_segment_weights"]
+)
+def test_rejects_mismatched_taxel_lengths(field):
     arrays = lbs_arrays()
-    arrays["taxel_bind_poses"] = arrays["taxel_bind_poses"][:2]
-    with pytest.raises(ValueError, match="same length"):
-        LBS(**arrays)
+    arrays[field] = arrays[field][:2]
+    geometry_mapping = LBS(**arrays)
+    with pytest.raises(ValueError, match=r"taxel_segment_(indices|weights): expected"):
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
 
 
 def test_rejects_mismatched_segment_mapping():
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match=r"segment_bind_poses.*joint_ids"):
         TactileMetadata(LBS(**lbs_arrays()), HandSkeletonRef([HandJoint.WRIST]))
 
 
 def test_rejects_out_of_range_zero_weight_slot():
     arrays = lbs_arrays()
     arrays["taxel_segment_indices"][0, 3] = 2
+    geometry_mapping = LBS(**arrays)
     with pytest.raises(ValueError, match="taxel_segment_indices"):
-        LBS(**arrays)
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
 
 
 @pytest.mark.parametrize("weight", [-1.0, np.inf, np.nan, 0.5])
 def test_rejects_invalid_weights(weight):
     arrays = lbs_arrays()
     arrays["taxel_segment_weights"][0, 0] = weight
+    geometry_mapping = LBS(**arrays)
     with pytest.raises(ValueError, match="taxel_segment_weights"):
-        LBS(**arrays)
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
 
 
 @pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
@@ -109,8 +130,11 @@ def test_rejects_invalid_weights(weight):
 def test_rejects_nonunit_quaternions(field, qw):
     arrays = lbs_arrays()
     arrays[field][-1, 6] = qw
+    geometry_mapping = LBS(**arrays)
     with pytest.raises(ValueError, match="unit quaternions"):
-        LBS(**arrays)
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
 
 
 @pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
@@ -125,7 +149,9 @@ def test_rejects_nonunit_quaternions(field, qw):
 def test_accepts_unit_quaternions_with_rounding_tolerance(field, quaternion):
     arrays = lbs_arrays()
     arrays[field][-1, 3:] = quaternion
-    LBS(**arrays)
+    TactileMetadata(
+        LBS(**arrays), HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+    )
 
 
 @pytest.mark.parametrize("field", ["segment_bind_poses", "taxel_bind_poses"])
@@ -134,14 +160,26 @@ def test_accepts_unit_quaternions_with_rounding_tolerance(field, quaternion):
 def test_rejects_nonfinite_bind_poses(field, component, value):
     arrays = lbs_arrays()
     arrays[field][-1, component] = value
+    geometry_mapping = LBS(**arrays)
     with pytest.raises(ValueError, match="finite"):
-        LBS(**arrays)
+        TactileMetadata(
+            geometry_mapping, HandSkeletonRef([HandJoint.WRIST, HandJoint.INDEX_TIP])
+        )
 
 
-def test_rejects_wrong_influence_width():
+@pytest.mark.parametrize(
+    "field",
+    [
+        "segment_bind_poses",
+        "taxel_bind_poses",
+        "taxel_segment_indices",
+        "taxel_segment_weights",
+    ],
+)
+def test_lbs_rejects_wrong_array_width(field):
     arrays = lbs_arrays()
-    arrays["taxel_segment_weights"] = np.zeros((3, 3), np.float32)
-    with pytest.raises(ValueError, match="taxel_segment_weights"):
+    arrays[field] = arrays[field][:, :-1]
+    with pytest.raises(ValueError, match=field):
         LBS(**arrays)
 
 
@@ -149,5 +187,7 @@ def test_rejects_wrong_influence_width():
     "joint_ids", [[HandJoint.WRIST, HandJoint.WRIST], [HandJoint.NUM_JOINTS]]
 )
 def test_rejects_invalid_joint_mapping(joint_ids):
+    segment_source = HandSkeletonRef(joint_ids)
+    geometry_mapping = LBS(**lbs_arrays(num_joints=len(joint_ids)))
     with pytest.raises(ValueError, match="joint_ids"):
-        HandSkeletonRef(joint_ids)
+        TactileMetadata(geometry_mapping, segment_source)

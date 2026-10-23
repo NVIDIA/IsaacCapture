@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Encoded tactile metadata views. Pose arrays use rows (x, y, z, qx, qy, qz, qw).
+// Complete-layout semantics are validated by TactileMetadata using the shared schema validator.
 
 #pragma once
 
@@ -12,12 +13,11 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <schema/tactile_metadata_generated.h>
+#include <schema/tactile_metadata_validation.hpp>
 
-#include <array>
-#include <cmath>
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -41,16 +41,6 @@ inline void bind_tactile_metadata(py::module& m)
         .def(py::init(
                  [](const std::vector<HandJoint>& joint_ids)
                  {
-                     std::array<bool, HandJoint_NUM_JOINTS> seen{};
-                     for (const auto joint : joint_ids)
-                     {
-                         if (joint >= HandJoint_NUM_JOINTS || seen[joint])
-                         {
-                             throw py::value_error(
-                                 "joint_ids: expected unique HandJoint identifiers, excluding NUM_JOINTS");
-                         }
-                         seen[joint] = true;
-                     }
                      HandSkeletonRefT native;
                      native.joint_ids = joint_ids;
                      return pack<HandSkeletonRef>(native);
@@ -69,66 +59,19 @@ inline void bind_tactile_metadata(py::module& m)
                                    return joint_ids;
                                });
 
-    auto poses_from_rows = [](const FloatRows& rows, const char* name)
-    {
-        auto poses = structs_from_rows<Pose, float, 7>(rows, name);
-        for (py::ssize_t i = 0; i < rows.shape(0); ++i)
-        {
-            const float* row = rows.data(i);
-            for (int c = 0; c < 7; ++c)
-            {
-                if (!std::isfinite(row[c]))
-                {
-                    throw py::value_error(std::string(name) + ": poses must be finite");
-                }
-            }
-            const float norm2 = row[3] * row[3] + row[4] * row[4] + row[5] * row[5] + row[6] * row[6];
-            if (std::abs(norm2 - 1.0f) > 1e-4f)
-            {
-                throw py::value_error(std::string(name) + ": orientations must be unit quaternions (x, y, z, w)");
-            }
-        }
-        return poses;
-    };
-
     serialized_class<LBS>(m, "LBS", "Linear blend skinning bind poses and four-slot influences.")
         .def(py::init(
-                 [poses_from_rows](const FloatRows& segment_bind_poses, const FloatRows& taxel_bind_poses,
-                                   const IndexRows& taxel_segment_indices, const FloatRows& taxel_segment_weights)
+                 [](const FloatRows& segment_bind_poses, const FloatRows& taxel_bind_poses,
+                    const IndexRows& taxel_segment_indices, const FloatRows& taxel_segment_weights)
                  {
                      LBST native;
-                     native.segment_bind_poses = poses_from_rows(segment_bind_poses, "segment_bind_poses");
-                     native.taxel_bind_poses = poses_from_rows(taxel_bind_poses, "taxel_bind_poses");
+                     native.segment_bind_poses =
+                         structs_from_rows<Pose, float, 7>(segment_bind_poses, "segment_bind_poses");
+                     native.taxel_bind_poses = structs_from_rows<Pose, float, 7>(taxel_bind_poses, "taxel_bind_poses");
                      native.taxel_segment_indices =
                          structs_from_rows<UInt4, uint32_t, 4>(taxel_segment_indices, "taxel_segment_indices");
                      native.taxel_segment_weights =
                          structs_from_rows<Float4, float, 4>(taxel_segment_weights, "taxel_segment_weights");
-                     const size_t taxels = native.taxel_bind_poses.size();
-                     if (native.taxel_segment_indices.size() != taxels || native.taxel_segment_weights.size() != taxels)
-                     {
-                         throw py::value_error("all taxel_* arrays must have the same length");
-                     }
-                     for (size_t i = 0; i < taxels; ++i)
-                     {
-                         float total = 0;
-                         for (int k = 0; k < 4; ++k)
-                         {
-                             if (native.taxel_segment_indices[i].values()->Get(k) >= native.segment_bind_poses.size())
-                             {
-                                 throw py::value_error("taxel_segment_indices: slot is not a segment index");
-                             }
-                             const float weight = native.taxel_segment_weights[i].values()->Get(k);
-                             if (!std::isfinite(weight) || weight < 0)
-                             {
-                                 throw py::value_error("taxel_segment_weights: weights must be finite and nonnegative");
-                             }
-                             total += weight;
-                         }
-                         if (std::abs(total - 1.0f) > 1e-5f)
-                         {
-                             throw py::value_error("taxel_segment_weights: each row must sum to one");
-                         }
-                     }
                      return pack<LBS>(native);
                  }),
              py::arg("segment_bind_poses"), py::arg("taxel_bind_poses"), py::arg("taxel_segment_indices"),
@@ -153,13 +96,6 @@ inline void bind_tactile_metadata(py::module& m)
         .def(py::init(
                  [](const Serialized<LBS>& geometry_mapping, const Serialized<HandSkeletonRef>& segment_source)
                  {
-                     const auto* poses = geometry_mapping->segment_bind_poses();
-                     const auto* joint_ids = segment_source->joint_ids();
-                     if ((poses != nullptr ? poses->size() : 0) != (joint_ids != nullptr ? joint_ids->size() : 0))
-                     {
-                         throw py::value_error(
-                             "segment_bind_poses and segment_source.joint_ids must have the same length");
-                     }
                      TactileMetadataT native;
                      LBST lbs;
                      geometry_mapping->UnPackTo(&lbs);
@@ -167,7 +103,16 @@ inline void bind_tactile_metadata(py::module& m)
                      HandSkeletonRefT hand;
                      segment_source->UnPackTo(&hand);
                      native.segment_source.Set(std::move(hand));
-                     return pack<TactileMetadata>(native);
+                     auto metadata = pack<TactileMetadata>(native);
+                     try
+                     {
+                         verify_tactile_metadata(*metadata);
+                     }
+                     catch (const std::runtime_error& error)
+                     {
+                         throw py::value_error(error.what());
+                     }
+                     return metadata;
                  }),
              py::arg("geometry_mapping"), py::arg("segment_source"))
         .def_property_readonly("geometry_mapping_type", field(&TactileMetadata::geometry_mapping_type))
