@@ -906,12 +906,12 @@ The following packages are installed via `requirements.txt` and
 
 | Package | Version | License | Source |
 |---------|---------|---------|--------|
-| hydra-core | 1.3.5 | MIT | https://pypi.org/project/hydra-core/ |
+| hydra-core | >=1.3.7 | MIT | https://pypi.org/project/hydra-core/ |
 | hydra-colorlog | 1.2.0 | MIT | https://pypi.org/project/hydra-colorlog/ |
 | rich | 14.3.3 | MIT | https://pypi.org/project/rich/ |
 | numpy | 2.4.4 | BSD-3-Clause | https://pypi.org/project/numpy/ |
 | scipy | 1.15.3 | BSD-3-Clause | https://pypi.org/project/scipy/ |
-| pillow | 12.3.0 | HPND (PIL) | https://pypi.org/project/pillow/ |
+| Pillow | >=13.0.0 | HPND (PIL) | https://pypi.org/project/pillow/ |
 | pyyaml | 6.0.3 | MIT | https://pypi.org/project/pyyaml/ |
 | setuptools | 82.0.1 | MIT | https://pypi.org/project/setuptools/ |
 | opencv-python | 4.11.0.86 | Apache-2.0 | https://pypi.org/project/opencv-python/ |
