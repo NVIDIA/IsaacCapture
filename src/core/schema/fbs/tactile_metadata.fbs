@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+include "float4.fbs";
 include "hand.fbs";
 include "pose.fbs";
+include "uint4.fbs";
 
 namespace core;
 
@@ -19,14 +21,6 @@ table HandSkeletonRef {
 
 union SegmentSource {
   HandSkeletonRef = 1,
-}
-
-struct UInt4 {
-  values: [uint32:4];
-}
-
-struct Float4 {
-  values: [float:4];
 }
 
 table LBS {
