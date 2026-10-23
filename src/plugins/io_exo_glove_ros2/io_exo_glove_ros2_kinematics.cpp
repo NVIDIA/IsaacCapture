@@ -4,6 +4,7 @@
 #include "io_exo_glove_ros2_kinematics.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <string>
@@ -16,8 +17,159 @@ namespace io_exo_glove_ros2
 namespace
 {
 
-//! A bend is clamped here: a linkage glitch should not fold the anatomy through itself.
-constexpr float kMaxBend = 1.4f;
+//! Revolute joints read per finger, in chain order: F1..F4. The thumb has a fifth joint (Thumb4)
+//! beyond the last anatomy joint the skeleton builder drives, so only ThumbBase..Thumb3 are read.
+constexpr std::size_t kRigSlotCount = 4;
+
+//! Which hand a table row belongs to.
+constexpr std::size_t hand_index(Hand hand)
+{
+    return hand == Hand::Left ? 0 : 1;
+}
+
+//! One revolute joint of the vendor's ``blender_human_skeleton_v5.urdf`` finger chain.
+struct RigJointSpec
+{
+    //! URDF ``<origin rpy>``: the fixed rotation from the parent frame to this joint's zero pose,
+    //! radians, applied as Rz(yaw) * Ry(pitch) * Rx(roll) like URDF does.
+    std::array<float, 3> rest_rpy;
+    //! URDF ``<axis xyz>``: the revolute axis in the joint frame (unit length in the URDF).
+    std::array<float, 3> axis;
+    //! Absolute joint angle of the open hand, radians: the calibration offset subtracted before the
+    //! anatomy is driven. See the derivation above the table.
+    float zero;
+    //! +1 when flexion increases the URDF angle, -1 when it decreases it. Slot 0 is the knuckle
+    //! spread and uses the hand sign instead (+ left, - right); see the note above the table.
+    float sign;
+};
+
+//! Rest rotation, revolute axis, open-hand zero and flexion sign for the four joints per finger that
+//! drive the anatomy: the knuckle (F1 -> spread) and the three bends (F2 -> MCP, F3 -> PIP,
+//! F4 -> DIP). For the thumb those are ThumbBase, Thumb1, Thumb2 and Thumb3.
+//!
+//! Derivation (validated against a 58.7 s recording of both hands opening and closing):
+//!
+//!  - The v5 URDF is
+//!    ``.../io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/blender_human_skeleton_v5.urdf``.
+//!    Every finger joint is ``revolute`` with an ``<origin xyz rpy>`` and an ``<axis xyz>``, and the
+//!    driver publishes both frames in ``base_link``. Therefore
+//!    ``q_child = q_parent * q_rest(rpy) * q_axis(theta)`` and, with the published quaternions,
+//!    ``R_rel = conj(q_parent) * q_child`` and ``theta = signed_angle(conj(q_rest) * R_rel, axis)``
+//!    is the joint's absolute angle relative to the URDF zero pose. ``read_hand_angles`` computes it
+//!    that way; no frame position, frame ordering or first-frame capture is involved.
+//!  - ``zero`` is the open-hand angle of that joint, in degrees, read from
+//!    ``raw_tf_both.jsonl``: for each finger, the frame where its fingertip was furthest from the
+//!    palm (largest ``dot(tip - F1, dorsal)``, with dorsal taken from the knuckle row and the F1->F2
+//!    direction), then every joint's angle at that frame. All 7251 recorded TF messages were used.
+//!    The open-hand zeros, F1/F2/F3/F4 (degrees):
+//!    - left thumb: -31.11 / -24.17 / 50.48 / -130.03
+//!    - left index: -17.95 / -64.99 / -101.56 / -60.32
+//!    - left middle: 5.69 / -66.71 / -104.02 / -59.16
+//!    - left ring: 1.69 / -64.73 / -107.26 / -76.79
+//!    - left little: 7.08 / -59.58 / -113.52 / -67.71
+//!    - right thumb: 15.03 / 2.09 / 48.85 / -115.31
+//!    - right index: 11.46 / 59.93 / -121.90 / 26.62
+//!    - right middle: -5.97 / -73.54 / -98.84 / -74.99
+//!    - right ring: -8.05 / -68.01 / -107.51 / -78.74
+//!    - right little: -13.43 / -61.02 / -110.70 / -79.34
+//!
+//!    A joint's zero is therefore a constant calibration: two sessions of the same rig produce
+//!    identical anatomical output for identical frame quaternions.
+//!  - ``sign`` turns the absolute angle into the anatomy's flexion-positive convention: +1 when the
+//!    joint angle grows from the most-open to the most-closed frame of the recording, -1 when it
+//!    shrinks. The validated mirror is left + / right - for the index MCP, but the rig's linkage does
+//!    not mirror every joint: one sign per hand would clamp the right middle/ring/little MCPs and two
+//!    thumb joints to zero, so the measured sign is stored per joint. Slot 0 (spread) is not a
+//!    flexion axis and always uses the hand sign.
+constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
+    // left
+    {
+        {
+            // thumb
+            { { 0.00000f, 0.00000f, 0.99442f }, { 1.00000f, 0.00000f, 0.00000f }, -0.54289f, 1.00000f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, -0.42177f, -1.00000f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.88109f, -1.00000f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.26941f, 1.00000f },
+        },
+        {
+            // index
+            { { 0.00000f, 0.26180f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.31324f, 1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.13436f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.77253f, -1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.05282f, 1.00000f },
+        },
+        {
+            // middle
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.09928f, 1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.16431f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.81542f, 1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.03251f, 1.00000f },
+        },
+        {
+            // ring
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.02944f, 1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.12981f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.87196f, 1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.34022f, 1.00000f },
+        },
+        {
+            // little
+            { { 0.00000f, -0.17453f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.12354f, 1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.03989f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.98132f, -1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.18170f, 1.00000f },
+        },
+    },
+    // right
+    {
+        {
+            // thumb
+            { { 3.14160f, 0.00000f, 2.14720f }, { 1.00000f, 0.00000f, 0.00000f }, 0.26231f, -1.00000f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, 0.03640f, 1.00000f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.85258f, -1.00000f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.01247f, 1.00000f },
+        },
+        {
+            // index
+            { { 0.00000f, -0.26180f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.19998f, -1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 1.04597f, -1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.12763f, 1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.46464f, -1.00000f },
+        },
+        {
+            // middle
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.10419f, -1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.28344f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.72500f, 1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.30885f, 1.00000f },
+        },
+        {
+            // ring
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.14056f, -1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.18702f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.87643f, 1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.37421f, 1.00000f },
+        },
+        {
+            // little
+            { { 0.00000f, 0.17453f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.23439f, -1.00000f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.06498f, 1.00000f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.93203f, -1.00000f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.38471f, 1.00000f },
+        },
+    },
+};
+
+//! Spread is clamped symmetrically: the metacarpal abduction/adduction range, about +/-25 deg.
+constexpr float kMaxSpread = 0.436332f;
+
+//! Human bend limits, radians, per bend slot (MCP, PIP, DIP): 0..100 deg, 0..110 deg, 0..110 deg.
+//! Negative values are extension and are clamped to the joint's URDF zero, which is the open hand.
+constexpr std::array<float, 3> kFingerBendLimit = { 1.745329f, 1.919862f, 1.919862f };
+
+//! Thumb limits, radians, per bend slot (CMC, MCP, IP): 0..60 deg, 0..60 deg, 0..80 deg. "As
+//! appropriate": the rig's thumb is a five-link chain mapped onto the anatomy's three thumb bends.
+constexpr std::array<float, 3> kThumbBendLimit = { 1.047198f, 1.047198f, 1.396263f };
 
 //! Dorsal direction of the anatomy's rest frame, i.e. the back of the hand (OpenXR's +Y).
 constexpr XrVector3f kDorsal{ 0.0f, 1.0f, 0.0f };
@@ -25,15 +177,6 @@ constexpr XrVector3f kDorsal{ 0.0f, 1.0f, 0.0f };
 const char* side_prefix(Hand hand)
 {
     return hand == Hand::Left ? "Left" : "Right";
-}
-
-const char* finger_tip_frame(Hand hand, std::size_t finger)
-{
-    static const char* kLeft[] = { "left_thumb_tip", "left_index_tip", "left_middle_tip", "left_ring_tip",
-                                   "left_pinky_tip" };
-    static const char* kRight[] = { "right_thumb_tip", "right_index_tip", "right_middle_tip", "right_ring_tip",
-                                    "right_pinky_tip" };
-    return hand == Hand::Left ? kLeft[finger] : kRight[finger];
 }
 
 const geometry_msgs::msg::TransformStamped* find_frame(const tf2_msgs::msg::TFMessage& msg, const std::string& name)
@@ -52,25 +195,9 @@ const geometry_msgs::msg::TransformStamped* find_frame(const tf2_msgs::msg::TFMe
     return nullptr;
 }
 
-XrVector3f to_vector(const geometry_msgs::msg::Transform& transform)
-{
-    return XrVector3f{ static_cast<float>(transform.translation.x), static_cast<float>(transform.translation.y),
-                       static_cast<float>(transform.translation.z) };
-}
-
-XrVector3f subtract(const XrVector3f& a, const XrVector3f& b)
-{
-    return XrVector3f{ a.x - b.x, a.y - b.y, a.z - b.z };
-}
-
 float dot(const XrVector3f& a, const XrVector3f& b)
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-XrVector3f cross(const XrVector3f& a, const XrVector3f& b)
-{
-    return XrVector3f{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
 }
 
 bool normalize(XrVector3f& v)
@@ -103,19 +230,6 @@ XrVector3f rotate_vector(const XrQuaternionf& q, const XrVector3f& v)
                        v.z + w * t.z + (u.x * t.y - u.y * t.x) };
 }
 
-//! Signed bend from segment @p previous to segment @p next, positive towards the palm (that is,
-//! towards -@p dorsal). Degenerate segments leave the bend at zero.
-float bend_between(const XrVector3f& previous, const XrVector3f& next, const XrVector3f& dorsal)
-{
-    XrVector3f from = previous;
-    XrVector3f to = next;
-    if (!normalize(from) || !normalize(to))
-    {
-        return 0.0f;
-    }
-    return std::clamp(std::atan2(-dot(to, dorsal), dot(to, from)), -kMaxBend, kMaxBend);
-}
-
 XrQuaternionf axis_angle(const XrVector3f& axis, float angle)
 {
     XrQuaternionf q{};
@@ -126,6 +240,103 @@ XrQuaternionf axis_angle(const XrVector3f& axis, float angle)
     q.z = axis.z * sine;
     q.w = std::cos(half);
     return q;
+}
+
+//! The URDF's fixed-axis rpy convention: R = Rz(yaw) * Ry(pitch) * Rx(roll).
+XrQuaternionf quaternion_from_rpy(const std::array<float, 3>& rpy)
+{
+    return multiply_quaternions(multiply_quaternions(axis_angle(XrVector3f{ 0.0f, 0.0f, 1.0f }, rpy[2]),
+                                                     axis_angle(XrVector3f{ 0.0f, 1.0f, 0.0f }, rpy[1])),
+                                axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, rpy[0]));
+}
+
+//! A published frame's rotation as a unit quaternion, defensively normalised.
+XrQuaternionf frame_rotation(const geometry_msgs::msg::TransformStamped& frame)
+{
+    XrQuaternionf q{ static_cast<float>(frame.transform.rotation.x), static_cast<float>(frame.transform.rotation.y),
+                     static_cast<float>(frame.transform.rotation.z), static_cast<float>(frame.transform.rotation.w) };
+    const float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (!(length > 1e-6f))
+    {
+        return XrQuaternionf{ 0.0f, 0.0f, 0.0f, 1.0f };
+    }
+    q.x /= length;
+    q.y /= length;
+    q.z /= length;
+    q.w /= length;
+    return q;
+}
+
+//! Signed rotation of @p q about @p axis, in radians: the same ``2 * atan2(dot(v, axis), w)`` with the
+//! quaternion's w made non-negative, so the result is the shortest signed angle in (-pi, pi].
+float signed_angle_about(const XrQuaternionf& q, const std::array<float, 3>& axis)
+{
+    XrVector3f v{ q.x, q.y, q.z };
+    float w = q.w;
+    if (w < 0.0f)
+    {
+        v = XrVector3f{ -v.x, -v.y, -v.z };
+        w = -w;
+    }
+    return 2.0f * std::atan2(dot(v, XrVector3f{ axis[0], axis[1], axis[2] }), w);
+}
+
+//! Absolute mechanism angles read from one message, before calibration: [finger][F1..F4] radians
+//! relative to the URDF zero pose. Internal, but used by the local harness to check the formula
+//! against known synthetic angles.
+struct RawHandAngles
+{
+    std::array<std::array<float, kRigSlotCount>, kRigFingerCount> joint{};
+    std::array<bool, kRigFingerCount> complete{};
+    bool valid = false;
+};
+
+RawHandAngles read_raw_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
+{
+    RawHandAngles raw;
+
+    // The root frame anchors both "is this glove streaming" and the parent of every F1 joint. The
+    // driver publishes both `link_<Side>SkeletonBase` and `joint_<Side>SkeletonBase`; accept either.
+    const geometry_msgs::msg::TransformStamped* root = find_frame(msg, mechanism_root_frame(hand));
+    if (root == nullptr)
+    {
+        root = find_frame(msg, std::string("joint_") + side_prefix(hand) + "SkeletonBase");
+    }
+    if (root == nullptr)
+    {
+        return raw;
+    }
+
+    const XrQuaternionf root_rotation = frame_rotation(*root);
+    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+    {
+        bool complete = true;
+        XrQuaternionf parent_rotation = root_rotation;
+        for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
+        {
+            const std::string name =
+                std::string("link_") + side_prefix(hand) + "Skeleton" + kRigFingers[finger].links[slot];
+            const geometry_msgs::msg::TransformStamped* frame = find_frame(msg, name);
+            if (frame == nullptr)
+            {
+                // A sparse stream leaves the rest of this finger at its zero, but the hand can still be
+                // injected from the fingers that are complete.
+                complete = false;
+                break;
+            }
+
+            const XrQuaternionf child_rotation = frame_rotation(*frame);
+            const RigJointSpec& spec = kRigJoints[hand_index(hand)][finger][slot];
+            const XrQuaternionf relative = multiply_quaternions(conjugate_quaternion(parent_rotation), child_rotation);
+            const XrQuaternionf residual =
+                multiply_quaternions(conjugate_quaternion(quaternion_from_rpy(spec.rest_rpy)), relative);
+            raw.joint[finger][slot] = signed_angle_about(residual, spec.axis);
+            parent_rotation = child_rotation;
+        }
+        raw.complete[finger] = complete;
+        raw.valid = raw.valid || complete;
+    }
+    return raw;
 }
 
 XrHandJointLocationEXT make_joint(const XrPosef& pose)
@@ -148,111 +359,39 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
 {
     HandAngles angles;
 
-    // The root frame anchors "is this glove streaming"; the links themselves carry the angles. The
-    // driver publishes both `link_<Side>SkeletonBase` and `joint_<Side>SkeletonBase`; accept either.
-    const geometry_msgs::msg::TransformStamped* root = find_frame(msg, mechanism_root_frame(hand));
-    if (root == nullptr)
-    {
-        root = find_frame(msg, std::string("joint_") + side_prefix(hand) + "SkeletonBase");
-    }
-    if (root == nullptr)
+    const RawHandAngles raw = read_raw_hand_angles(msg, hand);
+    if (!raw.valid)
     {
         return angles;
     }
 
-    // Mechanism points per finger, in chain order: F1..F4 and the fingertip.
-    std::array<std::array<XrVector3f, 5>, 5> points{};
-    std::array<bool, 5> present{};
-    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
-    {
-        bool complete = true;
-        for (std::size_t link = 0; link < kRigFingers[finger].links.size(); ++link)
-        {
-            const char* suffix = kRigFingers[finger].links[link];
-            const std::string name = (suffix[0] == '\0') ?
-                                         std::string(finger_tip_frame(hand, finger)) :
-                                         std::string("link_") + side_prefix(hand) + "Skeleton" + suffix;
-            const auto* frame = find_frame(msg, name);
-            if (frame == nullptr)
-            {
-                complete = false;
-                continue;
-            }
-            points[finger][link] = to_vector(frame->transform);
-            if (link == 0)
-            {
-                angles.metacarpal_frame[finger] = frame->child_frame_id;
-            }
-        }
-        present[finger] = complete;
-    }
-    if (!present[1] || !present[4])
-    {
-        // The two outer fingers define the palm; without them nothing can be oriented.
-        return angles;
-    }
+    const std::size_t side = hand_index(hand);
 
-    // Palm orientation of the *mechanism*: across runs from the little towards the index knuckle, and
-    // distal is the metacarpal direction (knuckle to the joint behind it), which the bends do not
-    // rotate -- taking it from the fingertips instead would tilt the dorsal as the fingers close and
-    // skew every angle read from it. Dorsal is their cross product, the same right-handed convention
-    // the anatomy uses. Only directions cross over, never lengths, so the mechanism's long linkage
-    // arms cannot leak into the injected hand.
-    XrVector3f across = normalized(subtract(points[1][0], points[4][0]));
-    XrVector3f distal{ 0.0f, 0.0f, 0.0f };
-    std::size_t distal_count = 0;
     for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
     {
-        if (!present[finger])
+        if (!raw.complete[finger])
         {
             continue;
         }
-        distal.x += points[finger][1].x - points[finger][0].x;
-        distal.y += points[finger][1].y - points[finger][0].y;
-        distal.z += points[finger][1].z - points[finger][0].z;
-        ++distal_count;
-    }
-    distal.x /= static_cast<float>(distal_count);
-    distal.y /= static_cast<float>(distal_count);
-    distal.z /= static_cast<float>(distal_count);
-    if (!normalize(distal) || !normalize(across))
-    {
-        return angles;
-    }
-    XrVector3f dorsal = normalized(cross(across, distal));
-    if (hand == Hand::Right)
-    {
-        // The right glove's knuckle row runs the other way, so the same cross product lands on the
-        // palm side; flip it here and "dorsal" means the back of the hand on both hands, which is what
-        // makes a positive bend read as a curl towards the palm either way.
-        dorsal = XrVector3f{ -dorsal.x, -dorsal.y, -dorsal.z };
-    }
-    if (!normalize(dorsal))
-    {
-        return angles;
-    }
 
-    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
-    {
-        if (!present[finger])
-        {
-            continue;
-        }
         FingerAngles& out = angles.fingers[finger];
 
-        // Knuckle spread: how far the first phalanx leaves the palm's distal axis towards the index.
-        const XrVector3f first_segment = normalized(subtract(points[finger][1], points[finger][0]));
-        out.spread = std::clamp(std::atan2(dot(first_segment, across), dot(first_segment, distal)), -kMaxBend, kMaxBend);
+        // Knuckle spread: the angle of the F1 joint, mirrored into "positive towards the index". Its
+        // table sign is the hand sign (+ left, - right); it is not a flexion axis.
+        const RigJointSpec& knuckle = kRigJoints[side][finger][0];
+        out.spread = std::clamp(knuckle.sign * (raw.joint[finger][0] - knuckle.zero), -kMaxSpread, kMaxSpread);
 
-        // Bends at the three joints after the knuckle; the thumb's chain starts one joint earlier, at
-        // its CMC, so its reading keeps that first bend as well.
-        std::size_t slot = 0;
-        for (std::size_t link = 1; link + 1 < 5 && slot < out.bend.size(); ++link)
+        // MCP/PIP/DIP (the thumb's CMC/MCP/IP): calibrated to the open hand and signed so flexion is
+        // positive, then clamped to the human range.
+        const std::array<float, 3>& limit = (finger == 0) ? kThumbBendLimit : kFingerBendLimit;
+        for (std::size_t slot = 1; slot < kRigSlotCount; ++slot)
         {
-            out.bend[slot] = bend_between(subtract(points[finger][link], points[finger][link - 1]),
-                                          subtract(points[finger][link + 1], points[finger][link]), dorsal);
-            ++slot;
+            const RigJointSpec& spec = kRigJoints[side][finger][slot];
+            out.bend[slot - 1] = std::clamp(spec.sign * (raw.joint[finger][slot] - spec.zero), 0.0f, limit[slot - 1]);
         }
+
+        angles.metacarpal_frame[finger] =
+            std::string("link_") + side_prefix(hand) + "Skeleton" + kRigFingers[finger].links[0];
     }
 
     angles.valid = true;

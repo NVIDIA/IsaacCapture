@@ -194,16 +194,18 @@ the anatomy from the vendor's human-hand model, driven by that articulation:
 
 | What the plugin reads (mechanism) | What it injects (anatomy) |
 | --- | --- |
-| `link_<Side>Skeleton<Finger>1..4` positions per finger (the knuckle spread, then three bends) | `…_METACARPAL`, `…_PROXIMAL`, `…_INTERMEDIATE`, `…_DISTAL`, `…_TIP` from `blender_human.urdf`, with human segment lengths |
+| `link_<Side>Skeleton<Finger>1..4` frame quaternions per finger (the knuckle spread, then three bends) | `…_METACARPAL`, `…_PROXIMAL`, `…_INTERMEDIATE`, `…_DISTAL`, `…_TIP` from `blender_human.urdf`, with human segment lengths |
 | `<side>_<finger>_tip` | the distal phalanx beyond `…_DISTAL` |
-| knuckle row (`Index1`–`Pinky1`) and metacarpal direction | the palm frame: `+X` little-to-index, `-Z` along the bones, `+Y` the back of the hand |
+| the fixed root frame (`link_<Side>SkeletonBase`) | the palm frame: `+X` little-to-index, `-Z` along the bones, `+Y` the back of the hand |
 
-The angles are read from geometry alone -- the bend between consecutive phalanx directions, signed
-towards the palm, and the knuckle spread signed towards the index -- so no quaternion convention and
-no frame alignment is involved, and moving the mechanism cannot move the injected hand. The landmark
-table and its derivation live in `io_exo_glove_ros2_kinematics.hpp`; a rig with different links only
-needs that file changed. The plugin logs, once, how many joints each hand filled and the mechanism
-root it bound to.
+The joint angles are read from the published frame quaternions: every v5-URDF joint carries a fixed
+rest rotation (`rpy`) and a revolute axis, so the relative rotation of a child frame to its parent
+gives that joint's angle relative to the URDF zero pose. A constant open-hand zero per joint and a
+per-joint flexion sign turn it into the anatomy's angles, so moving, rotating or reordering the
+mechanism's frames cannot move the injected hand. The constants and their derivation live in
+`io_exo_glove_ros2_kinematics.cpp`; the landmark table lives in the `.hpp`, and a rig with different
+links only needs those files changed. The plugin logs, once, how many joints each hand filled and the
+mechanism root it bound to.
 
 The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
 is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,

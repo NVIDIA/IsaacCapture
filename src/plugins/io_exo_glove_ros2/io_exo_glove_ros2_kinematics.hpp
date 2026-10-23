@@ -24,16 +24,18 @@ namespace io_exo_glove_ros2
  * human phalanx, and whose arm leaves the finger plane by 7 cm between two joints. Injecting those
  * frames as hand joints therefore yields a hand with a palm of a few millimetres and fingers twice a
  * palm long. What carries over is the *articulation*: the bend at each linkage joint, and the spread
- * at the knuckle. This module reads those angles from the link poses and drives a hand skeleton whose
- * landmarks come from the vendor's human-hand model instead.
+ * at the knuckle. This module reads those joint angles from the published frame quaternions and drives
+ * a hand skeleton whose landmarks come from the vendor's human-hand model instead.
  *
  * Everything below is a constant derived from the two URDFs that ship with the vendor SDK
  * (`io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/`), so nothing here
  * depends on when a frame happens to arrive:
  *
- *  - ``blender_human_skeleton_v2.urdf`` gives the mechanism's chain: ``joint_<side>SkeletonBase`` is
- *    the fixed root, and each finger is ``joint_<F>1`` (axis +Z, the knuckle spread) followed by
- *    ``joint_<F>2``, ``3``, ``4`` (axis +X, the bends).
+ *  - ``blender_human_skeleton_v5.urdf`` gives the mechanism's chain: ``joint_<side>SkeletonBase`` is
+ *    the fixed root, and each finger is ``joint_<F>1`` (the knuckle spread) followed by ``joint_<F>2``,
+ *    ``3``, ``4`` (the bends). Every joint carries an ``<origin rpy>`` rest rotation and a revolute
+ *    ``<axis>``, so the published child frame is parent * R_rest(rpy) * R(axis, theta); the joint's
+ *    absolute angle follows from the two frames' quaternions (see the table in the .cpp).
  *  - ``blender_human.urdf`` gives the anatomy: the wrist frame is ``link_<side>Hand_Y``, each finger
  *    starts at ``joint_<side>InHand<F>`` (the metacarpal base) and continues through
  *    ``joint_<side>Hand<F>1`` (MCP), ``2`` (PIP) and ``3`` (DIP).
@@ -114,12 +116,15 @@ inline constexpr HumanFinger kHumanFingers[] = {
     { "ring", 5, kRingLandmarks },   { "little", 5, kLittleLandmarks },
 };
 
-//! The mechanism's frame suffixes per finger, in chain order: the joint that follows the given frame.
-//! ``mechanism`` names are ``link_<Side>Skeleton<...>``; the last entry before the tip is fixed.
+//! The mechanism's frame suffixes per finger, in chain order. ``mechanism`` names are
+//! ``link_<Side>Skeleton<...>``. The first four entries are the revolute joints whose angles drive the
+//! anatomy (for the thumb: ThumbBase, Thumb1..3). The fifth names the thumb's last revolute joint,
+//! Thumb4, which the anatomy does not use; it is empty for the other fingers, whose fingertip frame is
+//! named separately.
 struct RigFinger
 {
     const char* name;
-    std::array<const char*, 5> links; //!< F1, F2, F3, F4, tip
+    std::array<const char*, 5> links; //!< F1, F2, F3, F4, Thumb4 (thumb only)
 };
 
 //! Mechanism chain per finger (left; the right hand's names differ only in ``Left``/``Right``).
