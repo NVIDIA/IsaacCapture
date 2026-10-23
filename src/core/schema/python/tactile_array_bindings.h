@@ -49,8 +49,7 @@ inline void bind_tactile_array(py::module& m)
                  return "TactileDataArray(taxels=" + std::to_string(forces != nullptr ? forces->size() : 0) + ")";
              });
 
-    bind_record<TactileDataArrayRecord, TactileDataArray>(
-        m, "TactileDataArrayRecord", "TactileDataArray", /* data_required = */ true);
+    bind_record<TactileDataArrayRecord, TactileDataArray>(m, "TactileDataArrayRecord", "TactileDataArray");
 }
 
 } // namespace core

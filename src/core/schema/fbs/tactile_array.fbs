@@ -18,7 +18,8 @@ table TactileDataArray {
 
 // MCAP recording wrapper for TactileDataArray.
 table TactileDataArrayRecord {
-  data: TactileDataArray (id: 0, required);
+  // Absent when tracking data is unavailable at this timestamp.
+  data: TactileDataArray (id: 0);
   timestamp: DeviceDataTimestamp (id: 1);
 }
 

@@ -57,21 +57,27 @@ TEST_CASE("TactileDataArray keeps its required vector present for an empty frame
     CHECK(verifier.VerifyBuffer<core::TactileDataArray>());
 }
 
-TEST_CASE("Tactile verification rejects missing required fields", "[unit][tactile]")
+TEST_CASE("TactileDataArray verification rejects a missing force vector", "[unit][tactile]")
 {
     flatbuffers::FlatBufferBuilder builder;
     // Build an unchecked empty table to test verification without required-field builder assertions.
     const auto start = builder.StartTable();
-    builder.Finish(flatbuffers::Offset<core::TactileDataArrayRecord>(builder.EndTable(start)));
+    builder.Finish(flatbuffers::Offset<core::TactileDataArray>(builder.EndTable(start)));
     flatbuffers::Verifier verifier(builder.GetBufferPointer(), builder.GetSize());
-    SECTION("taxel_forces")
-    {
-        CHECK_FALSE(verifier.VerifyBuffer<core::TactileDataArray>());
-    }
-    SECTION("record data")
-    {
-        CHECK_FALSE(core::VerifyTactileDataArrayRecordBuffer(verifier));
-    }
+    CHECK_FALSE(verifier.VerifyBuffer<core::TactileDataArray>());
+}
+
+TEST_CASE("TactileDataArrayRecord records unavailable data with its timestamp", "[unit][tactile]")
+{
+    core::TactileDataArrayRecordT native;
+    native.timestamp = std::make_shared<core::DeviceDataTimestamp>(1, 2, 3);
+    const auto record = core::pack<core::TactileDataArrayRecord>(native);
+
+    flatbuffers::Verifier verifier(record.buffer().data(), record.buffer().size());
+    REQUIRE(core::VerifyTactileDataArrayRecordBuffer(verifier));
+    CHECK(record->data() == nullptr);
+    REQUIRE(record->timestamp() != nullptr);
+    CHECK(record->timestamp()->sample_time_local_common_clock() == 2);
 }
 
 TEST_CASE("TactileDataArrayRecord verifies and carries its timestamp", "[unit][tactile]")

@@ -59,6 +59,9 @@ class TestTactileDataArrayRecord:
         np.testing.assert_array_equal(record.data.taxel_forces, FORCES)
         assert record.timestamp.sample_time_raw_device_clock == 3
 
-    def test_rejects_missing_payload(self):
-        with pytest.raises(TypeError, match="data"):
-            TactileDataArrayRecord(None, DeviceDataTimestamp(1, 2, 3))
+    def test_record_without_payload_preserves_timestamp(self):
+        record = TactileDataArrayRecord(None, DeviceDataTimestamp(1, 2, 3))
+        assert record.data is None
+        assert record.timestamp.available_time_local_common_clock == 1
+        assert record.timestamp.sample_time_local_common_clock == 2
+        assert record.timestamp.sample_time_raw_device_clock == 3
