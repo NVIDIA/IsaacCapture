@@ -170,6 +170,7 @@ class CloudXRService:
         self._device_profile = device_profile
         self._accept_eula = accept_eula
         self._setup_oob = setup_oob
+        self._control_token: str | None = None
         self._usb_local = usb_local
         self._host_client = host_client
 
@@ -607,6 +608,17 @@ class CloudXRService:
         """Path to the WSS proxy log file, or ``None`` if not yet started."""
         return self._wss_log_path
 
+    @property
+    def control_token(self) -> str | None:
+        """OOB hub control token, or ``None`` without *setup_oob*.
+
+        The exact value the running hub enforces, fixed when the proxy starts:
+        later ``CONTROL_TOKEN`` changes do not alter it. A secret, so never
+        logged; embedded owners read it here to authenticate or build a headset
+        URL.
+        """
+        return self._control_token
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -842,6 +854,12 @@ class CloudXRService:
         setup_oob = self._setup_oob
         usb_local = self._usb_local
         host_client = self._host_client
+        if setup_oob:
+            # Resolved once and handed to the hub, so the accessor cannot drift
+            # from what the hub enforces if CONTROL_TOKEN changes later.
+            from ..oob_teleop_env import resolve_control_token  # noqa: PLC0415
+
+            self._control_token = resolve_control_token()
 
         def _run_wss() -> None:
             asyncio.set_event_loop(loop)
@@ -865,6 +883,7 @@ class CloudXRService:
                         on_oob_status=self._publish_oob_status,
                         on_oob_fatal=self._on_oob_fatal,
                         connect_requested=self._connect_requested,
+                        control_token=self._control_token,
                     )
                 )
                 if (
