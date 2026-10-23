@@ -26,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --no_save_videos=false overlay rendering) and soma (the SOMA/MHR hand+body layer,
 # from the py-soma-x PyPI package).
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages \
+    "hydra-core>=1.3.7" -r /tmp/requirements.txt
 
 # EgoHand supplies torch and numpy for its DINOv3 backbone. Skip upstream's broader
 # training dependencies so this installation cannot replace the CUDA torch stack.
