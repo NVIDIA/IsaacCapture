@@ -57,8 +57,10 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``, pinning the local build's version
-``X.Y+local`` (``X.Y`` from the repository's ``VERSION`` file):
+After building, activate a virtual environment with the build's Python version (step 4 of
+:doc:`/development/build_from_source/index` shows how), then install the wheels with ``uv`` or
+``pip``, pinning the local build's version ``X.Y+local`` (``X.Y`` from the repository's ``VERSION``
+file):
 
 .. code-block:: bash
 
@@ -80,7 +82,8 @@ In addition to the classic CMake flow above (which stages the package
 and produces a wheel under ``install/wheels/``), the repository ships a root
 :code-file:`pyproject.toml` that exposes ``isaaccapture`` through the
 `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ build backend,
-driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
+driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist). Run it inside an
+activated virtual environment as well:
 
 .. code-block:: bash
 

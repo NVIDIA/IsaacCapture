@@ -497,8 +497,10 @@
 </section>
 <section id="using-the-python-wheel">
 <h2>Using the Python wheel<a class="headerlink" href="#using-the-python-wheel" title="Link to this heading">#</a></h2>
-<p>After building, install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or <code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version
-<code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file):</p>
+<p>After building, activate a virtual environment with the build’s Python version (step 4 of
+<a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> shows how), then install the wheels with <code class="docutils literal notranslate"><span class="pre">uv</span></code> or
+<code class="docutils literal notranslate"><span class="pre">pip</span></code>, pinning the local build’s version <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code> (<code class="docutils literal notranslate"><span class="pre">X.Y</span></code> from the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code>
+file):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># The pin keeps a newer release on the index from winning over the local build.</span>
 <span class="c1"># --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.</span>
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
@@ -517,7 +519,8 @@ in 1.9, so
 and produces a wheel under <code class="docutils literal notranslate"><span class="pre">install/wheels/</span></code>), the repository ships a root
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> that exposes <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> through the
 <a class="reference external" href="https://scikit-build-core.readthedocs.io/" rel="noopener noreferrer" target="_blank">scikit-build-core</a> build backend,
-driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist):</p>
+driving the <em>same</em> top-level <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> (so the two paths coexist). Run it inside an
+activated virtual environment as well:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>.<span class="w">            </span><span class="c1"># build + install the compiled wheel from source</span>
 pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="w">         </span><span class="c1"># editable / developer install</span>
 </pre></div>
