@@ -334,8 +334,16 @@ The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build
 
 The build writes two wheels to ``./install/wheels/``: ``isaaccapture`` and the ``isaacteleop``
 transition wheel it depends on. The ``isaaccapture`` wheel only installs on the Python version it
-was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so create and activate a venv
-with that version first.
+was built for (``ISAAC_TELEOP_PYTHON_VERSION``, 3.11 by default), so install it into a virtual
+environment with that version. Without one, ``pip install`` fails on Ubuntu 24.04 with
+``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment found``.
+From the repository root:
+
+.. code-block:: bash
+
+   # --seed adds pip, which the pip command below needs.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
 
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin

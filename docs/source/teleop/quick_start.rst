@@ -40,15 +40,31 @@ to clone the repository for a couple quick samples to run.
    replaces the legacy package and keeps old imports working temporarily.
    See :doc:`/development/migration`.
 
-In a new terminal, activate your preferred virtual or conda environment, then install the latest
-stable release from PyPI:
+Install the package into a virtual environment. Without one, ``pip install`` fails on Ubuntu 24.04
+with ``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment
+found``. In a new terminal, from the repository root, create and activate one with
+`uv <https://docs.astral.sh/uv/>`__, which downloads the requested Python if the system lacks it
+(Python 3.11 to 3.13 are supported). If ``uv`` is missing, install it first as shown in
+:ref:`one-time-setup`.
 
 .. code-block:: bash
 
-   pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+   # --seed adds pip, so plain pip install also works in this venv.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
+
+To use an existing venv, or a conda environment other than ``base`` (``uv`` treats ``base`` as a
+system Python), activate it and skip ``uv venv``. Activate the environment again in every new
+terminal you use for the steps below.
+
+Install the latest stable release from PyPI:
+
+.. code-block:: bash
+
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions — shown here with `uv <https://docs.astral.sh/uv/>`__:
+and an opt-in to pre-release versions:
 
 .. code-block:: bash
 
