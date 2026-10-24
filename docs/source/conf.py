@@ -67,6 +67,7 @@ extensions = [
     "sphinx_multiversion",
     "sphinx_design",
     "ecosystem_grid",
+    "breakable_literals",
 ]
 
 exclude_patterns = ["build", "_templates", "_data", "_ext", "Thumbs.db", ".DS_Store"]
