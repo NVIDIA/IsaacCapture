@@ -64,13 +64,8 @@ declare global {
 }
 
 if (typeof window !== 'undefined') {
-  // code is optional and omitted by default (a recoverable failure, matching the SDK's
-  // own default): CloudXRComponent.tsx's onStreamStopped auto-reconnects on a recoverable
-  // error without ever showing #errorMessageBox, exactly as it would for a real transient
-  // failure. Pass a code in the 0xc0f22300-0xc0f223ff (server-disconnect) range - see
-  // helpers/streamingErrorClassification.ts's isRecoverable() - for a genuine terminal
-  // error that surfaces on the DOM, matching CloudXRComponentTest.tsx's own
-  // NON_RETRYABLE_CODE steps.
+  // Without a code the failure is recoverable and reconnects silently; a code in the
+  // server-disconnect range (0xc0f22300-0xc0f223ff) is terminal and shows the error banner.
   window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage', code) => {
     activeSession?.triggerFailure({ name: 'StreamingError', message, code });
   };
