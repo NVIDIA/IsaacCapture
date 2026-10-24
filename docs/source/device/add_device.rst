@@ -290,4 +290,4 @@ For the shared library build and contribution workflow, see
 
 .. seealso::
 
-   Once your device publishes hand poses, prove it with :doc:`/conformance/overview`.
+   Once your device publishes hand or full-body poses, prove it with :doc:`/conformance/overview`.

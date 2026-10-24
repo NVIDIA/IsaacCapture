@@ -109,8 +109,9 @@ and `logo_dark`.
 
 `source/conformance/` and its media are vendor-neutral: no glove, suit or tracker company
 or product appears in prose, cards, commands, take names or plugin names, because a named
-example reads as an endorsement. Use a fictional device (Glove X with `glove_x_plugin`) and
-say it is a placeholder. Headsets (PICO, Quest) are the exception: every take runs on one.
+example reads as an endorsement. Use a fictional device (Glove X with `glove_x_plugin`,
+Suit X with `body.suit-x`) and say it is a placeholder. Headsets (PICO, Quest) are the
+exception: every take runs on one.
 
 ## Removing cache overrides
 
