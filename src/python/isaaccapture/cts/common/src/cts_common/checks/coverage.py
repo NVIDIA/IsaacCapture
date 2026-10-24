@@ -54,12 +54,14 @@ class ValidityTrend(Check):
 
     def __init__(self) -> None:
         super().__init__()
+        self.carrying = 0
         self.head: list[float] = []
         self.tail: deque[float] = deque(maxlen=self.WINDOW)
 
     def _update(self, frame: Frame) -> None:
         if frame.joints is None:
             return
+        self.carrying += 1
         coverage = sum(1 for joint in frame.joints if joint.is_valid) / len(
             frame.joints
         )
@@ -68,7 +70,7 @@ class ValidityTrend(Check):
         self.tail.append(coverage)
 
     def _result(self) -> Outcome:
-        if len(self.head) < self.WINDOW or len(self.tail) < self.WINDOW:
+        if self.carrying < 2 * self.WINDOW:
             return Outcome(
                 Status.INSUFFICIENT_DATA,
                 f"needs {2 * self.WINDOW} frames carrying joints",

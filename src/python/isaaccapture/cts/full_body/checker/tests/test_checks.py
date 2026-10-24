@@ -326,6 +326,16 @@ def test_validity_trend_will_not_conclude_from_a_short_recording():
     assert status_of(ValidityTrend, synth.frames(100)) is Status.INSUFFICIENT_DATA
 
 
+def test_validity_trend_needs_two_windows_of_frames_carrying_joints():
+    from full_body_cts.checks.envelope import ValidityTrend
+
+    empty = [synth.frame(i, has_payload=False) for i in range(200)]
+    decaying = [
+        synth.frame(200 + i, valid_joints=24 if i < 75 else 12) for i in range(150)
+    ]
+    assert status_of(ValidityTrend, empty + decaying) is Status.INSUFFICIENT_DATA
+
+
 def test_permanently_invalid_joints_are_not_a_decaying_trend():
     from full_body_cts.checks.envelope import ValidityTrend
 

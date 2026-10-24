@@ -98,6 +98,7 @@ class CapturePanel:
         self._vendor = vendor
         self._plugins = plugins
         self._spoken = {label: cues.wav(label, text) for label, _, text in STEPS}
+        self._closing = cues.wav("closing", cues.CLOSING)
         self._cue_process: subprocess.Popen | None = None
         self._armed = threading.Event()
         self._key = threading.Event()
@@ -210,7 +211,7 @@ class CapturePanel:
         with TeleopSession(config) as session:
             self._loop(LiveFrameSource(session, body), take)
         # Spoken after the file is closed.
-        cues.play(cues.wav("closing", cues.CLOSING))
+        cues.play(self._closing)
         self._label(take)
 
     def _loop(self, source: LiveFrameSource, take: Take) -> None:
