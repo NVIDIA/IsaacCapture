@@ -4,6 +4,7 @@
 """OVXR presentation over application-owned rendering resources."""
 
 from .ovxr_session import (
+    AuxiliaryRasterConfig,
     OvxrSessionBinding,
     OvxrSessionConfig,
     OvxrApplicationInterface,
@@ -12,6 +13,7 @@ from .ovxr_session import (
 )
 
 __all__ = [
+    "AuxiliaryRasterConfig",
     "OvxrSessionBinding",
     "OvxrSessionConfig",
     "OvxrApplicationInterface",

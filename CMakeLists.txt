@@ -74,6 +74,7 @@ option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; s
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
+option(BUILD_OVXR_CAMERA_QUADS "Build optional application-owned OVXR camera quad support" OFF)
 # Televiz (src/viz) needs Vulkan, the CUDA Toolkit, and glslangValidator.
 # Only Vulkan and CUDA gate the default -- without them the machine cannot build
 # viz at all, so a core-only source build still configures. glslangValidator is

@@ -41,6 +41,29 @@ from the Isaac Capture wheel. These packages retain their own licenses:
 CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and CloudXR EULA acceptance.
 
+Optional camera panels
+----------------------
+
+Camera picture-in-picture panels require the native camera helper. Follow the
+source-build guide to configure a build for your application's Python version,
+then enable camera support and rebuild the wheel:
+
+.. code-block:: bash
+
+   cmake -S . -B build -DBUILD_OVXR_CAMERA_QUADS=ON
+   cmake --build build --target python_package python_stubs python_wheel --parallel
+
+Install the generated wheel with its ``ovxr`` extra using the instructions
+above. The extra includes the CUDA Python bindings used for GPU camera output;
+``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
+The helper is disabled by default.
+
+Install the Vulkan development SDK before configuring camera support. Linux
+builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
+Use ``CUDAToolkit_ROOT`` to select a CUDA Toolkit installation and ``VULKAN_SDK``
+to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
+on the host.
+
 Use from another application
 ----------------------------
 

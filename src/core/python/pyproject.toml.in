@@ -102,6 +102,7 @@ robotic_grounding = [
     "assets/xmls/sharpawave/NOTICE",
     "assets/xmls/sharpawave/README.md",
 ]
+@OVXR_CAMERA_PACKAGE_DATA_BLOCK@
 
 [tool.uv]
 # Only use managed Python installations (not system Python)

@@ -20,6 +20,9 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from .camera_mailbox import CompletedCameraMailbox
+from .openxr_quad import OpenXRCameraQuad
+from .gpu_output import completed_outputs, map_cuda_array_rgba, native_renderer_handle
 
 _WORKER_SHUTDOWN_GRACE_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +101,8 @@ class OvxrSessionBinding:
     renderer: object
     stage: object
     ordinal_ledger: StageOrdinalLedger
+    auxiliary_render_product_path: str | None = None
+    auxiliary_render_product_paths: tuple[str, ...] = ()
     prepare_frame_scene: Callable[[], None] | None = None
 
     def __post_init__(self) -> None:
@@ -105,11 +110,78 @@ class OvxrSessionBinding:
             raise ValueError(
                 "OVXR session requires renderer, Stage, and ordinal ledger"
             )
+        paths = self.selected_auxiliary_paths
+        if (
+            len(paths) > 3
+            or len(paths) != len(set(paths))
+            or any(not path.startswith("/") for path in paths)
+        ):
+            raise ValueError(
+                "auxiliary RenderProduct paths must be absolute, unique, and at most three"
+            )
+
+    @property
+    def selected_auxiliary_paths(self) -> tuple[str, ...]:
+        if self.auxiliary_render_product_path is not None:
+            if self.auxiliary_render_product_paths:
+                raise ValueError("use singular or plural auxiliary paths, not both")
+            return (self.auxiliary_render_product_path,)
+        return self.auxiliary_render_product_paths
+
+
+@dataclass(frozen=True)
+class AuxiliaryRasterConfig:
+    """Application-owned cadence and head-locked panel placement.
+
+    The host applies ``max_fps`` when producing its RenderProduct. This owner
+    copies completed outputs without imposing another cadence limit.
+    """
+
+    max_fps: float = 30.0
+    max_image_bytes: int = 64 * 1024 * 1024
+    panel_width_m: float = 0.48
+    position: tuple[float, float, float] = (0.0, -0.15, -0.8)
+    orientation_xyzw: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    space: Literal["head_locked"] = "head_locked"
+    layer_manifest: str | None = None
+    label: str | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.max_fps) or self.max_fps <= 0.0:
+            raise ValueError("auxiliary raster max_fps must be finite and positive")
+        if self.max_image_bytes <= 0:
+            raise ValueError("auxiliary raster max_image_bytes must be positive")
+        if not math.isfinite(self.panel_width_m) or self.panel_width_m <= 0.0:
+            raise ValueError(
+                "auxiliary raster panel_width_m must be finite and positive"
+            )
+        if len(self.position) != 3 or not all(
+            math.isfinite(value) for value in self.position
+        ):
+            raise ValueError(
+                "auxiliary raster position must contain three finite values"
+            )
+        if len(self.orientation_xyzw) != 4 or not all(
+            math.isfinite(value) for value in self.orientation_xyzw
+        ):
+            raise ValueError(
+                "auxiliary raster orientation must contain four finite values"
+            )
+        norm = math.sqrt(sum(value * value for value in self.orientation_xyzw))
+        if norm <= 0.0:
+            raise ValueError("auxiliary raster orientation must have non-zero norm")
+        object.__setattr__(
+            self,
+            "orientation_xyzw",
+            tuple(value / norm for value in self.orientation_xyzw),
+        )
+        if self.space != "head_locked":
+            raise ValueError("auxiliary raster space must be 'head_locked'")
 
 
 @dataclass
 class OvxrSessionConfig:
-    """Configure an application-owned renderer/Stage XR session."""
+    """Configure XR presentation with optional completed-camera panels."""
 
     application_name: str = "isaacteleop-ovxr-session"
     session_mode: Literal["ar", "vr"] = "vr"
@@ -125,9 +197,23 @@ class OvxrSessionConfig:
     tracking_anchor_path: str = ""
     floor_aligned_anchor: bool | None = None
     host_wait_render_output: bool = False
+    auxiliary_raster: AuxiliaryRasterConfig | None = None
+    auxiliary_rasters: tuple[AuxiliaryRasterConfig, ...] = ()
     extra_openxr_extensions: tuple[str, ...] = ()
 
+    @property
+    def selected_auxiliary_rasters(self) -> tuple[AuxiliaryRasterConfig, ...]:
+        if self.auxiliary_raster is not None:
+            if self.auxiliary_rasters:
+                raise ValueError(
+                    "use singular or plural auxiliary raster policy, not both"
+                )
+            return (self.auxiliary_raster,)
+        return self.auxiliary_rasters
+
     def __post_init__(self) -> None:
+        if len(self.selected_auxiliary_rasters) > 3:
+            raise ValueError("at most three auxiliary camera quads are supported")
         if self.session_mode not in ("ar", "vr"):
             raise ValueError("session_mode must be 'ar' or 'vr'")
         if not math.isfinite(self.meters_per_unit) or self.meters_per_unit <= 0:
@@ -183,6 +269,9 @@ class OvxrSession:
         self._pending_plan = None
         self._binding: OvxrSessionBinding | None = None
         self._cloudxr_launcher = None
+        self._camera_quad_attached = False
+        self._camera_mailboxes: list[CompletedCameraMailbox] = []
+        self._camera_quads: list[OpenXRCameraQuad] = []
         self._worker: threading.Thread | None = None
         self._worker_native_thread_id: int | None = None
         self._worker_condition = threading.Condition()
@@ -278,12 +367,18 @@ class OvxrSession:
                         frame_began = self._render_published_scene(pending_ordinal)
                     else:
                         frame_began = self._render_reused_scene()
+                    # A peer can become ready after the bounded blank-frame
+                    # bootstrap. Publish its input handles from the owning
+                    # render thread once the session has actually appeared.
                     if self._worker_handles is None:
                         handles = self._external_oxr_handles_on_render_thread()
                         if handles is not None:
                             with self._worker_condition:
                                 self._worker_handles = handles
                                 self._worker_condition.notify_all()
+                    # A begun frame is paced by OpenXR even when simulation is
+                    # paused. Back off only without a scene or a ready session;
+                    # sleeping after a reused frame misses runtime deadlines.
                     if not frame_began:
                         with self._worker_condition:
                             if (
@@ -296,11 +391,15 @@ class OvxrSession:
                 # interrupts too, for caller-side re-raising and cleanup.
                 self._record_worker_failure(exc)
             finally:
+                # Once handles are exposed, only the host can acknowledge that
+                # its application step and DeviceIO borrowers have stopped.
                 if self._worker_ready:
                     self._borrowers_quiesced.wait()
                 try:
                     self._teardown_on_render_thread()
                 except BaseException as exc:
+                    # Failed consumer retirement retains its borrowed owners.
+                    # Report it to close() even when rendering itself succeeded.
                     self._record_worker_failure(exc)
                 finally:
                     with self._worker_condition:
@@ -313,6 +412,7 @@ class OvxrSession:
             )
             self._worker.start()
         except Exception:
+            # No owner thread accepted the borrowed pair; rollback stays on the application thread.
             self._worker = None
             self._closed = True
             try:
@@ -526,6 +626,18 @@ class OvxrSession:
             if self._shutdown_requested.is_set():
                 return
         ovxr = _import_ovxr()
+        auxiliaries = self._config.selected_auxiliary_rasters
+        auxiliary_paths = self._binding.selected_auxiliary_paths
+        if len(auxiliaries) != len(auxiliary_paths):
+            raise RuntimeError(
+                "auxiliary raster policy and borrowed RenderProduct paths must be provided together"
+            )
+        if len({cfg.layer_manifest for cfg in auxiliaries}) > 1:
+            raise ValueError("all camera panels must use the same native quad helper")
+        for index, auxiliary in enumerate(auxiliaries):
+            quad = OpenXRCameraQuad(auxiliary.layer_manifest, camera_index=index)
+            self._camera_quads.append(quad)
+            quad.configure(auxiliary)
         extensions = list(
             dict.fromkeys(
                 (
@@ -559,6 +671,23 @@ class OvxrSession:
             )
             with self._host.owner_lane():
                 self._context = ovxr.Context(desc)
+                self._camera_mailboxes = [
+                    CompletedCameraMailbox(
+                        path,
+                        policy.max_image_bytes,
+                        gpu_mapper=map_cuda_array_rgba if quad.supports_gpu else None,
+                    )
+                    for path, policy, quad in zip(
+                        auxiliary_paths, auxiliaries, self._camera_quads, strict=True
+                    )
+                ]
+                if auxiliaries:
+                    self._context.set_frame_render_products(list(auxiliary_paths))
+
+    def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
+        """Frame-owner copies before result retirement; PiP owns its independent copy."""
+        for mailbox in self._camera_mailboxes:
+            mailbox.on_outputs(user_data, renderer, outputs)
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -607,6 +736,12 @@ class OvxrSession:
             return None
         from isaaccapture.oxr import OpenXRSessionHandles
 
+        if self._camera_quads and not self._camera_quad_attached:
+            vulkan = self._context.get_vulkan_handles()
+            if vulkan is None:
+                return None
+            self._camera_quads[0].attach(handles, vulkan)
+            self._camera_quad_attached = True
         return OpenXRSessionHandles(
             handles.xr_instance,
             handles.xr_session,
@@ -654,6 +789,8 @@ class OvxrSession:
                     raise
                 self._binding.ordinal_ledger.resolve_external(
                     frame_ordinal,
+                    # Publication is independent of the eventual bind result:
+                    # a later failure must not reuse an already sealed ordinal.
                     expected_published=sealed,
                 )
                 if result not in (
@@ -667,6 +804,37 @@ class OvxrSession:
             if result != ovxr.Result.SUCCESS:
                 return True
             layers = []
+            if (self._camera_mailboxes) and active_plan.step_result:
+                try:
+                    renderer = native_renderer_handle(self._binding.renderer)
+                    outputs = completed_outputs(renderer, active_plan.step_result)
+                    self._on_completed_outputs(None, renderer, outputs)
+                    for quad, mailbox in zip(
+                        self._camera_quads, self._camera_mailboxes, strict=True
+                    ):
+                        try:
+                            quad.publish(
+                                mailbox.snapshot(), invalid=mailbox.error() is not None
+                            )
+                            if layer := quad.layer():
+                                layers.append(layer)
+                        except Exception:
+                            _LOGGER.exception("OpenXR camera quad publication failed")
+                            # Omit this layer even if optional native hiding fails.
+                            try:
+                                quad.hide()
+                            except Exception:
+                                _LOGGER.exception("OpenXR camera quad hiding failed")
+                except Exception:
+                    _LOGGER.exception("Optional bound-frame output observation failed")
+                    layers.clear()
+                    for quad in self._camera_quads:
+                        try:
+                            quad.hide()
+                        except Exception:
+                            _LOGGER.exception("OpenXR camera quad hiding failed")
+                finally:
+                    self._finish_frame_outputs()
             result, _frame = self._context.submit_frame(
                 active_plan, additional_layers=layers
             )
@@ -685,7 +853,10 @@ class OvxrSession:
             raise
         finally:
             if active_plan is not None:
+                # An unproved copy/unmap keeps the plan and context alive. Never
+                # consume borrowed output storage merely to recover a frame.
                 try:
+                    self._finish_frame_outputs()
                     self._context.cancel_frame(active_plan)
                     self._pending_plan = None
                 except BaseException as cleanup_error:
@@ -693,6 +864,10 @@ class OvxrSession:
                         raise
                     frame_error.add_note(f"Frame retirement failed: {cleanup_error}")
         return True
+
+    def _finish_frame_outputs(self) -> None:
+        for mailbox in self._camera_mailboxes:
+            mailbox.close()
 
     def _render_reused_scene(self) -> bool:
         if self._worker_last_ordinal is None:
@@ -707,10 +882,13 @@ class OvxrSession:
         except BaseException as exc:
             first_error = exc
         try:
+            for mailbox in self._camera_mailboxes:
+                mailbox.close()
             if self._pending_plan is not None:
+                self._finish_frame_outputs()
                 self._context.cancel_frame(self._pending_plan)
                 self._pending_plan = None
-            for quad in reversed(()):
+            for quad in reversed(self._camera_quads):
                 quad.close()
         except BaseException as retirement_error:
             if first_error is not None:
@@ -769,6 +947,8 @@ class OvxrSession:
                 self._closed = True
                 self._worker_condition.notify_all()
             return
+        self._camera_quads.clear()
+        self._camera_mailboxes.clear()
         with self._teardown_state_lock:
             self._ovxr_teardown_complete.set()
         if self._cloudxr_launcher is not None:

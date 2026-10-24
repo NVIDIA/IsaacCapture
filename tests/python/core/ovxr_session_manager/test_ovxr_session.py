@@ -7,6 +7,7 @@ from __future__ import annotations
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 from typing import ClassVar
 import pytest
@@ -182,6 +183,7 @@ class _FakeHost:
         self.events = []
         self.publication_closed = False
         self.owner_lane_entries = []
+        self.auxiliary_render_product_path = None
 
     def offer_render_owner_transfer(self):
         self.offer_thread = threading.get_native_id()
@@ -192,7 +194,10 @@ class _FakeHost:
         self.events.append("attach")
         _FakeContext.ordinal_ledger = self.ordinal_ledger
         return ovxr_session.OvxrSessionBinding(
-            self.renderer, self.stage, self.ordinal_ledger
+            self.renderer,
+            self.stage,
+            self.ordinal_ledger,
+            auxiliary_render_product_path=self.auxiliary_render_product_path,
         )
 
     @contextmanager
@@ -254,6 +259,18 @@ def _runtime_stubs(monkeypatch):
     _FakeContext.last_desc = None
     _FakeContext.selected_products = None
     monkeypatch.setattr(ovxr_session, "_import_ovxr", _fake_ovxr)
+    monkeypatch.setattr(
+        ovxr_session,
+        "OpenXRCameraQuad",
+        lambda _manifest, *, camera_index=0: SimpleNamespace(
+            supports_gpu=False,
+            configure=lambda _panel: None,
+            attach=lambda _xr, _vk: None,
+            layer=lambda: None,
+            publish=lambda _image, **kw: True,
+            close=lambda: None,
+        ),
+    )
     oxr = ModuleType("isaaccapture.oxr")
     oxr.OpenXRSessionHandles = lambda *values: values
     monkeypatch.setitem(__import__("sys").modules, "isaaccapture.oxr", oxr)
@@ -909,6 +926,94 @@ def test_binding_rejects_an_incomplete_borrowed_tuple():
         ovxr_session.OvxrSessionBinding(object(), object(), None)
 
 
+def test_auxiliary_raster_registers_one_borrowed_product_without_a_second_frame_source():
+    host = _FakeHost()
+    host.auxiliary_render_product_path = (
+        "/IsaacLabAuxiliaryRender/RenderProduct_robot_pov_cam"
+    )
+    config = _config()
+    config.auxiliary_raster = ovxr_session.AuxiliaryRasterConfig(
+        max_fps=30.0,
+        max_image_bytes=720 * 450 * 4,
+        panel_width_m=0.5,
+        position=(0.1, -0.2, -0.8),
+        space="head_locked",
+    )
+    owner = ovxr_session.OvxrSession(host, config)
+
+    owner.start()
+    desc = _FakeContext.last_desc
+    owner.close()
+
+    assert _FakeContext.selected_products == (host.auxiliary_render_product_path,)
+    assert not hasattr(desc, "enable_raster_layer")
+    assert not hasattr(desc, "auxiliary_render_product")
+    assert [name for name, _thread in _FakeContext.operations].count("submit") == 0
+
+
+def test_auxiliary_panel_space_remains_application_policy():
+    host = _FakeHost()
+    host.auxiliary_render_product_path = (
+        "/IsaacLabAuxiliaryRender/RenderProduct_robot_pov_cam"
+    )
+    config = _config()
+    config.auxiliary_raster = ovxr_session.AuxiliaryRasterConfig(
+        max_fps=30.0,
+        max_image_bytes=720 * 450 * 4,
+        space="head_locked",
+    )
+    owner = ovxr_session.OvxrSession(host, config)
+
+    owner.start()
+    owner.close()
+
+    assert config.auxiliary_raster.space == "head_locked"
+    assert _FakeContext.selected_products == (host.auxiliary_render_product_path,)
+    assert not hasattr(_FakeContext.last_desc, "auxiliary_panel_space")
+
+
+@pytest.mark.parametrize("space", ["stage", "viewer_start", "world"])
+def test_auxiliary_raster_rejects_unsupported_panel_space(space):
+    with pytest.raises(ValueError, match="space"):
+        ovxr_session.AuxiliaryRasterConfig(max_image_bytes=720 * 450 * 4, space=space)
+
+
+def test_auxiliary_raster_has_bounded_public_defaults():
+    config = ovxr_session.AuxiliaryRasterConfig()
+
+    assert config.max_fps == 30.0
+    assert config.max_image_bytes == 64 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_fps": 0.0}, "max_fps"),
+        ({"panel_width_m": 0.0}, "panel_width_m"),
+        ({"orientation_xyzw": (0.0, 0.0, 0.0, 0.0)}, "orientation"),
+    ],
+)
+def test_auxiliary_raster_rejects_invalid_policy(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        ovxr_session.AuxiliaryRasterConfig(**kwargs)
+
+
+def test_auxiliary_raster_requires_the_host_product_capability():
+    owner = ovxr_session.OvxrSession(
+        _FakeHost(),
+        ovxr_session.OvxrSessionConfig(
+            camera_paths=("/left", "/right"),
+            auto_launch_cloudxr=False,
+            auxiliary_raster=ovxr_session.AuxiliaryRasterConfig(
+                max_image_bytes=720 * 450 * 4
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="must be provided together"):
+        owner.start()
+
+
 def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypatch):
     host = _FakeHost()
     launcher_events = []
@@ -940,6 +1045,48 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
         ("create", owner.render_worker_native_thread_id),
         ("stop", owner.render_worker_native_thread_id),
     ]
+
+
+def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypatch):
+    host = _FakeHost()
+    host.auxiliary_render_product_path = "/Render/Head"
+    owner = ovxr_session.OvxrSession(
+        host, _config(auxiliary_raster=ovxr_session.AuxiliaryRasterConfig())
+    )
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    owner.start()
+    context = owner._context
+    quad = owner._camera_quads[0]
+    launcher = _ControlledLauncher()
+    owner._cloudxr_launcher = launcher
+    failure = RuntimeError("native quad detach failed")
+
+    def fail_detach():
+        raise failure
+
+    quad.close = fail_detach
+    with pytest.raises(RuntimeError, match="native quad detach failed") as caught:
+        owner.close()
+
+    assert caught.value is failure
+    assert not owner._worker.is_alive()
+    assert owner._shutdown_requested.is_set()
+    assert owner._closed
+    assert not owner.retirement_complete
+    with pytest.raises(RuntimeError) as repeated:
+        owner.close()
+    assert repeated.value is failure
+    assert not owner._ovxr_teardown_complete.is_set()
+    assert owner._context is context
+    assert owner._camera_quads == [quad]
+    assert owner._cloudxr_launcher is launcher
+    assert launcher.events == []
+    assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+    assert not any(
+        event[0] in {"host-close", "environment-close"}
+        for event in host.events
+        if isinstance(event, tuple)
+    )
 
 
 def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(
@@ -1439,6 +1586,235 @@ def test_session_mode_is_forwarded_to_ovxr(mode, expected):
 def test_config_rejects_unknown_session_mode():
     with pytest.raises(ValueError, match="session_mode must be 'ar' or 'vr'"):
         _config(session_mode="automatic")
+
+
+def test_three_products_keep_selection_order_and_one_loader_owner(monkeypatch):
+
+    host = _FakeHost()
+    attach = host.attach_on_render_thread
+    paths = ("/Render/Head", "/Render/Left", "/Render/Right")
+    host.attach_on_render_thread = lambda cap: replace(
+        attach(cap), auxiliary_render_product_paths=paths
+    )
+    events = []
+
+    def create(_manifest, *, camera_index=0):
+        return SimpleNamespace(
+            supports_gpu=False,
+            configure=lambda panel: events.append(
+                ("configure", camera_index, panel.label)
+            ),
+            attach=lambda _xr, _vk: events.append(("attach", camera_index)),
+            layer=lambda: None,
+            publish=lambda image, **kw: True,
+            close=lambda: events.append(("close", camera_index)),
+        )
+
+    monkeypatch.setattr(ovxr_session, "OpenXRCameraQuad", create)
+    config = _config(
+        auxiliary_rasters=tuple(
+            ovxr_session.AuxiliaryRasterConfig(label=label, space="head_locked")
+            for label in ("Head", "Left wrist", "Right wrist")
+        )
+    )
+    owner = ovxr_session.OvxrSession(host, config)
+    owner.start()
+    assert _FakeContext.selected_products == paths
+    assert tuple(box.product_path for box in owner._camera_mailboxes) == paths
+    owner.close()
+    assert [event for event in events if event[0] == "attach"] == [("attach", 0)]
+    assert [event for event in events if event[0] == "close"] == [
+        ("close", 2),
+        ("close", 1),
+        ("close", 0),
+    ]
+
+
+def test_auxiliary_products_reject_duplicate_identity_and_unbounded_sets():
+    for paths in (("/A", "/A"), ("/A", "/B", "/C", "/D")):
+        with pytest.raises(ValueError):
+            ovxr_session.OvxrSessionBinding(
+                object(), object(), object(), auxiliary_render_product_paths=paths
+            )
+
+
+@pytest.mark.parametrize("release_fails", [False, True])
+def test_bound_output_reads_finish_before_submit_or_cancel(monkeypatch, release_fails):
+    host = _FakeHost()
+    import ctypes
+
+    host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._binding = host.attach_on_render_thread(object())
+    plan = SimpleNamespace(step_result=77)
+    owner._completed_outputs_supported = True
+    events = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        host.ordinal_ledger.seal_external(stage_ordinal)
+        events.append("bind")
+        return 0, True
+
+    def release():
+        events.append("unmap")
+        if release_fails:
+            raise RuntimeError("source read completion unproved")
+
+    def submit(_plan, *, additional_layers):
+        assert events == ["bind", "observe", "copy", "unmap"]
+        assert additional_layers == [123]
+        events.append("submit")
+        return 0, SimpleNamespace(submitted=True)
+
+    owner._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        submit_frame=submit,
+        cancel_frame=lambda _plan: events.append("cancel"),
+    )
+    owner._camera_mailboxes = [
+        SimpleNamespace(snapshot=object, error=lambda: None, close=release)
+    ]
+    owner._camera_quads = [
+        SimpleNamespace(
+            publish=lambda *a, **kw: events.append("copy"), layer=lambda: 123
+        )
+    ]
+    owner._on_completed_outputs = lambda *args: events.append("observe")
+
+    def fetch(renderer, result):
+        assert renderer == 123 and result == 77
+        return object()
+
+    monkeypatch.setattr(ovxr_session, "completed_outputs", fetch)
+    if release_fails:
+        with pytest.raises(RuntimeError, match="completion unproved"):
+            owner._render_published_scene(9)
+        assert "submit" not in events and "cancel" not in events
+        assert owner._pending_plan is plan
+    else:
+        owner._render_published_scene(9)
+        assert events[-1] == "submit" and owner._pending_plan is None
+
+
+def test_no_render_plan_does_not_read_outputs_or_append_layers(monkeypatch):
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._binding = host.attach_on_render_thread(object())
+    plan = SimpleNamespace(step_result=0)
+    submitted = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        return 0, False
+
+    def unexpected(*args):
+        pytest.fail("no-render frame attempted an output read or quad operation")
+
+    owner._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        submit_frame=lambda _plan, **kw: (
+            submitted.append(kw) or 0,
+            SimpleNamespace(submitted=False),
+        ),
+        cancel_frame=unexpected,
+    )
+    owner._camera_quads = [SimpleNamespace(layer=unexpected)]
+    monkeypatch.setattr(ovxr_session, "completed_outputs", unexpected)
+    owner._render_published_scene(9)
+    assert submitted == [{"additional_layers": []}]
+
+
+@pytest.mark.parametrize("cleanup_boundary", ["outputs", "cancel"])
+def test_frame_cleanup_preserves_the_original_bind_error(cleanup_boundary):
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._binding = host.attach_on_render_thread(object())
+
+    failure = RuntimeError("original bind failure")
+    plan = SimpleNamespace(step_result=0)
+
+    def bind(*_args, **_kwargs):
+        raise failure
+
+    def cleanup():
+        raise RuntimeError("cleanup failed")
+
+    owner._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        cancel_frame=lambda _plan: cleanup() if cleanup_boundary == "cancel" else None,
+    )
+    if cleanup_boundary == "outputs":
+        owner._finish_frame_outputs = cleanup
+    with pytest.raises(RuntimeError, match="original bind failure") as error:
+        owner._render_published_scene(9)
+    assert error.value is failure
+    assert "cleanup failed" in " ".join(error.value.__notes__)
+    assert owner._pending_plan is plan
+
+
+@pytest.mark.parametrize("hide_fails", [False, True])
+@pytest.mark.parametrize("failure_site", ["fetch", "publish"])
+def test_failed_output_hides_cached_quad_until_successful_refresh(
+    monkeypatch, hide_fails, failure_site
+):
+    import ctypes
+
+    host = _FakeHost()
+    host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._binding = host.attach_on_render_thread(object())
+    events = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        host.ordinal_ledger.seal_external(stage_ordinal)
+        return 0, True
+
+    failing = [True]
+
+    def fetch(*_args):
+        if failing[0] and failure_site == "fetch":
+            raise RuntimeError("fetch failed")
+        return object()
+
+    owner._context = SimpleNamespace(
+        begin_frame=lambda: (0, SimpleNamespace(step_result=77)),
+        bind_frame=bind,
+        submit_frame=lambda *_a, **kw: (
+            events.append(kw["additional_layers"]) or 0,
+            SimpleNamespace(submitted=True),
+        ),
+    )
+    visible = [True]
+
+    def hide():
+        if hide_fails:
+            raise RuntimeError("optional hide failed")
+        visible[0] = False
+
+    def publish(*_args, **_kwargs):
+        if failing[0] and failure_site == "publish":
+            raise RuntimeError("publish failed")
+        visible[0] = True
+
+    owner._camera_quads = [
+        SimpleNamespace(
+            hide=hide,
+            publish=publish,
+            layer=lambda: 123 if visible[0] else 0,
+        )
+    ]
+    owner._camera_mailboxes = [
+        SimpleNamespace(close=lambda: None, snapshot=object, error=lambda: None)
+    ]
+    owner._on_completed_outputs = lambda *_a: None
+    monkeypatch.setattr(ovxr_session, "completed_outputs", fetch)
+    owner._render_published_scene(9)
+    assert events == [[]]
+    failing[0] = False
+    owner._render_published_scene(9)
+    assert events == [[], [123]]
 
 
 @pytest.mark.parametrize(

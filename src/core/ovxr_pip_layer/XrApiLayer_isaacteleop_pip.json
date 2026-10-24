@@ -1,0 +1,10 @@
+{
+    "file_format_version": "1.0.0",
+    "api_layer": {
+        "name": "XR_APILAYER_ISAACTELEOP_camera_quad",
+        "library_path": "./libXrApiLayer_isaacteleop_pip.so",
+        "api_version": "1.1",
+        "implementation_version": "1",
+        "description": "Isaac Teleop application-owned camera quad on the borrowed OVXR session"
+    }
+}
