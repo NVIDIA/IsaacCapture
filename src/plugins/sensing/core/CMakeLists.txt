@@ -20,6 +20,13 @@ if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
         ${JETSON_MMAPI_SOURCES}
     )
 else()
+    # yuv_to_rgba.cu includes cudaEGL.h, which needs the EGL headers even though
+    # nothing here opens an EGL display.
+    find_path(SENSING_EGL_INCLUDE_DIR EGL/egl.h)
+    if(NOT SENSING_EGL_INCLUDE_DIR)
+        message(FATAL_ERROR "The SENSING mock backend needs the EGL headers (cudaEGL.h includes them). "
+                            "Install libegl-dev.")
+    endif()
     # Parses the vendor JSON itself, so a MOCK build has no SIPL query library.
     find_package(nlohmann_json 3 QUIET)
     if(NOT nlohmann_json_FOUND)
@@ -99,5 +106,4 @@ if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
     )
 else()
     target_link_libraries(sensing_core PRIVATE nlohmann_json::nlohmann_json)
-    target_compile_definitions(sensing_core PUBLIC SENSING_MOCK_BACKEND=1)
 endif()

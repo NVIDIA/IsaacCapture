@@ -10,7 +10,6 @@
 #include <core/frame_sink.hpp>
 #include <core/sensing_camera.hpp>
 
-#include <cstdio>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -111,7 +110,8 @@ TEST_CASE("an unknown sensor index is reported with the available pipelines", "[
 TEST_CASE("an encoded stream writes Annex-B data and one metadata record per unit", "[unit][gpu][sensing]")
 {
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    const std::string output = unique_path("sensing_mock", ".h264");
+    TempFile output_file(".h264");
+    const std::string& output = output_file.path();
 
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 0;
@@ -125,7 +125,6 @@ TEST_CASE("an encoded stream writes Annex-B data and one metadata record per uni
     }
 
     const auto bytes = read_file(output);
-    std::remove(output.c_str());
     REQUIRE(bytes.size() > 4);
 
     const auto nals = split_annex_b(bytes);
@@ -191,7 +190,8 @@ TEST_CASE("an ipc-only stream records metadata with the sensor's capture TSC", "
 TEST_CASE("an encoded stream keeps its capture TSC through the encoder", "[unit][gpu][sensing]")
 {
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    const std::string output = unique_path("sensing_mock", ".h264");
+    TempFile output_file(".h264");
+    const std::string& output = output_file.path();
 
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 0;
@@ -203,7 +203,6 @@ TEST_CASE("an encoded stream keeps its capture TSC through the encoder", "[unit]
             make_config(), streams, std::make_unique<FrameSink>(streams, std::make_unique<RecordingPusher>(recorder)));
         run_for(camera, 700ms);
     }
-    std::remove(output.c_str());
 
     const auto records = records_for(*recorder, 0);
     REQUIRE(records.size() >= 5);

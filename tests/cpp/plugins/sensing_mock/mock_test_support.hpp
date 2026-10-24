@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
 #include <stdexcept>
@@ -65,6 +66,29 @@ inline std::string unique_path(const std::string& stem, const std::string& exten
     static int counter = 0;
     return "/tmp/" + stem + "_" + std::to_string(::getpid()) + "_" + std::to_string(counter++) + extension;
 }
+
+/// A path that is removed when the scope ends, however the test exits.
+class TempFile
+{
+public:
+    explicit TempFile(const std::string& extension) : m_path(unique_path("sensing_mock", extension))
+    {
+    }
+    ~TempFile()
+    {
+        std::remove(m_path.c_str());
+    }
+    TempFile(const TempFile&) = delete;
+    TempFile& operator=(const TempFile&) = delete;
+
+    const std::string& path() const
+    {
+        return m_path;
+    }
+
+private:
+    std::string m_path;
+};
 
 /// Copies a device RGBA frame to the host as tightly packed rows.
 inline std::vector<uint8_t> download_rgba(uintptr_t device_ptr, size_t pitch, uint32_t width, uint32_t height)

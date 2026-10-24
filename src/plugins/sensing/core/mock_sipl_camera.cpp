@@ -89,6 +89,18 @@ struct SiplCamera::Impl
         uint64_t published_capture_tsc_ns = 0;
 
         std::thread frame_thread;
+
+        // Owns its device memory, so a constructor that throws part-way through
+        // allocating does not leak what it had already allocated.
+        ~Sensor()
+        {
+            cudaFree(luma.ptr);
+            cudaFree(chroma.ptr);
+            for (auto& buffer : buffers)
+                cudaFree(buffer.ptr);
+            if (stream)
+                cudaStreamDestroy(stream);
+        }
     };
 
     explicit Impl(const SiplConfig& cfg) : config(cfg)
@@ -120,15 +132,6 @@ struct SiplCamera::Impl
     ~Impl()
     {
         stop();
-        for (auto& sensor : sensors)
-        {
-            cudaFree(sensor->luma.ptr);
-            cudaFree(sensor->chroma.ptr);
-            for (auto& buffer : sensor->buffers)
-                cudaFree(buffer.ptr);
-            if (sensor->stream)
-                cudaStreamDestroy(sensor->stream);
-        }
     }
 
     void allocate(Sensor& sensor)
