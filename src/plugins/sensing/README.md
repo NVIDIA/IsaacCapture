@@ -53,7 +53,7 @@ SIPL drivers.
 | Value | Capture | Encoder | Needs |
 | --- | --- | --- | --- |
 | `JETSON` | SIPL | V4L2 NVENC | L4T SDKs |
-| `MOCK` | synthetic frames | stand-in | NVIDIA GPU, CUDA toolkit, EGL headers (`libegl-dev`) |
+| `MOCK` | animated GIF frames | stand-in | NVIDIA GPU, CUDA toolkit, EGL headers (`libegl-dev`) |
 | `AUTO` (default) | `JETSON` on aarch64, `MOCK` elsewhere | | |
 
 ```bash
@@ -64,9 +64,9 @@ cmake --build build --target camera_plugin_sensing sensing_mock_tests
 
 Everything above those two classes is the code that runs on the rig: `SensingCamera`, the
 sinks, the YUV-to-RGBA and RGBA-to-NV12 kernels, and the CUDA IPC publisher. The mock
-resolves `--list-sensors` and the link masks from the vendor JSON, paints a synthetic NV12
-surface (a 16-bit frame counter top-left, chroma tinted per sensor), and runs the real
-conversion on it. Both sensors share a capture TSC, as the rig's fsync does.
+resolves `--list-sensors` and the link masks from the vendor JSON, builds a synthetic NV12
+surface from a GIF frame, and runs the real conversion on it. Both sensors share a capture
+TSC, as the rig's fsync does.
 
 The mock encoder's output is **not decodable video**: Annex-B start codes, SPS/PPS/IDR and
 non-IDR NAL types, and a payload naming the frame. It reproduces what callers depend on: a
@@ -74,10 +74,20 @@ fixed pool of input buffers that makes `submit()` refuse frames when the encoder
 a warm-up delay before the first unit, and capture stamps that come back at microsecond
 resolution.
 
+Every sensor shows an animated GIF, by default the bundled robot in [`mock_assets/`](mock_assets/)
+(Animated Noto Emoji, CC BY 4.0; see its README for the licence and source). The GIF plays on the
+capture clock, looping, scaled to cover the sensor's configured size and centre-cropped so it is
+never stretched (bilinear when enlarging, area-averaged when reducing). Transparent pixels show a
+plain gray. The sequence number and stamps advance on every capture even while the GIF holds one
+image. The GIF's own size and aspect do not matter; the frame size always comes from the platform
+config. A GIF that cannot be loaded, the bundled one included, is an error: there is no fallback.
+
 Environment, read once at construction:
 
 | Variable | Effect |
 | --- | --- |
+| `SENSING_MOCK_GIF` | path of an animated GIF shown by every sensor (default: the bundled robot) |
+| `SENSING_MOCK_GIF_<module name>` | a GIF for one sensor, by module name (`SENSING_MOCK_GIF_SHW5G_MIX_L3`); wins over `SENSING_MOCK_GIF`. The bundled `noto-waving-hand.gif` suits a wrist camera |
 | `SENSING_MOCK_FPS` | override the platform config's frame rate |
 | `SENSING_MOCK_SCALE_DIV` | divide the reported width and height (kept even); useful for tests |
 | `SENSING_MOCK_FAIL_AFTER` | every sensor fails after N frames, as a link drop would |

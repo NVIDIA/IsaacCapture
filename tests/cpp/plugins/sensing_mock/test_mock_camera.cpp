@@ -76,9 +76,9 @@ TEST_CASE("camera construction validates the masks", "[unit][gpu][sensing]")
     CHECK_THROWS_WITH(SiplCamera(config), Catch::Matchers::ContainsSubstring("no modules left"));
 }
 
-TEST_CASE("frames arrive with a fresh counter, rising sequence and rising stamps", "[unit][gpu][sensing]")
+TEST_CASE("frames arrive whole, with rising sequence and stamps, and the picture moves", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     SiplCamera camera(make_sipl_config());
     REQUIRE(camera.sensors().size() == 2);
     camera.start();
@@ -88,7 +88,7 @@ TEST_CASE("frames arrive with a fresh counter, rising sequence and rising stamps
         INFO("sensor " << sensor.id);
         uint64_t last_sequence = 0;
         uint64_t last_stamp = 0;
-        int seen = 0;
+        std::vector<Shot> shots;
         REQUIRE(wait_for(
             [&]
             {
@@ -103,18 +103,32 @@ TEST_CASE("frames arrive with a fresh counter, rising sequence and rising stamps
                 last_sequence = view->sequence;
                 last_stamp = view->timestamp_ns;
 
-                // The mock numbers frames from 0 and publishes the sequence from 1.
-                const auto pixels = download_rgba(view->ptr, view->pitch, view->width, view->height);
-                CHECK(read_counter(pixels, view->width) == ((view->sequence - 1) & 0xFFFF));
-                return ++seen >= 6;
+                Shot shot;
+                shot.width = view->width;
+                shot.height = view->height;
+                shot.sequence = view->sequence;
+                shot.rgba = download_rgba(view->ptr, view->pitch, view->width, view->height);
+                CHECK(is_whole(shot));
+                shots.push_back(std::move(shot));
+                return shots.size() >= 8;
             }));
+
+        // Eight captures span more than one 40 ms GIF frame, so the colour must have changed.
+        bool changed = false;
+        for (const auto& shot : shots)
+        {
+            const Rgb first = shots[0].at(shots[0].width / 2, shots[0].height / 2);
+            const Rgb here = shot.at(shot.width / 2, shot.height / 2);
+            changed = changed || !near(here, first.r, first.g, first.b, 30);
+        }
+        CHECK(changed);
     }
     camera.stop();
 }
 
 TEST_CASE("both sensors carry the same capture TSC for the same frame", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     SiplCamera camera(make_sipl_config());
     camera.start();
 
@@ -148,23 +162,38 @@ TEST_CASE("both sensors carry the same capture TSC for the same frame", "[unit][
 
 TEST_CASE("a leased slot is not overwritten while the producer keeps running", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     SiplCamera camera(make_sipl_config());
     camera.start();
 
     std::optional<FrameView> held;
     REQUIRE(wait_for([&] { return (held = camera.latest(0)).has_value(); }));
-    const uint32_t counter = read_counter(download_rgba(held->ptr, held->pitch, held->width, held->height), held->width);
+    const auto before = download_rgba(held->ptr, held->pitch, held->width, held->height);
 
-    // Several frame periods pass without another latest(): the lease must hold.
-    std::this_thread::sleep_for(150ms);
-    CHECK(read_counter(download_rgba(held->ptr, held->pitch, held->width, held->height), held->width) == counter);
+    // The GIF changes colour every 40 ms and the other two slots are rewritten on every capture. If
+    // the lease failed, the held slot would soon show a different colour.
+    const auto end = std::chrono::steady_clock::now() + 250ms;
+    while (std::chrono::steady_clock::now() < end)
+    {
+        CHECK(download_rgba(held->ptr, held->pitch, held->width, held->height) == before);
+        std::this_thread::sleep_for(5ms);
+    }
+
+    // The producer did keep going while the slot was held.
+    uint64_t latest_sequence = held->sequence;
+    REQUIRE(wait_for(
+        [&]
+        {
+            if (auto view = camera.latest(1))
+                latest_sequence = std::max<uint64_t>(latest_sequence, view->sequence);
+            return latest_sequence >= held->sequence + 5;
+        }));
     camera.stop();
 }
 
 TEST_CASE("an injected link failure surfaces from latest()", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     ScopedEnv fail("SENSING_MOCK_FAIL_AFTER", "3");
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -190,7 +219,7 @@ TEST_CASE("an injected link failure surfaces from latest()", "[unit][gpu][sensin
 
 TEST_CASE("an unknown sensor index is an error, and stop is idempotent", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     SiplCamera camera(make_sipl_config());
     CHECK_THROWS_AS(camera.latest(7), std::runtime_error);
     camera.start();
