@@ -29,5 +29,8 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+markers = [
+    "oob_browser: real Chrome + npm build; needs RUN_OOB_BROWSER_TESTS=1",
+]
 # Prevent pytest from recursing into parent directories
 norecursedirs = [".git", ".venv", "build", "dist", "*.egg", "__pycache__"]
