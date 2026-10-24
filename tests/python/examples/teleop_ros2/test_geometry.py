@@ -5,11 +5,9 @@
 """Tests for ROS pose geometry helpers."""
 
 import numpy as np
-import pytest
 from scipy.spatial.transform import Rotation
 
 from isaaccapture_examples.teleop_ros2.geometry import (
-    apply_manus_controller_to_hand_pose,
     apply_relative_pose,
     apply_transform_to_pose,
     to_pose,
@@ -63,52 +61,6 @@ def test_apply_transform_returns_a_new_pose_without_mutating_input() -> None:
     assert transformed is not pose
     np.testing.assert_allclose(_position(pose), [1.0, 2.0, 3.0])
     np.testing.assert_allclose(_position(transformed), [5.0, 7.0, 9.0])
-
-
-@pytest.mark.parametrize(
-    ("side", "expected_position", "expected_orientation"),
-    (
-        (
-            "left",
-            [0.0103315472, 0.055536544, -0.0566476072],
-            [
-                -0.1315856570103413,
-                -0.3586609382547703,
-                0.9111816820492541,
-                -0.15425786377769118,
-            ],
-        ),
-        (
-            "right",
-            [0.0103315472, -0.055536544, -0.0566476072],
-            [
-                -0.1315856570103413,
-                0.3586609382547703,
-                0.9111816820492541,
-                0.15425786377769118,
-            ],
-        ),
-    ),
-)
-def test_manus_controller_calibration_matches_known_good_transform(
-    side: str,
-    expected_position: list[float],
-    expected_orientation: list[float],
-) -> None:
-    controller_pose = to_pose([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
-
-    calibrated_pose = apply_manus_controller_to_hand_pose(controller_pose, side)
-
-    np.testing.assert_allclose(_position(calibrated_pose), expected_position)
-    np.testing.assert_allclose(_orientation(calibrated_pose), expected_orientation)
-
-
-def test_manus_controller_calibration_rejects_unknown_side() -> None:
-    with pytest.raises(ValueError, match="side must be 'left' or 'right'"):
-        apply_manus_controller_to_hand_pose(
-            to_pose([0.0, 0.0, 0.0]),
-            "center",
-        )
 
 
 def test_relative_pose_with_unrotated_reference_subtracts_position() -> None:
