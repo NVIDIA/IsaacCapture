@@ -665,7 +665,7 @@ the worker at roughly:</p>
 <p><code class="docutils literal notranslate"><span class="pre">predicted_next_step_time</span> <span class="pre">-</span> <span class="pre">estimated_retarget_cost</span> <span class="pre">-</span> <span class="pre">safety_margin_s</span></code>.</p>
 <p>The goal is to avoid starting too early, which uses older inputs, while still
 finishing before the application asks for the next action. If accumulated
-<code class="docutils literal notranslate"><span class="pre">session.last_step_info.frame_deadline_miss</span></code> counts rise, make the schedule
+<code class="docutils literal notranslate"><span class="pre">session.</span><wbr><span class="pre">last_</span><wbr><span class="pre">step_</span><wbr><span class="pre">info.</span><wbr><span class="pre">frame_</span><wbr><span class="pre">deadline_</span><wbr><span class="pre">miss</span></code> counts rise, make the schedule
 more conservative. If misses stay low but outputs use unnecessarily old inputs,
 make the schedule less conservative.</p>
 <div class="pst-scrollable-table-container"><table class="table">

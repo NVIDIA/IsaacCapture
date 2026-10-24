@@ -953,7 +953,7 @@ sets each frame.</p></li>
 <p>Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> owns the session and hands its handles to <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> / <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code>,
 which then skip creating their own. The viewer builds the session with the trackers’ required
-extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.oxr_handles</span></code>:</p>
+extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">oxr_</span><wbr><span class="pre">handles</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cfg</span><span class="o">.</span><span class="n">required_extensions</span> <span class="o">=</span> <span class="n">DeviceIOSession</span><span class="o">.</span><span class="n">get_required_extensions</span><span class="p">(</span><span class="n">trackers</span><span class="p">)</span>
 <span class="n">viz_session</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSession</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
 

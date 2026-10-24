@@ -646,7 +646,7 @@ substitute.</p>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__init__</span></code></p></td>
 <td><p>EULA refused, or runtime did not reach readiness within
-<code class="docutils literal notranslate"><span class="pre">RUNTIME_STARTUP_TIMEOUT_SEC</span></code> (30 s).  Any partial state is
+<code class="docutils literal notranslate"><span class="pre">RUNTIME_</span><wbr><span class="pre">STARTUP_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code> (30 s).  Any partial state is
 torn down before raising and the exception message includes a
 diagnostic tail from the runtime stderr log and the most recent
 <code class="docutils literal notranslate"><span class="pre">cxr_server</span></code> log.</p></td>
@@ -803,11 +803,11 @@ check <code class="docutils literal notranslate"><span class="pre">logs/runtime_
 <code class="docutils literal notranslate"><span class="pre">false</span></code> to keep native output on the terminal (useful for
 debugging; disables <code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">NV_CXR_ENABLE_PUSH_DEVICES</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">NV_</span><wbr><span class="pre">CXR_</span><wbr><span class="pre">ENABLE_</span><wbr><span class="pre">PUSH_</span><wbr><span class="pre">DEVICES</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
 <td><p>Enable OpenXR push-device extensions used by Isaac Teleop.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">NV_CXR_ENABLE_TENSOR_DATA</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">NV_</span><wbr><span class="pre">CXR_</span><wbr><span class="pre">ENABLE_</span><wbr><span class="pre">TENSOR_</span><wbr><span class="pre">DATA</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
 <td><p>Enable tensor-data streaming channel.</p></td>
 </tr>
@@ -908,7 +908,7 @@ a new launcher.</p>
 <h3>WSS proxy thread stopped unexpectedly<a class="headerlink" href="#wss-proxy-thread-stopped-unexpectedly" title="Link to this heading">#</a></h3>
 <p><code class="xref py py-meth docutils literal notranslate"><span class="pre">health_check()</span></code> reports <code class="docutils literal notranslate"><span class="pre">RuntimeError:</span> <span class="pre">CloudXR</span> <span class="pre">WSS</span> <span class="pre">proxy</span> <span class="pre">thread</span>
 <span class="pre">stopped</span> <span class="pre">unexpectedly</span></code>.  The thread logs its traceback via the
-<code class="docutils literal notranslate"><span class="pre">isaacteleop.cloudxr.launcher</span></code> logger and writes request-level
+<code class="docutils literal notranslate"><span class="pre">isaacteleop.</span><wbr><span class="pre">cloudxr.</span><wbr><span class="pre">launcher</span></code> logger and writes request-level
 details to <code class="docutils literal notranslate"><span class="pre">logs/wss.&lt;ts&gt;.log</span></code>.  Enable Python logging at <code class="docutils literal notranslate"><span class="pre">INFO</span></code> or
 <code class="docutils literal notranslate"><span class="pre">DEBUG</span></code> on that logger to capture the startup exception.</p>
 </section>

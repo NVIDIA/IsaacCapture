@@ -428,6 +428,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -507,11 +508,11 @@ this output contract:</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">reset_event</span></code>: bool pulse</p></li>
 </ul>
 <p>When provided, <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> decodes these outputs into
-<code class="docutils literal notranslate"><span class="pre">ComputeContext.execution_events</span></code> so downstream retargeters and high-level app
+<code class="docutils literal notranslate"><span class="pre">ComputeContext.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events</span></code> so downstream retargeters and high-level app
 logic can read:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.execution_state</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.reset</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">state</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">reset</span></code></p></li>
 </ul>
 <p>Isaac Teleop provides <code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> as a ready-to-use default
 state machine. It should work for most setups, but you can also implement your

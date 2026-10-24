@@ -535,7 +535,7 @@ the live and replay factories (includes, forward declarations, try-create thunks
 factory declarations and definitions), the MCAP recording traits in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/mcap/cpp/inc/mcap/recording_traits.hpp" rel="noopener noreferrer" target="_blank">src/core/mcap/cpp/inc/mcap/recording_traits.hpp</a>, the pybind blocks in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/deviceio_trackers/python/tracker_bindings.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/python/tracker_bindings.cpp</a>, and a
-<code class="docutils literal notranslate"><span class="pre">_generated_tracker_exports.py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/python/isaacteleop/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaacteleop/deviceio_trackers/__init__.py</a>
+<code class="docutils literal notranslate"><span class="pre">_</span><wbr><span class="pre">generated_</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">exports.</span><wbr><span class="pre">py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/python/isaacteleop/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaacteleop/deviceio_trackers/__init__.py</a>
 star-imports. Because that last one is spliced into <code class="docutils literal notranslate"><span class="pre">__all__</span></code>, a new manifest entry needs no
 Python edit at all.</p>
 <p><code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stubs need no work either: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/release/1.5.x/src/core/python/generate_stubs.py" rel="noopener noreferrer" target="_blank">src/core/python/generate_stubs.py</a> derives them from
@@ -578,7 +578,7 @@ the built module.</p>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame_metadata_oak</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FrameMetadataTrackerOak</span></code></p></td>
-<td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code> and <code class="docutils literal notranslate"><span class="pre">header</span></code> (file stem <code class="docutils literal notranslate"><span class="pre">frame_metadata_tracker_oak</span></code>)</p></td>
+<td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code> and <code class="docutils literal notranslate"><span class="pre">header</span></code> (file stem <code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">metadata_</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">oak</span></code>)</p></td>
 </tr>
 </tbody>
 </table>
@@ -607,7 +607,7 @@ the built module.</p>
 <td><p>Genuinely schema-based by mechanism, but a <strong>vendor</strong> of an existing facade — see below</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">MessageChannelTracker</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">XR_NV_opaque_data_channel</span></code> with its own connection state machine</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">NV_</span><wbr><span class="pre">opaque_</span><wbr><span class="pre">data_</span><wbr><span class="pre">channel</span></code> with its own connection state machine</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">HapticCommandReaderTracker</span></code></p></td>
 <td><p>Cross-process consumer: <code class="docutils literal notranslate"><span class="pre">read_all_samples</span></code> on one collection, buckets by

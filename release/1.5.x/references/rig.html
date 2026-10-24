@@ -590,7 +590,7 @@ default (<code class="docutils literal notranslate"><span class="pre">cwd</span>
 you are actually in: a build tree that was configured but never installed gets
 the one <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">...</span> <span class="pre">--prefix</span> <span class="pre">...</span></code> command (its own
 <code class="docutils literal notranslate"><span class="pre">CMAKE_INSTALL_PREFIX</span></code> may point anywhere, so the prefix is passed
-explicitly); a set <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_INSTALL_DIR</span></code> that resolves to the wrong tree
+explicitly); a set <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">INSTALL_</span><wbr><span class="pre">DIR</span></code> that resolves to the wrong tree
 says so rather than telling you to rebuild; and every message without the
 variable set mentions it, since an install tree you already have is as likely
 as an unbuilt one.</p>

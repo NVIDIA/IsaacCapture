@@ -520,7 +520,7 @@ examples. The instructions align with the project’s CMake configuration and th
 <li><p><strong>CMake</strong> 3.24 or higher (Ubuntu 22.04’s apt <code class="docutils literal notranslate"><span class="pre">cmake</span></code> is 3.22 — install a newer one
 from <a class="reference external" href="https://apt.kitware.com/" rel="noopener noreferrer" target="_blank">Kitware’s APT repository</a> or with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cmake</span></code>)</p></li>
 <li><p><strong>C++20</strong> compatible compiler</p></li>
-<li><p><strong>Python</strong> 3.11, 3.12, or 3.13 (default 3.11; see <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code> in root <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>)</p></li>
+<li><p><strong>Python</strong> 3.11, 3.12, or 3.13 (default 3.11; see <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> in root <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>)</p></li>
 <li><p><strong>uv</strong> for Python dependency management and managed Python</p></li>
 <li><p><strong>Internet connection</strong> for downloading dependencies via CMake FetchContent</p></li>
 </ul>
@@ -606,7 +606,7 @@ tarballs such as:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">CloudXR-&lt;version-for-runtime-sdk&gt;-Linux-&lt;arch&gt;-sdk.tar.gz</span></code> (CloudXR Runtime SDK)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">CloudXR-exp-&lt;version-for-runtime-sdk&gt;-Linux-&lt;arch&gt;-sdk.tar.gz</span></code> (experimental
-runtime). Packaged by default as <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr_exp</span></code>; needed for Jetson Orin
+runtime). Packaged by default as <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">cloudxr_</span><wbr><span class="pre">exp</span></code>; needed for Jetson Orin
 support (for example <a class="reference internal" href="../televiz.html"><span class="doc">Televiz</span></a>) until the default runtime covers
 those platforms.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version-for-web-sdk&gt;.tgz</span></code> (CloudXR Web SDK)</p></li>
@@ -618,9 +618,9 @@ like this:</p>
 <span class="nv">CXR_WEB_SDK_VERSION</span><span class="o">=</span>&lt;version-for-web-sdk&gt;
 </pre></div>
 </div>
-<p>The experimental runtime is packaged into the wheel as <code class="docutils literal notranslate"><span class="pre">isaaccapture.cloudxr_exp</span></code> by default
+<p>The experimental runtime is packaged into the wheel as <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">cloudxr_</span><wbr><span class="pre">exp</span></code> by default
 (<code class="docutils literal notranslate"><span class="pre">ENABLE_CLOUDXR_EXP_BUNDLE=ON</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">-DENABLE_CLOUDXR_EXP_BUNDLE=OFF</span></code> to skip it.
-Select it at runtime with <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP</span></code>.
+Select it at runtime with <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">CLOUDXR_</span><wbr><span class="pre">EXP</span></code>.
 See <a class="reference internal" href="../../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a>.</p>
 </section>
 </section>
@@ -637,7 +637,7 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="
 <div class="admonition important">
 <p class="admonition-title">Important</p>
 <p>The Python version is baked into a build directory’s CMake cache and its build
-venv, so <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code> cannot be changed on an existing tree —
+venv, so <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> cannot be changed on an existing tree —
 configuring again with a different value fails with an explanatory error. Select
 it on the first configure, and delete the tree to switch later:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DISAAC_TELEOP_PYTHON_VERSION<span class="o">=</span><span class="m">3</span>.12
@@ -657,7 +657,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 <h3>C++ Formatting Enforcement (Linux)<a class="headerlink" href="#c-formatting-enforcement-linux" title="Link to this heading">#</a></h3>
 <p>On Linux, <strong>clang-format</strong> is enforced by default; the build fails if formatting changes would be applied. The project
 uses <strong>clang-format-14</strong> for consistent results across distributions (see <code class="docutils literal notranslate"><span class="pre">cmake/ClangFormat.cmake</span></code>).</p>
-<p>To disable enforcement, set <code class="docutils literal notranslate"><span class="pre">ENABLE_CLANG_FORMAT_CHECK</span></code> to <code class="docutils literal notranslate"><span class="pre">OFF</span></code>:</p>
+<p>To disable enforcement, set <code class="docutils literal notranslate"><span class="pre">ENABLE_</span><wbr><span class="pre">CLANG_</span><wbr><span class="pre">FORMAT_</span><wbr><span class="pre">CHECK</span></code> to <code class="docutils literal notranslate"><span class="pre">OFF</span></code>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DENABLE_CLANG_FORMAT_CHECK<span class="o">=</span>OFF
 </pre></div>
 </div>
@@ -722,7 +722,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 <td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Python version</strong></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">3.11</span></code> (3.11, 3.12, or 3.13)</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Testing</strong></p></td>
@@ -730,7 +730,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 <td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code>; enables CTest and Catch2</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Clang-format check</strong></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">ENABLE_CLANG_FORMAT_CHECK</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ENABLE_</span><wbr><span class="pre">CLANG_</span><wbr><span class="pre">FORMAT_</span><wbr><span class="pre">CHECK</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code> on Linux</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Televiz visualization</strong></p></td>
@@ -765,7 +765,7 @@ vcpkg, so it also needs <code class="docutils literal notranslate"><span class="
 See <a class="reference internal" href="../../device/cameras/oak.html"><span class="doc">OAK Camera Plugin</span></a>.</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Teleop ROS2 example only</strong></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">BUILD_EXAMPLE_TELEOP_ROS2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BUILD_</span><wbr><span class="pre">EXAMPLE_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">ROS2</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code>; when <code class="docutils literal notranslate"><span class="pre">ON</span></code>, only <code class="docutils literal notranslate"><span class="pre">examples/teleop_ros2</span></code> (e.g. Docker)</p></td>
 </tr>
 </tbody>

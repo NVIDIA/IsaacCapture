@@ -729,7 +729,7 @@ the left buffer, view 1 (right) the right. Memory doubles.</p></td>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">submit(left,</span> <span class="pre">right=None,</span> <span class="pre">stream=0)</span></code> accepts a <code class="docutils literal notranslate"><span class="pre">VizBuffer</span></code> or any
-<code class="docutils literal notranslate"><span class="pre">__cuda_array_interface__</span></code> object; the binding converts it and releases the GIL across the copy.
+<code class="docutils literal notranslate"><span class="pre">_</span><wbr><span class="pre">_</span><wbr><span class="pre">cuda_</span><wbr><span class="pre">array_</span><wbr><span class="pre">interface_</span><wbr><span class="pre">_</span></code> object; the binding converts it and releases the GIL across the copy.
 For a stereo layer both buffers are copied on the same stream and signaled together, so the renderer
 never sees a half-matched pair. Lock-mode placement strategies (<code class="docutils literal notranslate"><span class="pre">world</span></code> / <code class="docutils literal notranslate"><span class="pre">head</span></code> / <code class="docutils literal notranslate"><span class="pre">lazy</span></code>) are
 <strong>application policy</strong> and ship in the sample, not in the module.</p>
@@ -824,7 +824,7 @@ extensions automatically), then pass the handles through:</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">get_oxr_handles()</span></code> returns <code class="docutils literal notranslate"><span class="pre">(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> as raw <code class="docutils literal notranslate"><span class="pre">uint64</span></code>
 values (or <code class="docutils literal notranslate"><span class="pre">None</span></code> outside <code class="docutils literal notranslate"><span class="pre">kXr</span></code>); wrap them with <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles(*tuple)</span></code> for
-<code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.oxr_handles</span></code>. <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> keep <strong>independent</strong> state
+<code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">oxr_</span><wbr><span class="pre">handles</span></code>. <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> keep <strong>independent</strong> state
 machines and lifecycles — either can run without the other. In the unified pattern the underlying
 OpenXR session is shared, so if it is lost both must be recreated. See
 <a class="reference internal" href="teleop_session.html"><span class="doc">Teleop Session</span></a> for the <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> side.</p>
@@ -862,7 +862,7 @@ wiring Televiz into a foreign Vulkan app. Most users won’t touch these.</p></l
 <h3><a class="toc-backref" href="#id17" role="doc-backlink">Data types</a><a class="headerlink" href="#data-types" title="Link to this heading">#</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">VizBuffer</span></code> — non-owning 2D pixel buffer descriptor. Device buffers expose
-<code class="docutils literal notranslate"><span class="pre">__cuda_array_interface__</span></code> (<code class="docutils literal notranslate"><span class="pre">cupy.asarray(buf)</span></code>); host buffers expose <code class="docutils literal notranslate"><span class="pre">__array_interface__</span></code>
+<code class="docutils literal notranslate"><span class="pre">_</span><wbr><span class="pre">_</span><wbr><span class="pre">cuda_</span><wbr><span class="pre">array_</span><wbr><span class="pre">interface_</span><wbr><span class="pre">_</span></code> (<code class="docutils literal notranslate"><span class="pre">cupy.asarray(buf)</span></code>); host buffers expose <code class="docutils literal notranslate"><span class="pre">__array_interface__</span></code>
 (<code class="docutils literal notranslate"><span class="pre">numpy.asarray(buf)</span></code>).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">HostImage</span></code> — owning host pixel buffer returned by <code class="docutils literal notranslate"><span class="pre">readback_to_host</span></code>; wrap with
 <code class="docutils literal notranslate"><span class="pre">numpy.asarray</span></code>.</p></li>

@@ -588,7 +588,7 @@ launch modes like <code class="docutils literal notranslate"><span class="pre">-
 <td><p>Device profile</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">auto-webrtc</span></code>, <code class="docutils literal notranslate"><span class="pre">auto-native</span></code>, <code class="docutils literal notranslate"><span class="pre">Quest3</span></code>, <code class="docutils literal notranslate"><span class="pre">AppleVisionPro</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">NV_CXR_ENABLE_PUSH_DEVICES</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">NV_</span><wbr><span class="pre">CXR_</span><wbr><span class="pre">ENABLE_</span><wbr><span class="pre">PUSH_</span><wbr><span class="pre">DEVICES</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
 <td><p>Push device overseer for hand tracking</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
@@ -603,7 +603,7 @@ launch modes like <code class="docutils literal notranslate"><span class="pre">-
 </div>
 <p>On Jetson Orin the launcher selects the experimental CloudXR runtime and
 main-thread join automatically. You normally do not need to set
-<code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP</span></code> or <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_JOIN_MAIN</span></code>; those are
+<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">CLOUDXR_</span><wbr><span class="pre">EXP</span></code> or <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">CLOUDXR_</span><wbr><span class="pre">JOIN_</span><wbr><span class="pre">MAIN</span></code>; those are
 overrides for debugging or forcing the stable path. See
 <a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a>.</p>
 </section>
@@ -734,7 +734,7 @@ details.</p>
 <summary class="sd-summary-title sd-card-header">
 <span class="sd-summary-text">Offline / air-gapped use</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
 <p class="sd-card-text">On <strong>first run</strong>, the launcher syncs the published web client into
-<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client/</span></code> (override with <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code>):
+<code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client/</span></code> (override with <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code>):
 <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code>. Subsequent runs
 are offline once those files are cached.</p>
 <p class="sd-card-text">For a <strong>true air-gapped machine</strong>, copy the full <code class="docutils literal notranslate"><span class="pre">build/</span></code> output (or the
@@ -780,10 +780,10 @@ Gripper Retargeting - Squeeze triggers to control grippers
 <p>The example runs for 20 seconds and then exits. To try other examples, see
 <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> — for instance:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">se3_retargeting_example.py</span></code> — maps hand or controller poses to
+<li><p><code class="docutils literal notranslate"><span class="pre">se3_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — maps hand or controller poses to
 end-effector poses (absolute or relative)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> — bimanual dexterous hand retargeting</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gripper_retargeting_example.py</span></code> — full gripper example with more
+<li><p><code class="docutils literal notranslate"><span class="pre">gripper_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — full gripper example with more
 configuration options</p></li>
 </ul>
 </section>

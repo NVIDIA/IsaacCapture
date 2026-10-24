@@ -505,8 +505,8 @@ graph outputs and writes them <em>out</em> to a device after the graph runs.</p>
 <li><p><strong>Device-side schemas</strong> (<code class="docutils literal notranslate"><span class="pre">TensorGroupType</span></code>) describe what a device consumes.
 <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code> carries <code class="docutils literal notranslate"><span class="pre">[amplitude,</span> <span class="pre">frequency_hz,</span> <span class="pre">duration_s]</span></code>;
 <code class="docutils literal notranslate"><span class="pre">EndEffectorForce</span></code> carries a 3-DoF force for future grounded devices. They
-live in <code class="docutils literal notranslate"><span class="pre">isaacteleop.retargeting_engine.tensor_types</span></code>.</p></li>
-<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaacteleop.retargeters.tactile_retargeters</span></code> map
+live in <code class="docutils literal notranslate"><span class="pre">isaacteleop.</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">engine.</span><wbr><span class="pre">tensor_</span><wbr><span class="pre">types</span></code>.</p></li>
+<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaacteleop.</span><wbr><span class="pre">retargeters.</span><wbr><span class="pre">tactile_</span><wbr><span class="pre">retargeters</span></code> map
 sim-side tactile data (a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code> / <code class="docutils literal notranslate"><span class="pre">TactileHeatmap</span></code>) to a
 device-side schema — e.g. <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code>.</p></li>
 <li><p><strong>HapticSink</strong> (<code class="docutils literal notranslate"><span class="pre">IDeviceIOSink</span></code>) is the vendor-neutral output node. It stores
@@ -516,7 +516,7 @@ device after the graph, with the active session in scope. Register it with
 <li><p><strong>IHapticDevice</strong> is the vendor adapter. <code class="docutils literal notranslate"><span class="pre">ControllerHapticDevice</span></code> is the
 in-process reference; it drives the controller’s vibration actuator through the
 same <code class="docutils literal notranslate"><span class="pre">ControllerTracker</span></code> that <code class="docutils literal notranslate"><span class="pre">ControllersSource</span></code> reads on the input side
-(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_left_haptic_feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_right_haptic_feedback</span></code>).
+(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">left_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">right_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code>).
 OpenXR specifics stay in the live tracker layer, so the device, sink, and schema
 are runtime-neutral.</p></li>
 </ul>

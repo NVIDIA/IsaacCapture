@@ -769,14 +769,14 @@ them to <code class="docutils literal notranslate"><span class="pre">--cloudxr-e
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">CLOUDXR_</span><wbr><span class="pre">EXP</span></code></p></td>
 <td><p>unset (auto on Orin)</p></td>
 <td><p>Select the experimental package (<code class="docutils literal notranslate"><span class="pre">isaacteleop.cloudxr_exp</span></code>).
 <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP=0</span></code> forces the stable runtime on Orin;
 <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_EXP=1</span></code> forces the experimental package elsewhere
 (launcher fails if it is missing).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_CLOUDXR_JOIN_MAIN</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">CLOUDXR_</span><wbr><span class="pre">JOIN_</span><wbr><span class="pre">MAIN</span></code></p></td>
 <td><p>unset (auto on Orin)</p></td>
 <td><p>Join the CloudXR service on the main thread (avoids a
 <code class="docutils literal notranslate"><span class="pre">Couldn't</span> <span class="pre">create</span> <span class="pre">autoTSSkey</span> <span class="pre">mapping</span></code> abort on some platforms).
@@ -794,9 +794,9 @@ them to <code class="docutils literal notranslate"><span class="pre">--cloudxr-e
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
 <section id="xrgetsystem-fails-with-xr-error-form-factor-unavailable-35">
-<span id="cloudxr-form-factor-unavailable"></span><h3><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code> (-35)<a class="headerlink" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35" title="Link to this heading">#</a></h3>
+<span id="cloudxr-form-factor-unavailable"></span><h3><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">ERROR_</span><wbr><span class="pre">FORM_</span><wbr><span class="pre">FACTOR_</span><wbr><span class="pre">UNAVAILABLE</span></code> (-35)<a class="headerlink" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35" title="Link to this heading">#</a></h3>
 <p>-35 is returned <em>after</em> <code class="docutils literal notranslate"><span class="pre">xrCreateInstance</span></code> succeeded, so the runtime was
-found and loaded — a missing runtime gives -51 (<code class="docutils literal notranslate"><span class="pre">XR_ERROR_RUNTIME_UNAVAILABLE</span></code>)
+found and loaded — a missing runtime gives -51 (<code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">ERROR_</span><wbr><span class="pre">RUNTIME_</span><wbr><span class="pre">UNAVAILABLE</span></code>)
 instead. It means the runtime is up but no headset session is attached to it
 yet. Check, in order:</p>
 <ol class="arabic simple">
@@ -881,7 +881,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run-the-service-in-a-container-or-ci">Run the service in a container or CI</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration">Configuration</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35"><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code> (-35)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35"><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr/><span class="pre">ERROR_</span><wbr/><span class="pre">FORM_</span><wbr/><span class="pre">FACTOR_</span><wbr/><span class="pre">UNAVAILABLE</span></code> (-35)</a></li>
 </ul>
 </li>
 </ul>

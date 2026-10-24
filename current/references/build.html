@@ -378,6 +378,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -533,7 +534,7 @@ interpreter and ABI are baked into <code class="docutils literal notranslate"><s
 two build paths therefore never share a directory:</p>
 <ul>
 <li><p><strong>classic CMake</strong> → whatever you pass to <code class="docutils literal notranslate"><span class="pre">-B</span></code>, <code class="docutils literal notranslate"><span class="pre">build/</span></code> by convention.
-<code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code> selects the interpreter (default <code class="docutils literal notranslate"><span class="pre">3.11</span></code>), and
+<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code> selects the interpreter (default <code class="docutils literal notranslate"><span class="pre">3.11</span></code>), and
 changing it on an existing tree is rejected with an error rather than silently
 reusing the old one — delete the tree to switch versions.</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w">                                            </span><span class="c1"># default 3.11</span>
@@ -547,7 +548,7 @@ cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </s
 <li><p><strong>pip / scikit-build-core</strong> → <code class="docutils literal notranslate"><span class="pre">build-wheel/&lt;cache-tag&gt;/</span></code> (e.g.
 <code class="docutils literal notranslate"><span class="pre">build-wheel/cpython-312/</span></code>), set by <code class="docutils literal notranslate"><span class="pre">build-dir</span></code> in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/pyproject.toml" rel="noopener noreferrer" target="_blank">pyproject.toml</a> and chosen automatically per interpreter, keyed off
-<code class="docutils literal notranslate"><span class="pre">sys.implementation.cache_tag</span></code>. It lives outside <code class="docutils literal notranslate"><span class="pre">build/</span></code> so <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>
+<code class="docutils literal notranslate"><span class="pre">sys.</span><wbr><span class="pre">implementation.</span><wbr><span class="pre">cache_</span><wbr><span class="pre">tag</span></code>. It lives outside <code class="docutils literal notranslate"><span class="pre">build/</span></code> so <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>
 and a classic <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">-B</span> <span class="pre">build</span></code> never collide, and <code class="docutils literal notranslate"><span class="pre">rm</span> <span class="pre">-rf</span> <span class="pre">build</span></code> leaves the
 incremental wheel tree intact.</p></li>
 </ul>
@@ -595,7 +596,7 @@ incremental wheel tree intact.</p></li>
 </section>
 <section id="uv-or-python-version">
 <h3>uv or Python version<a class="headerlink" href="#uv-or-python-version" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">cmake/SetupPython.cmake</span></code> requires <strong>uv</strong> and uses <code class="docutils literal notranslate"><span class="pre">ISAAC_TELEOP_PYTHON_VERSION</span></code>. Install uv as
+<p><code class="docutils literal notranslate"><span class="pre">cmake/SetupPython.cmake</span></code> requires <strong>uv</strong> and uses <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code>. Install uv as
 in <a class="reference internal" href="../development/build_from_source/index.html#one-time-setup"><span class="std std-ref">One time setup</span></a> and pass <code class="docutils literal notranslate"><span class="pre">-DISAAC_TELEOP_PYTHON_VERSION=3.12</span></code> (or 3.11,
 3.13) if you need a specific version.</p>
 </section>

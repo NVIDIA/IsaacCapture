@@ -428,6 +428,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -527,8 +528,8 @@ browser recovery failures leave the host running with a degraded OOB status.
 The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
 observing every 5 seconds. A meaningful device, network, rule, or browser
 change opens a fresh 60-second recovery episode. Override the positive,
-finite values with <code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code> and
-<code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code>; invalid values fail host preflight.</p>
+finite values with <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RECOVERY_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code> and
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RETRY_</span><wbr><span class="pre">INTERVAL_</span><wbr><span class="pre">SEC</span></code>; invalid values fail host preflight.</p>
 <p>At INFO, OOB progress reports headset waiting and connection, browser readiness,
 and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
 USB-health blocks remain visible with operator action. An unchanged wait for
@@ -633,7 +634,7 @@ watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><
 the correct <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code> parameters</p></li>
 <li><p><strong>CDP connect</strong> forwards the browser’s DevTools socket over <code class="docutils literal notranslate"><span class="pre">adb</span></code>,
 accepts the self-signed certificate interstitial, and clicks CONNECT
-via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.dispatchMouseEvent</span></code>)</p></li>
+via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.</span><wbr><span class="pre">dispatchMouseEvent</span></code>)</p></li>
 </ol>
 <p>Streaming and web page access use WiFi, not USB tethering.  The headset
 reaches the streaming host directly over WiFi.  <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">forward</span></code> is used only
@@ -753,7 +754,7 @@ TURN prerequisites.</p>
 <p>If CONNECT was dispatched but a fresh browser report has not arrived, the
 lifecycle remains degraded in <code class="docutils literal notranslate"><span class="pre">VERIFYING_BROWSER</span></code> and continues probing
 without clicking CONNECT again. After a USB cable replug, the lifecycle enters
-<code class="docutils literal notranslate"><span class="pre">VERIFYING_EXISTING_BROWSER</span></code> and gives the client’s configured reconnect loop
+<code class="docutils literal notranslate"><span class="pre">VERIFYING_</span><wbr><span class="pre">EXISTING_</span><wbr><span class="pre">BROWSER</span></code> and gives the client’s configured reconnect loop
 time to finish. Fresh post-repair stream metrics return it to <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code> without
 closing, reloading, or navigating the surviving tab. One terminal event permits
 one same-tab CONNECT click; a full browser launch is reserved for the case where
@@ -766,7 +767,7 @@ new recovery attempt. The browser bundle must implement <code class="docutils li
 startup checks for the protocol and fails with an asset diagnostic if the local
 bundle is too old. For source-tree testing, run
 <code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/webxr_client</span></code> and point
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> at its <code class="docutils literal notranslate"><span class="pre">build</span></code> directory before starting
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> at its <code class="docutils literal notranslate"><span class="pre">build</span></code> directory before starting
 the service. USB-local static responses use <code class="docutils literal notranslate"><span class="pre">Cache-Control:</span> <span class="pre">no-store</span></code>;
 the lifecycle also clears this UI origin’s browser storage once per selected
 headset session. Before each local-client CONNECT, CDP reloads the page with
@@ -845,7 +846,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Monotonic count of streamed frames.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">render.pose_to_render_time</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">render.</span><wbr><span class="pre">pose_</span><wbr><span class="pre">to_</span><wbr><span class="pre">render_</span><wbr><span class="pre">time</span></code></p></td>
 <td><p>Pose-to-render latency (ms), rolling average.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
@@ -853,27 +854,27 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Time spent uploading the pose.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">latency.pose_to_frame_received_ms</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">latency.</span><wbr><span class="pre">pose_</span><wbr><span class="pre">to_</span><wbr><span class="pre">frame_</span><wbr><span class="pre">received_</span><wbr><span class="pre">ms</span></code></p></td>
 <td><p>Time from pose send to frame received.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.compositor_skipped_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">compositor_</span><wbr><span class="pre">skipped_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames the compositor skipped.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.out_of_order_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">out_</span><wbr><span class="pre">of_</span><wbr><span class="pre">order_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames that arrived out of order.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">frame_pipeline.mismatched_percent</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">pipeline.</span><wbr><span class="pre">mismatched_</span><wbr><span class="pre">percent</span></code></p></td>
 <td><p>Share of frames whose pose did not match the rendered pixels.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.streaming_rate_mbps</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">streaming_</span><wbr><span class="pre">rate_</span><wbr><span class="pre">mbps</span></code></p></td>
 <td><p>Current streaming rate.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.available_bandwidth_mbps</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">available_</span><wbr><span class="pre">bandwidth_</span><wbr><span class="pre">mbps</span></code></p></td>
 <td><p>Estimated available bandwidth.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -885,7 +886,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Packet loss ratio.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.avg_decode_time_ms</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">avg_</span><wbr><span class="pre">decode_</span><wbr><span class="pre">time_</span><wbr><span class="pre">ms</span></code></p></td>
 <td><p>Average video decode time.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -897,7 +898,7 @@ the rate operator intent reaches the robot.</p></td>
 <td><p>Bandwidth component of the quality score, 0-4.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">network.network_loss_score</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">network.</span><wbr><span class="pre">network_</span><wbr><span class="pre">loss_</span><wbr><span class="pre">score</span></code></p></td>
 <td><p>Loss component of the quality score, 0-4.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">network</span></code></p></td>
@@ -1049,7 +1050,7 @@ and signaling share this socket. In <code class="docutils literal notranslate"><
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_CODEC</span></code></p></td>
 <td><p>Default video codec for headset bookmarks</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_PANEL_HIDDEN_AT_START</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">PANEL_</span><wbr><span class="pre">HIDDEN_</span><wbr><span class="pre">AT_</span><wbr><span class="pre">START</span></code></p></td>
 <td><p>Hide control panel on load (<code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_ROUTE</span></code></p></td>
@@ -1089,16 +1090,16 @@ Before each new browser launch, ADB must confirm
 <code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; wear or unlock the headset (or cover its
 proximity sensor) when the service reports that it is asleep.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECOVERY_TIMEOUT_SEC</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RECOVERY_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
 Expiry changes to observation mode; it never stops the host. If this is
 shorter than the browser reconnect budget, the host caps browser grace
 early enough to leave one retry interval for a bounded fallback.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RETRY_INTERVAL_SEC</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RETRY_</span><wbr><span class="pre">INTERVAL_</span><wbr><span class="pre">SEC</span></code></p></td>
 <td><p>Positive finite retry and observation interval in seconds (default <code class="docutils literal notranslate"><span class="pre">5</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">RECONNECT_</span><wbr><span class="pre">MAX_</span><wbr><span class="pre">ATTEMPTS</span></code></p></td>
 <td><p>Non-negative number of browser-local reconnect attempts (default <code class="docutils literal notranslate"><span class="pre">10</span></code>).
 The WebXR client’s stream reconnect loop is opt-in — off unless an
 explicit <code class="docutils literal notranslate"><span class="pre">reconnectEnabled=true</span></code> URL param or the 2D debug UI’s
@@ -1107,7 +1108,7 @@ always waits out this budget before taking over, whether or not the
 client is actually retrying. The value is also included in the
 generated headset URL.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_RECONNECT_DELAY_MS</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">RECONNECT_</span><wbr><span class="pre">DELAY_</span><wbr><span class="pre">MS</span></code></p></td>
 <td><p>Non-negative delay between browser-local attempts in milliseconds
 (default <code class="docutils literal notranslate"><span class="pre">3000</span></code>). The host derives its bounded recovery grace from
 this value and the maximum-attempt count.</p></td>
@@ -1139,7 +1140,7 @@ coturn endpoint).  Always use both flags together:</p>
 <li><p>Pre-flights host tools, ports, and static assets. It can start with no
 headset attached.</p></li>
 <li><p>Resolves the WebXR static directory from
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and syncs missing <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> from
 the published client (see <a class="reference internal" href="../development/build_from_source/webxr.html"><span class="doc">Build WebXR Client</span></a>).</p></li>
 <li><p>Serves that directory at <code class="docutils literal notranslate"><span class="pre">https://localhost:48322/client/</span></code> on the WSS
@@ -1162,7 +1163,7 @@ waiting for the ordinary five-second observation cadence.</p></li>
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://localhost:&lt;proxy_port&gt;</span></code>)
 once for the selected session — the SDK and web client both cache settings
-(e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
+(e.g. <code class="docutils literal notranslate"><span class="pre">general.</span><wbr><span class="pre">iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
 stale value can silently win over a fresh URL param. The origin is owned
 by the launcher so clearing it has no collateral effect; the step is a
@@ -1197,7 +1198,7 @@ and never claims that Wi-Fi dropped. Wi-Fi restoration resumes recovery.</p>
 <h3>Web client UI has no text (OOB / <code class="docutils literal notranslate"><span class="pre">--host-client</span></code>)<a class="headerlink" href="#web-client-ui-has-no-text-oob-host-client" title="Link to this heading">#</a></h3>
 <p><strong>Cause:</strong> Production webpack emits <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> (main app, including UIKit MSDF text)
 and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> (desktop emulation only). If the static cache under
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> is missing or outdated — especially a truncated
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> is missing or outdated — especially a truncated
 <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> — in-VR text does not render.</p>
 <p><strong>Fix:</strong> Ensure <code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code>, and <code class="docutils literal notranslate"><span class="pre">bundle.emulator.js</span></code> are present
 under the static dir — run the launcher once with network, copy a full <code class="docutils literal notranslate"><span class="pre">npm</span> <span class="pre">run</span> <span class="pre">build</span></code>
@@ -1246,7 +1247,7 @@ internet, this fails and <code class="docutils literal notranslate"><span class=
 <p><strong>Fix:</strong> Pre-stage the full client <code class="docutils literal notranslate"><span class="pre">build/</span></code> tree (or the published
 <code class="docutils literal notranslate"><span class="pre">/client/&lt;version&gt;/</span></code> directory) into the static dir, then re-run.  The
 launcher only downloads missing or empty files.  Override the target directory
-via <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code>.</p>
+via <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code>.</p>
 <p><strong>Fix:</strong> Set the SDK versions in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code> (copy from
 <code class="docutils literal notranslate"><span class="pre">.env.default</span></code>) so the download script can resolve the right version,
 or stage <code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version&gt;.tgz</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/</span></code> manually.</p>

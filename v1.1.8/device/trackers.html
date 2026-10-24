@@ -552,16 +552,16 @@ the recorder via <code class="docutils literal notranslate"><span class="pre">se
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">available_time_local_common_clock</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">available_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>System monotonic time when the sample became available to the recording
 system. Useful for measuring pipeline latency.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sample_time_local_common_clock</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>System monotonic time when the sample was captured. Enables
 cross-device synchronization (values from different devices share the
 same clock domain).</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sample_time_raw_device_clock</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">raw_</span><wbr><span class="pre">device_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>Timestamp from the device’s own clock. Values from different devices
 are <strong>not</strong> directly comparable.</p></td>
 </tr>
@@ -636,7 +636,7 @@ axis inputs. Uses standard OpenXR action bindings.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema/fbs/controller.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/controller.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/controller_tracker.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">ControllerTracker</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_controller</span></code>, <code class="docutils literal notranslate"><span class="pre">right_controller</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.ControllerSnapshotRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_controller</span></code>, <code class="docutils literal notranslate"><span class="pre">right_controller</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">ControllerSnapshotRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema_tests/cpp/test_controller.cpp" rel="noopener noreferrer" target="_blank">src/core/schema_tests/cpp/test_controller.cpp</a></p></li>
@@ -661,7 +661,7 @@ extension.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema/fbs/full_body.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/full_body.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/full_body_tracker_pico.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">FullBodyTrackerPico</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">full_body</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.FullBodyPosePicoRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">full_body</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">FullBodyPosePicoRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema_tests/cpp/test_full_body.cpp" rel="noopener noreferrer" target="_blank">src/core/schema_tests/cpp/test_full_body.cpp</a></p></li>
@@ -680,7 +680,7 @@ utility internally.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema/fbs/oak.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/oak.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/frame_metadata_tracker_oak.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">FrameMetadataTrackerOak</span></code></p></li>
-<li><p>Record channels: one per configured stream (e.g. <code class="docutils literal notranslate"><span class="pre">Color</span></code>, <code class="docutils literal notranslate"><span class="pre">MonoLeft</span></code>) | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.FrameMetadataOakRecord</span></code></p></li>
+<li><p>Record channels: one per configured stream (e.g. <code class="docutils literal notranslate"><span class="pre">Color</span></code>, <code class="docutils literal notranslate"><span class="pre">MonoLeft</span></code>) | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">FrameMetadataOakRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema_tests/cpp/test_oak.cpp" rel="noopener noreferrer" target="_blank">src/core/schema_tests/cpp/test_oak.cpp</a></p></li>
@@ -704,7 +704,7 @@ utility internally.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio/generic_3axis_pedal_tracker.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaacteleop.deviceio</span> <span class="pre">import</span> <span class="pre">Generic3AxisPedalTracker</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.Generic3AxisPedalOutputRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">Generic3AxisPedalOutputRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/v1.1.8/src/core/schema_tests/cpp/test_pedals.cpp" rel="noopener noreferrer" target="_blank">src/core/schema_tests/cpp/test_pedals.cpp</a></p></li>

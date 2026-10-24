@@ -382,6 +382,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -582,8 +583,8 @@ each with collection id <code class="docutils literal notranslate"><span class="
 <strong>same</strong> prefix the plugin was given (see <a class="reference internal" href="../trackers.html"><span class="doc">Spatial Trackers and Device Data</span></a>). TeleopSession’s
 DeviceIO layer uses the live tracker implementation to read the pushed
 tensors and write MCAP channels.</p></li>
-<li><p><strong>MCAP config</strong> — add every tracker to both <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.trackers</span></code>
-and <code class="docutils literal notranslate"><span class="pre">McapRecordingConfig.tracker_names</span></code>, each under its own base name. See
+<li><p><strong>MCAP config</strong> — add every tracker to both <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">trackers</span></code>
+and <code class="docutils literal notranslate"><span class="pre">McapRecordingConfig.</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">names</span></code>, each under its own base name. See
 also <a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a>.</p></li>
 </ol>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>

@@ -575,7 +575,7 @@ watch<span class="w"> </span>-n<span class="w"> </span><span class="m">2</span><
 the correct <code class="docutils literal notranslate"><span class="pre">oobEnable=1</span></code>, <code class="docutils literal notranslate"><span class="pre">serverIP</span></code>, and <code class="docutils literal notranslate"><span class="pre">port</span></code> parameters</p></li>
 <li><p><strong>CDP connect</strong> forwards the browser’s DevTools socket over <code class="docutils literal notranslate"><span class="pre">adb</span></code>,
 accepts the self-signed certificate interstitial, and clicks CONNECT
-via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.dispatchMouseEvent</span></code>)</p></li>
+via Chrome DevTools Protocol (<code class="docutils literal notranslate"><span class="pre">Input.</span><wbr><span class="pre">dispatchMouseEvent</span></code>)</p></li>
 </ol>
 <p>Streaming and web page access use WiFi, not USB tethering.  The headset
 reaches the streaming host directly over WiFi.  <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">forward</span></code> is used only
@@ -788,7 +788,7 @@ previously saved settings:</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_CODEC</span></code></p></td>
 <td><p>Default video codec for headset bookmarks</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_PANEL_HIDDEN_AT_START</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">PANEL_</span><wbr><span class="pre">HIDDEN_</span><wbr><span class="pre">AT_</span><wbr><span class="pre">START</span></code></p></td>
 <td><p>Hide control panel on load (<code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_ROUTE</span></code></p></td>
@@ -840,7 +840,7 @@ connected, headset has at least one non-loopback IP (Wi-Fi up — see
 troubleshooting below for why this is required even though no packets
 traverse the network).</p></li>
 <li><p>Resolves the WebXR static directory from
-<code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
+<code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/static-client</span></code>)
 and downloads <code class="docutils literal notranslate"><span class="pre">index.html</span></code> / <code class="docutils literal notranslate"><span class="pre">bundle.js</span></code> from
 <code class="docutils literal notranslate"><span class="pre">https://nvidia.github.io/IsaacTeleop/client/main/</span></code> if either is missing.</p></li>
 <li><p>Serves that directory over HTTPS on 127.0.0.1:8080 with the same PEM
@@ -853,7 +853,7 @@ the WSS proxy uses (Python <code class="docutils literal notranslate"><span clas
 <p>In <code class="docutils literal notranslate"><span class="pre">--usb-local</span></code> mode the launcher also wipes localStorage / IndexedDB /
 cookies / HTTP cache for the teleop UI origin (<code class="docutils literal notranslate"><span class="pre">https://127.0.0.1:&lt;usb_ui_port&gt;</span></code>)
 before the session starts — the SDK and web client both cache settings
-(e.g. <code class="docutils literal notranslate"><span class="pre">general.iceTransportPolicy</span></code> for ICE transport policy,
+(e.g. <code class="docutils literal notranslate"><span class="pre">general.</span><wbr><span class="pre">iceTransportPolicy</span></code> for ICE transport policy,
 <code class="docutils literal notranslate"><span class="pre">cxr.isaac.teleopPath</span></code> for the last-used project) in localStorage, and a
 stale value can silently win over a fresh URL param. The origin is owned
 by the launcher so clearing it has no collateral effect; the step is a
@@ -928,7 +928,7 @@ first run.  Behind a proxy or with no internet, this fails and
 <p><strong>Fix:</strong> Pre-stage the files (any way you like — <code class="docutils literal notranslate"><span class="pre">curl</span></code>, container
 build step, internal mirror) into the static dir, then re-run.  The
 launcher only downloads when a file is missing or empty.  Override the
-target directory via <code class="docutils literal notranslate"><span class="pre">TELEOP_WEB_CLIENT_STATIC_DIR</span></code>.</p>
+target directory via <code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">WEB_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">STATIC_</span><wbr><span class="pre">DIR</span></code>.</p>
 <p><strong>Fix:</strong> Set the SDK versions in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/.env</span></code> (copy from
 <code class="docutils literal notranslate"><span class="pre">.env.default</span></code>) so the download script can resolve the right version,
 or stage <code class="docutils literal notranslate"><span class="pre">nvidia-cloudxr-&lt;version&gt;.tgz</span></code> in <code class="docutils literal notranslate"><span class="pre">deps/cloudxr/</span></code> manually.</p>

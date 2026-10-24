@@ -501,7 +501,7 @@ provider.</p></td>
 MANO 21-joint layout, and convert quaternions to wxyz.</p></td>
 </tr>
 <tr class="row-even"><td><p>IK</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">robotic_grounding.retarget.hand_kinematics.SharpaHandKinematics</span></code>
+<td><p><code class="docutils literal notranslate"><span class="pre">robotic_</span><wbr><span class="pre">grounding.</span><wbr><span class="pre">retarget.</span><wbr><span class="pre">hand_</span><wbr><span class="pre">kinematics.</span><wbr><span class="pre">SharpaHandKinematics</span></code>
 runs Pink IK on a Pinocchio model loaded from the Sharpa MJCF, with
 a FreeFlyer root that re-anchors the wrist each frame.</p></td>
 </tr>
@@ -606,7 +606,7 @@ mesh-free variant used in tests and on machines without the STLs).</p></li>
 whatever finger joints Pinocchio discovers in the MJCF, in model order.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">source_to_robot_scale</span></code> — MANO-to-robot length scale.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver</span></code> / <code class="docutils literal notranslate"><span class="pre">max_iter</span></code> / <code class="docutils literal notranslate"><span class="pre">frequency</span></code> /
-<code class="docutils literal notranslate"><span class="pre">frame_tasks_converged_threshold</span></code> — Pink IK knobs forwarded to
+<code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">tasks_</span><wbr><span class="pre">converged_</span><wbr><span class="pre">threshold</span></code> — Pink IK knobs forwarded to
 <code class="docutils literal notranslate"><span class="pre">SharpaHandKinematics</span></code>.</p></li>
 </ul>
 <p>For bimanual control, instantiate two <code class="docutils literal notranslate"><span class="pre">SharpaHandRetargeter</span></code>s and

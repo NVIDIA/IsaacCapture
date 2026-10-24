@@ -428,6 +428,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -549,7 +550,7 @@ the live and replay factories (includes, forward declarations, try-create thunks
 factory declarations and definitions), the MCAP recording traits in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/mcap/cpp/inc/mcap/recording_traits.hpp" rel="noopener noreferrer" target="_blank">src/core/mcap/cpp/inc/mcap/recording_traits.hpp</a>, the pybind blocks in
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/python/tracker_bindings.cpp" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/python/tracker_bindings.cpp</a>, and a
-<code class="docutils literal notranslate"><span class="pre">_generated_tracker_exports.py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaaccapture/deviceio_trackers/__init__.py</a>
+<code class="docutils literal notranslate"><span class="pre">_</span><wbr><span class="pre">generated_</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">exports.</span><wbr><span class="pre">py</span></code> that <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/deviceio_trackers/__init__.py" rel="noopener noreferrer" target="_blank">src/python/isaaccapture/deviceio_trackers/__init__.py</a>
 star-imports. Because that last one is spliced into <code class="docutils literal notranslate"><span class="pre">__all__</span></code>, a new manifest entry needs no
 Python edit at all.</p>
 <p><code class="docutils literal notranslate"><span class="pre">.pyi</span></code> stubs need no work either: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/python/generate_stubs.py" rel="noopener noreferrer" target="_blank">src/core/python/generate_stubs.py</a> derives them from
@@ -572,8 +573,8 @@ it needs a hand-written <code class="docutils literal notranslate"><span class="
 Python. Only <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;pull&quot;</span></code> supports <code class="docutils literal notranslate"><span class="pre">metadata</span></code>.</p>
 <ul class="simple">
 <li><p><strong>Producer.</strong> Pushes the encoded table on <code class="docutils literal notranslate"><span class="pre">tracker_metadata_collection_id(collection_id)</span></code>
-(<code class="docutils literal notranslate"><span class="pre">&lt;collection_id&gt;/metadata</span></code>), tensor <code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_TENSOR_IDENTIFIER</span></code>, in samples of at most
-<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> bytes; see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/cpp/inc/schema/tracker_metadata.hpp" rel="noopener noreferrer" target="_blank">src/core/schema/cpp/inc/schema/tracker_metadata.hpp</a>.
+(<code class="docutils literal notranslate"><span class="pre">&lt;collection_id&gt;/metadata</span></code>), tensor <code class="docutils literal notranslate"><span class="pre">TRACKER_</span><wbr><span class="pre">METADATA_</span><wbr><span class="pre">TENSOR_</span><wbr><span class="pre">IDENTIFIER</span></code>, in samples of at most
+<code class="docutils literal notranslate"><span class="pre">TRACKER_</span><wbr><span class="pre">METADATA_</span><wbr><span class="pre">MAX_</span><wbr><span class="pre">SIZE</span></code> bytes; see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/cpp/inc/schema/tracker_metadata.hpp" rel="noopener noreferrer" target="_blank">src/core/schema/cpp/inc/schema/tracker_metadata.hpp</a>.
 It pushes when it starts and periodically after that, always the same encoded table, so a consumer
 that starts later still receives it. A C++ producer does this with a <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>, a Python one
 with a <code class="docutils literal notranslate"><span class="pre">TensorPushTracker</span></code>, either sized to the encoded table.</p></li>
@@ -610,7 +611,7 @@ recording that holds it.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">Se3Tracker</span></code></p></td>
 <td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code>; the default would give <code class="docutils literal notranslate"><span class="pre">Se3TrackerTracker</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_body_joint_rotations</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">body_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">SomaBodyJointRotationsTracker</span></code></p></td>
 <td><p>Keyed SOMA body rotations for up to 77 controls of the 78-joint skeleton; defined against SOMA-X v0.3.1</p></td>
 </tr>
@@ -618,7 +619,7 @@ recording that holds it.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">SomaBodyJointPosesTracker</span></code></p></td>
 <td><p>Keyed evaluated SOMA positions and orientations for up to 77 public joints</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_hand_joint_rotations</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">SomaHandJointRotationsTracker</span></code></p></td>
 <td><p>Keyed SOMA hand rotations for up to 25 controls; defined against SOMA-X v0.3.1</p></td>
 </tr>
@@ -640,7 +641,7 @@ recording that holds it.</p></li>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">frame_metadata_oak</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FrameMetadataTrackerOak</span></code></p></td>
-<td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code> and <code class="docutils literal notranslate"><span class="pre">header</span></code> (file stem <code class="docutils literal notranslate"><span class="pre">frame_metadata_tracker_oak</span></code>)</p></td>
+<td><p>Overrides <code class="docutils literal notranslate"><span class="pre">class</span></code> and <code class="docutils literal notranslate"><span class="pre">header</span></code> (file stem <code class="docutils literal notranslate"><span class="pre">frame_</span><wbr><span class="pre">metadata_</span><wbr><span class="pre">tracker_</span><wbr><span class="pre">oak</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spacemouse</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">SpaceMouseTracker</span></code></p></td>
@@ -677,7 +678,7 @@ recording that holds it.</p></li>
 <td><p>Genuinely schema-based by mechanism, but a <strong>vendor</strong> of an existing facade — see below</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">MessageChannelTracker</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">XR_NV_opaque_data_channel</span></code> with its own connection state machine</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">NV_</span><wbr><span class="pre">opaque_</span><wbr><span class="pre">data_</span><wbr><span class="pre">channel</span></code> with its own connection state machine</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">HapticCommandReaderTracker</span></code></p></td>
 <td><p>Cross-process consumer: <code class="docutils literal notranslate"><span class="pre">read_all_samples</span></code> on one collection, buckets by
