@@ -561,12 +561,13 @@ the built module.</p>
 example) declares that description as the tracker’s <code class="docutils literal notranslate"><span class="pre">metadata</span></code> table:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[tracker]]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tactile"</span>
-<span class="n">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileData"</span>
-<span class="n">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileShape"</span>
+<span class="n">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileDataArray"</span>
+<span class="n">schema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tactile_array"</span>
+<span class="n">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileMetadata"</span>
 </pre></div>
 </div>
 <p>The metadata table is the <code class="docutils literal notranslate"><span class="pre">root_type</span></code> of a schema of its own, named after the table in snake case
-(<code class="docutils literal notranslate"><span class="pre">tactile_shape.fbs</span></code>), with no Record wrapper: MCAP records the table itself. Like the data table,
+(<code class="docutils literal notranslate"><span class="pre">tactile_metadata.fbs</span></code>), with no Record wrapper: MCAP records the table itself. Like the data table,
 it needs a hand-written <code class="docutils literal notranslate"><span class="pre">schema/python/*_bindings.h</span></code> before <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code> can return it to
 Python. Only <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;pull&quot;</span></code> supports <code class="docutils literal notranslate"><span class="pre">metadata</span></code>.</p>
 <ul class="simple">
@@ -862,7 +863,7 @@ correct outcome — the generator exists to remove mechanical duplication, not t
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
       <br/>
     
   </p>

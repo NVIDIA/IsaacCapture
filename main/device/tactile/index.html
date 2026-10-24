@@ -233,6 +233,10 @@
   
 
   
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
 </div>
 
     </header>
@@ -496,11 +500,244 @@
 <h1>Tactile devices<a class="headerlink" href="#tactile-devices" title="Link to this heading">#</a></h1>
 <p>Tactile devices capture contact measurements. For actuator output, see
 <a class="reference internal" href="../../references/haptic_feedback.html"><span class="doc">Haptic Feedback</span></a>.</p>
+<p>The common tactile interface separates each frame’s force measurements from the
+device’s static layout. A <em>taxel</em> is one tactile sensing element: its force has
+three components, and its layout describes where it is attached to a skeleton.
+The current geometry mapping is linear blend skinning (LBS) over hand joints.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#data-contract" id="id1">Data contract</a></p></li>
+<li><p><a class="reference internal" href="#coordinate-conventions" id="id2">Coordinate conventions</a></p>
+<ul>
+<li><p><a class="reference internal" href="#hand-joints-and-the-skeleton-root" id="id3">Hand joints and the skeleton root</a></p></li>
+<li><p><a class="reference internal" href="#taxel-frames" id="id4">Taxel frames</a></p></li>
+<li><p><a class="reference internal" href="#left-and-right-hands" id="id5">Left and right hands</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#mapping-taxels-onto-the-moving-hand" id="id6">Mapping taxels onto the moving hand</a></p></li>
+<li><p><a class="reference internal" href="#publishing-and-consuming" id="id7">Publishing and consuming</a></p></li>
+<li><p><a class="reference internal" href="#vendor-integrations" id="id8">Vendor integrations</a></p></li>
+</ul>
+</nav>
+<section id="data-contract">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Data contract</a><a class="headerlink" href="#data-contract" title="Link to this heading">#</a></h2>
+<p>The contract is defined by
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/tactile_array.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/tactile_array.fbs</a> and
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/tactile_metadata.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/tactile_metadata.fbs</a>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 75.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Type</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TactileDataArray</span></code></p></td>
+<td><p>One force vector per taxel, in newtons, ordered exactly as the metadata.
+The Python view is an <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">3)</span></code> float32 array.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TactileMetadata</span></code></p></td>
+<td><p>The static <code class="docutils literal notranslate"><span class="pre">geometry_mapping</span></code> and <code class="docutils literal notranslate"><span class="pre">segment_source</span></code> for that stream.
+Currently these select <code class="docutils literal notranslate"><span class="pre">LBS</span></code> and <code class="docutils literal notranslate"><span class="pre">HandSkeletonRef</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">HandSkeletonRef</span></code></p></td>
+<td><p>An ordered list of unique <code class="docutils literal notranslate"><span class="pre">HandJoint</span></code> identifiers from
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/hand.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/hand.fbs</a>. <code class="docutils literal notranslate"><span class="pre">NUM_JOINTS</span></code> is a count,
+not a usable joint.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">LBS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">J</span></code> segment bind poses, <code class="docutils literal notranslate"><span class="pre">N</span></code> taxel bind poses, and four segment indices
+and weights per taxel. An index addresses the ordered segment list,
+rather than a <code class="docutils literal notranslate"><span class="pre">HandJoint</span></code> ordinal.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Python pose arrays have shape <code class="docutils literal notranslate"><span class="pre">(count,</span> <span class="pre">7)</span></code>: position <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z)</span></code> in meters,
+then a unit quaternion <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z,</span> <span class="pre">w)</span></code>. Identity orientation is <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">1)</span></code>.
+All frames are right-handed. A pose maps coordinates from its local frame into
+its reference frame: <code class="docutils literal notranslate"><span class="pre">p_reference</span> <span class="pre">=</span> <span class="pre">R(q)</span> <span class="pre">*</span> <span class="pre">p_local</span> <span class="pre">+</span> <span class="pre">position</span></code>.</p>
+</section>
+<section id="coordinate-conventions">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Coordinate conventions</a><a class="headerlink" href="#coordinate-conventions" title="Link to this heading">#</a></h2>
+<section id="hand-joints-and-the-skeleton-root">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Hand joints and the skeleton root</a><a class="headerlink" href="#hand-joints-and-the-skeleton-root" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">HandSkeletonRef</span></code> uses <code class="docutils literal notranslate"><span class="pre">HandJoint.WRIST</span></code> as the skeleton root. Its origin
+is the wrist pivot. The joint names and local orientations follow
+<a class="reference external" href="https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html#convention-of-hand-joints" rel="noopener noreferrer" target="_blank">OpenXR hand-joint conventions</a>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 85.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Root axis</p></th>
+<th class="head"><p>Anatomical direction</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">+Y</span></code></p></td>
+<td><p>Out through the back of the hand at the wrist.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">+Z</span></code></p></td>
+<td><p>Along the line through the wrist and middle-finger metacarpal, pointing
+toward the forearm, away from the fingertips.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">+X</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">+Y</span> <span class="pre">cross</span> <span class="pre">+Z</span></code>, completing the right-handed basis.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Finger-joint local <code class="docutils literal notranslate"><span class="pre">+Z</span></code> follows its bone away from the fingertip; local <code class="docutils literal notranslate"><span class="pre">+Y</span></code>
+points toward the nail/back side in the fully open hand. The palm uses the
+middle metacarpal for its longitudinal axis. These local frames move with the
+joints when the hand bends; their axes are not fixed world directions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">segment_bind_poses[j]</span></code> maps joint-local coordinates into the wrist frame in
+the calibrated bind configuration. All segments share that root; the poses are
+not relative to each joint’s parent. If WRIST appears in the segment list, its
+bind pose is identity. <code class="docutils literal notranslate"><span class="pre">taxel_bind_poses</span></code> use the same root and bind
+configuration. The bind configuration must match the device’s calibration;
+the schema does not prescribe joint angles or a particular hand size.</p>
+<p><strong>HandPose is not automatically wrist-relative.</strong> The live <code class="docutils literal notranslate"><span class="pre">HandTracker</span></code>
+copies OpenXR joint poses in the session base space, currently <code class="docutils literal notranslate"><span class="pre">STAGE</span></code>.
+To obtain current joint poses in the tactile skeleton’s wrist frame, use the
+wrist and joint poses from the same valid hand sample:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>T_root_joint(t) = inverse(T_base_wrist(t)) * T_base_joint(t)
+</pre></div>
+</div>
+<p>Here <code class="docutils literal notranslate"><span class="pre">T_A_B</span></code> maps a point from frame B to frame A. This conversion uses both
+the wrist translation and rotation. Subtracting the wrist position alone is
+insufficient. A downstream consumer must perform this conversion when using
+root-relative joint poses; <code class="docutils literal notranslate"><span class="pre">TactileSource</span></code> does not rebase a hand stream.</p>
+</section>
+<section id="taxel-frames">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Taxel frames</a><a class="headerlink" href="#taxel-frames" title="Link to this heading">#</a></h3>
+<p>A taxel pose’s origin is its sensing location. Its orientation defines:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 85.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Taxel axis</p></th>
+<th class="head"><p>Direction</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">+Z</span> <span class="pre">=</span> <span class="pre">N</span></code></p></td>
+<td><p>Unit normal pointing out of the sensing surface, away from the device.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">+X</span> <span class="pre">=</span> <span class="pre">T</span></code></p></td>
+<td><p>A calibrated unit tangent perpendicular to <code class="docutils literal notranslate"><span class="pre">N</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">+Y</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">cross</span> <span class="pre">T</span></code>. Thus <code class="docutils literal notranslate"><span class="pre">+X</span> <span class="pre">cross</span> <span class="pre">+Y</span> <span class="pre">=</span> <span class="pre">+Z</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The producer chooses and calibrates <code class="docutils literal notranslate"><span class="pre">T</span></code> for each taxel, then stores the full
+orientation in <code class="docutils literal notranslate"><span class="pre">taxel_bind_poses</span></code>. A normal alone cannot determine the tangent
+direction. In particular, taxel <code class="docutils literal notranslate"><span class="pre">+Z</span></code> is a surface normal, whereas hand-joint
+<code class="docutils literal notranslate"><span class="pre">+Z</span></code> follows a bone; the two local frames generally differ.</p>
+<p>Forces <code class="docutils literal notranslate"><span class="pre">(fx,</span> <span class="pre">fy,</span> <span class="pre">fz)</span></code> are components in these taxel-local axes, rather than in
+the wrist or world frame. Positive <code class="docutils literal notranslate"><span class="pre">fz</span></code> points outward; this does not imply
+that a vendor’s positive compression reading can be copied directly. The schema
+does not identify which body the reported force acts on. A device integration
+must document that choice and calibrate its units, axes, and signs accordingly.
+Raw pressure or ADC counts require conversion to force before publication.</p>
+</section>
+<section id="left-and-right-hands">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Left and right hands</a><a class="headerlink" href="#left-and-right-hands" title="Link to this heading">#</a></h3>
+<p>Both hands use the same joint identifiers, right-handed algebra, units,
+quaternion ordering, and taxel normal/tangent rules. Hand side does not reverse
+the cross product or automatically negate a force component. Anatomical geometry
+and the calibrated poses can differ between hands. For example, with an open
+hand, wrist <code class="docutils literal notranslate"><span class="pre">+X</span></code> points toward the thumb side on the left hand and the little
+finger side on the right hand.</p>
+<p><code class="docutils literal notranslate"><span class="pre">HandSkeletonRef</span></code> carries neither a side nor the identity of a hand tracker.
+The application must associate each tactile stream with the correct hand stream
+and calibration, using configuration and distinct collection IDs such as
+<code class="docutils literal notranslate"><span class="pre">tactile/left</span></code> and <code class="docutils literal notranslate"><span class="pre">tactile/right</span></code>. The runtime does not infer side from
+these names. Mirroring positions alone is insufficient: a reflection cannot be
+encoded as a rotation quaternion, so each hand needs a proper right-handed
+orientation for every joint and taxel.</p>
+</section>
+</section>
+<section id="mapping-taxels-onto-the-moving-hand">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Mapping taxels onto the moving hand</a><a class="headerlink" href="#mapping-taxels-onto-the-moving-hand" title="Link to this heading">#</a></h2>
+<p>For a taxel’s homogeneous bind position <code class="docutils literal notranslate"><span class="pre">p_bind</span></code> in the skeleton root, LBS
+computes its current root-relative position as:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>p_root(t) = sum_k w[k] * C[j[k]](t) * inverse(B[j[k]]) * p_bind
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">B[j]</span></code> is <code class="docutils literal notranslate"><span class="pre">segment_bind_poses[j]</span></code> and <code class="docutils literal notranslate"><span class="pre">C[j](t)</span></code> is the current pose of
+<code class="docutils literal notranslate"><span class="pre">joint_ids[j]</span></code> in the current wrist frame. Each taxel has four slots; weights
+must be finite, nonnegative, and sum to one (validation tolerance <code class="docutils literal notranslate"><span class="pre">1e-5</span></code>).
+Every slot’s index must be valid, including slots with zero weight. A taxel
+rigidly attached to one segment can use weights <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">0,</span> <span class="pre">0,</span> <span class="pre">0)</span></code> and repeat that
+segment’s index in all four slots.</p>
+<p>To express the resulting position in the hand tracker’s base space:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>p_base(t) = T_base_wrist(t) * p_root(t)
+</pre></div>
+</div>
+<p>LBS specifies blended positions; it does not define a unique rigid taxel frame
+after blending multiple segment rotations. A consumer that needs animated
+normals or world-space forces must choose an orientation/normal mapping rule.
+For a single rigid attachment, the taxel transform is unambiguous:
+<code class="docutils literal notranslate"><span class="pre">C[j](t)</span> <span class="pre">*</span> <span class="pre">inverse(B[j])</span> <span class="pre">*</span> <span class="pre">T_root_taxel_bind</span></code>. Transform force directions using
+rotation only, without adding the pose translation.</p>
+</section>
+<section id="publishing-and-consuming">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Publishing and consuming</a><a class="headerlink" href="#publishing-and-consuming" title="Link to this heading">#</a></h2>
+<p>A C++ plugin publishes serialized samples with <code class="docutils literal notranslate"><span class="pre">SchemaPusher</span></code>; a Python
+producer can use <code class="docutils literal notranslate"><span class="pre">TensorPushTracker</span></code>. The paired streams are:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;collection_id&gt;           tensor "tactile"  -&gt; TactileDataArray
+&lt;collection_id&gt;/metadata  tensor "metadata" -&gt; TactileMetadata
+</pre></div>
+</div>
+<p>Publish metadata on startup and periodically so consumers that start later can
+discover it. Publish the same encoded metadata throughout the tracker session.
+<code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> validates and adopts the first metadata, records it once,
+and exposes it through <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code>. It withholds force data until metadata
+is confirmed. Different or invalid metadata causes an error; after a producer
+restart, its metadata must be confirmed again. See <a class="reference internal" href="../../references/generated_trackers.html#tracker-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
+<p>The consumer’s <code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code> must be at least the producer’s declared
+sample size, including FlatBuffer overhead. The default is
+<code class="docutils literal notranslate"><span class="pre">TactileTracker.DEFAULT_MAX_FLATBUFFER_SIZE</span></code>; pass a larger
+<code class="docutils literal notranslate"><span class="pre">max_flatbuffer_size</span></code> to <code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> when the producer uses larger force
+samples. Metadata has its own
+<code class="docutils literal notranslate"><span class="pre">TRACKER_METADATA_MAX_SIZE</span></code> limit, including FlatBuffer overhead.
+The data array length must match the metadata’s taxel count.</p>
+<p>Applications can read <code class="docutils literal notranslate"><span class="pre">TactileTracker</span></code> directly for live or replay data.
+Retargeting graphs can instead use <code class="docutils literal notranslate"><span class="pre">TactileSource(name,</span> <span class="pre">collection_id,</span>
+<span class="pre">num_segments,</span> <span class="pre">num_taxels)</span></code> from
+<code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeting_engine.deviceio_source_nodes</span></code>. It emits
+<code class="docutils literal notranslate"><span class="pre">taxel_forces</span></code> and <code class="docutils literal notranslate"><span class="pre">tactile_layout</span></code> arrays; constructor counts fix their
+shapes. It adapts the frame and static layout to graph tensors; the application
+supplies hand motion and evaluates the geometry mapping separately.</p>
+<p>The runnable feeder, direct tracker consumer, and MCAP replay commands are in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/tactile/README.md" rel="noopener noreferrer" target="_blank">examples/tactile/README.md</a>. The feeder uses synthetic geometry to
+exercise transport; it is not an anatomical calibration model. Live operation
+requires an OpenXR runtime and an available HMD system, including when using a
+headless session; replay does not require the runtime.</p>
+</section>
+<section id="vendor-integrations">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Vendor integrations</a><a class="headerlink" href="#vendor-integrations" title="Link to this heading">#</a></h2>
+<p>The guides below describe individual devices. The existing OGLO integration
+uses its own <code class="docutils literal notranslate"><span class="pre">OgloGloveSample</span></code> schema with raw measurements; it does not
+automatically publish the common force-and-layout contract described above.</p>
 <div class="toctree-wrapper compound">
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="oglo.html">OGLO Tactile Glove Plugin</a></li>
 </ul>
 </div>
+</section>
 </section>
 
 
@@ -538,9 +775,34 @@
             
             
 
-<div class="bd-sidebar-secondary"></div>
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
 
 
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-contract">Data contract</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#coordinate-conventions">Coordinate conventions</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#hand-joints-and-the-skeleton-root">Hand joints and the skeleton root</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#taxel-frames">Taxel frames</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#left-and-right-hands">Left and right hands</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#mapping-taxels-onto-the-moving-hand">Mapping taxels onto the moving hand</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#publishing-and-consuming">Publishing and consuming</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#vendor-integrations">Vendor integrations</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
               
             
 
@@ -619,7 +881,7 @@
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
       <br/>
     
   </p>
