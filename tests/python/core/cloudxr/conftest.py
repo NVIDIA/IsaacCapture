@@ -347,8 +347,7 @@ def mock_adb(**kwargs):
 
 
 # ============================================================================
-# Real-browser OOB integration test-infra (see /oob-real-browser-integration-
-# test-plan.md at the repo root): a real Chromium running the real webxr
+# Real-browser OOB integration test-infra: a real Chromium running the real webxr
 # client, driven by run_oob_connect() through a RealBrowserAdb whose
 # success-path commands have real side effects instead of canned output.
 # ============================================================================

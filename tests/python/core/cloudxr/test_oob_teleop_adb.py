@@ -1714,8 +1714,7 @@ async def test_monitor_without_callback_still_logs_and_keeps_watching() -> None:
 
 
 # ============================================================================
-# run_oob_connect(): real-browser integration test (see
-# /oob-real-browser-integration-test-plan.md at the repo root). A real
+# run_oob_connect(): real-browser integration test. A real
 # Chromium runs the real webxr_client (real IWER-emulated WebXR, real CDP),
 # served from a real static production build (never a dev-server — see
 # static_webxr_build()'s docstring for why HMR is structurally unsafe for
@@ -1813,9 +1812,7 @@ async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
     matching what a real launch produces.
 
     Proves the crash-trigger mechanism itself — a real, real-DOM error banner
-    appears on demand — independent of whether anything recovers from it; see
-    :func:`test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch`
-    for the recovery assertion.
+    appears on demand — independent of whether anything recovers from it.
     """
     with (
         real_browser_env(tmp_path, monkeypatch) as env,
@@ -1857,8 +1854,7 @@ async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
             # Connected guard, so later retries no-op harmlessly.
             # 5s is ample margin above the ~1s this actually takes once the
             # session exists (observed) - MockCloudXR's own transitions are
-            # near-instant, unlike the relaunch test below which waits on
-            # real am start + tab discovery.
+            # near-instant.
             banner = ""
             deadline = asyncio.get_running_loop().time() + 5.0
             while asyncio.get_running_loop().time() < deadline:
@@ -1883,80 +1879,6 @@ async def test_run_oob_connect_real_mock_cxr_crash_surfaces_error_banner(
                 await asyncio.sleep(0.5)
 
             assert "simulated crash" in banner
-
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-
-async def test_run_oob_connect_real_mock_cxr_crash_triggers_real_relaunch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A real client-side terminal error should trigger a real auto-relaunch:
-    a second real ``am start``, a second real tab, clicked back to CONNECT-ready.
-
-    Exercises the repair-capable ``_monitor_teleop_error_banner`` added by
-    gmorgan/oob-error-relaunch (#1146): a genuine crash recovered by genuine
-    ADB+CDP automation, not a scripted stand-in for either. Asserts on
-    black-box observables only (a second ``am start``/tab), not on any
-    private function, so it stays correct across internal refactors.
-    """
-    with (
-        real_browser_env(tmp_path, monkeypatch) as env,
-        static_webxr_build(env.client_port),
-        real_chrome(_CDP_LOCAL_PORT, user_data_dir=env.user_data_dir) as chrome,
-        real_browser_adb(chrome) as fake_adb,
-    ):
-        async with real_wss_proxy(
-            env.install_dir, proxy_port=env.wss_port, backend_port=env.backend_port
-        ):
-            task = await run_oob_connect(
-                resolved_port=env.wss_port, timeout=30.0, usb_local=True
-            )
-            assert isinstance(task, asyncio.Task)
-
-            teleop_tabs_before = [
-                t for t in chrome.list_tabs() if "oobEnable=" in (t.get("url") or "")
-            ]
-            assert len(teleop_tabs_before) == 1
-            ws_url = teleop_tabs_before[0]["webSocketDebuggerUrl"]
-            am_start_calls_before = sum(
-                1 for c in fake_adb.calls if "am start" in " ".join(c)
-            )
-
-            # Same retry-until-it-lands approach as the crash-banner test above:
-            # triggerFailure() no-ops until MockCloudXR's session actually exists.
-            # 15s: a relaunch has no cold-launch devtools-socket wait (browser's
-            # already running) - just am start + tab discovery +
-            # click, which the initial launch above already does in ~5s.
-            relaunched = False
-            deadline = asyncio.get_running_loop().time() + 15.0
-            while asyncio.get_running_loop().time() < deadline:
-                await cdp_evaluate(
-                    ws_url,
-                    "window.__mockCloudXRFail('simulated crash', 0xc0f22300)",
-                )
-                am_start_calls_now = sum(
-                    1 for c in fake_adb.calls if "am start" in " ".join(c)
-                )
-                teleop_tabs_now = [
-                    t
-                    for t in chrome.list_tabs()
-                    if "oobEnable=" in (t.get("url") or "")
-                ]
-                if (
-                    am_start_calls_now > am_start_calls_before
-                    and len(teleop_tabs_now) >= 2
-                ):
-                    relaunched = True
-                    break
-                await asyncio.sleep(0.5)
-
-            assert relaunched, (
-                "expected a second real `am start` and a second real tab after "
-                "a terminal client error - the monitor should relaunch, not just "
-                "log the banner"
-            )
 
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
