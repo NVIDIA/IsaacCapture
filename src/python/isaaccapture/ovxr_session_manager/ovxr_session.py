@@ -11,18 +11,25 @@ dependency on Isaac Lab or on any simulation type.
 """
 
 from __future__ import annotations
+
 import logging
 import math
 import threading
 from abc import abstractmethod
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from .camera_mailbox import CompletedCameraMailbox
+
+from .camera_mailbox import CameraImage, CompletedCameraMailbox
 from .openxr_quad import OpenXRCameraQuad
-from .gpu_output import completed_outputs, map_cuda_array_rgba, native_renderer_handle
+from .gpu_output import (
+    completed_outputs,
+    map_cuda_array_rgba,
+    native_renderer_handle,
+)
+
 
 _WORKER_SHUTDOWN_GRACE_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
@@ -181,7 +188,11 @@ class AuxiliaryRasterConfig:
 
 @dataclass
 class OvxrSessionConfig:
-    """Configure XR presentation with optional completed-camera panels."""
+    """Application-neutral OVXR and CloudXR configuration.
+
+    The supported OVXR package supplies bound-frame outputs. Optional PiP and
+    output consumers copy those outputs on the sole frame owner before retirement.
+    """
 
     application_name: str = "isaacteleop-ovxr-session"
     session_mode: Literal["ar", "vr"] = "vr"
@@ -231,6 +242,47 @@ class OvxrSessionConfig:
             raise ValueError("OVXR stereo requires exactly two non-empty camera paths")
 
 
+class OvxrFrameConsumer(Protocol):
+    """Frame-owner callbacks for an optional completed-output consumer.
+
+    Prepare on the caller thread before ownership transfer, then initialize on
+    the render thread after context creation. ``finish_frame`` releases borrowed outputs
+    before submit/cancel. ``close`` must tolerate incomplete startup and raise if
+    retirement is unproved, so rendering providers stay alive.
+    """
+
+    @abstractmethod
+    def prepare_for_session_start(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_session_started(
+        self,
+        binding: OvxrSessionBinding,
+        config: OvxrSessionConfig,
+        request_shutdown: Callable[[], None],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_outputs(
+        self, renderer: int, outputs: Any, shared: Mapping[str, CameraImage | None]
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_frame_submitted(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def finish_frame(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
+
+
 def _import_ovxr():
     import ovxr
 
@@ -258,6 +310,7 @@ class OvxrSession:
         *,
         required_openxr_extensions: Iterable[str] = (),
         max_blank_frames: int = 1,
+        frame_consumers: Iterable[OvxrFrameConsumer] = (),
     ) -> None:
         if max_blank_frames < 0:
             raise ValueError("max_blank_frames must be non-negative")
@@ -265,6 +318,7 @@ class OvxrSession:
         self._config = config
         self._required_openxr_extensions = tuple(required_openxr_extensions)
         self._max_blank_frames = max_blank_frames
+        self._frame_consumers = tuple(frame_consumers)
         self._context = None
         self._pending_plan = None
         self._binding: OvxrSessionBinding | None = None
@@ -328,6 +382,8 @@ class OvxrSession:
             raise RuntimeError(
                 f"OVXR session is missing required Context methods: {', '.join(missing)}"
             )
+        for consumer in self._frame_consumers:
+            consumer.prepare_for_session_start()
         capability = self._host.offer_render_owner_transfer()
 
         def run() -> None:
@@ -469,6 +525,8 @@ class OvxrSession:
         with self._worker_condition:
             self._raise_worker_error()
             self._require_open()
+            # UI/signal shutdown can arrive during the current application step.
+            # Decline its late publication, but never hide a latched worker error.
             if self._shutdown_requested.is_set():
                 return None
             if self._worker is None or self._worker_closing:
@@ -596,7 +654,7 @@ class OvxrSession:
         self._request_worker_shutdown()
 
     def wait_for_shutdown(self, timeout_s: float) -> bool:
-        """Wait interruptibly on the same event used by signals and mirror close."""
+        """Wait interruptibly for a shutdown request."""
         return self._shutdown_requested.wait(timeout_s)
 
     @property
@@ -652,9 +710,14 @@ class OvxrSession:
                 ovstage=self._binding.stage,
                 application_name=self._config.application_name,
                 display_mode=ovxr.DisplayMode.STEREO,
+                # The server mode must reach OVXR; the browser AR preference cannot
+                # enable transparent rendering in an opaque server projection.
                 session_mode={"ar": ovxr.SessionMode.AR, "vr": ovxr.SessionMode.VR}[
                     self._config.session_mode
                 ],
+                # Empty means OVXR creates its default eye products. Supplying
+                # those names explicitly instead means existing products and
+                # changes the production/authoring contract.
                 render_products=list(self._config.render_products),
                 camera_paths=list(self._config.camera_paths),
                 create_render_products=self._config.create_render_products,
@@ -681,13 +744,26 @@ class OvxrSession:
                         auxiliary_paths, auxiliaries, self._camera_quads, strict=True
                     )
                 ]
-                if auxiliaries:
+                if auxiliaries or self._frame_consumers:
                     self._context.set_frame_render_products(list(auxiliary_paths))
+        for consumer in self._frame_consumers:
+            consumer.on_session_started(
+                self._binding, self._config, self.request_shutdown
+            )
 
     def _on_completed_outputs(self, user_data, renderer, outputs) -> None:
         """Frame-owner copies before result retirement; PiP owns its independent copy."""
+        shared = {}
         for mailbox in self._camera_mailboxes:
             mailbox.on_outputs(user_data, renderer, outputs)
+            if self._frame_consumers:
+                image = mailbox.snapshot()
+                if mailbox.error() is not None or (
+                    image is not None and image.gpu is None
+                ):
+                    shared[mailbox.product_path] = image
+        for consumer in self._frame_consumers:
+            consumer.on_outputs(renderer, outputs, shared)
 
     def _request_worker_shutdown(self) -> None:
         with self._worker_condition:
@@ -704,6 +780,8 @@ class OvxrSession:
 
     def _request_context_exit(self) -> None:
         """Wake an in-flight OpenXR frame wait without stopping CloudXR."""
+        # A startup failure may already be destroying under this lock. Never
+        # wait here and prevent close() from reaching its runtime fallback.
         if not self._context_lifecycle_lock.acquire(blocking=False):
             return
         try:
@@ -804,7 +882,9 @@ class OvxrSession:
             if result != ovxr.Result.SUCCESS:
                 return True
             layers = []
-            if (self._camera_mailboxes) and active_plan.step_result:
+            if (
+                self._camera_mailboxes or self._frame_consumers
+            ) and active_plan.step_result:
                 try:
                     renderer = native_renderer_handle(self._binding.renderer)
                     outputs = completed_outputs(renderer, active_plan.step_result)
@@ -846,6 +926,17 @@ class OvxrSession:
                 raise RuntimeError(
                     f"OVXR submit_frame failed: {ovxr.result_name(result)}: {self._context.last_error}"
                 )
+            if (
+                result == ovxr.Result.SUCCESS
+                and _frame.submitted
+                and self._frame_consumers
+            ):
+                # Submit consumed the plan; consumer callbacks must not
+                # cancel it even if a callback fails.
+                active_plan = None
+                self._pending_plan = None
+                for consumer in self._frame_consumers:
+                    consumer.on_frame_submitted()
             active_plan = None
             self._pending_plan = None
         except BaseException as error:
@@ -868,6 +959,8 @@ class OvxrSession:
     def _finish_frame_outputs(self) -> None:
         for mailbox in self._camera_mailboxes:
             mailbox.close()
+        for consumer in self._frame_consumers:
+            consumer.finish_frame()
 
     def _render_reused_scene(self) -> bool:
         if self._worker_last_ordinal is None:
@@ -882,17 +975,23 @@ class OvxrSession:
         except BaseException as exc:
             first_error = exc
         try:
+            for consumer in reversed(self._frame_consumers):
+                # A failed completion/unmap must keep the renderer alive: never
+                # destroy storage that an optional consumer might still access.
+                consumer.close()
             for mailbox in self._camera_mailboxes:
                 mailbox.close()
             if self._pending_plan is not None:
                 self._finish_frame_outputs()
                 self._context.cancel_frame(self._pending_plan)
                 self._pending_plan = None
+            # The helper borrows the session/device, so its resources retire first.
             for quad in reversed(self._camera_quads):
                 quad.close()
         except BaseException as retirement_error:
             if first_error is not None:
                 first_error.add_note(f"Consumer retirement failed: {retirement_error}")
+                # Keep the primary error and the failed retirement cause visible.
                 raise first_error from retirement_error
             raise
         context_retired = self._context is None
@@ -900,6 +999,9 @@ class OvxrSession:
             try:
                 assert self._binding is not None
                 with self._context_lifecycle_lock:
+                    # The close caller normally requested this already to wake
+                    # xrWaitFrame. Repeat idempotently on the owner thread so
+                    # worker-failure teardown follows the same graceful path.
                     try:
                         self._context.request_exit()
                     except BaseException as exc:
@@ -939,6 +1041,9 @@ class OvxrSession:
                 if context_retired:
                     self._context = None
         if not context_retired:
+            # A returned worker does not prove a failed destroy retired its
+            # borrowed Stage/renderer. Keep the context, binding, host and
+            # runtime alive; the terminal owner must never retry or reuse them.
             with self._teardown_state_lock:
                 self._ovxr_teardown_complete.set()
             with self._worker_condition:
@@ -949,6 +1054,9 @@ class OvxrSession:
             return
         self._camera_quads.clear()
         self._camera_mailboxes.clear()
+        # This is a terminal teardown milestone, including a failed destroy
+        # call.  Once the owner thread has left OVXR teardown, interrupting the
+        # runtime can only race the later, already-running CloudXR stop.
         with self._teardown_state_lock:
             self._ovxr_teardown_complete.set()
         if self._cloudxr_launcher is not None:

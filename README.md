@@ -87,10 +87,10 @@ Third-party materials may carry their own licenses.
 ### Separately retrieved optional materials
 
 The optional `isaaccapture[ovxr]` extra retrieves OVXR and its OVRTX/OVStage
-dependencies.
+dependencies. The separate `isaaccapture[desktop-mirror]` extra retrieves OVUI.
 These packages are downloaded separately, rather than bundled in the Isaac Capture
 wheel. Their licenses apply independently of Isaac Capture's Apache-2.0 license.
-OVXR, OVRTX and OVStage are NVIDIA proprietary software.
+OVXR, OVRTX and OVStage are NVIDIA proprietary software. OVUI is Apache-2.0.
 See [package sources and license details](docs/source/getting_started/ovxr.rst#optional-packages-and-licenses).
 Review the applicable package licenses and terms before installing or using these
 optional dependencies.

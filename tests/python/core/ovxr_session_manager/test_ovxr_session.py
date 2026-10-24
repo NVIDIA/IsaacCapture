@@ -4,13 +4,21 @@
 """Focused ownership and lifecycle tests for external OVXR presentation."""
 
 from __future__ import annotations
+
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 from typing import ClassVar
+
 import pytest
+
+from isaaccapture.ovxr_session_manager.desktop_mirror import (
+    DesktopMirrorConfig,
+    DesktopMirrorStatus,
+)
+import isaaccapture.ovxr_session_manager.owned_mirror as owned_mirror
 import isaaccapture.ovxr_session_manager.ovxr_session as ovxr_session
 
 
@@ -651,6 +659,60 @@ def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
     assert (first, True, True) in host.ordinal_ledger.external_resolutions
 
 
+def test_frame_scene_callback_seals_before_the_next_bind_ordinal():
+    class Host(_FakeHost):
+        def attach_on_render_thread(self, capability):
+            binding = super().attach_on_render_thread(capability)
+
+            def prepare():
+                ordinal = self.ordinal_ledger.reserve()
+                self.ordinal_ledger.publish(ordinal)
+                self.events.append(("frame-scene", ordinal))
+
+            return replace(binding, prepare_frame_scene=prepare)
+
+    host = Host()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner.start()
+    owner.request_render("physics")
+    _wait_for_operation("submit")
+    owner.close()
+    prepared = [
+        e[1] for e in host.events if isinstance(e, tuple) and e[0] == "frame-scene"
+    ]
+    assert prepared
+    assert _FakeContext.bind_ordinals == [ordinal + 1 for ordinal in prepared]
+
+
+def test_shutdown_wait_wakes_on_the_existing_lifecycle_event():
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config())
+    woke = threading.Event()
+    thread = threading.Thread(target=lambda: (owner.wait_for_shutdown(30), woke.set()))
+    thread.start()
+    try:
+        owner.request_shutdown()
+        assert woke.wait(1)
+        assert owner.wait_for_shutdown(30)
+    finally:
+        thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_unsupported_provider_rejects_before_host_transfer(monkeypatch):
+    runtime = _fake_ovxr()
+    runtime.Context = type(
+        "OldContext", (_FakeContext,), {"set_frame_render_products": None}
+    )
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: runtime)
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    with pytest.raises(
+        RuntimeError, match="required Context methods: set_frame_render_products"
+    ):
+        owner.start()
+    assert host.offer_thread is None
+
+
 def test_missing_core_phase_method_still_rejects_before_host_transfer(monkeypatch):
     runtime = _fake_ovxr()
     runtime.Context = type("BrokenContext", (_FakeContext,), {"cancel_frame": None})
@@ -875,10 +937,8 @@ def test_worker_thread_start_failure_rolls_back_host_and_preserves_first_error(
     owner = ovxr_session.OvxrSession(host, _config())
     start_error = RuntimeError("native thread creation failed")
     original_cause = OSError("thread resources unavailable")
-    if hasattr(start_error, "add_note"):
-        start_error.add_note("Original thread diagnostic")
-    original_notes = getattr(start_error, "__notes__", None)
-    start_error.add_note = None
+    start_error.add_note("Original thread diagnostic")
+    original_notes = list(start_error.__notes__)
     abort_error = RuntimeError("host abort failed")
 
     def fail_start(_thread):
@@ -1047,6 +1107,272 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     ]
 
 
+def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
+    events = []
+    threads = []
+    outputs = object()
+    caller_thread = threading.get_native_id()
+    host = _FakeHost()
+
+    class Context(_FakeContext):
+        def begin_frame(self):
+            result, plan = super().begin_frame()
+            plan.step_result = 1
+            return result, plan
+
+    class Consumer:
+        def __init__(self, name):
+            self.name = name
+
+        def record(self, event):
+            events.append((event, self.name))
+            threads.append(threading.get_native_id())
+
+        def prepare_for_session_start(self):
+            assert host.offer_thread is None
+            assert owner._worker is None
+            self.record("prepare")
+
+        def on_session_started(self, _binding, _config, request_shutdown):
+            assert any(name == "create" for name, _ in _FakeContext.operations)
+            self.request_shutdown = request_shutdown
+            self.record("start")
+
+        def on_outputs(self, renderer, completed, shared):
+            assert renderer == 7 and completed is outputs and shared == {}
+            self.record("outputs")
+
+        def finish_frame(self):
+            self.record("finish")
+
+        def on_frame_submitted(self):
+            assert any(name == "submit" for name, _ in _FakeContext.operations)
+            self.record("submitted")
+            self.request_shutdown()
+
+        def close(self):
+            assert not any(name == "destroy" for name, _ in _FakeContext.operations)
+            self.record("close")
+
+    api = _fake_ovxr()
+    api.Context = Context
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: api)
+    monkeypatch.setattr(ovxr_session, "native_renderer_handle", lambda _renderer: 7)
+    monkeypatch.setattr(ovxr_session, "completed_outputs", lambda *_args: outputs)
+    owner = ovxr_session.OvxrSession(
+        host, _config(), frame_consumers=(Consumer("first"), Consumer("second"))
+    )
+    with owner:
+        owner.start()
+        owner.request_render("step-1")
+        _wait_for_operation("submit")
+    assert events == [
+        ("prepare", "first"),
+        ("prepare", "second"),
+        ("start", "first"),
+        ("start", "second"),
+        ("outputs", "first"),
+        ("outputs", "second"),
+        ("finish", "first"),
+        ("finish", "second"),
+        ("submitted", "first"),
+        ("submitted", "second"),
+        ("close", "second"),
+        ("close", "first"),
+    ]
+    assert threads[:2] == [caller_thread, caller_thread]
+    assert set(threads[2:]) == {owner.render_worker_native_thread_id}
+    assert not any(name == "cancel" for name, _ in _FakeContext.operations)
+
+
+def test_consumer_preparation_failure_preserves_application_ownership():
+    host = _FakeHost()
+    failure = RuntimeError("consumer preparation failed")
+
+    def prepare():
+        raise failure
+
+    consumer = SimpleNamespace(prepare_for_session_start=prepare)
+    with ovxr_session.OvxrSession(
+        host, _config(), frame_consumers=(consumer,)
+    ) as owner:
+        with pytest.raises(RuntimeError) as caught:
+            owner.start()
+        assert caught.value is failure
+        assert host.offer_thread is None
+        assert owner._worker is None
+        assert _FakeContext.operations == []
+    assert owner.retirement_complete
+
+
+def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch):
+    host = _FakeHost()
+    mirror_events = []
+    acquired = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def __init__(self, acquire_frame):
+            self.acquire_frame = acquire_frame
+
+        def start(self):
+            acquired.append(self.acquire_frame())
+            mirror_events.append(("start", threading.get_native_id()))
+
+        def record_host_frame(self):
+            mirror_events.append(("host",))
+
+        def set_status_text(self, text):
+            mirror_events.append(("status", text))
+
+        def record_render_frame(self):
+            mirror_events.append(("render", threading.get_native_id()))
+
+        def close(self):
+            assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+            mirror_events.append(("close", threading.get_native_id()))
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda acquire_frame, config, _on_user_close, *, products=None: (
+            mirror_events.append(("create", threading.get_native_id(), config))
+            or FakeMirror(acquire_frame)
+        ),
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+
+    owner.start()
+    context = owner._context
+    assert not getattr(context.desc, "enable_frame_readback", False)
+    assert context.desc.render_products == list(config.render_products)
+    assert _FakeContext.selected_products == ()
+    assert [p.path for p in consumer._mailbox.view()[0]] == [
+        "/OVXR/Render/Products/Left",
+        "/OVXR/Render/Products/Right",
+    ]
+    assert consumer.status == DesktopMirrorStatus()
+    consumer.record_host_frame()
+    consumer.set_status_text("Application status")
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    owner.close()
+
+    owner_thread = owner.render_worker_native_thread_id
+    assert mirror_events[0:2] == [
+        ("create", owner_thread, mirror_config),
+        ("host",),
+    ]
+    assert ("start", owner_thread) in mirror_events
+    assert mirror_events.index(("start", owner_thread)) < mirror_events.index(
+        ("render", owner_thread)
+    )
+    assert ("status", "Application status") in mirror_events
+    assert ("render", owner_thread) in mirror_events
+    assert mirror_events[-1] == ("close", owner_thread)
+    assert acquired == [None]
+    assert consumer.status == DesktopMirrorStatus()
+
+
+def test_status_mirror_starts_after_cloudxr_context_creation(monkeypatch):
+    host = _FakeHost()
+    events = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def start(self):
+            assert any(name == "create" for name, _thread in _FakeContext.operations)
+            events.append("mirror-start")
+
+        def close(self):
+            events.append("mirror-close")
+
+    class FakeLauncher:
+        def __init__(self):
+            events.append("cloudxr-start")
+
+        def interrupt_runtime(self):
+            events.append("cloudxr-interrupt")
+
+        def stop(self):
+            events.append("cloudxr-stop")
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _acquire_frame, _config, _on_user_close, *, products=None: FakeMirror(),
+    )
+    monkeypatch.setattr(
+        ovxr_session,
+        "_create_cloudxr_launcher",
+        lambda _path, *, accept_eula=False: FakeLauncher(),
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+
+    owner.start()
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while "mirror-start" not in events and time.monotonic() < deadline:
+        time.sleep(0.001)
+    owner.close()
+
+    assert events.index("cloudxr-start") < events.index("mirror-start")
+    assert "cloudxr-interrupt" not in events
+    assert events.index("mirror-close") < events.index("cloudxr-stop")
+
+
+def test_stuck_mirror_prevents_borrowed_context_teardown(monkeypatch):
+    host = _FakeHost()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus()
+
+        def start(self):
+            pass
+
+        def close(self):
+            raise TimeoutError("mirror stuck")
+
+    mirror = FakeMirror()
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _context, _config, _on_user_close, *, products=None: mirror,
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+
+    owner.start()
+    context = owner._context
+    with pytest.raises(TimeoutError, match="mirror stuck"):
+        owner.close()
+
+    assert owner._context is context
+    assert consumer._worker is mirror
+    assert not owner.retirement_complete
+    with pytest.raises(TimeoutError, match="mirror stuck"):
+        owner.close()
+    assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+    assert not any(
+        event[0] in {"host-close", "environment-close"}
+        for event in host.events
+        if isinstance(event, tuple)
+    )
+
+
 def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypatch):
     host = _FakeHost()
     host.auxiliary_render_product_path = "/Render/Head"
@@ -1087,6 +1413,148 @@ def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypat
         for event in host.events
         if isinstance(event, tuple)
     )
+
+
+def test_user_closing_mirror_requests_application_shutdown_before_owner_teardown(
+    monkeypatch,
+):
+    host = _FakeHost()
+    mirror_events = []
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            mirror_events.append(("start", threading.get_native_id()))
+
+        def close(self):
+            mirror_events.append(("close", threading.get_native_id()))
+
+    mirror = None
+
+    def create_mirror(_acquire_frame, _config, on_user_close, *, products=None):
+        nonlocal mirror
+        mirror = FakeMirror(on_user_close)
+        return mirror
+
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+    owner.start()
+
+    assert mirror is not None
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while not mirror_events and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert mirror_events and mirror_events[0][0] == "start"
+    mirror.on_user_close()
+    assert owner.shutdown_requested
+    assert not owner._closed
+    assert not host.publication_closed
+
+    owner.close()
+    assert host.publication_closed
+    assert [name for name, _thread in _FakeContext.operations].count("destroy") == 1
+    assert host.events[-2:] == [
+        ("host-close", host.attach_thread),
+        ("environment-close", host.attach_thread),
+    ]
+    assert [name for name, _thread in mirror_events] == ["start", "close"]
+
+
+@pytest.mark.parametrize("close_from_mirror", [False, True])
+def test_shutdown_request_exit_wakes_frame_wait_without_runtime_interrupt(
+    monkeypatch, caplog, close_from_mirror
+):
+    host = _FakeHost()
+    frame_wait_entered = threading.Event()
+    runtime_stopped = threading.Event()
+    launcher_events = []
+
+    class BlockingContext(_FakeContext):
+        def begin_frame(self):
+            frame_wait_entered.set()
+            runtime_stopped.wait(timeout=1.0)
+            return super().begin_frame()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            pass
+
+        def close(self):
+            pass
+
+        def record_render_frame(self):
+            pass
+
+    class FakeLauncher:
+        def interrupt_runtime(self):
+            launcher_events.append(("interrupt", threading.get_native_id()))
+            runtime_stopped.set()
+
+        def stop(self):
+            launcher_events.append(("stop", threading.get_native_id()))
+
+    mirror = None
+
+    def create_mirror(_acquire_frame, _config, on_user_close, *, products=None):
+        nonlocal mirror
+        mirror = FakeMirror(on_user_close)
+        return mirror
+
+    fake_ovxr = _fake_ovxr()
+    fake_ovxr.Context = BlockingContext
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: fake_ovxr)
+    monkeypatch.setattr(owned_mirror, "OwnedDesktopMirrorWorker", create_mirror)
+    monkeypatch.setattr(
+        ovxr_session,
+        "_create_cloudxr_launcher",
+        lambda _path, *, accept_eula=False: FakeLauncher(),
+    )
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_GRACE_SECONDS", 0.01)
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+    owner.start()
+    _FakeContext.request_exit_callback = runtime_stopped.set
+
+    assert mirror is not None
+    assert owner.request_render("step-1") == 10
+    assert frame_wait_entered.wait(timeout=1.0)
+    try:
+        if close_from_mirror:
+            mirror.on_user_close()
+            assert owner.shutdown_requested
+            assert not owner._closed
+            owner.close()
+        else:
+            owner.close()
+        deadline = time.monotonic() + 0.25
+        while not owner._closed and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert owner._closed
+        assert owner.shutdown_requested
+        assert [name for name, _thread in launcher_events].count("interrupt") == 0
+        assert launcher_events == [("stop", owner.render_worker_native_thread_id)]
+        assert "interrupting the owned OpenXR runtime" not in caplog.text
+    finally:
+        runtime_stopped.set()
+        owner.close()
 
 
 def test_shutdown_falls_back_only_when_request_exit_cannot_wake_frame_wait(
@@ -1367,6 +1835,57 @@ def test_partial_startup_failure_marks_ovxr_teardown_before_cloudxr_stop(monkeyp
     ]
 
 
+def test_user_closing_mirror_on_first_submit_retires_created_ovxr(
+    monkeypatch,
+):
+    host = _FakeHost()
+
+    class FakeMirror:
+        status = DesktopMirrorStatus(closed=True)
+
+        def __init__(self, on_user_close):
+            self.on_user_close = on_user_close
+
+        def start(self):
+            self.on_user_close()
+
+        def record_render_frame(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        owned_mirror,
+        "OwnedDesktopMirrorWorker",
+        lambda _acquire, _config, on_user_close, *, products=None: FakeMirror(
+            on_user_close
+        ),
+    )
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = ovxr_session.OvxrSession(host, config, frame_consumers=(consumer,))
+
+    assert owner.start() is True
+    assert owner.request_render("step-1") > 0
+    _wait_for_operation("submit")
+    deadline = time.monotonic() + 1.0
+    while not owner.shutdown_requested and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert owner.shutdown_requested
+    owner.close()
+    operation_names = [name for name, _thread in _FakeContext.operations]
+    assert operation_names.count("create") == 1
+    assert operation_names.count("destroy") == 1
+    assert operation_names.count("submit") >= 1
+    assert operation_names.index("destroy") > operation_names.index("submit")
+    assert host.events[-2:] == [
+        ("host-close", host.attach_thread),
+        ("environment-close", host.attach_thread),
+    ]
+
+
 @pytest.mark.parametrize("failure_type", [RuntimeError, _WorkerAbort])
 def test_render_failure_waits_for_borrowers_and_preserves_first_error(
     monkeypatch, failure_type
@@ -1462,6 +1981,8 @@ def test_paused_frames_use_runtime_pacing_without_an_added_idle_wait(
 
         def begin_frame(self):
             self.frames += 1
+            # The runtime owns the next-frame wait, including while physics is
+            # paused. Block in that boundary to check shutdown as well as pace.
             if self.frames == 4:
                 fourth_frame.set()
                 assert release_frame.wait(1.0)
@@ -1564,6 +2085,8 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
         if publish_scene:
             owner.request_render("paused-scene")
             _wait_for_operation("submit")
+        # Scene rendering may proceed before DeviceIO handles exist, exactly
+        # as for an initial failed peer followed by a later headset connection.
         peer_ready.set()
         with owner._worker_condition:
             ready = owner._worker_condition.wait_for(
@@ -1588,7 +2111,31 @@ def test_config_rejects_unknown_session_mode():
         _config(session_mode="automatic")
 
 
+def test_success_without_xr_submission_does_not_count_render_frame(monkeypatch):
+    class NoSubmission(_FakeContext):
+        def submit_frame(self, plan, **kwargs):
+            super().submit_frame(plan, **kwargs)
+            return 0, SimpleNamespace(submitted=False)
+
+    api = _fake_ovxr()
+    api.Context = NoSubmission
+    monkeypatch.setattr(ovxr_session, "_import_ovxr", lambda: api)
+    config = _config()
+    mirror_config = DesktopMirrorConfig()
+    consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
+    owner = ovxr_session.OvxrSession(_FakeHost(), config, frame_consumers=(consumer,))
+    owner.start()
+    worker = consumer
+    with owner:
+        assert owner.request_render("no-submit") > 0
+        _wait_for_operation("submit")
+        assert not worker._start_attempted
+        assert worker.status.render_thread_fps == 0
+        assert worker.status.presented_frames == 0
+
+
 def test_three_products_keep_selection_order_and_one_loader_owner(monkeypatch):
+    from dataclasses import replace
 
     host = _FakeHost()
     attach = host.attach_on_render_thread
@@ -1647,7 +2194,6 @@ def test_bound_output_reads_finish_before_submit_or_cancel(monkeypatch, release_
     owner = ovxr_session.OvxrSession(host, _config())
     owner._binding = host.attach_on_render_thread(object())
     plan = SimpleNamespace(step_result=77)
-    owner._completed_outputs_supported = True
     events = []
 
     def bind(_plan, _time, *, stage_ordinal):
@@ -1752,6 +2298,27 @@ def test_frame_cleanup_preserves_the_original_bind_error(cleanup_boundary):
     assert error.value is failure
     assert "cleanup failed" in " ".join(error.value.__notes__)
     assert owner._pending_plan is plan
+
+
+def test_consumer_retirement_failure_preserves_earlier_publication_error():
+    host = _FakeHost()
+    failure = RuntimeError("publication close failed")
+
+    def close_publication():
+        raise failure
+
+    def close_map():
+        raise RuntimeError("map retirement failed")
+
+    host.close_publication = close_publication
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._frame_consumers = (SimpleNamespace(close=close_map),)
+    with pytest.raises(RuntimeError, match="publication close failed") as error:
+        owner._teardown_on_render_thread()
+    assert error.value is failure
+    assert "map retirement failed" in " ".join(error.value.__notes__)
+    assert not owner._ovxr_teardown_complete.is_set()
+    assert not host.events  # Borrowed objects must not retire past a live map.
 
 
 @pytest.mark.parametrize("hide_fails", [False, True])

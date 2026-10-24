@@ -8,15 +8,20 @@ from .ovxr_session import (
     OvxrSessionBinding,
     OvxrSessionConfig,
     OvxrApplicationInterface,
+    OvxrFrameConsumer,
     OvxrSession,
     StageOrdinalLedger,
 )
+from .desktop_mirror import DesktopMirrorConfig, DesktopMirrorStatus
 
 __all__ = [
     "AuxiliaryRasterConfig",
     "OvxrSessionBinding",
     "OvxrSessionConfig",
     "OvxrApplicationInterface",
+    "OvxrFrameConsumer",
     "OvxrSession",
     "StageOrdinalLedger",
+    "DesktopMirrorConfig",
+    "DesktopMirrorStatus",
 ]

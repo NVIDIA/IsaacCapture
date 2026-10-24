@@ -1,0 +1,3 @@
+# Optional standalone desktop mirror
+ovui==0.3.0
+cuda-bindings>=12.9,<14

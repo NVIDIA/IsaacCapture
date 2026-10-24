@@ -37,6 +37,9 @@ from the Isaac Capture wheel. These packages retain their own licenses:
   `OVRTX <https://pypi.org/project/ovrtx/>`__ and
   `OVStage <https://pypi.org/project/ovstage/>`__ are NVIDIA proprietary software.
   Review the license included with each distribution before use.
+* `OVUI <https://pypi.org/project/ovui/>`__ is Apache-2.0 and is installed by
+  the independent ``desktop-mirror`` extra. Review its package metadata for
+  supported Python versions and platforms.
 
 CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and CloudXR EULA acceptance.
@@ -63,6 +66,20 @@ builds also require the CUDA Toolkit. CMake discovers these installed dependenci
 Use ``CUDAToolkit_ROOT`` to select a CUDA Toolkit installation and ``VULKAN_SDK``
 to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
 on the host.
+
+Optional desktop mirror
+-----------------------
+
+Select both extras with ``isaaccapture[ovxr,desktop-mirror]`` in the installation
+requirement or the application's optional dependencies to include the OVUI
+mirror. The mirror requires a desktop display associated with a CUDA device.
+The native camera helper is required only when camera panels are also enabled.
+
+Initialize the renderer before starting the mirror. The mirror uses the OpenGL
+backend and defaults ``OMNIUI_BACKEND`` to ``opengl`` when it is unset. Configure
+this setting before the first OVUI initialization; existing settings and an
+already initialized backend are preserved. The CUDA image-copy path does not
+support the Vulkan UI backend. This setting does not change headset rendering.
 
 Use from another application
 ----------------------------
