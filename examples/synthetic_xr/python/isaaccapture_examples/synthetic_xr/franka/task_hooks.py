@@ -12,6 +12,26 @@ import time
 from pathlib import Path
 
 
+def install_reset_observer(environment, on_reset):
+    """Observe both explicit resets and Lab's same-step automatic resets."""
+    original = environment._reset_idx
+
+    def reset_indices(env_ids, *args, **kwargs):
+        # Mark the boundary before native reset/rendering can publish a new scene.
+        # Explicit resets use slices; automatic resets supply index tensors.
+        if env_ids is None:
+            count = environment.num_envs
+        elif isinstance(env_ids, slice):
+            count = len(range(environment.num_envs)[env_ids])
+        else:
+            count = len(env_ids)
+        if count:
+            on_reset()
+        return original(env_ids, *args, **kwargs)
+
+    environment._reset_idx = reset_indices
+
+
 def load_success_hook(specification):
     module, separator, name = specification.partition(":")
     if not separator or not module or not name.isidentifier():

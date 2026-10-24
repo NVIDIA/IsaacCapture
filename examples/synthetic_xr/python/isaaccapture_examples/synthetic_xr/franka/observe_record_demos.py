@@ -20,7 +20,12 @@ import threading
 import time
 from types import SimpleNamespace
 
-from .task_hooks import check_driver_lease, evaluate_success, load_success_hook
+from .task_hooks import (
+    check_driver_lease,
+    evaluate_success,
+    install_reset_observer,
+    load_success_hook,
+)
 from .observer_process import supervise, write_snapshot
 
 import numpy as np
@@ -210,6 +215,10 @@ def create_environment_config(*args, **kwargs):
         def custom_success(env):
             import torch
 
+            # A reset increments episode_id before the throttled render publisher
+            # refreshes scene data. Never initialize a task callback from that
+            # mixed snapshot; read the native scene at this evaluation boundary.
+            publish(force=True)
             return torch.tensor(
                 [evaluate_success(success_callback, state)],
                 dtype=torch.bool,
@@ -262,13 +271,16 @@ def create_environment(cfg):
             values(ee.target_quat_source)[0][0]
         ).as_matrix()
 
-    # The task randomizes joints at reset. Capture the actual reset pose each
-    # time, before the native recorder forwards its RESET event to the device.
+    def record_reset():
+        state["episode_id"] += 1
+
+    # Lab's step() resets terminated environments through _reset_idx, bypassing
+    # reset(). Observe that shared boundary without replacing native reset behavior.
+    install_reset_observer(environment, record_reset)
     original_reset = env.reset
 
     def reset(*args, **kwargs):
         result = original_reset(*args, **kwargs)
-        state["episode_id"] += 1
         measure_home()
         return result
 
@@ -287,7 +299,10 @@ def create_environment(cfg):
     original_step = env.step
 
     def step(actions):
+        episode_before = state["episode_id"]
         result = original_step(actions)
+        if state["episode_id"] != episode_before:
+            measure_home()
         state["phase"] = "running"
         state["steps"] += 1
         state["last_action"] = values(actions)

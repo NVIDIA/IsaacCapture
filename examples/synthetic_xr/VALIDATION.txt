@@ -1,4 +1,67 @@
+24 October 2026 — shared-action example integration
+
+The input-independent task and XR/native adapters are packaged from the exercised
+shared pick-and-place experiment. The tutorial remains focused on stacking;
+keyboard/gamepad are optional Lab-native callback integration examples, not new
+Capture device support. No host credentials, device creation, QA verdict code or
+host-specific launch paths are included in the package.
+
+Prepared-host evidence before packaging/rebase:
+- Repaired XR feature ceb6941c: stacking 1966 native samples/190 command
+  correlations; pick-and-place 23/23 checks,1268 samples/109 correlations,
+  0.671 mm placement error. One successful native episode per task.
+- Native keyboard: 40/40 checks,1771 samples,1.342 mm placement error.
+- Native gamepad: 41/41 checks,2915 samples,1.774 mm placement error.
+- Native common adapter: 25 CPU controls and Claude source review accepted.
+  XR four-fix patch: Claude and Codex source reviews accepted.
+- Keyboard and gamepad initially failed target settling; those attempts remain
+  retained. Bounded correction preserves the original pose tolerances/budgets.
+- Native keyboard/gamepad used AutoData953cd377 and Lab91a0906f, relative IK;
+  XR used the prepared Capture83e2598e backend and Labcb9628be, absolute IK.
+  XR's installed example wheel and rebuilt client contained the repaired feature.
+- Primary assistant reviewed sampled video frames, full decode and independent
+  native telemetry/negative controls. No separate model whole-video review.
+
+These are single final passes on a prepared x86 host, not reliability, physical
+sensing or full current-main SDK-build qualification. The packaging/rebase is
+checked separately; prior recordings are not claimed to execute the new Git head.
+The packaged/rebased example was then exercised on the same prepared native
+Capture83e2598e/Labcb9628be backend with the rebuilt client. First motion-only
+attempt and diagnostic retry failed native export: the callback cached an old
+scene under a new reset ID on the paused render path. Both failures are retained.
+The observer now refreshes the scene at each custom-success evaluation boundary.
+A regression fails against the old package and passes against the fixed wheel.
+
+Fresh direct packaged XR pick-and-place after that repair:
+- One native episode exported; native worker exited normally, task PASS.
+- 23/23 independent dataset/input/placement checks;1412 native samples,
+  109 browser/native command correlations;0.310 mm placement error.
+- Native success began at step1113; final neutral wait required step1194,
+  task checkpoint1196; native export1412 after300 success steps.
+- Same active episode; every input acknowledgement has a later native step.
+- Browser-left/Lab-right video decodes cleanly; sampled carry/release frames
+  agree with native telemetry. This is primary review, not whole-video model review.
+- Fixed destination, export guard and shared task ran from the installed wheel;
+  keyboard/gamepad runtime evidence remains the prepackaging runs above.
+- Bounded shared-source and reset-snapshot fix reviews accepted by Claude;
+  the earlier four XR guard fixes also had Codex review. Reviews are code-level,
+  not blanket end-to-end certification of every feature or target platform.
+- 85 installed Python checks,130 client checks,4 browser checks, production/type
+  builds, strict docs and repository pre-commit. Temporary trust and owned
+  processes were cleaned up; unrelated host workloads were preserved.
+
+This validates the final example modules on the prepared backend. It does not
+claim a full SDK rebuild from rebased main or repeated-run reliability.
+
+--- Retained end-user installation evidence ---
+
 Synthetic XR Teleoperation 0.2.1 — end-user validation, 2026-10-18
+
+Historical native evidence: these runs predate the task-guard corrections for
+endpoint admission, measured orientation, episode reset and fresh-step action
+correlation. Those corrections have CPU regression coverage and the prepared-host native
+recheck recorded below. Do not treat the earlier results as native qualification
+of subsequent source changes.
 
 Executed configuration:
 - SDK built from our branch refreshed onto upstream main 22026461cceb238fc0f7b3d4aecd3d970d444791.
@@ -36,7 +99,7 @@ Both native HDF5 datasets are checked against feedback and command receipts,
 with native pre-step observations aligned to post-step states. Both videos fully
 decode. Selected frames show grasp, lift, transfer and release in both views;
 this is sampled visual inspection, not exhaustive video-model evaluation.
-The final feature Python modules match those executed byte for byte. Version,
+At that validation checkpoint, the feature Python modules matched those executed byte for byte. Version,
 setup documentation and browser-only mock fixtures changed after native runs;
 production browser source is unchanged. Exact wheel/build identities, final
 repository checks, independent review and archive checks accompany this package.

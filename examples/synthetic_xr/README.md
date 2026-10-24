@@ -153,19 +153,52 @@ Import `FrankaTaskSession` from `isaaccapture_examples.synthetic_xr.franka.sessi
 | Operation | Contract |
 | --- | --- |
 | `observe()` | Fresh schema-v1 dictionary; rejects stale feedback, a restarted observer, or a mismatched observation directory. |
-| `move_tool(position, quaternion, seconds=2)` | Franka `ee_frame` target in world metres/Z-up; quaternion `[x,y,z,w]`, unit length. Interpolates XR input and checks native acknowledgement and tool convergence. |
+| `move_tool(position, quaternion, seconds=2)` | Franka `ee_frame` target in world metres/Z-up; quaternion `[x,y,z,w]`, unit length. Checks the endpoint before input, then requires measured position within 0.01 m and orientation within 0.05 radians. |
 | `set_gripper(closed=True)` | Boolean grip decision, converted to XR trigger; this does not write robot joints. |
 | `wait(seconds)` | Wait in simulation seconds with a bounded wall-clock timeout. |
 | `mark(name)` | Save a named observation to the task trace. |
 | `wait_for_export(timeout=30)` | Wait for the native successful episode and orderly observer completion. Does not set a success flag. Use `--num_demos 1`. |
 
-Observation fields: `run_id` identifies the observer, `episode_id` changes on reset, `steps` counts physics steps, `simulation_dt` is seconds/step, and `timestamp` is host Unix time. `ee_positions_world[0][0]` and `ee_quaternions_world[0][0]` describe the tool. `cubes[name]` contains `position_world[0]`, `quaternion_world[0]`, and `linear_velocity_world[0]`. Positions are metres; velocities are metres/second; all quaternions are xyzw. `joint_names` maps `joints[0]`. Select additional scene objects with the observer's `--objects name ...`; the `cubes` field name is retained for schema-v1 compatibility.
+Observation fields: `run_id` identifies the observer, `episode_id` changes on reset, `steps` counts environment steps, `simulation_dt` is seconds/environment step, and `timestamp` is host Unix time. `ee_positions_world[0][0]` and `ee_quaternions_world[0][0]` describe the tool. `cubes[name]` contains `position_world[0]`, `quaternion_world[0]`, and `linear_velocity_world[0]`. Positions are metres; velocities are metres/second; all quaternions are xyzw. `joint_names` maps `joints[0]`. Select additional scene objects with the observer's `--objects name ...`; the `cubes` field name is retained for schema-v1 compatibility.
 
 The adapter owns the `panda_hand` → tool offset (0.1034 m along local Z) and XR/frame transforms. It remains specific to this Franka configuration. Targets are checked for finite values and the declared workspace; this is not a collision-avoidance or reachability planner. Native episode completion ends movement immediately, including any remaining interpolation; inspect the returned observation before issuing another action. Only one task driver may attach to an observer. Use a new observation directory for every run; a failed attachment does not take over an existing driver.
+
+The session binds the episode after startup. An unexpected explicit or automatic reset, or a regressing environment step, releases input and fails the task; start a fresh session rather than resuming its old trajectory. Native successful export is terminal and does not rearm motion after a recorder reset. These are asynchronous feedback guards: a reset after the last check can race with one command already in flight. Command receipts require a matching action at an environment step later than the pre-send observation. This is fresh-step value correlation, not a unique transport acknowledgement for identical commands; measured tool convergence is checked separately.
 
 For your own task, use the shipped [stack_logic.py](python/isaaccapture_examples/synthetic_xr/franka/stack_logic.py) as the runnable starting point and replace its decisions. Define a trusted Python callback `is_success(observation) -> bool` and start the observer with `--success my_task:is_success`; make `my_task` importable in the Lab environment. The callback receives a detached snapshot after each step. Use `episode_id` to reset any history. Exceptions and non-boolean returns abort the run. The callback is application code, not a sandbox.
 
 The native recorder still requires its configured consecutive success steps (`--num_success_steps`, default 10), records state/actions, marks success and exports. An application callback changes the success criterion, not the motion pipeline. Include any required grasp/lift history, settling and release checks. A driver finishing its commands does not establish success. Without `--success`, the original native stacking criterion remains active.
+
+## Reuse task decisions across inputs
+
+[`task_plan.execute`](python/isaaccapture_examples/synthetic_xr/franka/task_plan.py) contains the input-independent pick-and-place decisions. It calls the `TaskBackend` interface: `observe`, `move_tool`, `set_gripper`, `wait` and `neutral`. `neutral` stops motion and releases button edges while retaining the gripper's open/closed state. Task completion is separate from the application's success criterion and native export.
+
+The packaged [`XRBackend`](python/isaaccapture_examples/synthetic_xr/franka/xr_backend.py) wraps `FrankaTaskSession`. To try pick-and-place with the same service/browser setup, use a **new run directory**, add the following options to the observer command in step 2, then replace step 4 with:
+
+```bash
+# Additional observer arguments (before the Lab arguments):
+# --success isaaccapture_examples.synthetic_xr.franka.pick_place_success:is_success
+# Replace the default recorder success count with --num_success_steps 300.
+python -m isaaccapture_examples.synthetic_xr.franka.pick_place_logic \
+  --observation-dir "$SYNTHETIC_RUN/observations" \
+  --output "$SYNTHETIC_RUN/logic"
+```
+
+This example requires `--num_demos 1`: the pinned Lab recorder exits after export before its reset branch, retaining the completed episode for final observations. The driver and callback share a fixed destination `(0.45, -0.20)` metres in XY and reject a scene where it is occupied or too close. The callback requires a lifted object, placement, open fingers and at least 0.16 m vertical retreat toward the 0.18 m target. Use 300 consecutive success steps to leave margin for the remaining retreat, command latency and the three-second neutral wait. This count is a conservative example setting, not a general timing guarantee. The adapter independently requires the full three-second neutral wait and rejects premature export. Observer `steps` and `simulation_dt` both describe environment steps (`env.step_dt`), so the wait uses that same timebase. Keep this recorder count for the example; the default stacking count can export too early.
+
+[`NativeBackend`](python/isaaccapture_examples/synthetic_xr/franka/native_backend.py) contains the corresponding **Lab-native integration adapters**, with bounded target settling, reset/staleness checks and input release on failure. These are callback-based adapters, not Capture keyboard/gamepad devices or a ready-to-run native launcher. The application owns its Lab observer, OS input device and shutdown:
+
+```python
+from isaaccapture_examples.synthetic_xr.franka.native_backend import NativeBackend
+from isaaccapture_examples.synthetic_xr.franka.task_plan import execute
+
+backend = NativeBackend("keyboard", read_observation, send_input, run_id)
+result = execute(backend, record_phase)  # Use "gamepad" with a gamepad sender.
+```
+
+- `read_observation()` supplies fresh dictionaries: `run_id`, `episode_id`, monotonic `step`, `sim_time`, Unix `time`, `ee`, `ee_quaternion`, `object`, `object_quaternion`, `object_velocity`, `joints`, `action`, `terminated` and `truncated`. Vectors are world metres/Z-up; `quaternion_order` must be `"xyzw"`. `tool_frame` must identify `ee_frame`, index `0`, body `panda_hand`, offset `[0, 0, 0.1034]`. Joints end with the two Franka fingers; the action ends with the native gripper command. The adapter validates this scene contract before motion.
+- Keyboard `send_input(keys)` applies a complete held-key set through an existing mechanism such as XTEST: release previous keys, then hold the supplied keys; `[]` releases all. Gamepad `send_input(values)` applies normalized `lx/ly/rx/ry`, discrete `hx/hy` D-pad axes and binary `x`; omitted values mean zero. Use an existing device mechanism such as evemu with a stock Xbox360 profile. Calls must be bounded and report errors; callbacks are not preempted by the adapter's cooperative timeouts.
+- These mappings were exercised with Lab `91a0906f93802eb859192dcb0bca879f891e92d6`, `IsaacContrib-Lift-Cube-Franka-IK-Rel`, keyboard sensitivity `0.8` and gamepad sensitivity `0.5`. They use native `Se3Keyboard`/`Se3Gamepad`, bypassing WebXR/CloudXR. Validate the mapping and observation contract before using another Lab revision or scene. Synthetic XR retains the documented Capture path.
 
 ## Stop and troubleshoot
 

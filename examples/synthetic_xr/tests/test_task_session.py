@@ -43,6 +43,8 @@ def observation(root):
         "phase": "running",
         "timestamp": time.time(),
         "simulation_dt": 0.05,
+        "episode_id": 1,
+        "steps": 10,
         "ee_positions_world": [[[0.4, 0, 0.2]]],
         "ee_quaternions_world": [[[0, 0, 0, 1]]],
         "cubes": {
@@ -285,6 +287,7 @@ class TaskTests(unittest.TestCase):
     def test_improper_rotation_rejected_before_browser_command(self):
         bridge = XRControllerBridge.__new__(XRControllerBridge)
         bridge.client = Mock()
+        bridge.trigger = 0.0
         with self.assertRaises(ValueError):
             bridge.target_base([0.4, 0, 0.2], np.diag([1, 1, -1]))
         bridge.client.command.assert_not_called()

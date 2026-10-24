@@ -14,9 +14,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from .browser_command import BrowserClient
-from .xr_controller_bridge import XRControllerBridge, play, wait_steps
+from .xr_controller_bridge import EpisodeCompleted, XRControllerBridge, play, wait_steps
 
 TOOL_OFFSET = np.array([0.0, 0.0, 0.1034])
+ORIENTATION_TOLERANCE = (
+    0.05  # Radians, measured tool orientation rather than action echo.
+)
 
 
 def validate_observation(value):
@@ -36,6 +39,9 @@ def validate_observation(value):
         or value.get("simulation_dt", 0) <= 0
     ):
         raise ValueError("Invalid simulation step duration")
+    for name in ("episode_id", "steps", "exported_successful_episodes"):
+        if type(value.get(name)) is not int or value[name] < 0:
+            raise ValueError("Invalid observation counter: " + name)
     frame_count = None
     for name, width in (("ee_positions_world", 3), ("ee_quaternions_world", 4)):
         array = np.asarray(value[name])
@@ -51,6 +57,10 @@ def validate_observation(value):
         if frame_count is not None and array.shape[1] != frame_count:
             raise ValueError("Position and orientation target counts differ")
         frame_count = array.shape[1]
+        if name == "ee_quaternions_world" and not np.allclose(
+            np.linalg.norm(array, axis=-1), 1.0, atol=1e-3
+        ):
+            raise ValueError("Measured tool quaternions must be unit xyzw values")
     for obj in value["cubes"].values():
         for name, width in (
             ("position_world", 3),
@@ -92,8 +102,15 @@ class FrankaTaskSession:
         self.stop_observer = stop_observer
         self._trace = None
         self._entered = False
+        self.episode_id = None
+        self._last_step = None
+        self._starting = False
+        self._terminal = False
+        self._episode_error = None
 
     def state(self, max_age=5):
+        if self._episode_error is not None:
+            raise RuntimeError(self._episode_error)
         try:
             value = self.client.state(max_age)
         except (URLError, OSError):
@@ -111,6 +128,25 @@ class FrankaTaskSession:
             raise RuntimeError("Feedback belongs to a different observation directory")
         if self.run_id is not None and value["run_id"] != self.run_id:
             raise RuntimeError("Observer restarted during the task")
+        if self.run_id is not None and not self._starting:
+            # Native export may reset the scene before the worker closes. It is
+            # terminal for this driver and must never rearm motion in the next episode.
+            self._terminal = self._terminal or value["exported_successful_episodes"] > 0
+            if self.episode_id is None:
+                self.episode_id = value["episode_id"]
+            elif not self._terminal and (
+                value["episode_id"] != self.episode_id
+                or (self._last_step is not None and value["steps"] < self._last_step)
+            ):
+                self._episode_error = "Episode reset during task; start a fresh session"
+                try:
+                    self.client.command("stop")
+                except Exception as failure:
+                    raise RuntimeError(
+                        self._episode_error + "; input release failed"
+                    ) from failure
+                raise RuntimeError(self._episode_error)
+            self._last_step = value["steps"]
         self._heartbeat()
         return value
 
@@ -122,9 +158,17 @@ class FrankaTaskSession:
             )
             temporary.replace(self.observation_dir / "driver-heartbeat.json")
 
-    def command(self, *args, **kwargs):
+    def command(self, action, *args, **kwargs):
+        current = None
+        if action not in {"stop", "inspect"} and self.run_id is not None:
+            current = self.state()
+            if self._terminal or current.get("exported_successful_episodes", 0):
+                raise EpisodeCompleted("Episode already completed")
         self._heartbeat()
-        return self.client.command(*args, **kwargs)
+        receipt = self.client.command(action, *args, **kwargs)
+        if current is not None:
+            receipt["native_step_before_send"] = current["steps"]
+        return receipt
 
     def __enter__(self):
         if self._entered:
@@ -146,6 +190,7 @@ class FrankaTaskSession:
             with (self.observation_dir / "driver-owner.json").open("x") as owner:
                 json.dump({"run_id": observation["run_id"], "pid": os.getpid()}, owner)
             self.run_id = observation["run_id"]
+            self._starting = True
             self.command("inspect")
             self.command(
                 "head", quaternion=Rotation.from_euler("x", -0.55).as_quat().tolist()
@@ -155,12 +200,15 @@ class FrankaTaskSession:
             )
             if not observation.get("control", {}).get("is_active"):
                 play(client=self)
+            self._starting = False
+            self.state()
             self.controller.target_base(
                 self.controller.target[:3, 3], self.controller.target[:3, :3]
             )
             self.mark("started")
             return self
         except BaseException as error:
+            self._starting = False
             self.__exit__(type(error), error, error.__traceback__)
             raise
 
@@ -209,7 +257,11 @@ class FrankaTaskSession:
             if current.get("exported_successful_episodes", 0):
                 return current
             error = point - np.asarray(current["ee_positions_world"])[0, 0]
-            if np.linalg.norm(error) < 0.002:
+            angular_error = (
+                Rotation.from_quat(q).inv()
+                * Rotation.from_quat(current["ee_quaternions_world"][0][0])
+            ).magnitude()
+            if np.linalg.norm(error) < 0.002 and angular_error <= ORIENTATION_TOLERANCE:
                 return current
             target = (
                 np.linalg.inv(self.controller.base_to_world) @ self.controller.target
@@ -217,14 +269,21 @@ class FrankaTaskSession:
             self.controller.move_world(
                 target[:3, 3] + np.clip(error, -0.01, 0.01), rotation, seconds=0.6
             )
-        if (
-            np.linalg.norm(point - np.asarray(self.state()["ee_positions_world"])[0, 0])
-            > 0.01
-        ):
+        current = self.state()
+        if current.get("exported_successful_episodes", 0):
+            return current
+        position_error = np.linalg.norm(
+            point - np.asarray(current["ee_positions_world"])[0, 0]
+        )
+        angular_error = (
+            Rotation.from_quat(q).inv()
+            * Rotation.from_quat(current["ee_quaternions_world"][0][0])
+        ).magnitude()
+        if position_error > 0.01 or angular_error > ORIENTATION_TOLERANCE:
             raise RuntimeError(
-                "Tool did not converge within 0.01 m of its requested target"
+                "Tool did not converge within 0.01 m and 0.05 radians of its requested pose"
             )
-        return self.state()
+        return current
 
     def set_gripper(self, *, closed):
         if type(closed) is not bool:
