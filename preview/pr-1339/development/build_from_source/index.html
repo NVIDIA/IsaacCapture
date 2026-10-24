@@ -790,7 +790,7 @@ was built for (<code class="docutils literal notranslate"><span class="pre">ISAA
 environment with that version. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04 with
 <code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span> <span class="pre">found</span></code>.
 From the repository root:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># --seed adds pip, which the pip command below needs.</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.</span>
 uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </pre></div>
