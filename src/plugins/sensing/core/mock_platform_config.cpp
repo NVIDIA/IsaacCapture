@@ -75,7 +75,9 @@ std::vector<SensorInfo> mock_query_platform_config(const std::string& platform_c
         const uint32_t transport = module.value("transportIndex", 0u);
         if (!link_masks.empty())
         {
-            const bool enabled = transport < link_masks.size() && ((link_masks[transport] >> (4 * link)) & 0xF) != 0;
+            // A mask is eight hex digits, one per link; a link beyond that cannot be enabled.
+            const bool enabled =
+                link < 8 && transport < link_masks.size() && ((link_masks[transport] >> (4 * link)) & 0xF) != 0;
             if (!enabled)
                 continue;
         }

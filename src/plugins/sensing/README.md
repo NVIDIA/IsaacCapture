@@ -53,7 +53,7 @@ SIPL drivers.
 | Value | Capture | Encoder | Needs |
 | --- | --- | --- | --- |
 | `JETSON` | SIPL | V4L2 NVENC | L4T SDKs |
-| `MOCK` | synthetic frames | stand-in | NVIDIA GPU, CUDA toolkit |
+| `MOCK` | synthetic frames | stand-in | NVIDIA GPU, CUDA toolkit, EGL headers (`libegl-dev`) |
 | `AUTO` (default) | `JETSON` on aarch64, `MOCK` elsewhere | | |
 
 ```bash

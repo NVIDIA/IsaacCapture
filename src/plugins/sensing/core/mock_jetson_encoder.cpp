@@ -153,7 +153,8 @@ struct JetsonEncoder::Impl
             {
                 std::unique_lock<std::mutex> lock(mutex);
                 wake.wait(lock, [&] { return closing || !jobs.empty(); });
-                if (jobs.empty())
+                // Frames still queued at teardown are abandoned, as the hardware encoder would.
+                if (closing || jobs.empty())
                     return;
                 job = jobs.front();
                 jobs.pop_front();
