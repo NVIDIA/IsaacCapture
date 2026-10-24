@@ -954,8 +954,8 @@ version's accompanying license when resolving the environment.
 | py-soma-x | `0.3.0` | Apache-2.0 | [Package](https://pypi.org/project/py-soma-x/0.3.0/) | [Upstream license](https://github.com/NVlabs/SOMA-X/blob/v0.3.0/LICENSE) |
 | cholespy | `2.2.0` | BSD-3-Clause | [Package](https://pypi.org/project/cholespy/2.2.0/) | [Upstream license](https://github.com/rgl-epfl/cholespy/blob/v2.2.0/LICENSE) |
 | torch | `>=2.13.0` | BSD-3-Clause; bundled components have additional terms; check selected version | [Package](https://pypi.org/project/torch/) | [Upstream license](https://github.com/pytorch/pytorch/blob/main/LICENSE) |
-| torchvision | `0.22.1+cu128` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/torchvision/0.22.1/) | [Upstream license](https://github.com/pytorch/vision/blob/v0.22.1/LICENSE) |
-| triton | `3.3.1` | MIT | [Package](https://pypi.org/project/triton/3.3.1/) | [Upstream license](https://github.com/triton-lang/triton/blob/v3.3.1/LICENSE) |
+| torchvision | `0.28.0` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/torchvision/0.28.0/) | [Upstream license](https://github.com/pytorch/vision/blob/v0.28.0/LICENSE) |
+| triton | `3.7.1` | MIT | [Package](https://pypi.org/project/triton/3.7.1/) | [Upstream license](https://github.com/triton-lang/triton/blob/v3.7.1/LICENSE) |
 | transformers | `5.18.0` | Apache-2.0 | [Package](https://pypi.org/project/transformers/5.18.0/) | [Upstream license](https://github.com/huggingface/transformers/blob/v5.18.0/LICENSE) |
 | numpy | `1.26.4` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/numpy/1.26.4/) | [Upstream license](https://github.com/numpy/numpy/blob/v1.26.4/LICENSE.txt) |
 | scipy | `1.17.1` | BSD-3-Clause; bundled components have additional terms | [Package](https://pypi.org/project/scipy/1.17.1/) | [Upstream license](https://github.com/scipy/scipy/blob/v1.17.1/LICENSE.txt) |

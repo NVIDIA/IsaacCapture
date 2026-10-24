@@ -4,12 +4,11 @@
 # Run from this folder: python -m pip install -r requirements.txt
 # Pin the main numerical runtime used for the sample; pyproject.toml supplies
 # the complete direct dependency list. This is not a transitive lock file.
---extra-index-url https://download.pytorch.org/whl/cu128
 py-soma-x==0.3.0
 cholespy==2.2.0
 torch>=2.13.0
-torchvision==0.22.1+cu128
-triton==3.3.1
+torchvision==0.28.0
+triton==3.7.1
 transformers==5.18.0
 numpy==1.26.4
 scipy==1.17.1
