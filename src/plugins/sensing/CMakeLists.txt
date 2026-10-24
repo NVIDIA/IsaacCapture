@@ -4,7 +4,12 @@
 # ==============================================================================
 # SENSING Camera Plugin (Jetson SIPL capture + V4L2 H.264 encode)
 # ==============================================================================
-# Jetson-only: SIPL and the V4L2 M2M encoder exist only on L4T.
+# Two backends sit behind SiplCamera and JetsonEncoder:
+#   JETSON  SIPL capture and the V4L2 M2M encoder, which exist only on L4T.
+#   MOCK    synthetic frames and a stand-in encoder, for any machine with an
+#           NVIDIA GPU and the CUDA toolkit. Everything above those two classes
+#           (SensingCamera, sinks, CUDA IPC, the app) is the same code.
+# SENSING_BACKEND=AUTO picks JETSON on aarch64 and MOCK elsewhere.
 #
 # Four leaf targets, one per directory (cmake/cmake-structure.md rule 1):
 #   cuda_ipc/  sensing_cuda_ipc  — CUDA-only IPC publisher + wire format
@@ -12,7 +17,8 @@
 #   app/       camera_plugin_sensing
 #   tools/     sensing_ipc_testsrc — links cuda_ipc only, no SIPL, no encoder
 #
-# The Jetson SDK checks below gate the whole plugin, tools/ included.
+# The Jetson SDK checks below gate the whole plugin, tools/ included, when the
+# backend is JETSON.
 #
 # Prerequisites (match the L4T release in /etc/nv_tegra_release; the examples
 # use R39.2.1). Neither is installed by the setup scripts:
@@ -25,7 +31,8 @@
 # See "Build prerequisites" in docs/source/device/camera/sensing.rst.
 #
 # Configure with:
-#   cmake -B build -DBUILD_PLUGIN_SENSING=ON
+#   cmake -B build -DBUILD_PLUGIN_SENSING=ON                          # Jetson, or mock elsewhere
+#   cmake -B build -DBUILD_PLUGIN_SENSING=ON -DSENSING_BACKEND=MOCK   # force the mock
 # ==============================================================================
 
 enable_language(CUDA)
@@ -37,12 +44,32 @@ endif()
 
 find_package(CUDAToolkit REQUIRED)
 
+set(SENSING_BACKEND "AUTO" CACHE STRING "SENSING backend: AUTO, JETSON (SIPL + V4L2 NVENC) or MOCK (synthetic)")
+set_property(CACHE SENSING_BACKEND PROPERTY STRINGS AUTO JETSON MOCK)
+if(SENSING_BACKEND STREQUAL "AUTO")
+    # A Jetson that lacks the SDK should still get the setup instructions below,
+    # not a silent mock, so only non-aarch64 hosts fall back.
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        set(SENSING_BACKEND_RESOLVED "JETSON" CACHE INTERNAL "")
+    else()
+        set(SENSING_BACKEND_RESOLVED "MOCK" CACHE INTERNAL "")
+    endif()
+elseif(SENSING_BACKEND STREQUAL "JETSON" OR SENSING_BACKEND STREQUAL "MOCK")
+    set(SENSING_BACKEND_RESOLVED "${SENSING_BACKEND}" CACHE INTERNAL "")
+else()
+    message(FATAL_ERROR "SENSING_BACKEND must be AUTO, JETSON or MOCK, got '${SENSING_BACKEND}'")
+endif()
+# Cache, not a plain variable, so tests/ (a sibling directory) can gate on it too.
+message(STATUS "SENSING plugin backend: ${SENSING_BACKEND_RESOLVED}")
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     set(_tegra_lib_dirs "/usr/lib/aarch64-linux-gnu/nvidia" "/usr/lib/aarch64-linux-gnu/tegra")
 else()
     set(_tegra_lib_dirs "/usr/lib/x86_64-linux-gnu/nvidia")
 endif()
 
+if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
+# Jetson-only SDK checks.
 # ==============================================================================
 # SIPL
 # ==============================================================================
@@ -169,6 +196,7 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 # No libnvjpeg here on purpose: on R39 libnvbufsurface has no libjpeg
 # dependency at all (readelf -d lists only EGL, cuda, dl, pthread, rt, c), and
 # the tegra lib dir ships no libnvjpeg to link against.
+endif()
 
 # ==============================================================================
 # Targets

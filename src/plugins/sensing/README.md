@@ -24,6 +24,7 @@ That guide owns the operating instructions; this README maps the source tree.
 - [`docker/`](docker/): example image, image-side group configuration, and
   host-side container setup.
 - [`configs/`](configs/): the platform configuration and its provenance.
+- [`core/mock_*`](core/): the mock backend (see below).
 
 ## Platform configuration provenance
 
@@ -44,3 +45,44 @@ Keep the file byte-identical to the vendor copy. Compare new vendor drops
 before replacing it; do not hand-edit the board wiring. Its CSI ports, I2C
 buses, deserializer addresses, GPIOs, and link modes must match the installed
 SIPL drivers.
+
+## Mock backend: run the plugin without a Jetson
+
+`SENSING_BACKEND` selects what sits behind `SiplCamera` and `JetsonEncoder`:
+
+| Value | Capture | Encoder | Needs |
+| --- | --- | --- | --- |
+| `JETSON` | SIPL | V4L2 NVENC | L4T SDKs |
+| `MOCK` | synthetic frames | stand-in | NVIDIA GPU, CUDA toolkit |
+| `AUTO` (default) | `JETSON` on aarch64, `MOCK` elsewhere | | |
+
+```bash
+cmake -B build -DBUILD_PLUGIN_SENSING=ON -DSENSING_BACKEND=MOCK
+cmake --build build --target camera_plugin_sensing sensing_mock_tests
+./build/src/plugins/sensing/app/camera_plugin_sensing --list-sensors
+```
+
+Everything above those two classes is the code that runs on the rig: `SensingCamera`, the
+sinks, the YUV-to-RGBA and RGBA-to-NV12 kernels, and the CUDA IPC publisher. The mock
+resolves `--list-sensors` and the link masks from the vendor JSON, paints a synthetic NV12
+surface (a 16-bit frame counter top-left, chroma tinted per sensor), and runs the real
+conversion on it. Both sensors share a capture TSC, as the rig's fsync does.
+
+The mock encoder's output is **not decodable video**: Annex-B start codes, SPS/PPS/IDR and
+non-IDR NAL types, and a payload naming the frame. It reproduces what callers depend on: a
+fixed pool of input buffers that makes `submit()` refuse frames when the encoder falls behind,
+a warm-up delay before the first unit, and capture stamps that come back at microsecond
+resolution.
+
+Environment, read once at construction:
+
+| Variable | Effect |
+| --- | --- |
+| `SENSING_MOCK_FPS` | override the platform config's frame rate |
+| `SENSING_MOCK_SCALE_DIV` | divide the reported width and height (kept even); useful for tests |
+| `SENSING_MOCK_FAIL_AFTER` | every sensor fails after N frames, as a link drop would |
+| `SENSING_MOCK_ENCODER_LATENCY_MS` | per-frame encode time |
+| `SENSING_MOCK_ENCODER_DEPTH` | frames held back before the first unit (default 2) |
+
+A pass on the mock says nothing about SIPL, the ISP output format, NvSci buffer lifetime, the
+V4L2 encoder or real frame rates. Those are only checked on an Orin with SENSING cameras.
