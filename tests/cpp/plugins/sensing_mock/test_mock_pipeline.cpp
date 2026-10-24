@@ -188,10 +188,7 @@ TEST_CASE("an ipc-only stream records metadata with the sensor's capture TSC", "
     CHECK(shared >= 3);
 }
 
-// The encoder returns each unit's stamp at microsecond resolution, while SensingCamera remembers the
-// stamp it submitted in nanoseconds and matches them for equality, so the capture TSC of an encoded
-// stream is never found. Remove [!shouldfail] when that is fixed.
-TEST_CASE("an encoded stream keeps its capture TSC through the encoder", "[unit][gpu][sensing][!shouldfail]")
+TEST_CASE("an encoded stream keeps its capture TSC through the encoder", "[unit][gpu][sensing]")
 {
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
     const std::string output = unique_path("sensing_mock", ".h264");
