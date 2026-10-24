@@ -1,18 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Mock backend for SiplCamera: synthetic frames from a CUDA pattern generator,
-// no SIPL, NvSci or EGL. It keeps the contract the rest of the plugin relies on
-// -- per-sensor capture threads, a three-slot RGBA mailbox with a reader lease,
-// a TSC stamp shared by every sensor, and failures surfacing from latest() --
-// and runs the real YUV-to-RGBA kernel on the synthetic NV12, so the conversion
-// code is exercised too.
+// Mock backend for SiplCamera: frames from an animated GIF, no SIPL, NvSci or EGL.
+// It keeps the contract the rest of the plugin relies on -- per-sensor capture
+// threads, a three-slot RGBA mailbox with a reader lease, a TSC stamp shared by
+// every sensor, and failures surfacing from latest() -- and runs the real
+// YUV-to-RGBA kernel on a synthetic NV12 surface made from the GIF, so the
+// conversion code is exercised too.
 //
-// Environment (read once, at construction):
+// What a sensor shows: an animated GIF, chosen in this order
+//   SENSING_MOCK_GIF_<module name>=PATH     one sensor, by its module name
+//   SENSING_MOCK_GIF=PATH                   every sensor
+//   (neither)                               the bundled robot, in mock_assets/
+// A GIF that cannot be loaded, the bundled one included, is an error. It is scaled to cover the
+// sensor's configured size and centre-cropped, never stretched, and follows the capture clock: it
+// advances with each frame's time, and the sequence number and stamps advance on every capture even
+// while the GIF shows one image.
+//
+// Other environment (read once, at construction):
 //   SENSING_MOCK_FPS=N          override the platform config's frame rate
 //   SENSING_MOCK_FAIL_AFTER=N   every sensor fails after N frames, as a link drop would
 //   SENSING_MOCK_SCALE_DIV=N    shrink the reported geometry (see mock_platform_config.hpp)
 
+#include "mock_gif_source.hpp"
 #include "mock_nv12_source.cuh"
 #include "mock_platform_config.hpp"
 #include "sipl_camera.hpp"
@@ -25,6 +35,8 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -88,6 +100,8 @@ struct SiplCamera::Impl
         uint64_t published_timestamp_ns = 0;
         uint64_t published_capture_tsc_ns = 0;
 
+        std::shared_ptr<MockGifSource> gif;
+
         std::thread frame_thread;
 
         // Owns its device memory, so a constructor that throws part-way through
@@ -125,6 +139,7 @@ struct SiplCamera::Impl
             auto sensor = std::make_unique<Sensor>();
             sensor->info = info;
             allocate(*sensor);
+            sensor->gif = gif_for(info);
             sensors.push_back(std::move(sensor));
         }
     }
@@ -148,6 +163,23 @@ struct SiplCamera::Impl
                        "cudaMallocPitch(RGBA)");
         }
         check_cuda(cudaStreamCreateWithFlags(&sensor.stream, cudaStreamNonBlocking), "cudaStreamCreate");
+    }
+
+    /// The GIF a sensor shows.
+    std::shared_ptr<MockGifSource> gif_for(const SensorInfo& info)
+    {
+        const char* path = std::getenv(("SENSING_MOCK_GIF_" + info.name).c_str());
+        if (!path)
+            path = std::getenv("SENSING_MOCK_GIF");
+        const std::string bundled = std::string(SENSING_MOCK_ASSET_DIR) + "/noto-robot.gif";
+        if (!path)
+            path = bundled.c_str();
+
+        // Sensors showing the same file share one copy on the device.
+        auto& slot = gif_cache[path];
+        if (!slot)
+            slot = std::make_shared<MockGifSource>(path);
+        return slot;
     }
 
     Sensor* find(uint32_t id)
@@ -196,16 +228,17 @@ struct SiplCamera::Impl
         ++sensor.published_sequence;
     }
 
-    void capture_one(Sensor& sensor, uint64_t frame_index, uint64_t tsc_ns)
+    void capture_one(Sensor& sensor, double seconds, uint64_t tsc_ns)
     {
         const uint32_t write_idx = pick_write_index(sensor);
         const DeviceBuffer& dest = sensor.buffers[write_idx];
         const int width = static_cast<int>(sensor.info.width);
         const int height = static_cast<int>(sensor.info.height);
 
-        launch_mock_nv12_pattern(sensor.luma.ptr, static_cast<int>(sensor.luma.pitch), sensor.chroma.ptr,
-                                 static_cast<int>(sensor.chroma.pitch), width, height, sensor.info.id,
-                                 static_cast<uint32_t>(frame_index), sensor.stream);
+        launch_mock_gif_nv12(sensor.gif->frame(sensor.gif->frame_index_at(seconds)),
+                             static_cast<int>(sensor.gif->pitch()), static_cast<int>(sensor.gif->width()),
+                             static_cast<int>(sensor.gif->height()), sensor.luma.ptr, static_cast<int>(sensor.luma.pitch),
+                             sensor.chroma.ptr, static_cast<int>(sensor.chroma.pitch), width, height, sensor.stream);
 
         // Same call, layout and colour matrix as the SIPL path: full-range
         // BT.709 semi-planar, from the surface the ISP would have written.
@@ -236,7 +269,7 @@ struct SiplCamera::Impl
                 // Every sensor derives its TSC from the same epoch, as the
                 // deserializer's shared fsync does: frame n of each sensor
                 // carries the same capture time.
-                capture_one(sensor, n, kMockTscBaseNs + static_cast<uint64_t>(n * period_ns));
+                capture_one(sensor, n * period_ns / 1e9, kMockTscBaseNs + static_cast<uint64_t>(n * period_ns));
             }
         }
         catch (const std::exception& e)
@@ -272,6 +305,7 @@ struct SiplCamera::Impl
     std::vector<SensorInfo> sensor_infos;
     std::vector<std::unique_ptr<Sensor>> sensors;
     std::atomic<bool> running{ false };
+    std::map<std::string, std::shared_ptr<MockGifSource>> gif_cache;
     double fps_override = 0.0;
     uint64_t fail_after_frames = 0;
     std::mutex failure_mutex;

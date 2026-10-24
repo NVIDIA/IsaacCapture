@@ -99,7 +99,7 @@ void run_for(SensingCamera& camera, std::chrono::milliseconds duration)
 
 TEST_CASE("an unknown sensor index is reported with the available pipelines", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 5;
     streams[0].ipc_socket_path = unique_path("sensing_mock", ".sock");
@@ -109,7 +109,7 @@ TEST_CASE("an unknown sensor index is reported with the available pipelines", "[
 
 TEST_CASE("an encoded stream writes Annex-B data and one metadata record per unit", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     TempFile output_file(".h264");
     const std::string& output = output_file.path();
 
@@ -151,7 +151,7 @@ TEST_CASE("an encoded stream writes Annex-B data and one metadata record per uni
 
 TEST_CASE("an ipc-only stream records metadata with the sensor's capture TSC", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     std::vector<StreamConfig> streams(2);
     streams[0].sensor_id = 0;
     streams[0].ipc_socket_path = unique_path("sensing_mock", ".sock");
@@ -189,7 +189,7 @@ TEST_CASE("an ipc-only stream records metadata with the sensor's capture TSC", "
 
 TEST_CASE("an encoded stream keeps its capture TSC through the encoder", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     TempFile output_file(".h264");
     const std::string& output = output_file.path();
 

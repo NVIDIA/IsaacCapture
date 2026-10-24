@@ -86,7 +86,8 @@ To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.git
 
 The default license is [Apache-2.0](LICENSE.md).
 EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
-Third-party materials may carry their own licenses.
+Third-party materials may carry their own licenses; for example, the sample GIFs under
+[`src/plugins/sensing/mock_assets/`](src/plugins/sensing/mock_assets/) are Animated Noto Emoji under CC BY 4.0.
 
 ### Separately retrieved optional materials
 

@@ -3,10 +3,13 @@
 
 #pragma once
 
+#include "gif_fixture.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <core/sipl_camera.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -26,7 +29,15 @@ class ScopedEnv
 public:
     ScopedEnv(const char* name, const char* value) : m_name(name)
     {
-        ::setenv(name, value, 1);
+        set(value);
+    }
+    /// Names the variable now; the value is set later with set().
+    explicit ScopedEnv(const char* name) : m_name(name)
+    {
+    }
+    void set(const char* value)
+    {
+        ::setenv(m_name.c_str(), value, 1);
     }
     ~ScopedEnv()
     {
@@ -90,6 +101,72 @@ private:
     std::string m_path;
 };
 
+/// The mock at test size, showing a short GIF that cycles black, red, blue and white every 40 ms.
+/// Small frames keep tests fast, and solid frames of known colours show whether a frame is whole.
+class FastMock
+{
+public:
+    FastMock() : m_gif(".gif"), m_scale("SENSING_MOCK_SCALE_DIV", "8"), m_source("SENSING_MOCK_GIF")
+    {
+        write_gif(m_gif.path(), 16, 16,
+                  { solid_frame(16, 16, kGifBlack, 4), solid_frame(16, 16, kGifRed, 4),
+                    solid_frame(16, 16, kGifBlue, 4), solid_frame(16, 16, kGifWhite, 4) });
+        m_source.set(m_gif.path().c_str());
+    }
+
+private:
+    TempFile m_gif;
+    ScopedEnv m_scale;
+    ScopedEnv m_source;
+};
+
+struct Rgb
+{
+    int r;
+    int g;
+    int b;
+};
+
+/// One frame copied to the host.
+struct Shot
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint64_t sequence = 0;
+    std::vector<uint8_t> rgba;
+
+    Rgb at(uint32_t x, uint32_t y) const
+    {
+        const uint8_t* px = &rgba[(static_cast<size_t>(y) * width + x) * 4];
+        return { px[0], px[1], px[2] };
+    }
+};
+
+inline bool near(const Rgb& c, int r, int g, int b, int tolerance = 12)
+{
+    return std::abs(c.r - r) <= tolerance && std::abs(c.g - g) <= tolerance && std::abs(c.b - b) <= tolerance;
+}
+
+/// Black, red, blue or white: the colours of the frames FastMock plays.
+inline bool is_cycle_colour(const Rgb& c)
+{
+    return near(c, 0, 0, 0) || near(c, 255, 0, 0) || near(c, 0, 0, 255) || near(c, 255, 255, 255, 14);
+}
+
+/// True when the corners and centre agree, as in a frame of one solid colour. A frame torn between two
+/// captures would show two.
+inline bool is_whole(const Shot& shot)
+{
+    const Rgb centre = shot.at(shot.width / 2, shot.height / 2);
+    for (const Rgb& corner : { shot.at(0, 0), shot.at(shot.width - 1, 0), shot.at(0, shot.height - 1),
+                               shot.at(shot.width - 1, shot.height - 1) })
+    {
+        if (!near(corner, centre.r, centre.g, centre.b, 14))
+            return false;
+    }
+    return is_cycle_colour(centre);
+}
+
 /// Copies a device RGBA frame to the host as tightly packed rows.
 inline std::vector<uint8_t> download_rgba(uintptr_t device_ptr, size_t pitch, uint32_t width, uint32_t height)
 {
@@ -102,19 +179,23 @@ inline std::vector<uint8_t> download_rgba(uintptr_t device_ptr, size_t pitch, ui
     return host;
 }
 
-/// Reads the 16-bit frame counter the mock paints top-left: 16 px cells, most significant bit first.
-inline uint32_t read_counter(const std::vector<uint8_t>& rgba, uint32_t width)
+/// Waits for one frame from `sensor` and copies it to the host.
+inline Shot grab(plugins::sensing::SiplCamera& camera, uint32_t sensor)
 {
-    uint32_t value = 0;
-    for (int bit = 0; bit < 16; ++bit)
-    {
-        const size_t x = 8 + 16 * static_cast<size_t>(bit);
-        const size_t y = 8;
-        const uint8_t* px = &rgba[(y * width + x) * 4];
-        const bool on = px[0] > 127 && px[1] > 127 && px[2] > 127;
-        value = (value << 1) | (on ? 1u : 0u);
-    }
-    return value;
+    Shot shot;
+    REQUIRE(wait_for(
+        [&]
+        {
+            auto view = camera.latest(sensor);
+            if (!view)
+                return false;
+            shot.width = view->width;
+            shot.height = view->height;
+            shot.sequence = view->sequence;
+            shot.rgba = download_rgba(view->ptr, view->pitch, view->width, view->height);
+            return true;
+        }));
+    return shot;
 }
 
 /// One NAL unit of the mock encoder's Annex-B output.

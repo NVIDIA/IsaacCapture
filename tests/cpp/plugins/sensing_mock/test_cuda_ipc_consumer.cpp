@@ -203,7 +203,7 @@ SensingConfig make_config()
 
 TEST_CASE("a consumer receives a described, mappable allocation", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 1;
     streams[0].ipc_socket_path = unique_path("sensing_mock", ".sock");
@@ -223,9 +223,9 @@ TEST_CASE("a consumer receives a described, mappable allocation", "[unit][gpu][s
     CHECK(hello.total_bytes >= hello.slot_stride * hello.slot_count);
 }
 
-TEST_CASE("published frames are fresh pixels in order", "[unit][gpu][sensing]")
+TEST_CASE("published frames are whole, in order, and the picture moves", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 0;
     streams[0].ipc_socket_path = unique_path("sensing_mock", ".sock");
@@ -233,31 +233,39 @@ TEST_CASE("published frames are fresh pixels in order", "[unit][gpu][sensing]")
     SensingCamera camera(make_config(), streams, std::make_unique<FrameSink>(streams));
     UpdateLoop loop(camera);
     IpcConsumer consumer(streams[0].ipc_socket_path);
+    REQUIRE(consumer.hello().pitch == static_cast<uint64_t>(consumer.hello().width) * 4);
 
     uint64_t last_sequence = 0;
     uint64_t last_stamp = 0;
-    int64_t last_counter = -1;
+    std::vector<Rgb> colours;
     for (int i = 0; i < 20; ++i)
     {
         ipc::FrameReady frame{};
         REQUIRE(consumer.next_frame(frame, 2000ms));
-        const auto pixels = consumer.read_slot(frame.slot);
-        const int64_t counter = read_counter(pixels, consumer.hello().width);
+        Shot shot;
+        shot.width = consumer.hello().width;
+        shot.height = consumer.hello().height;
+        shot.rgba = consumer.read_slot(frame.slot);
         consumer.release(frame.slot);
 
         CHECK(frame.sequence > last_sequence);
         CHECK(frame.timestamp_ns > last_stamp);
-        // Each published frame is a new capture, never a repeat of the previous one.
-        CHECK(counter > last_counter);
+        CHECK(is_whole(shot)); // not torn between two captures
         last_sequence = frame.sequence;
         last_stamp = frame.timestamp_ns;
-        last_counter = counter;
+        colours.push_back(shot.at(shot.width / 2, shot.height / 2));
     }
+
+    // Twenty frames span several 40 ms GIF frames, so more than one colour appears.
+    bool changed = false;
+    for (const Rgb& c : colours)
+        changed = changed || !near(c, colours[0].r, colours[0].g, colours[0].b, 30);
+    CHECK(changed);
 }
 
 TEST_CASE("a consumer that holds its slots cannot stall the producer", "[unit][gpu][sensing]")
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    FastMock fast;
     std::vector<StreamConfig> streams(1);
     streams[0].sensor_id = 0;
     streams[0].ipc_socket_path = unique_path("sensing_mock", ".sock");

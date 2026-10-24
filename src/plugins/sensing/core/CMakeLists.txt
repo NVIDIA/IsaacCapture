@@ -42,8 +42,20 @@ else()
         FetchContent_MakeAvailable(nlohmann_json)
         isaac_teleop_third_party_scope_end()
     endif()
+    # Decodes the GIFs the mock camera can show. A single public-domain header, pinned to a commit and
+    # checked against its hash, so nothing else of the project is cloned.
+    include(FetchContent)
+    FetchContent_Declare(
+        stb_image
+        URL https://raw.githubusercontent.com/nothings/stb/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5/stb_image.h
+        URL_HASH SHA256=594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3
+        DOWNLOAD_NO_EXTRACT TRUE
+    )
+    FetchContent_MakeAvailable(stb_image)
+
     set(SENSING_BACKEND_SOURCES
         mock_sipl_camera.cpp
+        mock_gif_source.cpp
         mock_platform_config.cpp
         mock_nv12_source.cu
         mock_jetson_encoder.cpp
@@ -106,4 +118,6 @@ if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
     )
 else()
     target_link_libraries(sensing_core PRIVATE nlohmann_json::nlohmann_json)
+    target_include_directories(sensing_core SYSTEM PRIVATE ${stb_image_SOURCE_DIR})
+    target_compile_definitions(sensing_core PRIVATE SENSING_MOCK_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../mock_assets")
 endif()
