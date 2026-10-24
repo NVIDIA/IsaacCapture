@@ -237,6 +237,80 @@ class TestServiceConstruction:
 class TestServiceStop:
     """Tests for CloudXRService.stop()."""
 
+    def test_stop_and_interrupt_do_not_terminate_runtime_concurrently(self, tmp_path):
+        """A lifecycle stop cannot race the render-thread runtime wake."""
+        with mock_service_deps(tmp_path, ready=True):
+            service = CloudXRService()
+            first_entered = threading.Event()
+            second_entered = threading.Event()
+            stop_entered = threading.Event()
+            release_first = threading.Event()
+            calls = []
+
+            def terminate():
+                calls.append(threading.get_ident())
+                if len(calls) == 1:
+                    first_entered.set()
+                    assert release_first.wait(5)
+                else:
+                    second_entered.set()
+
+            with (
+                patch.object(service, "_terminate_runtime", side_effect=terminate),
+                patch.object(service, "_stop_wss_proxy", side_effect=stop_entered.set),
+                patch.object(service, "_restore_signal_handlers"),
+            ):
+                interrupt = threading.Thread(target=service.interrupt_runtime)
+                stop = threading.Thread(target=service.stop)
+                interrupt.start()
+                try:
+                    assert first_entered.wait(5)
+                    stop.start()
+                    assert stop_entered.wait(5)
+                    assert not second_entered.wait(0.25)
+                finally:
+                    release_first.set()
+                    interrupt.join(5)
+                    if stop.ident is not None:
+                        stop.join(5)
+                assert not interrupt.is_alive() and not stop.is_alive()
+                assert second_entered.is_set() and len(calls) == 2
+                assert service._runtime_proc is None
+
+    def test_interrupt_runtime_leaves_proxy_cleanup_to_owner(self, tmp_path):
+        """A render-thread wake must not retire proxy or process-handle ownership."""
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            service = CloudXRService()
+            with (
+                patch.object(service, "_terminate_runtime") as terminate,
+                patch.object(service, "_stop_wss_proxy") as stop_proxy,
+            ):
+                service.interrupt_runtime()
+            terminate.assert_called_once_with()
+            stop_proxy.assert_not_called()
+            assert service._runtime_proc is mocks["proc"]
+            mocks["proc"].poll.return_value = 0
+            service.stop()
+
+    def test_stop_failure_retains_runtime_and_restores_handlers(self, tmp_path):
+        """Failed drain preserves the owner and allows an ordinary cleanup retry."""
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            service = CloudXRService()
+            failure = RuntimeError("owned runtime did not drain")
+            with (
+                patch.object(service, "_terminate_runtime", side_effect=failure),
+                patch.object(service, "_stop_wss_proxy"),
+                patch.object(service, "_restore_signal_handlers") as restore,
+            ):
+                with pytest.raises(RuntimeError) as caught:
+                    service.stop()
+            assert caught.value is failure
+            restore.assert_called_once_with()
+            assert not service._stopping
+            assert service._runtime_proc is mocks["proc"]
+            mocks["proc"].poll.return_value = 0
+            service.stop()
+
     @_posix_only
     def test_stop_terminates_runtime(self, tmp_path):
         """stop() sends SIGTERM to the runtime process group."""

@@ -69,6 +69,7 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
+- [OVXR installation](docs/source/getting_started/ovxr.rst)
 
 
 ### Install & Run Isaac Lab
@@ -82,3 +83,17 @@ To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.git
 The default license is [Apache-2.0](LICENSE.md).
 EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
 Third-party materials may carry their own licenses.
+
+### Separately retrieved optional materials
+
+The optional `isaaccapture[ovxr]` extra retrieves OVXR and its OVRTX/OVStage
+dependencies.
+These packages are downloaded separately, rather than bundled in the Isaac Capture
+wheel. Their licenses apply independently of Isaac Capture's Apache-2.0 license.
+OVXR, OVRTX and OVStage are NVIDIA proprietary software.
+See [package sources and license details](docs/source/getting_started/ovxr.rst#optional-packages-and-licenses).
+Review the applicable package licenses and terms before installing or using these
+optional dependencies.
+
+Existing CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and EULA acceptance.

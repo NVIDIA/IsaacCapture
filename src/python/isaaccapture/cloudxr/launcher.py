@@ -857,6 +857,15 @@ class CloudXRLauncher:
         if self._service is not None:
             self._service.stop()
 
+    def interrupt_runtime(self) -> None:
+        """Wake a blocked OpenXR call using only the runtime this launcher owns.
+
+        Attached services outlive their borrowers and are never interrupted.
+        Full cleanup remains owned by :meth:`stop`.
+        """
+        if self._service is not None:
+            self._service.interrupt_runtime()
+
     def connect_headset(self) -> None:
         """Release deferred OOB automation once the application's XR session is ready.
 

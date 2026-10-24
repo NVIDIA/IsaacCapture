@@ -194,6 +194,7 @@ class CloudXRService:
         self._atexit_registered = False
         self._stopping = False
         self._stop_lock = threading.RLock()
+        self._runtime_stop_lock = threading.Lock()
         self._oob_lock = threading.Lock()
         self._oob_publish_lock = asyncio.Lock()
         self._oob_snapshot: dict | None = None
@@ -404,18 +405,19 @@ class CloudXRService:
                     # A stalled WSS writer must not keep a failed service alive.
                     wss_error = exc
 
-                if self._runtime_proc is not None:
-                    try:
-                        self._terminate_runtime()
-                    except RuntimeError:
-                        logger.warning(
-                            "Failed to cleanly terminate CloudXR runtime process "
-                            "(pid=%s); handle retained for later cleanup",
-                            self._runtime_proc.pid,
-                        )
-                        raise
-                    self._runtime_proc = None
-                    logger.info("CloudXR runtime process stopped")
+                with self._runtime_stop_lock:
+                    if self._runtime_proc is not None:
+                        try:
+                            self._terminate_runtime()
+                        except RuntimeError:
+                            logger.warning(
+                                "Failed to cleanly terminate CloudXR runtime process "
+                                "(pid=%s); handle retained for later cleanup",
+                                self._runtime_proc.pid,
+                            )
+                            raise
+                        self._runtime_proc = None
+                        logger.info("CloudXR runtime process stopped")
                 if self._fatal_error is None and self._oob_snapshot is not None:
                     try:
                         current = json.loads(
@@ -435,6 +437,15 @@ class CloudXRService:
             finally:
                 self._restore_signal_handlers()
                 self._stopping = False
+
+    def interrupt_runtime(self) -> None:
+        """Wake blocked OpenXR calls by stopping only this service's runtime.
+
+        Full proxy and signal-handler cleanup stays with the lifecycle owner.
+        Runtime termination is serialized with :meth:`stop`.
+        """
+        with self._runtime_stop_lock:
+            self._terminate_runtime()
 
     def _persist_oob_status(self, payload: dict) -> None:
         """Atomically persist one status payload from a worker thread."""
