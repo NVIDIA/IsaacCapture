@@ -349,6 +349,10 @@
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -373,13 +377,14 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -388,7 +393,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -451,7 +455,7 @@ examples more readable by focusing on <strong>what</strong> you want to do rathe
 <p>The main component is <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/teleop_session_manager/teleop_session.py" rel="noopener noreferrer" target="_blank">TeleopSession</a>, which manages the complete lifecycle
 of a teleop session. It wraps the lower-level
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_session/cpp/inc/deviceio_session/deviceio_session.hpp" rel="noopener noreferrer" target="_blank">DeviceIOSession</a>
-and <a class="reference internal" href="../device/trackers.html"><span class="doc">device trackers</span></a> so that callers don’t need to
+and <a class="reference internal" href="../device/trackers/index.html"><span class="doc">device trackers</span></a> so that callers don’t need to
 manage them directly:</p>
 <ol class="arabic simple">
 <li><p>Creates and configures trackers (head, hands, controllers)</p></li>
@@ -568,7 +572,7 @@ tracker’s default vendor. Because the vendor travels with the source, it is pa
 of the pipeline: <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> picks it up automatically, and
 <code class="docutils literal notranslate"><span class="pre">get_required_oxr_extensions_from_pipeline(pipeline)</span></code> reports the matching
 OpenXR extensions with no extra argument (important for the external-<code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>
-flow). See <a class="reference internal" href="../device/trackers.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
+flow). See <a class="reference internal" href="../device/trackers/index.html#vendor-selection"><span class="std std-ref">Vendor Selection</span></a> for the underlying DeviceIO mechanism and the
 available vendor ids.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">isaaccapture.deviceio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">deviceio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeting_engine.deviceio_source_nodes</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullBodySource</span>
@@ -1158,7 +1162,7 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
       <br/>
     
   </p>

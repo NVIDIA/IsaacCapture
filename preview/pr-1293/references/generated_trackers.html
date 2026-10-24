@@ -60,7 +60,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Retargeting Interface" href="retargeting/index.html" />
-    <link rel="prev" title="Build System" href="build.html" />
+    <link rel="prev" title="Wheel contents SBOM and license evidence" href="sbom.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -349,6 +349,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -373,13 +377,14 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -388,7 +393,6 @@
 <li class="toctree-l1"><a class="reference internal" href="cloudxr.html">CloudXR Service</a></li>
 <li class="toctree-l1"><a class="reference internal" href="oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
 <li class="toctree-l1"><a class="reference internal" href="haptic_feedback.html">Haptic Feedback</a></li>
-<li class="toctree-l1"><a class="reference internal" href="egocentric_hand_reconstruction.html">Egocentric Hand Reconstruction</a></li>
 </ul>
 </div>
 </nav></div>
@@ -508,12 +512,13 @@ the built module.</p>
 example) declares that description as the tracker’s <code class="docutils literal notranslate"><span class="pre">metadata</span></code> table:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[tracker]]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tactile"</span>
-<span class="n">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileData"</span>
-<span class="n">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileShape"</span>
+<span class="n">table</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileDataArray"</span>
+<span class="n">schema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tactile_array"</span>
+<span class="n">metadata</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"TactileMetadata"</span>
 </pre></div>
 </div>
 <p>The metadata table is the <code class="docutils literal notranslate"><span class="pre">root_type</span></code> of a schema of its own, named after the table in snake case
-(<code class="docutils literal notranslate"><span class="pre">tactile_shape.fbs</span></code>), with no Record wrapper: MCAP records the table itself. Like the data table,
+(<code class="docutils literal notranslate"><span class="pre">tactile_metadata.fbs</span></code>), with no Record wrapper: MCAP records the table itself. Like the data table,
 it needs a hand-written <code class="docutils literal notranslate"><span class="pre">schema/python/*_bindings.h</span></code> before <code class="docutils literal notranslate"><span class="pre">get_metadata()</span></code> can return it to
 Python. Only <code class="docutils literal notranslate"><span class="pre">direction</span> <span class="pre">=</span> <span class="pre">&quot;pull&quot;</span></code> supports <code class="docutils literal notranslate"><span class="pre">metadata</span></code>.</p>
 <ul class="simple">
@@ -683,12 +688,12 @@ correct outcome — the generator exists to remove mechanical duplication, not t
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="build.html"
+       href="sbom.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Build System</p>
+        <p class="prev-next-title">Wheel contents SBOM and license evidence</p>
       </div>
     </a>
     <a class="right-next"
@@ -809,7 +814,7 @@ correct outcome — the generator exists to remove mechanical duplication, not t
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 20, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 24, 2026.
       <br/>
     
   </p>

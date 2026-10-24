@@ -88,6 +88,13 @@ Keep the virtual controller and native pipeline; change the decisions that
 drive them. For example, a pick-and-place script could choose a destination
 region instead of another cube as the placement target.
 
+**Reuse task logic across input sources.** Keep approach, grasp, transfer and
+release decisions separate from input generation. The example's
+:download:`shared task logic <../../../examples/synthetic_xr/python/isaaccapture_examples/synthetic_xr/franka/task_plan.py>`
+uses input-specific adapters for XR controller poses, keyboard events or gamepad
+values. XR uses the WebXR/CloudXR path; the keyboard/gamepad adapters target
+Lab's native input path. See the example README for integration contracts.
+
 .. code-block:: text
 
    Your task logic
