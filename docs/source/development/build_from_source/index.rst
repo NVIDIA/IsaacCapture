@@ -341,7 +341,7 @@ From the repository root:
 
 .. code-block:: bash
 
-   # --seed adds pip, which the pip command below needs.
+   # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
    uv venv --python 3.11 --seed .venv
    source .venv/bin/activate
 
