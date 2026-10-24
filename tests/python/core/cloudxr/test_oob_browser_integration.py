@@ -413,13 +413,33 @@ def _tab_url(cdp_port: int) -> str:
     return next(t["url"] for t in pages if "oobEnable=1" in t["url"])
 
 
+def _evaluate(cdp_port: int, expression: str):
+    """Value of *expression* in the page tab, over its own CDP socket."""
+    with urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json", timeout=5) as resp:
+        tab = next(t for t in json.load(resp) if "oobEnable=1" in t.get("url", ""))
+    with ws_connect(tab["webSocketDebuggerUrl"], max_size=None) as ws:
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": expression, "returnByValue": True},
+                }
+            )
+        )
+        while True:
+            reply = json.loads(ws.recv(timeout=10))
+            if reply.get("id") == 1:
+                return reply["result"]["result"].get("value")
+
+
 @pytest.mark.oob_browser
 @pytest.mark.skipif(
     os.environ.get("RUN_OOB_BROWSER_TESTS") != "1",
     reason="set RUN_OOB_BROWSER_TESTS=1 to run the real-browser token tests",
 )
-class TestFragmentTokenInRealBrowser:
-    """Launch, authenticate, clean the URL; and reject a wrong token.
+class TestOobRealBrowser:
+    """Launch and auth, wrong-token rejection, bookmark timeouts, terminal errors.
 
     Reload persistence is covered by the jest and Playwright tests, not here.
     """
@@ -506,3 +526,37 @@ class TestFragmentTokenInRealBrowser:
                 )
 
             await _wait_for(timed_out, "the client's stream-attach timeout", timeout=20)
+
+    @pytest.mark.parametrize("token", [None], indirect=True)
+    async def test_terminal_client_error_shows_the_error_banner(
+        self, monkeypatch, chrome, static_server, hub, token
+    ):
+        """A server-disconnect-range failure in the mock session reaches the DOM banner."""
+        async with _session(monkeypatch, chrome, static_server, hub):
+
+            async def streaming():
+                return [h for h in await hub() if h["streaming"]]
+
+            await _wait_for(streaming, "the mock session to report streaming")
+            # A code in 0xc0f22300..ff is a server disconnect; a code-less failure is
+            # recoverable and reconnects without ever showing the banner.
+            await asyncio.to_thread(
+                _evaluate,
+                chrome,
+                "window.__mockCloudXRFail('simulated crash', 0xc0f22300)",
+            )
+
+            async def banner():
+                return await asyncio.to_thread(
+                    _evaluate,
+                    chrome,
+                    "(() => { const box = document.getElementById('errorMessageBox');"
+                    " if (!box || !box.classList.contains('show')) return '';"
+                    " if (box.classList.contains('success') ||"
+                    " box.classList.contains('info')) return '';"
+                    " return document.getElementById('errorMessageText')"
+                    "?.textContent?.trim() || ''; })()",
+                )
+
+            text = await _wait_for(banner, "the error banner", timeout=15)
+            assert "simulated crash" in text
