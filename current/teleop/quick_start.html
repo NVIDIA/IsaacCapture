@@ -481,13 +481,26 @@ renamed from <code class="docutils literal notranslate"><span class="pre">isaact
 replaces the legacy package and keeps old imports working temporarily.
 See <a class="reference internal" href="../development/migration.html"><span class="doc">Migrating to isaaccapture</span></a>.</p>
 </div>
-<p>In a new terminal, activate your preferred virtual or conda environment, then install the latest
-stable release from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span>
+<p>Install the package into a virtual environment. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04
+with <code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span>
+<span class="pre">found</span></code>. In a new terminal, from the repository root, create and activate one with
+<a class="reference external" href="https://docs.astral.sh/uv/" rel="noopener noreferrer" target="_blank">uv</a>, which downloads the requested Python if the system lacks it
+(Python 3.11 to 3.13 are supported). If <code class="docutils literal notranslate"><span class="pre">uv</span></code> is missing, install it first as shown in
+<a class="reference internal" href="../development/build_from_source/index.html#one-time-setup"><span class="std std-ref">One time setup</span></a>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># --seed adds pip, so plain pip install also works in this venv.</span>
+uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</pre></div>
+</div>
+<p>To use an existing venv, or a conda environment other than <code class="docutils literal notranslate"><span class="pre">base</span></code> (<code class="docutils literal notranslate"><span class="pre">uv</span></code> treats <code class="docutils literal notranslate"><span class="pre">base</span></code> as a
+system Python), activate it and skip <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">venv</span></code>. Activate the environment again in every new
+terminal you use for the steps below.</p>
+<p>Install the latest stable release from PyPI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span>
 </pre></div>
 </div>
 <p>Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions — shown here with <a class="reference external" href="https://docs.astral.sh/uv/" rel="noopener noreferrer" target="_blank">uv</a>:</p>
+and an opt-in to pre-release versions:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">'isaaccapture[cloudxr,retargeters]~=1.0'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">      </span>--extra-index-url<span class="w"> </span>https://pypi.nvidia.com<span class="w"> </span>--prerelease<span class="o">=</span>allow
 </pre></div>

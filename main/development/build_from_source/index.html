@@ -837,8 +837,15 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
 <h2><a class="toc-backref" href="#id10" role="doc-backlink">4. Install the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package</a><a class="headerlink" href="#install-the-isaaccapture-pip-package" title="Link to this heading">#</a></h2>
 <p>The build writes two wheels to <code class="docutils literal notranslate"><span class="pre">./install/wheels/</span></code>: <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> and the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code>
 transition wheel it depends on. The <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel only installs on the Python version it
-was built for (<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code>, 3.11 by default), so create and activate a venv
-with that version first.</p>
+was built for (<code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">PYTHON_</span><wbr><span class="pre">VERSION</span></code>, 3.11 by default), so install it into a virtual
+environment with that version. Without one, <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> fails on Ubuntu 24.04 with
+<code class="docutils literal notranslate"><span class="pre">externally-managed-environment</span></code> and <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span></code> with <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">virtual</span> <span class="pre">environment</span> <span class="pre">found</span></code>.
+From the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.</span>
+uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.11<span class="w"> </span>--seed<span class="w"> </span>.venv
+<span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</pre></div>
+</div>
 <p>Install it by version. A local build is always <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code>, where <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> is the first two
 numbers of the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file; they also appear in the wheel’s file name. The pin
 selects your build for the venv’s Python, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> cannot replace it.
