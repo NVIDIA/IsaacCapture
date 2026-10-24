@@ -265,7 +265,9 @@ pre-commit install --hook-type commit-msg
 - **`--all-files` means all *tracked* files.** pre-commit enumerates through
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.
-  Stage first (`git add -A`), then run the hooks.
+  Stage first (`git add -A`), then run the hooks; read `git status` first so a local
+  artifact (a `node_modules` symlink, a log) is not staged with it — a symlink whose
+  target exists only on your machine passes locally and fails CI's `check-symlinks`.
 - Format touched Python source with `ruff format` before staging. If the
   pre-commit hook rewrites a file, restage it and rerun the hooks.
 - **REUSE:** files covered by the REUSE hook need **`SPDX-FileCopyrightText`** and **`SPDX-License-Identifier`** in the form the repo already uses (for example the HTML comment block at the top of `README.md` also applies to **`AGENTS.md`** and similar docs).

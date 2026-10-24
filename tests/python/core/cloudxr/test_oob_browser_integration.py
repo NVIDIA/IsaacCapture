@@ -151,7 +151,6 @@ class _Tab:
     def __init__(self, cdp_port: int) -> None:
         self.cdp_port = cdp_port
         self.console: list[str] = []  # console lines and uncaught exceptions
-        self.navigations: list[str] = []  # main-frame URLs, fragment dropped
         self._ws = None
         self._id = 0
 
@@ -179,8 +178,6 @@ class _Tab:
                 "EXCEPTION "
                 + str(detail.get("exception", {}).get("description", detail["text"]))
             )
-        elif method == "Page.frameNavigated" and "parentId" not in params["frame"]:
-            self.navigations.append(params["frame"]["url"].split("#")[0])
 
     def _pump(self):
         while True:
@@ -202,6 +199,8 @@ class _Tab:
             "Target.attachToTarget", {"targetId": target, "flatten": True}
         )["sessionId"]
         self._call("Runtime.enable", session=session)
+        # Keep the Page domain enabled: without it the new-document script below did
+        # not run in the attach-timeout case.
         self._call("Page.enable", session=session)
         if init_script:  # runs in every new document, before the page's own scripts
             self._call(
@@ -436,7 +435,7 @@ def _evaluate(cdp_port: int, expression: str):
 @pytest.mark.oob_browser
 @pytest.mark.skipif(
     os.environ.get("RUN_OOB_BROWSER_TESTS") != "1",
-    reason="set RUN_OOB_BROWSER_TESTS=1 to run the real-browser token tests",
+    reason="set RUN_OOB_BROWSER_TESTS=1 to run the OOB browser tests",
 )
 class TestOobRealBrowser:
     """Launch and auth, wrong-token rejection, bookmark timeouts, terminal errors.
