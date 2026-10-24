@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The OOB control token travels in the URL fragment from the host to the hub.
+"""Real-browser OOB tests: the headset launch path, the hub, and the web client together.
+
+The fragment token travels from the host to the hub, and client timeouts set in the
+bookmark reach the page.
 
 ``build_teleop_url`` -> ``run_oob_connect`` -> :class:`conftest.FakeAdb` ``am start`` ->
 real Chrome opens the exact recorded URL -> the real web client (``npm run
@@ -188,7 +191,7 @@ class _Tab:
             except (ConnectionClosed, OSError):
                 return
 
-    def open(self, url: str) -> None:
+    def open(self, url: str, init_script: str | None = None) -> None:
         with urllib.request.urlopen(
             f"http://127.0.0.1:{self.cdp_port}/json/version", timeout=5
         ) as resp:
@@ -200,6 +203,12 @@ class _Tab:
         )["sessionId"]
         self._call("Runtime.enable", session=session)
         self._call("Page.enable", session=session)
+        if init_script:  # runs in every new document, before the page's own scripts
+            self._call(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": init_script},
+                session=session,
+            )
         self._call("Page.navigate", {"url": url}, session=session)
         self.pump = threading.Thread(target=self._pump, daemon=True)
         self.pump.start()
@@ -212,9 +221,16 @@ class _Tab:
 class _BrowserAdb(FakeAdb):
     """FakeAdb whose accepted ``am start`` opens its exact ``-d`` URL in real Chrome."""
 
-    def __init__(self, tab: _Tab, *, fragment_token: str | None = None) -> None:
+    def __init__(
+        self,
+        tab: _Tab,
+        *,
+        fragment_token: str | None = None,
+        init_script: str | None = None,
+    ) -> None:
         super().__init__()
         self.tab = tab
+        self.init_script = init_script
         self.fragment_token = fragment_token  # fault injection: replaces the real token
         self.launched: list[str] = []
         self.monitor: asyncio.Task | None = None
@@ -237,7 +253,7 @@ class _BrowserAdb(FakeAdb):
                     f"{head}#{route}?{urlencode({'controlToken': self.fragment_token})}"
                 )
             self.launched.append(url)
-            self.tab.open(url)
+            self.tab.open(url, self.init_script)
         return result
 
 
@@ -364,7 +380,9 @@ async def hub(tmp_path, monkeypatch, token):
 
 
 @contextlib.asynccontextmanager
-async def _session(monkeypatch, chrome, static_server, hub, *, fragment_token=None):
+async def _session(
+    monkeypatch, chrome, static_server, hub, *, fragment_token=None, init_script=None
+):
     """Run the real ``run_oob_connect`` against Chrome; yield the adapter, then tear down."""
     monkeypatch.setenv("TELEOP_CLIENT_ROUTE", "/sim/isaaclab")
     monkeypatch.setenv(
@@ -373,7 +391,7 @@ async def _session(monkeypatch, chrome, static_server, hub, *, fragment_token=No
     monkeypatch.setattr(adb_module, "_CDP_LOCAL_PORT", chrome)
 
     tab = _Tab(chrome)
-    adb = _BrowserAdb(tab, fragment_token=fragment_token)
+    adb = _BrowserAdb(tab, fragment_token=fragment_token, init_script=init_script)
     try:
         with patch("subprocess.run", side_effect=adb):
             adb.monitor = await adb_module.run_oob_connect(
@@ -463,3 +481,28 @@ class TestFragmentTokenInRealBrowser:
 
             await _wait_for(rejected, "the client's 1008 auth rejection in the console")
             assert await hub() == []
+
+    @pytest.mark.parametrize("token", [None], indirect=True)
+    async def test_stream_attach_timeout_from_the_bookmark_reaches_the_page(
+        self, monkeypatch, chrome, static_server, hub, token
+    ):
+        """A timeout set in the environment travels in the bookmark and fires."""
+        monkeypatch.setenv("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "3000")
+        async with _session(
+            monkeypatch,
+            chrome,
+            static_server,
+            hub,
+            # Hold the mock session in Connecting so the attach deadline expires.
+            init_script="window.__mockCloudXRConnectDelayMs = 3600000;",
+        ) as adb:
+            (url,) = adb.launched
+            assert parse_qs(urlsplit(url).query)["streamAttachTimeoutMs"] == ["3000"]
+
+            async def timed_out():
+                return any(
+                    "stream did not attach within 3000ms" in line
+                    for line in adb.tab.console
+                )
+
+            await _wait_for(timed_out, "the client's stream-attach timeout", timeout=20)
