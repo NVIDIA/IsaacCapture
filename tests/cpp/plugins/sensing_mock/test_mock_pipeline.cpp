@@ -129,24 +129,27 @@ TEST_CASE("an encoded stream writes Annex-B data and one metadata record per uni
 
     const auto nals = split_annex_b(bytes);
     REQUIRE_FALSE(nals.empty());
-    CHECK(nals[0].type == 0x67); // the stream opens with its parameter sets
-    std::vector<uint32_t> frames;
+    CHECK(nals[0].type == kNalSps); // the stream opens with its parameter sets
+    size_t slices = 0;
     for (const auto& nal : nals)
+        slices += is_slice(nal) ? 1 : 0;
+    REQUIRE(slices >= 10);
+
+    // It is real video: every slice decodes, at the sensor's size.
+    const auto pictures = decode_annex_b(bytes);
+    CHECK(pictures.size() == slices);
+    for (const auto& picture : pictures)
     {
-        if (is_slice(nal))
-            frames.push_back(frame_of(nal));
+        CHECK(picture.width == 320);
+        CHECK(picture.height == 248);
     }
-    REQUIRE(frames.size() >= 10);
-    // The encoder preserves submission order; the mailbox may skip frames but never reorders.
-    for (size_t i = 1; i < frames.size(); ++i)
-        CHECK(frames[i] > frames[i - 1]);
 
     const auto records = records_for(*recorder, 0);
     REQUIRE(records.size() >= 5);
     for (size_t i = 0; i < records.size(); ++i)
         CHECK(records[i].sequence_number == i); // contiguous from zero, one per dispatched unit
     // The final flush folds the warm-up tail into one unit, so units can be fewer than frames.
-    CHECK(records.size() <= frames.size());
+    CHECK(records.size() <= slices);
 }
 
 TEST_CASE("an ipc-only stream records metadata with the sensor's capture TSC", "[unit][gpu][sensing]")

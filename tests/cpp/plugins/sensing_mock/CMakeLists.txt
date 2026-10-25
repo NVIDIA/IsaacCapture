@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Exercises the plugin on the MOCK backend: synthetic frames and a stand-in
+# Exercises the plugin on the MOCK backend: synthetic frames and an NVENC
 # encoder, but the real SensingCamera, sinks, CUDA kernels and CUDA IPC. Needs an
 # NVIDIA GPU, not a Jetson.
 find_package(CUDAToolkit REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec libavutil)
 
 add_executable(sensing_mock_tests
     gif_fixture.hpp
@@ -22,6 +24,7 @@ target_link_libraries(sensing_mock_tests
         sensing::core
         CUDA::cudart
         CUDA::cuda_driver
+        PkgConfig::AVCODEC
 )
 
 target_compile_definitions(sensing_mock_tests PRIVATE

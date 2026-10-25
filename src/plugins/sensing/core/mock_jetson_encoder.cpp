@@ -1,33 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Mock backend for JetsonEncoder: no V4L2 and no NVENC. It runs the real
-// RGBA-to-NV12 kernel and the same device-to-host copy as the V4L2 path, then
-// a worker thread turns each frame into an Annex-B *shaped* unit.
+// Mock backend for JetsonEncoder: real H.264 from the desktop GPU's NVENC, through libavcodec's
+// h264_nvenc, set up as the Jetson V4L2 encoder is (High profile, Level 5.2, VBR with a peak, an IDR
+// every GOP with SPS/PPS in front of it, no B-frames). It runs the real RGBA-to-NV12 kernel and the same
+// device-to-host copy as the V4L2 path, then a worker thread feeds the NV12 buffer to the encoder.
 //
-// The units are NOT decodable video. Each carries start codes, plausible NAL
-// types (SPS/PPS/IDR on the first frame of every GOP, non-IDR slices between)
-// and a payload that records the frame, so sinks and tests can follow a frame
-// through. What it reproduces from the real encoder is the behaviour callers
-// depend on:
-//   * a fixed pool of input buffers, so submit() returns false when the encoder
-//     falls behind rather than blocking;
-//   * warm-up: a unit appears only after more frames have been submitted;
-//   * the capture stamp comes back at microsecond resolution (a timeval), not
-//     the nanoseconds it went in with;
-//   * end_of_stream() returns the remaining tail as one concatenated unit.
-//
-// Environment (read once, at construction):
-//   SENSING_MOCK_ENCODER_LATENCY_MS=N   per-frame encode time (default 0)
-//   SENSING_MOCK_ENCODER_DEPTH=N        frames held back before output (default 2)
+// Reproduced from the real encoder: a fixed pool of input buffers, so submit() returns false when the
+// encoder falls behind rather than blocking; the capture stamp coming back at microsecond resolution (a
+// V4L2 timeval); end_of_stream() returning the remaining tail as one concatenated unit. NVENC's own
+// latency and unit sizes are what they are, and are not those of the Jetson engine.
 
 #include "jetson_encoder.hpp"
 #include "rgba_to_nv12.cuh"
 
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include <libavutil/opt.h>
+}
+
 #include <algorithm>
-#include <chrono>
 #include <condition_variable>
-#include <cstdlib>
+#include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
 #include <mutex>
@@ -51,24 +48,14 @@ void check_cuda(cudaError_t err, const char* what)
         throw std::runtime_error(std::string("mock JetsonEncoder: ") + what + ": " + cudaGetErrorString(err));
 }
 
-uint32_t env_uint(const char* name, uint32_t fallback)
+void check_av(int err, const char* what)
 {
-    const char* value = std::getenv(name);
-    return value ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : fallback;
-}
-
-void append_start_code(std::vector<uint8_t>& out)
-{
-    for (uint8_t byte : { 0, 0, 0, 1 })
-        out.push_back(byte);
-}
-
-/// One byte becomes two printable bytes, so a payload never contains the zero
-/// bytes that would read as a start code.
-void append_hex(std::vector<uint8_t>& out, uint32_t value, int nibbles)
-{
-    for (int shift = (nibbles - 1) * 4; shift >= 0; shift -= 4)
-        out.push_back(static_cast<uint8_t>('A' + ((value >> shift) & 0xF)));
+    if (err < 0)
+    {
+        char text[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(err, text, sizeof(text));
+        throw std::runtime_error(std::string("mock JetsonEncoder: ") + what + ": " + text);
+    }
 }
 
 } // namespace
@@ -78,20 +65,32 @@ struct JetsonEncoder::Impl
     struct Job
     {
         uint32_t buffer = 0;
-        uint32_t frame = 0;
         int64_t timestamp_ns = 0;
     };
 
     explicit Impl(const EncoderConfig& cfg) : config(cfg)
     {
-        gop = config.gop ? config.gop : (config.fps ? config.fps * 5 : 150);
-        latency = std::chrono::milliseconds(env_uint("SENSING_MOCK_ENCODER_LATENCY_MS", 0));
-        depth = env_uint("SENSING_MOCK_ENCODER_DEPTH", 2);
+        const AVCodec* codec = avcodec_find_encoder_by_name("h264_nvenc");
+        if (!codec)
+            throw std::runtime_error("mock JetsonEncoder: libavcodec has no h264_nvenc encoder");
+        context = avcodec_alloc_context3(codec);
+        if (!context)
+            throw std::runtime_error("mock JetsonEncoder: cannot allocate the encoder context");
 
-        check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_y), &d_y_pitch, config.width, config.height),
-                   "cudaMallocPitch(Y)");
-        check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &d_uv_pitch, config.width, config.height / 2),
-                   "cudaMallocPitch(UV)");
+        // A constructor that throws never runs the destructor, so free what was allocated here.
+        try
+        {
+            open(codec);
+            check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_y), &d_y_pitch, config.width, config.height),
+                       "cudaMallocPitch(Y)");
+            check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &d_uv_pitch, config.width, config.height / 2),
+                       "cudaMallocPitch(UV)");
+        }
+        catch (...)
+        {
+            release();
+            throw;
+        }
 
         // Host staging, standing in for the V4L2 output plane's mapped buffers.
         const size_t nv12_bytes = static_cast<size_t>(config.width) * config.height * 3 / 2;
@@ -112,37 +111,89 @@ struct JetsonEncoder::Impl
         wake.notify_all();
         if (worker.joinable())
             worker.join();
-        cudaFree(d_y);
-        cudaFree(d_uv);
+        release();
     }
 
-    std::vector<uint8_t> build_unit(const Job& job, uint32_t checksum) const
+    void open(const AVCodec* codec)
     {
-        std::vector<uint8_t> unit;
-        if (job.frame % gop == 0)
+        const uint32_t fps = config.fps ? config.fps : 30;
+        const uint32_t gop = config.gop ? config.gop : fps * 5;
+        context->width = static_cast<int>(config.width);
+        context->height = static_cast<int>(config.height);
+        context->pix_fmt = AV_PIX_FMT_NV12;
+        // Microseconds, as a V4L2 timeval carries them.
+        context->time_base = { 1, 1'000'000 };
+        context->framerate = { static_cast<int>(fps), 1 };
+        context->bit_rate = config.bitrate_bps;
+        context->gop_size = static_cast<int>(gop);
+        context->max_b_frames = 0;
+        // Parameter sets stay in the stream, in front of every IDR, so a receiver can join mid-stream.
+        context->flags &= ~AV_CODEC_FLAG_GLOBAL_HEADER;
+        av_opt_set(context->priv_data, "profile", "high", 0);
+        av_opt_set(context->priv_data, "level", "5.2", 0);
+        av_opt_set(context->priv_data, "forced-idr", "1", 0);
+        av_opt_set(context->priv_data, "zerolatency", "1", 0);
+        if (config.peak_bitrate_bps > config.bitrate_bps)
         {
-            append_start_code(unit);
-            unit.push_back(0x67); // SPS
-            append_hex(unit, config.width, 4);
-            append_hex(unit, config.height, 4);
-            append_hex(unit, config.fps, 4);
-            append_start_code(unit);
-            unit.push_back(0x68); // PPS
-            append_hex(unit, 0, 2);
+            context->rc_max_rate = config.peak_bitrate_bps;
+            context->rc_buffer_size = static_cast<int>(config.peak_bitrate_bps);
+            av_opt_set(context->priv_data, "rc", "vbr", 0);
         }
-        const bool idr = job.frame % gop == 0;
-        append_start_code(unit);
-        unit.push_back(idr ? 0x65 : 0x41);
-        for (char c : { 'M', 'O', 'C', 'K' })
-            unit.push_back(static_cast<uint8_t>(c));
-        append_hex(unit, job.frame, 8);
-        append_hex(unit, checksum, 8);
+        else
+        {
+            av_opt_set(context->priv_data, "rc", "cbr", 0);
+        }
+        check_av(avcodec_open2(context, codec, nullptr), "cannot open h264_nvenc");
 
-        // Size follows the bitrate budget (capped), so throughput looks plausible.
-        const size_t budget = config.bitrate_bps / 8 / std::max<uint32_t>(config.fps, 1);
-        const size_t target = std::min<size_t>(std::max<size_t>(budget, unit.size()), 64 * 1024);
-        unit.resize(target, 'U');
-        return unit;
+        frame = av_frame_alloc();
+        packet = av_packet_alloc();
+        if (!frame || !packet)
+            throw std::runtime_error("mock JetsonEncoder: cannot allocate a frame or packet");
+        frame->format = AV_PIX_FMT_NV12;
+        frame->width = context->width;
+        frame->height = context->height;
+        check_av(av_frame_get_buffer(frame, 0), "cannot allocate the input frame");
+    }
+
+    void release()
+    {
+        cudaFree(d_y);
+        cudaFree(d_uv);
+        av_packet_free(&packet);
+        av_frame_free(&frame);
+        avcodec_free_context(&context);
+    }
+
+    // Moves every packet the encoder has ready into `out`. Worker thread, or end_of_stream() once the
+    // worker is idle.
+    void collect(std::deque<EncodedUnit>& out)
+    {
+        for (;;)
+        {
+            const int err = avcodec_receive_packet(context, packet);
+            if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
+                return;
+            check_av(err, "avcodec_receive_packet");
+            EncodedUnit unit;
+            unit.data.assign(packet->data, packet->data + packet->size);
+            unit.timestamp_ns = packet->pts * 1000;
+            av_packet_unref(packet);
+            out.push_back(std::move(unit));
+        }
+    }
+
+    void encode(const Job& job)
+    {
+        check_av(av_frame_make_writable(frame), "av_frame_make_writable");
+        const uint8_t* nv12 = host_buffers[job.buffer].data();
+        const size_t width = config.width;
+        for (uint32_t row = 0; row < config.height; ++row)
+            std::memcpy(frame->data[0] + static_cast<size_t>(row) * frame->linesize[0], nv12 + row * width, width);
+        const uint8_t* uv = nv12 + width * config.height;
+        for (uint32_t row = 0; row < config.height / 2; ++row)
+            std::memcpy(frame->data[1] + static_cast<size_t>(row) * frame->linesize[1], uv + row * width, width);
+        frame->pts = job.timestamp_ns / 1000;
+        check_av(avcodec_send_frame(context, frame), "avcodec_send_frame");
     }
 
     void run()
@@ -161,29 +212,25 @@ struct JetsonEncoder::Impl
                 busy = true;
             }
 
-            if (latency.count() > 0)
-                std::this_thread::sleep_for(latency);
-
-            // Cheap content fingerprint: a sparse sum over the NV12 bytes.
-            uint32_t checksum = 0;
-            const auto& nv12 = host_buffers[job.buffer];
-            for (size_t i = 0; i < nv12.size(); i += 97)
-                checksum = checksum * 31u + nv12[i];
-
-            EncodedUnit unit;
-            unit.data = build_unit(job, checksum);
-            // A V4L2 timeval holds microseconds; the stamp does not survive finer.
-            unit.timestamp_ns = (job.timestamp_ns / 1000) * 1000;
+            std::deque<EncodedUnit> produced;
+            std::string error;
+            try
+            {
+                encode(job);
+                collect(produced);
+            }
+            catch (const std::exception& e)
+            {
+                error = e.what();
+            }
 
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 free_buffers.push_back(job.buffer);
-                held.push_back(std::move(unit));
-                while (held.size() > depth)
-                {
-                    ready.push_back(std::move(held.front()));
-                    held.pop_front();
-                }
+                for (auto& unit : produced)
+                    ready.push_back(std::move(unit));
+                if (!error.empty() && failure.empty())
+                    failure = error;
                 busy = false;
             }
             idle.notify_all();
@@ -191,9 +238,10 @@ struct JetsonEncoder::Impl
     }
 
     EncoderConfig config;
-    uint32_t gop = 150;
-    uint32_t depth = 2;
-    std::chrono::milliseconds latency{ 0 };
+
+    AVCodecContext* context = nullptr;
+    AVFrame* frame = nullptr;
+    AVPacket* packet = nullptr;
 
     uint8_t* d_y = nullptr;
     uint8_t* d_uv = nullptr;
@@ -201,17 +249,17 @@ struct JetsonEncoder::Impl
     size_t d_uv_pitch = 0;
 
     std::vector<std::vector<uint8_t>> host_buffers;
-    uint32_t submitted = 0;
 
     std::mutex mutex;
     std::condition_variable wake;
     std::condition_variable idle;
     std::deque<uint32_t> free_buffers;
     std::deque<Job> jobs;
-    std::deque<EncodedUnit> held; // encoded, still inside the warm-up window
     std::deque<EncodedUnit> ready; // what poll() hands out
+    std::string failure;
     bool busy = false;
     bool closing = false;
+    bool flushed = false;
     std::thread worker;
 };
 
@@ -234,6 +282,8 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     uint32_t buffer = 0;
     {
         std::lock_guard<std::mutex> lock(impl.mutex);
+        if (!impl.failure.empty())
+            throw std::runtime_error(impl.failure);
         if (impl.free_buffers.empty())
             return false; // encoder still busy; drop this frame rather than block
         buffer = impl.free_buffers.front();
@@ -256,7 +306,7 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
 
     {
         std::lock_guard<std::mutex> lock(impl.mutex);
-        impl.jobs.push_back({ buffer, impl.submitted++, timestamp_ns });
+        impl.jobs.push_back({ buffer, timestamp_ns });
     }
     impl.wake.notify_one();
     return true;
@@ -265,6 +315,8 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
 EncodedUnit JetsonEncoder::poll()
 {
     std::lock_guard<std::mutex> lock(m_impl->mutex);
+    if (!m_impl->failure.empty())
+        throw std::runtime_error(m_impl->failure);
     if (m_impl->ready.empty())
         return {};
     auto out = std::move(m_impl->ready.front());
@@ -277,19 +329,24 @@ EncodedUnit JetsonEncoder::end_of_stream()
     auto& impl = *m_impl;
     std::unique_lock<std::mutex> lock(impl.mutex);
     impl.idle.wait(lock, [&] { return impl.jobs.empty() && !impl.busy; });
+    if (!impl.failure.empty())
+        throw std::runtime_error(impl.failure);
 
-    // The warm-up window empties at EOS, then the tail is concatenated, so it
-    // carries the stamp of the last unit in it.
+    if (impl.flushed)
+        return {};
+    impl.flushed = true;
+
+    // Flush the encoder, then concatenate what is left, so the tail carries the stamp of the last unit.
+    check_av(avcodec_send_frame(impl.context, nullptr), "avcodec_send_frame(flush)");
+    impl.collect(impl.ready);
+
     EncodedUnit out;
-    for (auto* queue : { &impl.ready, &impl.held })
+    for (auto& chunk : impl.ready)
     {
-        for (auto& chunk : *queue)
-        {
-            out.data.insert(out.data.end(), chunk.data.begin(), chunk.data.end());
-            out.timestamp_ns = chunk.timestamp_ns;
-        }
-        queue->clear();
+        out.data.insert(out.data.end(), chunk.data.begin(), chunk.data.end());
+        out.timestamp_ns = chunk.timestamp_ns;
     }
+    impl.ready.clear();
     return out;
 }
 
