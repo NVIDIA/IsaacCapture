@@ -199,11 +199,47 @@ message(STATUS "SENSING plugin: V4L2=${V4L2_LIBRARY}")
 endif()
 
 # ==============================================================================
+# LiveKit video output (optional)
+# ==============================================================================
+# Publishes each selected sensor as a LiveKit camera track. Off by default so a build that does not
+# stream needs nothing new. The SDK is a prebuilt package (headers and shared libraries), pinned to a
+# release and checked against its hash; point LIVEKIT_SDK_DIR at an unpacked copy to use another.
+option(SENSING_LIVEKIT "Add LiveKit video streaming to the SENSING plugin (downloads the LiveKit C++ SDK)" OFF)
+if(SENSING_LIVEKIT)
+    if(NOT LIVEKIT_SDK_DIR)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+            set(_livekit_arch "arm64")
+            set(_livekit_hash "e3a97f71943c0bf9fa4ebd70927ca2906b31dcd6c14b42312b1225b4b868e4ad")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            set(_livekit_arch "x64")
+            set(_livekit_hash "5e0feb2e519c6ff131dd2d1c45149115057ae4e21a324fdb249e1789d5614e7b")
+        else()
+            message(FATAL_ERROR "No prebuilt LiveKit SDK for ${CMAKE_SYSTEM_PROCESSOR}; set LIVEKIT_SDK_DIR.")
+        endif()
+        include(FetchContent)
+        FetchContent_Declare(
+            livekit_sdk
+            URL https://github.com/livekit/client-sdk-cpp/releases/download/v1.12.4/livekit-sdk-ubuntu-24.04-${_livekit_arch}-1.12.4.tar.gz
+            URL_HASH SHA256=${_livekit_hash}
+        )
+        FetchContent_MakeAvailable(livekit_sdk)
+        set(LIVEKIT_SDK_DIR "${livekit_sdk_SOURCE_DIR}")
+    endif()
+    find_package(LiveKit CONFIG REQUIRED PATHS "${LIVEKIT_SDK_DIR}" NO_DEFAULT_PATH)
+    message(STATUS "SENSING plugin: LiveKit SDK=${LIVEKIT_SDK_DIR}")
+    # Cache, so tests/ (a sibling directory) can find the same SDK.
+    set(SENSING_LIVEKIT_SDK_DIR "${LIVEKIT_SDK_DIR}" CACHE INTERNAL "")
+endif()
+
+# ==============================================================================
 # Targets
 # ==============================================================================
 message(STATUS "Building SENSING camera plugin")
 
 add_subdirectory(cuda_ipc)
+if(SENSING_LIVEKIT)
+    add_subdirectory(livekit)
+endif()
 add_subdirectory(core)
 add_subdirectory(app)
 add_subdirectory(tools)

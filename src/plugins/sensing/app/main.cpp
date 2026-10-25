@@ -11,8 +11,10 @@
 #include <climits>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -67,6 +69,10 @@ static StreamConfig parse_stream_arg(const std::string& arg)
         {
             cfg.ipc_socket_path = val;
         }
+        else if (key == "livekit")
+        {
+            cfg.livekit_track = val;
+        }
         else
         {
             throw std::runtime_error("Unknown key in --add-stream: '" + key + "'");
@@ -75,8 +81,8 @@ static StreamConfig parse_stream_arg(const std::string& arg)
 
     if (!has_sensor)
         throw std::runtime_error("--add-stream requires sensor=<sipl-pipeline-index>");
-    if (cfg.output_path.empty() && cfg.ipc_socket_path.empty())
-        throw std::runtime_error("--add-stream requires output=<path> or ipc=<socket>, or both");
+    if (cfg.output_path.empty() && cfg.ipc_socket_path.empty() && cfg.livekit_track.empty())
+        throw std::runtime_error("--add-stream requires at least one of output=<path>, ipc=<socket>, livekit=<track>");
 
     return cfg;
 }
@@ -123,13 +129,15 @@ void print_usage(const char* program_name)
 {
     std::cout << "Usage: " << program_name << " [options] --add-stream ...\n"
               << "\nStream Configuration (repeatable):\n"
-              << "  --add-stream sensor=<id>[,output=<path>][,ipc=<socket>]\n"
+              << "  --add-stream sensor=<id>[,output=<path>][,ipc=<socket>][,livekit=<track>]\n"
               << "      sensor: SIPL pipeline index, as --list-sensors reports it. This is NOT\n"
               << "              the GMSL link index or the JSON sensorInfo.id.\n"
               << "      output: file path for this stream's H.264 data\n"
               << "      ipc:    Unix socket serving raw RGBA8 frames as CUDA memory to\n"
               << "              another process (camera_viz `type: cuda_ipc`). No encode.\n"
-              << "      At least one of output/ipc is required; both may be given.\n"
+              << "      livekit: name of the LiveKit camera track carrying this sensor (needs the\n"
+              << "              --livekit-* options below and a build with -DSENSING_LIVEKIT=ON).\n"
+              << "      At least one of output/ipc/livekit is required; any combination may be given.\n"
               << "\nPlatform (resolution and frame rate come from here, not from flags):\n"
               << "  --platform-config=PATH  platform JSON (default: configs/shw5g.json beside this\n"
               << "                          binary; point it at the vendor package to test a\n"
@@ -142,6 +150,14 @@ void print_usage(const char* program_name)
               << "  --bitrate=N         H.264 average bitrate in bps (default: 40000000)\n"
               << "  --peak-bitrate=N    VBR ceiling in bps; 0 selects CBR (default: 60000000)\n"
               << "  --gop=N             IDR period in frames (default: fps*5)\n"
+              << "\nLiveKit (for livekit= streams):\n"
+              << "  --livekit-url=URL         server, e.g. wss://livekit.example.org\n"
+              << "  --livekit-token-file=PATH file holding the join token; it names the room and the\n"
+              << "                            participant, and must allow publishing. Never printed.\n"
+              << "  --livekit-fps=N           publication rate cap (default: 30)\n"
+              << "  --livekit-scale-div=N     reduce every track by this integer divisor, e.g. 2 gives\n"
+              << "                            1280x992 from 2560x1984; must divide exactly (default: 1)\n"
+              << "  The track is H.264 and its bitrate ceiling is --bitrate.\n"
               << "\nGeneral:\n"
               << "  --gpu-id=N          CUDA device index (default: 0)\n"
               << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
@@ -152,7 +168,10 @@ void print_usage(const char* program_name)
               << "\nExamples:\n"
               << "  " << program_name << " --list-sensors\n"
               << "  " << program_name << " --add-stream=sensor=0,ipc=/tmp/sensing0.sock \\\n"
-              << "      --add-stream=sensor=1,ipc=/tmp/sensing1.sock\n";
+              << "      --add-stream=sensor=1,ipc=/tmp/sensing1.sock\n"
+              << "  " << program_name << " --livekit-url=wss://livekit.example.org \\\n"
+              << "      --livekit-token-file=join.token --add-stream=sensor=0,livekit=sensing-left \\\n"
+              << "      --add-stream=sensor=1,livekit=sensing-right\n";
 }
 
 // =============================================================================
@@ -165,6 +184,7 @@ try
     SensingConfig camera_config;
     std::map<uint32_t, StreamConfig> stream_map;
     std::string mcap_filename;
+    std::string livekit_token_file;
     bool list_sensors = false;
 
     for (int i = 1; i < argc; ++i)
@@ -206,6 +226,22 @@ try
         else if (arg == "--list-sensors")
         {
             list_sensors = true;
+        }
+        else if (arg.find("--livekit-url=") == 0)
+        {
+            camera_config.livekit.url = arg.substr(14);
+        }
+        else if (arg.find("--livekit-token-file=") == 0)
+        {
+            livekit_token_file = arg.substr(21);
+        }
+        else if (arg.find("--livekit-fps=") == 0)
+        {
+            camera_config.livekit.fps = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+        }
+        else if (arg.find("--livekit-scale-div=") == 0)
+        {
+            camera_config.livekit.scale_div = static_cast<uint32_t>(std::stoul(arg.substr(20)));
         }
         else if (arg.find("--bitrate=") == 0)
         {
@@ -294,6 +330,37 @@ try
     for (auto& [_, cfg] : stream_map)
     {
         stream_configs.push_back(std::move(cfg));
+    }
+
+    // LiveKit: check the settings that need no hardware or network before anything is opened.
+    const bool uses_livekit = std::any_of(
+        stream_configs.begin(), stream_configs.end(), [](const StreamConfig& s) { return !s.livekit_track.empty(); });
+    if (uses_livekit)
+    {
+        std::set<std::string> track_names;
+        for (const auto& s : stream_configs)
+        {
+            if (!s.livekit_track.empty() && !track_names.insert(s.livekit_track).second)
+                throw std::runtime_error("LiveKit track name '" + s.livekit_track + "' is used twice");
+        }
+        if (camera_config.livekit.url.empty() || livekit_token_file.empty())
+            throw std::runtime_error("livekit= streams need --livekit-url and --livekit-token-file");
+        if (camera_config.livekit.fps == 0)
+            throw std::runtime_error("--livekit-fps must be at least 1");
+
+        // The token is read from a file so it never appears in a process listing, and is not printed.
+        std::ifstream token_file(livekit_token_file);
+        if (!token_file)
+            throw std::runtime_error("cannot read --livekit-token-file " + livekit_token_file);
+        std::getline(token_file, camera_config.livekit.token);
+        const auto last = camera_config.livekit.token.find_last_not_of(" \t\r\n");
+        camera_config.livekit.token.erase(last == std::string::npos ? 0 : last + 1);
+        if (camera_config.livekit.token.empty())
+            throw std::runtime_error("--livekit-token-file " + livekit_token_file + " is empty");
+    }
+    else if (!camera_config.livekit.url.empty() || !livekit_token_file.empty())
+    {
+        throw std::runtime_error("--livekit-* options were given but no stream has livekit=<track>");
     }
 
     // This process captures and never renders, but EGL is on its critical path:

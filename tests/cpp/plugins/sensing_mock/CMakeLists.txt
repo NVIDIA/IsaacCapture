@@ -33,4 +33,25 @@ target_compile_definitions(sensing_mock_tests PRIVATE
     SENSING_BUNDLED_GIF_DIR="${CMAKE_SOURCE_DIR}/src/plugins/sensing/mock_assets"
 )
 
+# LiveKit streaming tests. The unit tests use a fake track; the integration tests also need a
+# livekit-server binary, named by LIVEKIT_SERVER, and skip without it.
+if(SENSING_LIVEKIT)
+    find_package(LiveKit CONFIG REQUIRED PATHS "${SENSING_LIVEKIT_SDK_DIR}" NO_DEFAULT_PATH)
+    find_package(OpenSSL REQUIRED)
+    target_sources(sensing_mock_tests PRIVATE
+        livekit_test_support.hpp
+        test_livekit_cli.cpp
+        test_livekit_output.cpp
+        test_livekit_stream.cpp
+    )
+    target_link_libraries(sensing_mock_tests
+        PRIVATE
+            sensing::livekit
+            LiveKit::livekit
+            OpenSSL::Crypto
+    )    # test_livekit_cli.cpp runs the plugin binary, so it has to be built first.
+    add_dependencies(sensing_mock_tests camera_plugin_sensing)
+    target_compile_definitions(sensing_mock_tests PRIVATE SENSING_PLUGIN_BINARY="$<TARGET_FILE:camera_plugin_sensing>")
+endif()
+
 catch_discover_tests(sensing_mock_tests ADD_TAGS_AS_LABELS)
