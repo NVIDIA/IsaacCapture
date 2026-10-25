@@ -117,7 +117,11 @@ if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
             ${V4L2_LIBRARY}
     )
 else()
-    target_link_libraries(sensing_core PRIVATE nlohmann_json::nlohmann_json)
+    # The mock encoder produces real H.264 with libavcodec's h264_nvenc (development package:
+    # libavcodec-dev; the desktop driver supplies NVENC).
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec libavutil)
+    target_link_libraries(sensing_core PRIVATE nlohmann_json::nlohmann_json PkgConfig::AVCODEC)
     target_include_directories(sensing_core SYSTEM PRIVATE ${stb_image_SOURCE_DIR})
     target_compile_definitions(sensing_core PRIVATE SENSING_MOCK_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../mock_assets")
 endif()

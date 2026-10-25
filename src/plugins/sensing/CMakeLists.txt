@@ -6,7 +6,7 @@
 # ==============================================================================
 # Two backends sit behind SiplCamera and JetsonEncoder:
 #   JETSON  SIPL capture and the V4L2 M2M encoder, which exist only on L4T.
-#   MOCK    synthetic frames and a stand-in encoder, for any machine with an
+#   MOCK    synthetic frames and an NVENC encoder (libavcodec), for any machine with an
 #           NVIDIA GPU and the CUDA toolkit. Everything above those two classes
 #           (SensingCamera, sinks, CUDA IPC, the app) is the same code.
 # SENSING_BACKEND=AUTO picks JETSON on aarch64 and MOCK elsewhere.

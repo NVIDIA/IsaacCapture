@@ -9,6 +9,12 @@
 #include <core/mock_test_hooks.hpp>
 #include <core/sipl_camera.hpp>
 
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavutil/frame.h>
+}
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -216,54 +222,117 @@ inline Shot grab(plugins::sensing::SiplCamera& camera, uint32_t sensor)
     return shot;
 }
 
-/// One NAL unit of the mock encoder's Annex-B output.
+/// One NAL unit of an Annex-B stream. `type` is the nal_unit_type (7 SPS, 8 PPS, 5 IDR slice, 1 other
+/// slice); `payload` follows the one-byte NAL header.
 struct Nal
 {
     uint8_t type = 0;
     std::vector<uint8_t> payload;
 };
 
+constexpr uint8_t kNalSlice = 1;
+constexpr uint8_t kNalIdr = 5;
+constexpr uint8_t kNalSei = 6;
+constexpr uint8_t kNalSps = 7;
+constexpr uint8_t kNalPps = 8;
+
 inline std::vector<Nal> split_annex_b(const std::vector<uint8_t>& data)
 {
-    std::vector<Nal> nals;
-    for (size_t i = 0; i + 4 < data.size();)
+    // Offsets just past each 00 00 01 start code.
+    std::vector<size_t> starts;
+    for (size_t i = 0; i + 3 <= data.size(); ++i)
     {
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1)
-        {
-            Nal nal;
-            nal.type = data[i + 4];
-            size_t end = i + 5;
-            while (end + 3 < data.size() &&
-                   !(data[end] == 0 && data[end + 1] == 0 && data[end + 2] == 0 && data[end + 3] == 1))
-                ++end;
-            if (end + 3 >= data.size())
-                end = data.size();
-            nal.payload.assign(data.begin() + i + 5, data.begin() + end);
-            nals.push_back(std::move(nal));
-            i = end;
-        }
-        else
-        {
-            ++i;
-        }
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
+            starts.push_back(i + 3);
+    }
+    std::vector<Nal> nals;
+    for (size_t n = 0; n < starts.size(); ++n)
+    {
+        size_t end = n + 1 < starts.size() ? starts[n + 1] - 3 : data.size();
+        while (end > starts[n] && data[end - 1] == 0 && n + 1 < starts.size())
+            --end; // the zero of a four-byte start code
+        if (starts[n] >= end)
+            continue;
+        Nal nal;
+        nal.type = data[starts[n]] & 0x1F;
+        nal.payload.assign(data.begin() + starts[n] + 1, data.begin() + end);
+        nals.push_back(std::move(nal));
     }
     return nals;
 }
 
-/// The frame number the mock records after the "MOCK" magic, as 8 hex-like letters.
-inline uint32_t frame_of(const Nal& slice)
-{
-    REQUIRE(slice.payload.size() >= 12);
-    REQUIRE(std::string(slice.payload.begin(), slice.payload.begin() + 4) == "MOCK");
-    uint32_t value = 0;
-    for (int i = 0; i < 8; ++i)
-        value = (value << 4) | static_cast<uint32_t>(slice.payload[4 + i] - 'A');
-    return value;
-}
-
 inline bool is_slice(const Nal& nal)
 {
-    return nal.type == 0x65 || nal.type == 0x41;
+    return nal.type == kNalSlice || nal.type == kNalIdr;
+}
+
+/// One decoded picture: its size and the mean of its luma plane.
+struct Decoded
+{
+    int width = 0;
+    int height = 0;
+    double luma = 0;
+};
+
+/// Decodes an Annex-B stream with libavcodec's software H.264 decoder, in output order.
+inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& data)
+{
+    const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    REQUIRE(codec != nullptr);
+    AVCodecContext* context = avcodec_alloc_context3(codec);
+    AVCodecParserContext* parser = av_parser_init(AV_CODEC_ID_H264);
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    REQUIRE((context && parser && packet && frame));
+    REQUIRE(avcodec_open2(context, codec, nullptr) == 0);
+
+    std::vector<Decoded> out;
+    auto drain = [&]
+    {
+        while (avcodec_receive_frame(context, frame) == 0)
+        {
+            Decoded picture;
+            picture.width = frame->width;
+            picture.height = frame->height;
+            double sum = 0;
+            for (int y = 0; y < frame->height; ++y)
+            {
+                const uint8_t* row = frame->data[0] + static_cast<size_t>(y) * frame->linesize[0];
+                for (int x = 0; x < frame->width; ++x)
+                    sum += row[x];
+            }
+            picture.luma = sum / (static_cast<double>(frame->width) * frame->height);
+            out.push_back(picture);
+        }
+    };
+    size_t offset = 0;
+    while (offset < data.size())
+    {
+        const int used = av_parser_parse2(parser, context, &packet->data, &packet->size, data.data() + offset,
+                                          static_cast<int>(data.size() - offset), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        REQUIRE(used >= 0);
+        offset += static_cast<size_t>(used);
+        if (packet->size > 0)
+        {
+            REQUIRE(avcodec_send_packet(context, packet) == 0);
+            drain();
+        }
+    }
+    // The parser holds the last NAL until it sees what follows; flush it.
+    av_parser_parse2(parser, context, &packet->data, &packet->size, nullptr, 0, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+    if (packet->size > 0)
+    {
+        REQUIRE(avcodec_send_packet(context, packet) == 0);
+        drain();
+    }
+    avcodec_send_packet(context, nullptr);
+    drain();
+
+    av_frame_free(&frame);
+    av_packet_free(&packet);
+    av_parser_close(parser);
+    avcodec_free_context(&context);
+    return out;
 }
 
 } // namespace sensing_test

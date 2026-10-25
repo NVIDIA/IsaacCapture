@@ -53,7 +53,7 @@ SIPL drivers.
 | Value | Capture | Encoder | Needs |
 | --- | --- | --- | --- |
 | `JETSON` | SIPL | V4L2 NVENC | L4T SDKs |
-| `MOCK` | animated GIF frames | stand-in | NVIDIA GPU, CUDA toolkit, EGL headers (`libegl-dev`) |
+| `MOCK` | animated GIF frames | NVENC through libavcodec | NVIDIA GPU, CUDA toolkit, EGL headers (`libegl-dev`), `libavcodec-dev` |
 | `AUTO` (default) | `JETSON` on aarch64, `MOCK` elsewhere | | |
 
 ```bash
@@ -68,11 +68,12 @@ resolves `--list-sensors` and the link masks from the vendor JSON, builds a synt
 surface from a GIF frame, and runs the real conversion on it. Both sensors share a capture
 TSC, as the rig's fsync does.
 
-The mock encoder's output is **not decodable video**: Annex-B start codes, SPS/PPS/IDR and
-non-IDR NAL types, and a payload naming the frame. It reproduces what callers depend on: a
-fixed pool of input buffers that makes `submit()` refuse frames when the encoder falls behind,
-a warm-up delay before the first unit, and capture stamps that come back at microsecond
-resolution.
+The mock encoder produces real, decodable H.264 on the desktop GPU's NVENC (libavcodec's `h264_nvenc`),
+configured as the Jetson encoder is: High profile, Level 5.2, VBR with a peak, an IDR every GOP with
+SPS/PPS in front of it, no B-frames. It reproduces what callers depend on: a fixed pool of input
+buffers that makes `submit()` refuse frames when the encoder falls behind, capture stamps that come
+back at microsecond resolution, and the tail returned as one unit at end of stream. Bitstream bytes,
+unit sizes and latency are NVENC's, not the Jetson engine's.
 
 Every sensor shows an animated GIF chosen by its **module name** (never its pipeline index, which the
 link mask renumbers), from the bundled Animated Noto Emoji in [`mock_assets/`](mock_assets/) (CC BY 4.0;
@@ -97,8 +98,6 @@ Environment, read once at construction:
 | `SENSING_MOCK_FPS` | override the platform config's frame rate |
 | `SENSING_MOCK_SCALE_DIV` | divide the reported width and height (kept even); useful for tests |
 | `SENSING_MOCK_FAIL_AFTER` | every sensor fails after N frames, as a link drop would |
-| `SENSING_MOCK_ENCODER_LATENCY_MS` | per-frame encode time |
-| `SENSING_MOCK_ENCODER_DEPTH` | frames held back before the first unit (default 2) |
 
 A pass on the mock says nothing about SIPL, the ISP output format, NvSci buffer lifetime, the
 V4L2 encoder or real frame rates. Those are only checked on an Orin with SENSING cameras.
