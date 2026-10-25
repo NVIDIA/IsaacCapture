@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace plugins
@@ -11,9 +13,14 @@ namespace plugins
 namespace sensing
 {
 
-/// What accompanies one published frame.
-struct VideoFrameInfo
+/// One complete encoded H.264 access unit, with what accompanies it.
+struct EncodedVideoFrame
 {
+    /// Annex-B bytes: an IDR carries its SPS/PPS in front of it.
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    /// The unit is an IDR, decodable on its own.
+    bool keyframe = false;
     /// CLOCK_MONOTONIC microseconds at capture: the host timeline, not sensor time.
     uint64_t timestamp_us = 0;
     /// The camera's own frame sequence.
@@ -23,29 +30,39 @@ struct VideoFrameInfo
     uint64_t capture_tsc_ns = 0;
 };
 
+/// What the receiving side asked of the encoder since the last call.
+struct EncoderFeedback
+{
+    /// The next frame must be an IDR with its parameter sets.
+    bool keyframe_requested = false;
+    /// Latest bitrate target from congestion control, if one was requested.
+    std::optional<uint32_t> target_bitrate_bps;
+};
+
 /**
- * @brief One published video track, as the camera side sees it.
+ * @brief One published video track that carries frames already encoded by hardware.
  *
- * The caller fills frame_buffer() with a frame and then submits it. A single thread must drive one
- * sink: the buffer is reused for every frame.
+ * The SDK forwards each access unit without encoding it again. A single thread must drive one sink.
  */
 class VideoTrackSink
 {
 public:
     virtual ~VideoTrackSink() = default;
 
+    /// Size of the encoded pictures this track was published for.
     virtual uint32_t width() const = 0;
     virtual uint32_t height() const = 0;
 
-    /// Tightly packed NV12: width*height luma, then width*height/2 interleaved chroma, BT.601 limited range.
-    virtual uint8_t* frame_buffer() = 0;
+    /// Publishes one access unit; the bytes are copied before this returns.
+    /// @return false when the SDK did not accept the frame, which can break the reference chain:
+    ///         the caller must follow with a keyframe.
+    /// @throws std::runtime_error when the frame cannot be published at all.
+    virtual bool submit(const EncodedVideoFrame& frame) = 0;
 
-    /// Publishes the current contents of frame_buffer(). Returns once the SDK has copied it, so the
-    /// buffer may be rewritten immediately.
-    /// @throws std::runtime_error when the frame cannot be published.
-    virtual void submit(const VideoFrameInfo& info) = 0;
+    /// Keyframe and rate requests accumulated since the previous call.
+    virtual EncoderFeedback take_feedback() = 0;
 
-    /// One line naming the encoder in use and its achieved size and rate, or empty if unavailable.
+    /// One line naming the transport's view of the stream, or empty if unavailable.
     virtual std::string describe() = 0;
 };
 

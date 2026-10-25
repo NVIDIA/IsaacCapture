@@ -116,39 +116,60 @@ camera_plugin_sensing --livekit-url=wss://livekit.example.org --livekit-token-fi
     --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right
 ```
 
+- **Hardware-encoded passthrough.** Each track carries H.264 that this machine's hardware encoder
+  produced, published through the SDK's pre-encoded source (`EncodedVideoSource`, encoder backend
+  `PreEncoded`): the SDK forwards each access unit and does not encode. The encoder is the plugin's
+  `JetsonEncoder` class, so it is the V4L2 engine on a Jetson and NVENC through libavcodec on the
+  mock. There is no software encoder and no fallback: if the hardware encoder cannot start,
+  construction fails. The status line names the encoder and the passthrough mode.
 - **Token.** The operator supplies it in a file, never on the command line. It names the room and
   the participant and must allow publishing; viewers use a separate subscribe-only token. It is not
   printed.
-- **Tracks.** One H.264 track per sensor, no simulcast, bitrate ceiling `--bitrate`. The default size
-  is the sensor's configured size. `--livekit-scale-div=N` reduces every track by an integer divisor
-  that must divide the sensor exactly and leave even sizes (2 gives 1280x992 from 2560x1984); it is
-  refused otherwise, never rounded or stretched. `--livekit-fps` caps the publication rate on the
-  capture clock (default 30). When bandwidth is short the encoder lowers the frame rate, not the
-  size.
+- **Tracks.** One H.264 track per sensor, no simulcast. The default size is the sensor's configured
+  size. `--livekit-scale-div=N` reduces every track by an integer divisor that must divide the
+  sensor exactly and leave even sizes (2 gives 1280x992 from 2560x1984); it is refused otherwise,
+  never rounded or stretched, and the encoder runs at the reduced size. `--livekit-fps` caps the
+  publication rate on the capture clock (default 30). `--livekit-bitrate` sets the encoder's target
+  (default 8 Mbit/s; the VBR ceiling is half as much again), unlike the recording's `--bitrate`.
 - **Frames.** `update()` takes a GPU snapshot of the camera frame and finishes that copy before
   returning, because the camera may rewrite its slot at the second following poll. A worker per
-  sensor then reduces it if asked, converts it with the existing RGBA-to-NV12 kernel (BT.601 limited
-  range, which is what the video pipeline decodes NV12 as), copies it to the host and submits it. A
-  slow network drops frames and cannot hold up capture or the other sensor: one snapshot is being
-  published, one waits, and a newer capture replaces the waiting one.
+  sensor then reduces it if asked, hands it to the hardware encoder and publishes each encoded unit
+  as one access unit, with its own stamp. A slow network drops frames before encoding and cannot
+  hold up capture or the other sensor: one snapshot is being encoded, one waits, and a newer capture
+  replaces the waiting one.
+- **Feedback.** A viewer joining, or packet loss, makes the SDK ask for a keyframe: the next frame
+  is an IDR with SPS/PPS. A frame the SDK refuses breaks the reference chain, so the next frame is
+  an IDR and nothing is published in between. Bitrate targets from congestion control are clamped
+  to the configured range and applied to the encoder: the Jetson engine changes rate while running;
+  the mock reopens its session at the new rate, which starts with an IDR.
 - **Metadata.** Each frame carries the camera's sequence as its frame ID, the capture time on the host
   clock (CLOCK_MONOTONIC microseconds) as its user timestamp, and the sensor's capture TSC as eight
   little-endian bytes of user data. Two separately published tracks are not exposure-synchronised;
   the shared TSC is what pairs them.
-- **Streaming only.** A stream with only `livekit=` writes no file and builds no H.264 encoder.
-  `--mcap-filename` metadata is separate and unchanged.
+- **Recording.** A stream with `output=` and `livekit=` runs two encoders, one for the file at the
+  recording's settings and one for the track at the live settings. `--mcap-filename` metadata is
+  separate and unchanged.
 - **Failure.** Losing the room, or a failed publish, ends capture with an error; there is no
   fallback to files or another transport. The SDK's own reconnection runs first; on loopback, losing
   the server was reported after 15 to 30 s.
 
-**Not verified.** The encoder that ran in every test was the SDK's software OpenH264, including when
-the SDK was asked for NVENC or hardware encoding. It keeps up with two native 2560x1984 sensors on
-a laptop CPU, but nothing here says what an Orin's CPU or any hardware encoder will do; use
-`--livekit-fps` and `--livekit-scale-div` after measuring. The arm64 package is pinned but was not
-built or run, and neither was the `JETSON` backend with LiveKit.
+**Verified.** On a desktop GPU against a local `livekit-server`, with a second participant decoding
+what arrives: tracks, sizes and picture content, frame IDs and capture TSCs, a viewer joining late
+and rejoining, keyframe requests, recovery after a refused frame, the end-of-stream drain, lower
+bitrate targets, and the transport's stats naming the passthrough source. The arm64 SDK package has
+the same pre-encoded API headers as the x64 one.
+
+**Not verified.** Nothing here ran on an Orin: not real cameras, not the V4L2 encoder feeding
+LiveKit, not the arm64 package, and not the `JETSON` build with LiveKit. The Jetson encoder's
+keyframe, rate and drain code is written but was not compiled off the rig. That the H.264 the
+Jetson engine produces (High profile, Level 5.2) is accepted by a WebRTC receiver is likewise
+unproven; the mock's NVENC output, with the same settings, decoded in the tests.
 
 `cmake --install` copies `liblivekit.so` and `liblivekit_ffi.so` beside the plugin, which finds them
-through `$ORIGIN`; the SDK package ships no licence files, so take them from its release page.
+through `$ORIGIN`, and the SDK's own `LICENSE` and `NOTICE` (fetched at configure time, hash
+checked) under `licenses/livekit-sdk/`. `liblivekit_ffi.so` bundles third-party components, WebRTC
+among them, whose notices the SDK package does not ship: they need a compliance review before the
+binaries are distributed.
 
 Tests that need a LiveKit service start a local `livekit-server` when `LIVEKIT_SERVER` names its
 binary, and are skipped without it; the rest need only a GPU.

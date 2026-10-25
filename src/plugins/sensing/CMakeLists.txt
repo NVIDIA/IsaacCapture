@@ -225,6 +225,22 @@ if(SENSING_LIVEKIT)
         FetchContent_MakeAvailable(livekit_sdk)
         set(LIVEKIT_SDK_DIR "${livekit_sdk_SOURCE_DIR}")
     endif()
+    # The package ships no licence files: install the SDK's own, pinned to the same release.
+    foreach(_notice LICENSE NOTICE)
+        if(_notice STREQUAL "LICENSE")
+            set(_notice_hash "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b")
+        else()
+            set(_notice_hash "6d0f7c5e0deb284362296c5da110dd353831da2e67ca77cb5abc051b951b0fac")
+        endif()
+        FetchContent_Declare(
+            livekit_sdk_${_notice}
+            URL https://raw.githubusercontent.com/livekit/client-sdk-cpp/v1.12.4/${_notice}
+            URL_HASH SHA256=${_notice_hash}
+            DOWNLOAD_NO_EXTRACT TRUE
+        )
+        FetchContent_MakeAvailable(livekit_sdk_${_notice})
+        set(SENSING_LIVEKIT_${_notice}_FILE "${livekit_sdk_${_notice}_SOURCE_DIR}/${_notice}" CACHE INTERNAL "")
+    endforeach()
     find_package(LiveKit CONFIG REQUIRED PATHS "${LIVEKIT_SDK_DIR}" NO_DEFAULT_PATH)
     message(STATUS "SENSING plugin: LiveKit SDK=${LIVEKIT_SDK_DIR}")
     # Cache, so tests/ (a sibling directory) can find the same SDK.

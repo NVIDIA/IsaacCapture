@@ -12,8 +12,10 @@
 #include <core/frame_sink.hpp>
 #include <core/sensing_camera.hpp>
 
+#include <iostream>
 #include <memory>
 #include <optional>
+#include <sstream>
 
 using namespace plugins::sensing;
 using namespace sensing_test;
@@ -107,6 +109,39 @@ TEST_CASE("two sensors reach a real server as named tracks and decode correctly"
         for (const auto& [id, tsc] : seen.tsc_by_frame)
             CHECK(tsc == kMockTscBaseNs + static_cast<uint64_t>((id - 1) * (1e9 / 60.0)));
     }
+}
+
+TEST_CASE("the track carries hardware-encoded video passed through, with no software encoder",
+          "[unit][gpu][sensing][livekit][server]")
+{
+    REQUIRE_SERVER();
+    LocalServer server;
+    FastMock fast;
+    std::vector<StreamConfig> streams(1);
+    streams[0].sensor_id = 0;
+    streams[0].livekit_track = "passthrough";
+    auto camera = make_camera(stream_config(server.url(), 1), streams);
+    {
+        UpdateLoop loop(*camera);
+        Subscriber subscriber(server.url(), kRoom);
+        REQUIRE(subscriber.wait_for_frames({ "passthrough" }, 25, 30s));
+    }
+
+    // The first report starts the transport's stats request and the second collects it.
+    std::ostringstream report;
+    auto* previous = std::cout.rdbuf(report.rdbuf());
+    camera->print_stats();
+    std::this_thread::sleep_for(2s);
+    camera->print_stats();
+    std::cout.rdbuf(previous);
+
+    const std::string text = report.str();
+    INFO(text);
+    CHECK(text.find("NVENC") != std::string::npos);
+    CHECK(text.find("pre-encoded passthrough") != std::string::npos);
+    CHECK(text.find("transport: encoder LiveKit pre-encoded passthrough") != std::string::npos);
+    CHECK(text.find("OpenH264") == std::string::npos);
+    CHECK(text.find("openh264") == std::string::npos);
 }
 
 TEST_CASE("a track is published at the sensor's native geometry by default", "[unit][gpu][sensing][livekit][server]")
