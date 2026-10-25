@@ -1,0 +1,335 @@
+{
+  "deserializers": [
+    {
+      "name": "MAX96712_Fusa_nv_AB",
+      "description": "Maxim MAX96712 GMSL2 Deserializer - CSI-AB",
+      "i2cAddress": "0x29"
+    },
+    {
+      "name": "MAX96712_Fusa_nv_CD",
+      "description": "Maxim MAX96712 GMSL2 Deserializer - CSI-CD",
+      "i2cAddress": "0x2d"
+    }
+  ],
+  "serializers": [
+    {
+      "name": "MAX9295",
+      "description": "Maxim MAX9295D Serializer",
+      "i2cAddress": "0x40",
+      "useCDIv2API": true
+    },
+    {
+      "name": "MAX96717F",
+      "description": "Maxim MAX96717F Serializer",
+      "i2cAddress": "0x40",
+      "useCDIv2API": true
+    },
+    {
+      "name": "MAX96717",
+      "description": "Maxim MAX96717 Serializer",
+      "i2cAddress": "0x40",
+      "useCDIv2API": true
+    }
+  ],
+  "imageSensors": [
+    {
+      "name": "VB1940",
+      "description": "SHW5G link2/3 VB1940 physical 0x10",
+      "i2cAddress": "0x10",
+      "virtualChannels": [
+        {
+          "cfa": "gbrg",
+          "embeddedTopLines": 1,
+          "embeddedBottomLines": 0,
+          "inputFormat": "raw10",
+          "width": 2560,
+          "height": 1984,
+          "fps": 60.0,
+          "isEmbeddedDataTypeEnabled": true
+        }
+      ],
+      "isTriggerModeEnabled": true,
+      "isTPGEnabled": false,
+      "useCDIv2API": true
+    }
+  ],
+  "platformTransportSettings": [
+    {
+      "name": "jetson-thor",
+      "description": "Thor - Jetson AGX Thor Devkit (p3834)",
+      "boardIdPrefix": "p3834",
+      "enableMasks": [
+        "0x0000",
+        "0x1100"
+      ],
+      "transportSettings": [
+        {
+          "name": "transportSettings_jetson-thor_AB",
+          "type": "GMSL",
+          "description": "GMSL CSI-AB with external MAX96712",
+          "csiPort": "csi-gh",
+          "phyMode": "dphy",
+          "desTxPort": 1,
+          "deserInfo": {
+            "name": "Max96712GmslDeserializer",
+            "i2cAddress": "0x2d"
+          },
+          "powerControlInfo": {
+            "deserializerInfo": {
+              "name": "TegraDeserPowerDriver",
+              "gpioPinIndex": 9043968
+            }
+          },
+          "i2cDevice": 10,
+          "desI2CPort": 0,
+          "groupInitProg": true
+        },
+        {
+          "name": "transportSettings_jetson-thor_CD",
+          "type": "GMSL",
+          "description": "GMSL CSI-CD with external MAX96712",
+          "csiPort": "csi-cd",
+          "phyMode": "dphy",
+          "desTxPort": 1,
+          "deserInfo": {
+            "name": "Max96712GmslDeserializer",
+            "i2cAddress": "0x29"
+          },
+          "powerControlInfo": {
+            "deserializerInfo": {
+              "name": "TegraDeserPowerDriver",
+              "gpioPinIndex": 3211264
+            }
+          },
+          "i2cDevice": 9,
+          "desI2CPort": 0,
+          "groupInitProg": true
+        }
+      ]
+    }
+  ],
+  "cameraConfigs": [
+    {
+      "name": "MOCK_S56C_2_SHF3L",
+      "type": "GMSL",
+      "description": "Mock rig: S56C stereo head camera on link 0, SHF3L left and right wrist cameras on links 1 and 2",
+      "cameraModules": [
+        {
+          "name": "S56C_HEAD",
+          "linkIndex": 0,
+          "transportIndex": 1
+        },
+        {
+          "name": "SHF3L_LEFT",
+          "linkIndex": 1,
+          "transportIndex": 1
+        },
+        {
+          "name": "SHF3L_RIGHT",
+          "linkIndex": 2,
+          "transportIndex": 1
+        }
+      ],
+      "transportSettings": [
+        {
+          "name": "transportSettings_jetson-thor_AB",
+          "type": "GMSL",
+          "csiPort": "csi-gh",
+          "phyMode": "dphy",
+          "desTxPort": 1,
+          "deserInfo": {
+            "name": "Max96712GmslDeserializer",
+            "i2cAddress": "0x2d"
+          },
+          "powerControlInfo": {
+            "deserializerInfo": {
+              "name": "TegraDeserPowerDriver",
+              "gpioPinIndex": 9043968
+            }
+          },
+          "i2cDevice": 10,
+          "desI2CPort": 0,
+          "groupInitProg": false
+        },
+        {
+          "name": "transportSettings_jetson-thor_CD",
+          "type": "GMSL",
+          "csiPort": "csi-cd",
+          "phyMode": "dphy",
+          "desTxPort": 1,
+          "deserInfo": {
+            "name": "Max96712GmslDeserializer",
+            "i2cAddress": "0x29"
+          },
+          "powerControlInfo": {
+            "deserializerInfo": {
+              "name": "TegraDeserPowerDriver",
+              "gpioPinIndex": 3211264
+            }
+          },
+          "i2cDevice": 9,
+          "desI2CPort": 0,
+          "groupInitProg": true
+        }
+      ]
+    },
+    {
+      "name": "S56C_HEAD",
+      "type": "GMSL",
+      "description": "S56C stereo head camera, left eye then right eye",
+      "moduleDriverName": "SHW5G",
+      "serInfo": {
+        "name": "MAX96717",
+        "i2cAddress": "0x40"
+      },
+      "linkMode": "LINK_MODE_GMSL2_6GBPS",
+      "fsyncMode": "osc_manual",
+      "mipiSettings": {
+        "dphyRate": 2500000,
+        "phyMode": "dphy"
+      },
+      "sensorInfo": [
+        {
+          "name": "S56C_LEFT",
+          "id": 0,
+          "description": "S56C stereo head camera, left eye then right eye",
+          "i2cAddress": "0x10",
+          "numContext": 1,
+          "isTriggerModeEnabled": true,
+          "deviceIndex": 0,
+          "virtualChannels": [
+            {
+              "vcIdSrc": 2,
+              "vcIdDst": 2,
+              "cfa": "gbrg",
+              "embeddedTopLines": 1,
+              "embeddedBottomLines": 0,
+              "inputFormat": "raw10",
+              "width": 2560,
+              "height": 1984,
+              "fps": 30.0,
+              "isEmbeddedDataTypeEnabled": true
+            }
+          ]
+        },
+        {
+          "name": "S56C_RIGHT",
+          "id": 1,
+          "description": "S56C stereo head camera, left eye then right eye",
+          "i2cAddress": "0x10",
+          "numContext": 1,
+          "isTriggerModeEnabled": true,
+          "deviceIndex": 0,
+          "virtualChannels": [
+            {
+              "vcIdSrc": 2,
+              "vcIdDst": 2,
+              "cfa": "gbrg",
+              "embeddedTopLines": 1,
+              "embeddedBottomLines": 0,
+              "inputFormat": "raw10",
+              "width": 2560,
+              "height": 1984,
+              "fps": 30.0,
+              "isEmbeddedDataTypeEnabled": true
+            }
+          ]
+        }
+      ],
+      "eepromInfo": {
+        "name": "BR24H128",
+        "i2cAddress": "0x50"
+      }
+    },
+    {
+      "name": "SHF3L_LEFT",
+      "type": "GMSL",
+      "description": "SHF3L left wrist camera",
+      "moduleDriverName": "SHW5G",
+      "serInfo": {
+        "name": "MAX96717",
+        "i2cAddress": "0x40"
+      },
+      "linkMode": "LINK_MODE_GMSL2_6GBPS",
+      "fsyncMode": "osc_manual",
+      "mipiSettings": {
+        "dphyRate": 2500000,
+        "phyMode": "dphy"
+      },
+      "sensorInfo": [
+        {
+          "name": "SHF3L",
+          "id": 0,
+          "description": "SHF3L left wrist camera",
+          "i2cAddress": "0x10",
+          "numContext": 1,
+          "isTriggerModeEnabled": true,
+          "deviceIndex": 0,
+          "virtualChannels": [
+            {
+              "vcIdSrc": 2,
+              "vcIdDst": 2,
+              "cfa": "gbrg",
+              "embeddedTopLines": 1,
+              "embeddedBottomLines": 0,
+              "inputFormat": "raw10",
+              "width": 1920,
+              "height": 1536,
+              "fps": 30.0,
+              "isEmbeddedDataTypeEnabled": true
+            }
+          ]
+        }
+      ],
+      "eepromInfo": {
+        "name": "BR24H128",
+        "i2cAddress": "0x50"
+      }
+    },
+    {
+      "name": "SHF3L_RIGHT",
+      "type": "GMSL",
+      "description": "SHF3L right wrist camera",
+      "moduleDriverName": "SHW5G",
+      "serInfo": {
+        "name": "MAX96717",
+        "i2cAddress": "0x40"
+      },
+      "linkMode": "LINK_MODE_GMSL2_6GBPS",
+      "fsyncMode": "osc_manual",
+      "mipiSettings": {
+        "dphyRate": 2500000,
+        "phyMode": "dphy"
+      },
+      "sensorInfo": [
+        {
+          "name": "SHF3L",
+          "id": 0,
+          "description": "SHF3L right wrist camera",
+          "i2cAddress": "0x10",
+          "numContext": 1,
+          "isTriggerModeEnabled": true,
+          "deviceIndex": 0,
+          "virtualChannels": [
+            {
+              "vcIdSrc": 2,
+              "vcIdDst": 2,
+              "cfa": "gbrg",
+              "embeddedTopLines": 1,
+              "embeddedBottomLines": 0,
+              "inputFormat": "raw10",
+              "width": 1920,
+              "height": 1536,
+              "fps": 30.0,
+              "isEmbeddedDataTypeEnabled": true
+            }
+          ]
+        }
+      ],
+      "eepromInfo": {
+        "name": "BR24H128",
+        "i2cAddress": "0x50"
+      }
+    }
+  ]
+}

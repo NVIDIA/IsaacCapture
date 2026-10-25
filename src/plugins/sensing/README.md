@@ -74,20 +74,29 @@ fixed pool of input buffers that makes `submit()` refuse frames when the encoder
 a warm-up delay before the first unit, and capture stamps that come back at microsecond
 resolution.
 
-Every sensor shows an animated GIF, by default the bundled robot in [`mock_assets/`](mock_assets/)
-(Animated Noto Emoji, CC BY 4.0; see its README for the licence and source). The GIF plays on the
-capture clock, looping, scaled to cover the sensor's configured size and centre-cropped so it is
-never stretched (bilinear when enlarging, area-averaged when reducing). Transparent pixels show a
-plain gray. The sequence number and stamps advance on every capture even while the GIF holds one
-image. The GIF's own size and aspect do not matter; the frame size always comes from the platform
-config. A GIF that cannot be loaded, the bundled one included, is an error: there is no fallback.
+Every sensor shows an animated GIF chosen by its **module name** (never its pipeline index, which the
+link mask renumbers), from the bundled Animated Noto Emoji in [`mock_assets/`](mock_assets/) (CC BY 4.0;
+see its README): `S56C_HEAD` the robot, `SHF3L_LEFT` the waving hand, `SHF3L_RIGHT` the hand flipped left
+to right. The two sensors of `S56C_HEAD` are its left and right eyes; their pictures are offset against
+each other by a fixed 2% of the width, as a 60 mm baseline gives. A module not in that table needs
+`SENSING_MOCK_GIF` or `SENSING_MOCK_GIF_<module name>`. The GIF plays on the capture clock, looping, scaled
+to cover the sensor's configured size and centre-cropped so it is never stretched (bilinear when
+enlarging, area-averaged when reducing). Transparent pixels show a plain gray. The GIF's own size and
+aspect do not matter; the frame size always comes from the platform config. A GIF that cannot be loaded,
+the bundled one included, is an error: there is no fallback.
+
+[`mock_assets/mock_rig.json`](mock_assets/mock_rig.json) describes a three-camera rig for the mock only
+(not a SIPL config): one S56C stereo head camera with two 2560x1984 @ 30 eyes, and two SHF3L wrist
+cameras at 1920x1536 @ 30. Use `--platform-config=.../mock_rig.json --config-name=MOCK_S56C_2_SHF3L
+--link-masks='0x0000 0x0111'`.
 
 Environment, read once at construction:
 
 | Variable | Effect |
 | --- | --- |
-| `SENSING_MOCK_GIF` | path of an animated GIF shown by every sensor (default: the bundled robot) |
-| `SENSING_MOCK_GIF_<module name>` | a GIF for one sensor, by module name (`SENSING_MOCK_GIF_SHW5G_MIX_L3`); wins over `SENSING_MOCK_GIF`. The bundled `noto-waving-hand.gif` suits a wrist camera |
+| `SENSING_MOCK_GIF` | path of an animated GIF shown by every sensor, as it is (default: by module, above) |
+| `SENSING_MOCK_GIF_<module name>` | a GIF for one sensor, by module name (`SENSING_MOCK_GIF_SHW5G_MIX_L3`); wins over `SENSING_MOCK_GIF` |
+| `SENSING_MOCK_FLIP_<module name>` | `1` or `0`: flip that module's picture left to right, or not, whatever its GIF |
 | `SENSING_MOCK_FPS` | override the platform config's frame rate |
 | `SENSING_MOCK_SCALE_DIV` | divide the reported width and height (kept even); useful for tests |
 | `SENSING_MOCK_FAIL_AFTER` | every sensor fails after N frames, as a link drop would |

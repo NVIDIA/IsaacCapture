@@ -36,8 +36,8 @@ __device__ float3 sample_cover(const uint8_t* src, int pitch, const CoverGeometr
 {
     const float sx = static_cast<float>(g.src_width) / g.scaled_width;
     const float sy = static_cast<float>(g.src_height) / g.scaled_height;
-    const int X = x + g.crop_x;
-    const int Y = y + g.crop_y;
+    const int X = min(max(x + g.crop_x, 0), g.scaled_width - 1);
+    const int Y = min(max(y + g.crop_y, 0), g.scaled_height - 1);
 
     if (sx <= 1.0f && sy <= 1.0f)
     {
@@ -95,7 +95,9 @@ __global__ void paint_gif(const uint8_t* src,
                           uint8_t* uv_plane,
                           int uv_pitch,
                           int width,
-                          int height)
+                          int height,
+                          bool mirror,
+                          int shift_x)
 {
     const int cx = blockIdx.x * blockDim.x + threadIdx.x;
     const int cy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -109,7 +111,9 @@ __global__ void paint_gif(const uint8_t* src,
         {
             const int x = 2 * cx + dx;
             const int y = 2 * cy + dy;
-            const float3 rgb = sample_cover(src, src_pitch, geometry, x, y);
+            // A mirrored view samples the picture right to left; the output pixel stays where it is.
+            const int sx = (mirror ? width - 1 - x : x) - shift_x;
+            const float3 rgb = sample_cover(src, src_pitch, geometry, sx, y);
             y_plane[static_cast<size_t>(y) * y_pitch + x] = static_cast<uint8_t>(luma_709(rgb) + 0.5f);
             mean.x += 0.25f * rgb.x;
             mean.y += 0.25f * rgb.y;
@@ -138,6 +142,8 @@ void launch_mock_gif_nv12(const uint8_t* src_rgba,
                           int uv_pitch,
                           int width,
                           int height,
+                          bool mirror,
+                          int shift_x,
                           cudaStream_t stream)
 {
     const float scale = fmaxf(static_cast<float>(width) / src_width, static_cast<float>(height) / src_height);
@@ -152,7 +158,7 @@ void launch_mock_gif_nv12(const uint8_t* src_rgba,
     const dim3 block(16, 16);
     const dim3 grid((width / 2 + block.x - 1) / block.x, (height / 2 + block.y - 1) / block.y);
     paint_gif<<<grid, block, 0, stream>>>(
-        src_rgba, src_pitch, geometry, y_plane, y_pitch, uv_plane, uv_pitch, width, height);
+        src_rgba, src_pitch, geometry, y_plane, y_pitch, uv_plane, uv_pitch, width, height, mirror, shift_x);
 }
 
 

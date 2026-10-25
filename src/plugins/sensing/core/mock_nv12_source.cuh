@@ -21,6 +21,8 @@ namespace sensing
  *
  * @param src_rgba   Device pointer to the GIF frame, src_width x src_height RGBA8.
  * @param src_pitch  Source row stride in bytes.
+ * @param mirror     Show the picture flipped left to right.
+ * @param shift_x    Pixels the picture moves right after any flip; the edge pixel repeats into the gap.
  */
 void launch_mock_gif_nv12(const uint8_t* src_rgba,
                           int src_pitch,
@@ -32,6 +34,8 @@ void launch_mock_gif_nv12(const uint8_t* src_rgba,
                           int uv_pitch,
                           int width,
                           int height,
+                          bool mirror,
+                          int shift_x,
                           cudaStream_t stream);
 
 } // namespace sensing
