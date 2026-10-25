@@ -1,0 +1,108 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SENSING LiveKit receiver</title>
+<style>
+  :root { color-scheme: light dark; --gap: 12px; }
+  body { margin: 0; padding: 16px; font: 14px system-ui, sans-serif; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 8px; }
+  label { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; }
+  input { font: inherit; padding: 4px 6px; }
+  #status { margin: 0 0 var(--gap); opacity: 0.75; }
+  #tracks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap); }
+  figure { margin: 0; }
+  video { display: block; width: 100%; height: auto; object-fit: contain; background: #000; }
+  figcaption { padding-top: 4px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<form id="connection">
+  <label>Server URL <input id="url" type="url" placeholder="wss://livekit.example.org" required></label>
+  <label>Subscriber token <input id="token" type="password" autocomplete="off" required></label>
+  <button id="connect" type="submit">Connect</button>
+  <button id="disconnect" type="button" disabled>Disconnect</button>
+</form>
+<p id="status" role="status">Not connected.</p>
+<div id="tracks"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.7/dist/livekit-client.umd.min.js"
+        integrity="sha384-DMQ2sryZ/q5LQCbnG52f5wPRIRGrt1g9iHCwzAHWNbuYPEEKf1kOC2iHjG7zuowb"
+        crossorigin="anonymous"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const tracks = new Map(); // track sid -> { figure, video, label, name }
+let room = null;
+
+function setStatus(text) { $('status').textContent = text; }
+function setConnected(connected) {
+  $('connect').disabled = connected;
+  $('disconnect').disabled = !connected;
+}
+
+function addTrack(track, publication) {
+  if (track.kind !== 'video') return;
+  const figure = document.createElement('figure');
+  const video = document.createElement('video');
+  video.autoplay = true; video.muted = true; video.playsInline = true;
+  const label = document.createElement('figcaption');
+  figure.append(video, label);
+  $('tracks').append(figure);
+  track.attach(video);
+  const entry = { figure, video, label, name: publication.trackName };
+  tracks.set(track.sid, entry);
+  updateLabel(entry);
+}
+
+function removeTrack(track) {
+  const entry = tracks.get(track.sid);
+  if (!entry) return;
+  track.detach(entry.video);
+  entry.figure.remove();
+  tracks.delete(track.sid);
+}
+
+function updateLabel(entry) {
+  const v = entry.video;
+  entry.label.textContent = entry.name + (v.videoWidth ? ' — ' + v.videoWidth + '×' + v.videoHeight : '');
+}
+
+function clearTracks() {
+  for (const entry of tracks.values()) entry.figure.remove();
+  tracks.clear();
+}
+
+setInterval(() => { for (const entry of tracks.values()) updateLabel(entry); }, 500);
+
+$('connection').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setConnected(true);
+  setStatus('Connecting…');
+  room = new LivekitClient.Room();
+  room.on(LivekitClient.RoomEvent.TrackSubscribed, addTrack);
+  room.on(LivekitClient.RoomEvent.TrackUnsubscribed, removeTrack);
+  room.on(LivekitClient.RoomEvent.Disconnected, () => {
+    clearTracks();
+    setConnected(false);
+    setStatus('Disconnected.');
+    room = null;
+  });
+  try {
+    await room.connect($('url').value.trim(), $('token').value.trim());
+    setStatus('Connected. Waiting for video tracks…');
+  } catch (error) {
+    setConnected(false);
+    setStatus('Could not connect: ' + error.message);
+    room = null;
+  }
+});
+
+$('disconnect').addEventListener('click', () => { if (room) room.disconnect(); });
+</script>
+</body>
+</html>

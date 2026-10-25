@@ -165,6 +165,33 @@ keyframe, rate and drain code is written but was not compiled off the rig. That 
 Jetson engine produces (High profile, Level 5.2) is accepted by a WebRTC receiver is likewise
 unproven; the mock's NVENC output, with the same settings, decoded in the tests.
 
+**Receiver page.** [`livekit/receiver/index.html`](livekit/receiver/index.html) is a static page that
+uses the LiveKit browser SDK (from a CDN, integrity-checked): enter the server URL and a subscriber
+token, Connect, and each subscribed video track appears under its name with its size, in its own
+aspect ratio. There is no backend or token generator; it is installed beside the plugin under
+`receiver/` and can be opened from disk or any static server.
+
+**Capacity on a Jetson (not measured).** The numbers below are calculated encoder workloads from the
+module datasheets, not achieved frame rates; nothing has run on an Orin. They assume head images at
+2560x1984 and wrist images at 1920x1536.
+
+| Images | Rate | Encoded pixels/s | Assessment |
+| --- | --- | --- | --- |
+| Head stereo, native | 30 fps | 305 million | plausible first target |
+| Head stereo and both wrists, native | 30 fps | 482 million | depends on the preset; little headroom |
+| All four at half width and height | 30 fps | 120 million | more headroom |
+| All four, native | 60 fps | 963 million | not a supported target |
+
+The datasheets list H.264 ceilings of 930/530/280 MPixel/s (UHP/HP/HQ) for the AGX Orin 64GB module,
+730/420/220 for the 32GB module and 680/470/220 for Orin NX; four native images at 30 fps already
+exceed the NX and 32GB HP ceilings. Orin Nano has no NVENC, so it cannot meet the hardware-encoder
+requirement. The encoder selects the V4L2 `FAST` hardware preset explicitly (a control separate from
+max-performance clocks); four native images may need `ULTRAFAST`, to be measured. A stream with both
+`output=` and `livekit=` runs two encoder instances on the one hardware engine, so budget the sum of
+their pixel rates. Sustained rates also depend on power mode and cooling. A frame the encoder has no
+input buffer for is dropped before any conversion work. Moving frames without the intermediate
+copies (a direct NV12 or DMA-BUF path) is a separate change to make only if measurements call for it.
+
 `cmake --install` copies `liblivekit.so` and `liblivekit_ffi.so` beside the plugin, which finds them
 through `$ORIGIN`, and the SDK's own `LICENSE` and `NOTICE` (fetched at configure time, hash
 checked) under `licenses/livekit-sdk/`. `liblivekit_ffi.so` bundles third-party components, WebRTC

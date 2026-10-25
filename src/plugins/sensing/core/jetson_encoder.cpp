@@ -155,6 +155,9 @@ JetsonEncoder::JetsonEncoder(const EncoderConfig& config) : m_impl(std::make_uni
     check(enc->setNumBFrames(0), "setNumBFrames");
     check(enc->setInsertSpsPpsAtIdrEnabled(true), "setInsertSpsPpsAtIdrEnabled");
     check(enc->setMaxPerfMode(1), "setMaxPerfMode");
+    // A separate control from the max-performance clocks: it trades quality for encoder throughput.
+    // FAST suits live streams; four native-size images at 30 fps may need ULTRAFAST, to be measured.
+    check(enc->setHWPresetType(V4L2_ENC_HW_PRESET_FAST), "setHWPresetType");
 
     check(enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, kOutputBuffers, true, false), "output setupPlane");
     check(enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, kCaptureBuffers, true, false), "capture setupPlane");
@@ -198,12 +201,6 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     auto* enc = m_impl->encoder;
     const auto& config = m_impl->config;
 
-    launch_rgba_to_nv12(reinterpret_cast<const uint8_t*>(rgba_device_ptr), static_cast<int>(row_pitch_bytes), m_impl->d_y,
-                        static_cast<int>(m_impl->d_y_pitch), m_impl->d_uv, static_cast<int>(m_impl->d_uv_pitch),
-                        static_cast<int>(config.width), static_cast<int>(config.height), config.full_range, nullptr);
-    check_cuda(cudaGetLastError(), "rgba_to_nv12 launch");
-    check_cuda(cudaStreamSynchronize(nullptr), "rgba_to_nv12 sync");
-
     struct v4l2_buffer v4l2_buf;
     struct v4l2_plane planes[MAX_PLANES];
     std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
@@ -223,6 +220,14 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
     {
         return false; // encoder still busy; drop this frame rather than block
     }
+
+    // An input buffer is ours now, so convert: a frame that would be dropped costs no conversion. A
+    // failure from here is terminal for the encoder, as a failed qBuffer is.
+    launch_rgba_to_nv12(reinterpret_cast<const uint8_t*>(rgba_device_ptr), static_cast<int>(row_pitch_bytes), m_impl->d_y,
+                        static_cast<int>(m_impl->d_y_pitch), m_impl->d_uv, static_cast<int>(m_impl->d_uv_pitch),
+                        static_cast<int>(config.width), static_cast<int>(config.height), config.full_range, nullptr);
+    check_cuda(cudaGetLastError(), "rgba_to_nv12 launch");
+    check_cuda(cudaStreamSynchronize(nullptr), "rgba_to_nv12 sync");
 
     check_cuda(cudaMemcpy2D(buffer->planes[0].data, buffer->planes[0].fmt.stride, m_impl->d_y, m_impl->d_y_pitch,
                             config.width, config.height, cudaMemcpyDeviceToHost),
