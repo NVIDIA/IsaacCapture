@@ -274,9 +274,15 @@ struct Decoded
     double luma = 0;
 };
 
-/// Decodes an Annex-B stream with libavcodec's software H.264 decoder, in output order.
-inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& data)
+/// Decodes an Annex-B stream with libavcodec's software H.264 decoder, in output order. Any parser or
+/// decoder error, or a picture flagged as damaged, fails the calling test.
+inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& stream)
 {
+    // The parser reads a little past the end of its input.
+    std::vector<uint8_t> data(stream);
+    data.resize(stream.size() + AV_INPUT_BUFFER_PADDING_SIZE, 0);
+    const size_t size = stream.size();
+
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     REQUIRE(codec != nullptr);
     AVCodecContext* context = avcodec_alloc_context3(codec);
@@ -289,8 +295,14 @@ inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& data)
     std::vector<Decoded> out;
     auto drain = [&]
     {
-        while (avcodec_receive_frame(context, frame) == 0)
+        for (;;)
         {
+            const int err = avcodec_receive_frame(context, frame);
+            if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
+                return;
+            REQUIRE(err == 0);
+            CHECK((frame->flags & AV_FRAME_FLAG_CORRUPT) == 0);
+            CHECK((frame->decode_error_flags) == 0);
             Decoded picture;
             picture.width = frame->width;
             picture.height = frame->height;
@@ -305,27 +317,28 @@ inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& data)
             out.push_back(picture);
         }
     };
-    size_t offset = 0;
-    while (offset < data.size())
+    auto send = [&]
     {
-        const int used = av_parser_parse2(parser, context, &packet->data, &packet->size, data.data() + offset,
-                                          static_cast<int>(data.size() - offset), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-        REQUIRE(used >= 0);
-        offset += static_cast<size_t>(used);
         if (packet->size > 0)
         {
             REQUIRE(avcodec_send_packet(context, packet) == 0);
             drain();
         }
-    }
-    // The parser holds the last NAL until it sees what follows; flush it.
-    av_parser_parse2(parser, context, &packet->data, &packet->size, nullptr, 0, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-    if (packet->size > 0)
+    };
+    size_t offset = 0;
+    while (offset < size)
     {
-        REQUIRE(avcodec_send_packet(context, packet) == 0);
-        drain();
+        const int used = av_parser_parse2(parser, context, &packet->data, &packet->size, data.data() + offset,
+                                          static_cast<int>(size - offset), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        REQUIRE(used >= 0);
+        offset += static_cast<size_t>(used);
+        send();
     }
-    avcodec_send_packet(context, nullptr);
+    // The parser holds the last NAL until it sees what follows; flush it, then the decoder.
+    REQUIRE(av_parser_parse2(
+                parser, context, &packet->data, &packet->size, nullptr, 0, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0) >= 0);
+    send();
+    REQUIRE(avcodec_send_packet(context, nullptr) == 0);
     drain();
 
     av_frame_free(&frame);

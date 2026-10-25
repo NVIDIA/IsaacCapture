@@ -85,21 +85,21 @@ struct JetsonEncoder::Impl
                        "cudaMallocPitch(Y)");
             check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &d_uv_pitch, config.width, config.height / 2),
                        "cudaMallocPitch(UV)");
+
+            // Host staging, standing in for the V4L2 output plane's mapped buffers.
+            const size_t nv12_bytes = static_cast<size_t>(config.width) * config.height * 3 / 2;
+            for (uint32_t i = 0; i < kInputBuffers; ++i)
+            {
+                host_buffers.emplace_back(nv12_bytes);
+                free_buffers.push_back(i);
+            }
+            worker = std::thread([this] { run(); });
         }
         catch (...)
         {
             release();
             throw;
         }
-
-        // Host staging, standing in for the V4L2 output plane's mapped buffers.
-        const size_t nv12_bytes = static_cast<size_t>(config.width) * config.height * 3 / 2;
-        for (uint32_t i = 0; i < kInputBuffers; ++i)
-        {
-            host_buffers.emplace_back(nv12_bytes);
-            free_buffers.push_back(i);
-        }
-        worker = std::thread([this] { run(); });
     }
 
     ~Impl()
@@ -129,19 +129,37 @@ struct JetsonEncoder::Impl
         context->max_b_frames = 0;
         // Parameter sets stay in the stream, in front of every IDR, so a receiver can join mid-stream.
         context->flags &= ~AV_CODEC_FLAG_GLOBAL_HEADER;
-        av_opt_set(context->priv_data, "profile", "high", 0);
-        av_opt_set(context->priv_data, "level", "5.2", 0);
-        av_opt_set(context->priv_data, "forced-idr", "1", 0);
-        av_opt_set(context->priv_data, "zerolatency", "1", 0);
+        check_av(av_opt_set(context->priv_data, "profile", "high", 0),
+                 "av_opt_set("
+                 "profile"
+                 ")");
+        check_av(av_opt_set(context->priv_data, "level", "5.2", 0),
+                 "av_opt_set("
+                 "level"
+                 ")");
+        check_av(av_opt_set(context->priv_data, "forced-idr", "1", 0),
+                 "av_opt_set("
+                 "forced-idr"
+                 ")");
+        check_av(av_opt_set(context->priv_data, "zerolatency", "1", 0),
+                 "av_opt_set("
+                 "zerolatency"
+                 ")");
         if (config.peak_bitrate_bps > config.bitrate_bps)
         {
             context->rc_max_rate = config.peak_bitrate_bps;
             context->rc_buffer_size = static_cast<int>(config.peak_bitrate_bps);
-            av_opt_set(context->priv_data, "rc", "vbr", 0);
+            check_av(av_opt_set(context->priv_data, "rc", "vbr", 0),
+                     "av_opt_set("
+                     "rc"
+                     ")");
         }
         else
         {
-            av_opt_set(context->priv_data, "rc", "cbr", 0);
+            check_av(av_opt_set(context->priv_data, "rc", "cbr", 0),
+                     "av_opt_set("
+                     "rc"
+                     ")");
         }
         check_av(avcodec_open2(context, codec, nullptr), "cannot open h264_nvenc");
 
