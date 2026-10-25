@@ -55,27 +55,36 @@ struct LiveKitVideoOutput::Impl
             throw std::runtime_error("LiveKit output: the track size does not match the output size");
         period_ns = 1'000'000'000ull / config.fps;
 
-        check_cuda(cudaSetDevice(config.gpu_id), "cudaSetDevice");
-        for (auto& slot : slots)
+        // A constructor that throws never runs the destructor, so free what was allocated here.
+        try
         {
-            check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&slot.ptr), &slot.pitch,
-                                       static_cast<size_t>(config.source_width) * 4, config.source_height),
-                       "cudaMallocPitch(snapshot)");
-        }
-        if (config.scale_div > 1)
-        {
-            check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_scaled), &scaled_pitch,
-                                       static_cast<size_t>(out_width) * 4, out_height),
-                       "cudaMallocPitch(reduced)");
-        }
-        check_cuda(
-            cudaMallocPitch(reinterpret_cast<void**>(&d_y), &y_pitch, out_width, out_height), "cudaMallocPitch(Y)");
-        check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &uv_pitch, out_width, out_height / 2),
-                   "cudaMallocPitch(UV)");
-        check_cuda(cudaStreamCreateWithFlags(&snapshot_stream, cudaStreamNonBlocking), "cudaStreamCreate");
-        check_cuda(cudaStreamCreateWithFlags(&work_stream, cudaStreamNonBlocking), "cudaStreamCreate");
+            check_cuda(cudaSetDevice(config.gpu_id), "cudaSetDevice");
+            for (auto& slot : slots)
+            {
+                check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&slot.ptr), &slot.pitch,
+                                           static_cast<size_t>(config.source_width) * 4, config.source_height),
+                           "cudaMallocPitch(snapshot)");
+            }
+            if (config.scale_div > 1)
+            {
+                check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_scaled), &scaled_pitch,
+                                           static_cast<size_t>(out_width) * 4, out_height),
+                           "cudaMallocPitch(reduced)");
+            }
+            check_cuda(
+                cudaMallocPitch(reinterpret_cast<void**>(&d_y), &y_pitch, out_width, out_height), "cudaMallocPitch(Y)");
+            check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &uv_pitch, out_width, out_height / 2),
+                       "cudaMallocPitch(UV)");
+            check_cuda(cudaStreamCreateWithFlags(&snapshot_stream, cudaStreamNonBlocking), "cudaStreamCreate");
+            check_cuda(cudaStreamCreateWithFlags(&work_stream, cudaStreamNonBlocking), "cudaStreamCreate");
 
-        worker = std::thread([this] { run(); });
+            worker = std::thread([this] { run(); });
+        }
+        catch (...)
+        {
+            release();
+            throw;
+        }
     }
 
     ~Impl()
@@ -87,6 +96,11 @@ struct LiveKitVideoOutput::Impl
         wake.notify_all();
         if (worker.joinable())
             worker.join();
+        release();
+    }
+
+    void release()
+    {
         for (auto& slot : slots)
             cudaFree(slot.ptr);
         cudaFree(d_scaled);

@@ -187,10 +187,19 @@ public:
 
     ~Subscriber() override
     {
-        m_closing = true;
-        for (auto& stream : m_streams)
+        // The SDK callback takes the mutex, so claim the streams and readers under it, then close and join
+        // with it released.
+        std::vector<std::shared_ptr<livekit::VideoStream>> streams;
+        std::vector<std::thread> readers;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_closing = true;
+            streams.swap(m_streams);
+            readers.swap(m_readers);
+        }
+        for (auto& stream : streams)
             stream->close();
-        for (auto& reader : m_readers)
+        for (auto& reader : readers)
             reader.join();
         m_room->disconnect();
         m_room.reset();
