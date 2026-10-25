@@ -105,8 +105,9 @@
 /tests/cpp/core/log_bridge/ @lotusl-code @AndreusNvidius
 /tests/python/core/logging_config/ @lotusl-code @AndreusNvidius
 
-# Keep documentation ownership centralized; do not add subsystem overrides.
+# Shared documentation owners, with EgoPost guides owned by its maintainers.
 /docs/ @jiwenc-nv @ivany-nv @aristarkhovNV
+/docs/source/ego_post_processing/ @shaosu-nvidia @tifchen-nvda
 
 # Plugin infrastructure, integrations, and tests share owners; avoid device overrides.
 /src/plugins/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code

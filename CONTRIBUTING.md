@@ -72,10 +72,11 @@ GitHub Actions builds the default targets and runs tests.
 
 [`.github/CODEOWNERS`](.github/CODEOWNERS) maps subsystems to reviewers, with
 repository maintainers covering unmatched paths. Keep related source, bindings,
-and tests assigned together when adding or moving files. All files under `docs/`
-share the documentation owners; plugin infrastructure, integrations, and tests
-share the plugin owners. Examples have their own entries. Rules are ordered
-from broad defaults to specific overrides; the last matching rule wins.
+and tests assigned together when adding or moving files. Files under `docs/`
+share the documentation owners, except `docs/source/ego_post_processing/`, which
+follows the EgoPost maintainers. Plugin infrastructure, integrations, and tests
+share the plugin owners. Examples have their own entries. Rules are ordered from
+broad defaults to specific overrides; the last matching rule wins.
 
 Owners must have repository write access. Update the map as maintainers change,
 keeping a backup reviewer for each area.
