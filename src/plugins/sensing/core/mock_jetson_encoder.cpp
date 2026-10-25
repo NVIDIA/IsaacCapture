@@ -27,6 +27,7 @@ extern "C"
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -66,21 +67,20 @@ struct JetsonEncoder::Impl
     {
         uint32_t buffer = 0;
         int64_t timestamp_ns = 0;
+        bool keyframe = false;
     };
 
     explicit Impl(const EncoderConfig& cfg) : config(cfg)
     {
-        const AVCodec* codec = avcodec_find_encoder_by_name("h264_nvenc");
+        codec = avcodec_find_encoder_by_name("h264_nvenc");
         if (!codec)
             throw std::runtime_error("mock JetsonEncoder: libavcodec has no h264_nvenc encoder");
-        context = avcodec_alloc_context3(codec);
-        if (!context)
-            throw std::runtime_error("mock JetsonEncoder: cannot allocate the encoder context");
 
         // A constructor that throws never runs the destructor, so free what was allocated here.
         try
         {
-            open(codec);
+            open_context(config.bitrate_bps);
+            alloc_frame();
             check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_y), &d_y_pitch, config.width, config.height),
                        "cudaMallocPitch(Y)");
             check_cuda(cudaMallocPitch(reinterpret_cast<void**>(&d_uv), &d_uv_pitch, config.width, config.height / 2),
@@ -114,8 +114,19 @@ struct JetsonEncoder::Impl
         release();
     }
 
-    void open(const AVCodec* codec)
+    void set_option(const char* name, const char* value)
     {
+        check_av(av_opt_set(context->priv_data, name, value, 0), (std::string("av_opt_set ") + name).c_str());
+    }
+
+    // A fresh encoder session at `bitrate`: its first frame is an IDR with parameter sets.
+    void open_context(uint32_t bitrate)
+    {
+        avcodec_free_context(&context);
+        context = avcodec_alloc_context3(codec);
+        if (!context)
+            throw std::runtime_error("mock JetsonEncoder: cannot allocate the encoder context");
+
         const uint32_t fps = config.fps ? config.fps : 30;
         const uint32_t gop = config.gop ? config.gop : fps * 5;
         context->width = static_cast<int>(config.width);
@@ -124,45 +135,34 @@ struct JetsonEncoder::Impl
         // Microseconds, as a V4L2 timeval carries them.
         context->time_base = { 1, 1'000'000 };
         context->framerate = { static_cast<int>(fps), 1 };
-        context->bit_rate = config.bitrate_bps;
+        context->bit_rate = bitrate;
         context->gop_size = static_cast<int>(gop);
         context->max_b_frames = 0;
         // Parameter sets stay in the stream, in front of every IDR, so a receiver can join mid-stream.
         context->flags &= ~AV_CODEC_FLAG_GLOBAL_HEADER;
-        check_av(av_opt_set(context->priv_data, "profile", "high", 0),
-                 "av_opt_set("
-                 "profile"
-                 ")");
-        check_av(av_opt_set(context->priv_data, "level", "5.2", 0),
-                 "av_opt_set("
-                 "level"
-                 ")");
-        check_av(av_opt_set(context->priv_data, "forced-idr", "1", 0),
-                 "av_opt_set("
-                 "forced-idr"
-                 ")");
-        check_av(av_opt_set(context->priv_data, "zerolatency", "1", 0),
-                 "av_opt_set("
-                 "zerolatency"
-                 ")");
+        set_option("profile", "high");
+        set_option("level", "5.2");
+        set_option("forced-idr", "1");
+        set_option("zerolatency", "1");
+        // Hand each unit back as soon as it is encoded rather than after a queue of frames.
+        set_option("delay", "0");
         if (config.peak_bitrate_bps > config.bitrate_bps)
         {
-            context->rc_max_rate = config.peak_bitrate_bps;
-            context->rc_buffer_size = static_cast<int>(config.peak_bitrate_bps);
-            check_av(av_opt_set(context->priv_data, "rc", "vbr", 0),
-                     "av_opt_set("
-                     "rc"
-                     ")");
+            // The configured ratio between the ceiling and the target holds at any target.
+            context->rc_max_rate = static_cast<int64_t>(bitrate) * config.peak_bitrate_bps / config.bitrate_bps;
+            context->rc_buffer_size = static_cast<int>(context->rc_max_rate);
+            set_option("rc", "vbr");
         }
         else
         {
-            check_av(av_opt_set(context->priv_data, "rc", "cbr", 0),
-                     "av_opt_set("
-                     "rc"
-                     ")");
+            set_option("rc", "cbr");
         }
         check_av(avcodec_open2(context, codec, nullptr), "cannot open h264_nvenc");
+        applied_bitrate = bitrate;
+    }
 
+    void alloc_frame()
+    {
         frame = av_frame_alloc();
         packet = av_packet_alloc();
         if (!frame || !packet)
@@ -195,9 +195,28 @@ struct JetsonEncoder::Impl
             EncodedUnit unit;
             unit.data.assign(packet->data, packet->data + packet->size);
             unit.timestamp_ns = packet->pts * 1000;
+            unit.keyframe = (packet->flags & AV_PKT_FLAG_KEY) != 0;
             av_packet_unref(packet);
             out.push_back(std::move(unit));
         }
+    }
+
+    // Worker thread, which owns the codec. The libavcodec NVENC wrapper takes its rate control at
+    // open, so a new target drains the running session into `out` and opens another at that rate: the
+    // stream continues from an IDR with parameter sets.
+    void apply_bitrate(std::deque<EncodedUnit>& out)
+    {
+        uint32_t target = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            target = pending_bitrate;
+            pending_bitrate = 0;
+        }
+        if (target == 0 || target == applied_bitrate)
+            return;
+        check_av(avcodec_send_frame(context, nullptr), "avcodec_send_frame(flush)");
+        collect(out);
+        open_context(target);
     }
 
     void encode(const Job& job)
@@ -211,6 +230,8 @@ struct JetsonEncoder::Impl
         for (uint32_t row = 0; row < config.height / 2; ++row)
             std::memcpy(frame->data[1] + static_cast<size_t>(row) * frame->linesize[1], uv + row * width, width);
         frame->pts = job.timestamp_ns / 1000;
+        // With forced-idr, an I picture is an IDR with its parameter sets.
+        frame->pict_type = job.keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
         check_av(avcodec_send_frame(context, frame), "avcodec_send_frame");
     }
 
@@ -234,6 +255,7 @@ struct JetsonEncoder::Impl
             std::string error;
             try
             {
+                apply_bitrate(produced);
                 encode(job);
                 collect(produced);
             }
@@ -257,6 +279,7 @@ struct JetsonEncoder::Impl
 
     EncoderConfig config;
 
+    const AVCodec* codec = nullptr;
     AVCodecContext* context = nullptr;
     AVFrame* frame = nullptr;
     AVPacket* packet = nullptr;
@@ -278,6 +301,9 @@ struct JetsonEncoder::Impl
     bool busy = false;
     bool closing = false;
     bool flushed = false;
+    bool keyframe_requested = false; // guarded by `mutex`
+    uint32_t pending_bitrate = 0; // guarded by `mutex`; 0 when nothing is waiting
+    uint32_t applied_bitrate = 0; // worker thread only
     std::thread worker;
 };
 
@@ -324,7 +350,8 @@ bool JetsonEncoder::submit(uintptr_t rgba_device_ptr, std::size_t row_pitch_byte
 
     {
         std::lock_guard<std::mutex> lock(impl.mutex);
-        impl.jobs.push_back({ buffer, timestamp_ns });
+        impl.jobs.push_back({ buffer, timestamp_ns, impl.keyframe_requested });
+        impl.keyframe_requested = false;
     }
     impl.wake.notify_one();
     return true;
@@ -342,30 +369,55 @@ EncodedUnit JetsonEncoder::poll()
     return out;
 }
 
-EncodedUnit JetsonEncoder::end_of_stream()
+std::vector<EncodedUnit> JetsonEncoder::drain()
 {
     auto& impl = *m_impl;
     std::unique_lock<std::mutex> lock(impl.mutex);
     impl.idle.wait(lock, [&] { return impl.jobs.empty() && !impl.busy; });
     if (!impl.failure.empty())
         throw std::runtime_error(impl.failure);
+    if (!impl.flushed)
+    {
+        impl.flushed = true;
+        check_av(avcodec_send_frame(impl.context, nullptr), "avcodec_send_frame(flush)");
+        impl.collect(impl.ready);
+    }
+    std::vector<EncodedUnit> units(
+        std::make_move_iterator(impl.ready.begin()), std::make_move_iterator(impl.ready.end()));
+    impl.ready.clear();
+    return units;
+}
 
-    if (impl.flushed)
-        return {};
-    impl.flushed = true;
-
-    // Flush the encoder, then concatenate what is left, so the tail carries the stamp of the last unit.
-    check_av(avcodec_send_frame(impl.context, nullptr), "avcodec_send_frame(flush)");
-    impl.collect(impl.ready);
-
+EncodedUnit JetsonEncoder::end_of_stream()
+{
+    // The tail is concatenated, so it carries the stamp of the last unit in it.
     EncodedUnit out;
-    for (auto& chunk : impl.ready)
+    for (auto& chunk : drain())
     {
         out.data.insert(out.data.end(), chunk.data.begin(), chunk.data.end());
         out.timestamp_ns = chunk.timestamp_ns;
     }
-    impl.ready.clear();
     return out;
+}
+
+void JetsonEncoder::request_keyframe()
+{
+    std::lock_guard<std::mutex> lock(m_impl->mutex);
+    m_impl->keyframe_requested = true;
+}
+
+bool JetsonEncoder::set_bitrate(uint32_t bitrate_bps)
+{
+    if (bitrate_bps == 0)
+        return false;
+    std::lock_guard<std::mutex> lock(m_impl->mutex);
+    m_impl->pending_bitrate = bitrate_bps;
+    return true;
+}
+
+const char* JetsonEncoder::backend_name()
+{
+    return "NVENC (libavcodec h264_nvenc)";
 }
 
 } // namespace sensing

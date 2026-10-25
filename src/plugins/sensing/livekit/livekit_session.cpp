@@ -3,6 +3,7 @@
 
 #include "inc/sensing_livekit/livekit_session.hpp"
 
+#include <livekit/encoded_video_source.h>
 #include <livekit/livekit.h>
 #include <log_bridge/logger.hpp>
 
@@ -111,28 +112,25 @@ struct LiveKitSessionImpl : livekit::RoomDelegate
 namespace
 {
 
-/// A track fed from one NV12 buffer.
+/// A track fed with H.264 access units that were encoded upstream.
 class LiveKitVideoTrack : public VideoTrackSink
 {
 public:
     LiveKitVideoTrack(std::shared_ptr<LiveKitSessionImpl> session, const PublishSpec& spec)
-        : m_session(std::move(session)),
-          m_width(spec.width),
-          m_height(spec.height),
-          m_frame(livekit::VideoFrame::create(
-              static_cast<int>(spec.width), static_cast<int>(spec.height), livekit::VideoBufferType::NV12))
+        : m_session(std::move(session)), m_width(spec.width), m_height(spec.height)
     {
-        m_source = std::make_shared<livekit::VideoSource>(static_cast<int>(spec.width), static_cast<int>(spec.height));
+        m_source = std::make_shared<livekit::EncodedVideoSource>(
+            livekit::VideoCodec::H264, static_cast<int>(spec.width), static_cast<int>(spec.height));
         m_track = livekit::LocalVideoTrack::createLocalVideoTrack(spec.name, m_source);
 
         livekit::TrackPublishOptions options;
         options.source = livekit::TrackSource::SOURCE_CAMERA;
         options.video_codec = livekit::VideoCodec::H264;
+        // Pre-encoded access units go through as they are: no software or SDK-selected encoder.
+        options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
         options.simulcast = false;
         options.video_encoding = livekit::VideoEncodingOptions{ spec.max_bitrate_bps, spec.max_fps };
         options.frame_metadata_features = livekit::FrameMetadataFeatures{ true, true, true };
-        // Under bandwidth pressure give up frame rate, not picture size or aspect.
-        options.degradation_preference = livekit::DegradationPreference::MaintainResolution;
 
         auto participant = m_session->room.localParticipant().lock();
         if (!participant)
@@ -169,35 +167,52 @@ public:
     {
         return m_height;
     }
-    uint8_t* frame_buffer() override
-    {
-        return m_frame.data();
-    }
 
-    void submit(const VideoFrameInfo& info) override
+    bool submit(const EncodedVideoFrame& frame) override
     {
         if (m_session->failed.load())
             throw std::runtime_error(m_session->failure);
 
-        livekit::VideoCaptureOptions options;
-        options.timestamp_us = static_cast<int64_t>(info.timestamp_us);
+        livekit::EncodedVideoSource::Frame out;
+        out.is_keyframe = frame.keyframe;
+        out.width = m_width;
+        out.height = m_height;
+        out.timestamp_us = static_cast<int64_t>(frame.timestamp_us);
+        out.data.assign(frame.data, frame.data + frame.size);
         livekit::VideoFrameMetadata metadata;
-        metadata.user_timestamp_us = info.timestamp_us;
-        metadata.frame_id = info.frame_id;
+        metadata.user_timestamp_us = frame.timestamp_us;
+        metadata.frame_id = frame.frame_id;
         std::vector<uint8_t> tsc(8);
         for (int i = 0; i < 8; ++i)
-            tsc[i] = static_cast<uint8_t>((info.capture_tsc_ns >> (8 * i)) & 0xFF);
+            tsc[i] = static_cast<uint8_t>((frame.capture_tsc_ns >> (8 * i)) & 0xFF);
         metadata.user_data = std::move(tsc);
-        options.metadata = std::move(metadata);
+        out.metadata = std::move(metadata);
 
         try
         {
-            m_source->captureFrame(m_frame, options);
+            return m_source->captureFrame(out);
         }
         catch (const std::exception& e)
         {
             throw std::runtime_error(std::string("LiveKit: cannot submit a frame: ") + e.what());
         }
+    }
+
+    EncoderFeedback take_feedback() override
+    {
+        EncoderFeedback feedback;
+        try
+        {
+            const auto pending = m_source->takeFeedback();
+            feedback.keyframe_requested = pending.keyframe_requested;
+            if (pending.rate_control && pending.rate_control->target_bitrate_bps > 0)
+                feedback.target_bitrate_bps = static_cast<uint32_t>(pending.rate_control->target_bitrate_bps);
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(std::string("LiveKit: cannot read encoder feedback: ") + e.what());
+        }
+        return feedback;
     }
 
     // Called from the polling thread, which must not wait on the network: this returns the last answer
@@ -234,8 +249,7 @@ private:
     std::shared_ptr<LiveKitSessionImpl> m_session;
     uint32_t m_width;
     uint32_t m_height;
-    livekit::VideoFrame m_frame;
-    std::shared_ptr<livekit::VideoSource> m_source;
+    std::shared_ptr<livekit::EncodedVideoSource> m_source;
     std::shared_ptr<livekit::LocalVideoTrack> m_track;
     std::weak_ptr<livekit::LocalParticipant> m_participant;
     decltype(std::declval<livekit::LocalVideoTrack&>().getStats()) m_stats;

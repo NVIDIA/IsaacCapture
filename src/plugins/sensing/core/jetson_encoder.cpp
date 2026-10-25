@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cuda_runtime.h>
 #include <deque>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -55,6 +56,7 @@ struct JetsonEncoder::Impl
     std::mutex mutex;
     std::deque<EncodedUnit> ready;
     bool eos_reached = false;
+    bool eos_sent = false; // driving thread only
 
     ~Impl()
     {
@@ -83,6 +85,7 @@ struct JetsonEncoder::Impl
             unit.data.assign(data, data + buffer->planes[0].bytesused);
             unit.timestamp_ns = static_cast<int64_t>(v4l2_buf->timestamp.tv_sec) * 1000000000LL +
                                 static_cast<int64_t>(v4l2_buf->timestamp.tv_usec) * 1000LL;
+            unit.keyframe = (v4l2_buf->flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
             std::lock_guard<std::mutex> lock(self->mutex);
             self->ready.push_back(std::move(unit));
         }
@@ -253,37 +256,64 @@ EncodedUnit JetsonEncoder::poll()
     return out;
 }
 
-EncodedUnit JetsonEncoder::end_of_stream()
+std::vector<EncodedUnit> JetsonEncoder::drain()
 {
     auto* enc = m_impl->encoder;
 
-    // A zero-length output buffer is the EOS marker for the V4L2 encoder.
-    struct v4l2_buffer v4l2_buf;
-    struct v4l2_plane planes[MAX_PLANES];
-    std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
-    std::memset(planes, 0, sizeof(planes));
-    v4l2_buf.m.planes = planes;
-
-    NvBuffer* buffer = nullptr;
-    if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 10) >= 0)
+    // A zero-length output buffer is the EOS marker for the V4L2 encoder. It is sent once: a second
+    // drain only returns what is left.
+    if (!m_impl->eos_sent)
     {
-        v4l2_buf.m.planes[0].bytesused = 0;
-        v4l2_buf.m.planes[1].bytesused = 0;
-        enc->output_plane.qBuffer(v4l2_buf, nullptr);
+        m_impl->eos_sent = true;
+        struct v4l2_buffer v4l2_buf;
+        struct v4l2_plane planes[MAX_PLANES];
+        std::memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+        std::memset(planes, 0, sizeof(planes));
+        v4l2_buf.m.planes = planes;
+
+        NvBuffer* buffer = nullptr;
+        if (enc->output_plane.dqBuffer(v4l2_buf, &buffer, nullptr, 10) >= 0)
+        {
+            v4l2_buf.m.planes[0].bytesused = 0;
+            v4l2_buf.m.planes[1].bytesused = 0;
+            enc->output_plane.qBuffer(v4l2_buf, nullptr);
+        }
+
+        enc->capture_plane.waitForDQThread(2000);
     }
 
-    enc->capture_plane.waitForDQThread(2000);
-
-    EncodedUnit out;
     std::lock_guard<std::mutex> lock(m_impl->mutex);
+    std::vector<EncodedUnit> units(
+        std::make_move_iterator(m_impl->ready.begin()), std::make_move_iterator(m_impl->ready.end()));
+    m_impl->ready.clear();
+    return units;
+}
+
+EncodedUnit JetsonEncoder::end_of_stream()
+{
     // The tail is concatenated, so it carries the stamp of the last unit in it.
-    for (auto& chunk : m_impl->ready)
+    EncodedUnit out;
+    for (auto& chunk : drain())
     {
         out.data.insert(out.data.end(), chunk.data.begin(), chunk.data.end());
         out.timestamp_ns = chunk.timestamp_ns;
     }
-    m_impl->ready.clear();
     return out;
+}
+
+void JetsonEncoder::request_keyframe()
+{
+    check(m_impl->encoder->forceIDR(), "forceIDR");
+}
+
+bool JetsonEncoder::set_bitrate(uint32_t bitrate_bps)
+{
+    return m_impl->encoder->setBitrate(bitrate_bps) >= 0;
+}
+
+const char* JetsonEncoder::backend_name()
+{
+    return "Jetson V4L2 NVENC";
 }
 
 } // namespace sensing

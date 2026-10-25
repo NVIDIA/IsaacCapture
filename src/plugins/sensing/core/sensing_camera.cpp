@@ -141,6 +141,10 @@ SensingCamera::SensingCamera(const SensingConfig& config,
             output.scale_div = config.livekit.scale_div;
             output.fps = config.livekit.fps;
             output.gpu_id = config.gpu_id;
+            output.bitrate_bps = config.livekit.bitrate_bps;
+            output.peak_bitrate_bps = config.livekit.bitrate_bps + config.livekit.bitrate_bps / 2;
+            output.gop = config.gop;
+            output.full_range = config.full_range;
             if (!m_livekit)
                 m_livekit = LiveKitSession::connect(config.livekit.url, config.livekit.token);
 
@@ -148,7 +152,7 @@ SensingCamera::SensingCamera(const SensingConfig& config,
             spec.name = stream_config.livekit_track;
             spec.width = found->width / output.scale_div;
             spec.height = found->height / output.scale_div;
-            spec.max_bitrate_bps = config.bitrate_bps;
+            spec.max_bitrate_bps = output.peak_bitrate_bps;
             spec.max_fps = static_cast<double>(std::min<double>(output.fps, found->fps));
             stream.livekit = std::make_unique<LiveKitVideoOutput>(m_livekit->publish_video(spec), output);
             std::cout << "LiveKit track '" << spec.name << "': " << spec.width << "x" << spec.height << " @ up to "
@@ -270,6 +274,10 @@ void SensingCamera::flush()
 {
     for (auto& stream : m_streams)
     {
+#if SENSING_WITH_LIVEKIT
+        if (stream.livekit)
+            stream.livekit->flush();
+#endif
         if (!stream.encoder)
             continue;
         auto unit = stream.encoder->end_of_stream();
@@ -322,6 +330,12 @@ void SensingCamera::print_stats() const
             const auto s = stream.livekit->stats();
             std::cout << " | livekit " << s.published << " published, " << s.paced_out << " paced out, " << s.replaced
                       << " replaced";
+            if (s.encoder_busy)
+                std::cout << ", " << s.encoder_busy << " encoder busy";
+            if (s.rejected)
+                std::cout << ", " << s.rejected << " rejected";
+            if (s.keyframes_requested)
+                std::cout << ", " << s.keyframes_requested << " keyframes requested";
             const std::string encoder = stream.livekit->describe();
             if (!encoder.empty())
                 std::cout << " (" << encoder << ")";

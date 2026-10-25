@@ -37,7 +37,7 @@ struct PublishSpec
     std::string name;
     uint32_t width = 0;
     uint32_t height = 0;
-    /// Upper bound the encoder may use; WebRTC adapts below it.
+    /// Upper bound the upstream encoder may use; WebRTC adapts below it.
     uint64_t max_bitrate_bps = 0;
     double max_fps = 30.0;
 };
@@ -61,7 +61,7 @@ public:
     LiveKitSession(const LiveKitSession&) = delete;
     LiveKitSession& operator=(const LiveKitSession&) = delete;
 
-    /// Publishes an H.264 camera track fed from NV12 frames.
+    /// Publishes an H.264 camera track that carries pre-encoded access units; the SDK does not encode.
     /// @throws std::runtime_error if publication fails.
     std::unique_ptr<VideoTrackSink> publish_video(const PublishSpec& spec);
 

@@ -20,8 +20,8 @@ namespace sensing
 {
 
 /// One captured sensor and where its frames go. Any destination may be empty: an
-/// ipc-only or livekit-only stream skips the encoder entirely, which is the point
-/// of those paths.
+/// ipc-only stream skips the encoder entirely, and a livekit-only stream has no recording
+/// encoder, only the live track's own.
 struct StreamConfig
 {
     /// SIPL pipeline index, validated against the platform config at startup.
@@ -44,6 +44,9 @@ struct LiveKitConfig
     uint32_t fps = 30;
     /// Output-only uniform reduction of every track; 1 publishes the sensor's native size.
     uint32_t scale_div = 1;
+    /// Target bitrate of each track's hardware encoder; the VBR ceiling is half as much again. A
+    /// live transport, unlike the recording, cannot take the recording's rate.
+    uint32_t bitrate_bps = 8'000'000;
 };
 
 struct SensingConfig

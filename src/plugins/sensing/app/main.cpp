@@ -157,7 +157,10 @@ void print_usage(const char* program_name)
               << "  --livekit-fps=N           publication rate cap (default: 30)\n"
               << "  --livekit-scale-div=N     reduce every track by this integer divisor, e.g. 2 gives\n"
               << "                            1280x992 from 2560x1984; must divide exactly (default: 1)\n"
-              << "  The track is H.264 and its bitrate ceiling is --bitrate.\n"
+              << "  --livekit-bitrate=N       target bitrate of each track's hardware encoder in bps; the\n"
+              << "                            ceiling is half as much again (default: 8000000)\n"
+              << "  Each track carries H.264 encoded on this machine's hardware encoder and forwarded as is;\n"
+              << "  there is no software encoder.\n"
               << "\nGeneral:\n"
               << "  --gpu-id=N          CUDA device index (default: 0)\n"
               << "  --isp0-buffers=N    ISP0 buffers per sensor (default: 6)\n"
@@ -238,6 +241,10 @@ try
         else if (arg.find("--livekit-fps=") == 0)
         {
             camera_config.livekit.fps = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+        }
+        else if (arg.find("--livekit-bitrate=") == 0)
+        {
+            camera_config.livekit.bitrate_bps = static_cast<uint32_t>(std::stoul(arg.substr(18)));
         }
         else if (arg.find("--livekit-scale-div=") == 0)
         {
@@ -347,6 +354,8 @@ try
             throw std::runtime_error("livekit= streams need --livekit-url and --livekit-token-file");
         if (camera_config.livekit.fps == 0)
             throw std::runtime_error("--livekit-fps must be at least 1");
+        if (camera_config.livekit.bitrate_bps < 100'000)
+            throw std::runtime_error("--livekit-bitrate must be at least 100000");
 
         // The token is read from a file so it never appears in a process listing, and is not printed.
         std::ifstream token_file(livekit_token_file);

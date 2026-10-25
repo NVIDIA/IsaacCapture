@@ -32,4 +32,7 @@ if(SENSING_LIVEKIT)
         "${SENSING_LIVEKIT_SDK_DIR}/lib/liblivekit_ffi.so"
         DESTINATION plugins/sensing_camera
     )
+    install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
+        DESTINATION plugins/sensing_camera/licenses/livekit-sdk
+    )
 endif()
