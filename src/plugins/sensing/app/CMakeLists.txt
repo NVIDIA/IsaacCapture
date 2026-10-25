@@ -35,4 +35,7 @@ if(SENSING_LIVEKIT)
     install(FILES "${SENSING_LIVEKIT_LICENSE_FILE}" "${SENSING_LIVEKIT_NOTICE_FILE}"
         DESTINATION plugins/sensing_camera/licenses/livekit-sdk
     )
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../livekit/receiver/index.html"
+        DESTINATION plugins/sensing_camera/receiver
+    )
 endif()
