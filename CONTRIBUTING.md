@@ -72,12 +72,12 @@ GitHub Actions builds the default targets and runs tests.
 
 [`.github/CODEOWNERS`](.github/CODEOWNERS) maps subsystems to reviewers, with
 repository maintainers covering unmatched paths. Keep each subsystem's source,
-bindings, tests, examples, and documentation assigned together when adding or
-moving files. Rules are ordered from broad defaults to specific overrides;
-the last matching rule wins.
+bindings, tests, and examples assigned together when adding or moving files.
+All files under `docs/` share the documentation owners. Rules are ordered from
+broad defaults to specific overrides; the last matching rule wins.
 
-Owners must have repository write access. Initial assignments come from Git
-history; integrations without an eligible specialist use repository maintainers.
+Owners must have repository write access. Integrations without an eligible
+specialist use repository maintainers.
 Update the map as maintainers change, keeping a backup reviewer for each area.
 Multiple owners on a line are alternatives, not a requirement for both to approve.
 
