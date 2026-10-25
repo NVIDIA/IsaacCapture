@@ -71,14 +71,14 @@ GitHub Actions builds the default targets and runs tests.
 ### Code ownership
 
 [`.github/CODEOWNERS`](.github/CODEOWNERS) maps subsystems to reviewers, with
-repository maintainers covering unmatched paths. Keep each subsystem's source,
-bindings, tests, and examples assigned together when adding or moving files.
-All files under `docs/` share the documentation owners. Rules are ordered from
-broad defaults to specific overrides; the last matching rule wins.
+repository maintainers covering unmatched paths. Keep related source, bindings,
+and tests assigned together when adding or moving files. All files under `docs/`
+share the documentation owners; plugin infrastructure, integrations, and tests
+share the plugin owners. Examples have their own entries. Rules are ordered
+from broad defaults to specific overrides; the last matching rule wins.
 
-Owners must have repository write access. Integrations without an eligible
-specialist use repository maintainers.
-Update the map as maintainers change, keeping a backup reviewer for each area.
+Owners must have repository write access. Update the map as maintainers change,
+keeping a backup reviewer for each area.
 Multiple owners on a line are alternatives, not a requirement for both to approve.
 
 GitHub requests owner reviews for ready pull requests once the file is on their

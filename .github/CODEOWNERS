@@ -108,36 +108,13 @@
 # Keep documentation ownership centralized; do not add subsystem overrides.
 /docs/ @jiwenc-nv @ivany-nv @aristarkhovNV
 
-# Plugins: shared infrastructure, hardware integrations, and tests.
-/src/plugins/ @jiwenc-nv @aristarkhovNV
-/tests/cpp/plugins/ @jiwenc-nv @aristarkhovNV
-/src/core/pusherio/ @aristarkhovNV @ivany-nv
-/src/core/plugin_manager/ @aristarkhovNV @ivany-nv
-/src/python/isaaccapture/plugin_manager/ @aristarkhovNV @ivany-nv
-/tests/cpp/core/plugin_manager/ @aristarkhovNV @ivany-nv
-/src/plugins/controller_se3_tracker/ @aristarkhovNV @ivany-nv
-/src/plugins/controller_synthetic_hands/ @aristarkhovNV @ivany-nv
-/src/plugins/gamepad/ @rwiltz @aristarkhovNV
-/tests/cpp/plugins/gamepad/ @rwiltz @aristarkhovNV
-/src/plugins/generic_3axis_pedal/ @rwiltz @aristarkhovNV
-/src/plugins/haptikos/ @jiwenc-nv @aristarkhovNV
-/src/plugins/manus/ @sgrizan-nv @jiwenc-nv
-/src/plugins/noitom_mocap/ @jiwenc-nv @aristarkhovNV
-/src/plugins/oak/ @shaosu-nvidia @jiwenc-nv
-/src/plugins/oglo_tactile/ @jiwenc-nv @aristarkhovNV
-/tests/cpp/plugins/oglo_tactile/ @jiwenc-nv @aristarkhovNV
-/src/plugins/plugin_utils/ @aristarkhovNV @ivany-nv
-/tests/cpp/plugins/plugin_utils/ @aristarkhovNV @ivany-nv
-/src/plugins/rebot_devarm_leader/ @jiwenc-nv @aristarkhovNV
-/src/plugins/sensing/ @jiwenc-nv @aristarkhovNV
-/src/plugins/sharpa_avatar/ @lotusl-code @jiwenc-nv
-/src/plugins/so101_leader/ @rwiltz @aristarkhovNV
-/src/plugins/spacemouse/ @rwiltz @aristarkhovNV
-/tests/cpp/plugins/spacemouse/ @rwiltz @aristarkhovNV
-/src/plugins/steering_wheel/ @jiwenc-nv @aristarkhovNV
-/src/plugins/vive_se3_tracker/ @jiwenc-nv @aristarkhovNV
-/src/plugins/wuji_glove/ @sgrizan-nv @jiwenc-nv
-/src/plugins/xsens_full_body/ @jiwenc-nv @aristarkhovNV
+# Plugin infrastructure, integrations, and tests share owners; avoid device overrides.
+/src/plugins/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
+/tests/cpp/plugins/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
+/src/core/pusherio/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
+/src/core/plugin_manager/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
+/src/python/isaaccapture/plugin_manager/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
+/tests/cpp/core/plugin_manager/ @jiwenc-nv @aristarkhovNV @ivany-nv @rwiltz @sgrizan-nv @shaosu-nvidia @lotusl-code
 
 # Examples and their tests.
 /examples/camera_viz/ @farbod-nv @nv-mhaselton
