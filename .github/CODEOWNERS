@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Direct repository admins; keep this list aligned with their access.
+* @aristarkhovNV @ivany-nv @jiwenc-nv
+
+# An empty owner list removes the approval requirement for this subtree.
+/examples/agentic_teleop/
