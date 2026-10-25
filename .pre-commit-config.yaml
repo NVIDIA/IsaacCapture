@@ -43,6 +43,17 @@ repos:
   # Copyright year: ensure SPDX-FileCopyrightText includes current year (--fix updates in place)
   - repo: local
     hooks:
+      # Keep this fork-specific restriction and its maintenance guidance here.
+      # Hook updates require SKIP=check-agentic-teleop-scope.
+      - id: check-agentic-teleop-scope
+        name: Only allow staged changes under examples/agentic_teleop/
+        entry: >-
+          git diff --cached --exit-code --name-only --no-renames --
+          . ':(exclude)examples/agentic_teleop/**'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
       - id: check-dco-signoff
         name: Require DCO Signed-off-by in commit message
         entry: python3 scripts/check_dco_signoff.py
