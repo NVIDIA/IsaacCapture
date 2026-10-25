@@ -78,8 +78,8 @@ Every sensor shows an animated GIF chosen by its **module name** (never its pipe
 link mask renumbers), from the bundled Animated Noto Emoji in [`mock_assets/`](mock_assets/) (CC BY 4.0;
 see its README): `S56C_HEAD` the robot, `SHF3L_LEFT` the waving hand, `SHF3L_RIGHT` the hand flipped left
 to right. The two sensors of `S56C_HEAD` are its left and right eyes; their pictures are offset against
-each other by a fixed 2% of the width, as a 60 mm baseline gives. A module not in that table needs
-`SENSING_MOCK_GIF` or `SENSING_MOCK_GIF_<module name>`. The GIF plays on the capture clock, looping, scaled
+each other by a fixed 2% of the width (illustrative, not calibrated geometry). A module not in that
+table is an error. The GIF plays on the capture clock, looping, scaled
 to cover the sensor's configured size and centre-cropped so it is never stretched (bilinear when
 enlarging, area-averaged when reducing). Transparent pixels show a plain gray. The GIF's own size and
 aspect do not matter; the frame size always comes from the platform config. A GIF that cannot be loaded,
@@ -94,9 +94,6 @@ Environment, read once at construction:
 
 | Variable | Effect |
 | --- | --- |
-| `SENSING_MOCK_GIF` | path of an animated GIF shown by every sensor, as it is (default: by module, above) |
-| `SENSING_MOCK_GIF_<module name>` | a GIF for one sensor, by module name (`SENSING_MOCK_GIF_SHW5G_MIX_L3`); wins over `SENSING_MOCK_GIF` |
-| `SENSING_MOCK_FLIP_<module name>` | `1` or `0`: flip that module's picture left to right, or not, whatever its GIF |
 | `SENSING_MOCK_FPS` | override the platform config's frame rate |
 | `SENSING_MOCK_SCALE_DIV` | divide the reported width and height (kept even); useful for tests |
 | `SENSING_MOCK_FAIL_AFTER` | every sensor fails after N frames, as a link drop would |

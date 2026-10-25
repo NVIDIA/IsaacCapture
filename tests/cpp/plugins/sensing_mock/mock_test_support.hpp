@@ -6,6 +6,7 @@
 #include "gif_fixture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <core/mock_test_hooks.hpp>
 #include <core/sipl_camera.hpp>
 
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -48,6 +50,22 @@ public:
 
 private:
     std::string m_name;
+};
+
+/// Every sensor shows this GIF as it is for one scope.
+class ScopedPicture
+{
+public:
+    explicit ScopedPicture(const std::string& path)
+    {
+        plugins::sensing::mock_set_test_picture(path);
+    }
+    ~ScopedPicture()
+    {
+        plugins::sensing::mock_set_test_picture("");
+    }
+    ScopedPicture(const ScopedPicture&) = delete;
+    ScopedPicture& operator=(const ScopedPicture&) = delete;
 };
 
 template <typename Pred>
@@ -106,18 +124,18 @@ private:
 class FastMock
 {
 public:
-    FastMock() : m_gif(".gif"), m_scale("SENSING_MOCK_SCALE_DIV", "8"), m_source("SENSING_MOCK_GIF")
+    FastMock() : m_gif(".gif"), m_scale("SENSING_MOCK_SCALE_DIV", "8")
     {
         write_gif(m_gif.path(), 16, 16,
                   { solid_frame(16, 16, kGifBlack, 4), solid_frame(16, 16, kGifRed, 4),
                     solid_frame(16, 16, kGifBlue, 4), solid_frame(16, 16, kGifWhite, 4) });
-        m_source.set(m_gif.path().c_str());
+        m_source = std::make_unique<ScopedPicture>(m_gif.path());
     }
 
 private:
     TempFile m_gif;
     ScopedEnv m_scale;
-    ScopedEnv m_source;
+    std::unique_ptr<ScopedPicture> m_source;
 };
 
 struct Rgb

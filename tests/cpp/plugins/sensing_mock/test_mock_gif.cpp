@@ -80,7 +80,7 @@ TEST_CASE("a GIF that is missing or is not a GIF fails construction", "[unit][gp
     CHECK_THROWS_WITH(MockGifSource(text.path()), Catch::Matchers::ContainsSubstring("cannot decode"));
 
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv gif("SENSING_MOCK_GIF", "/nonexistent/none.gif");
+    ScopedPicture gif("/nonexistent/none.gif");
     CHECK_THROWS_AS(SiplCamera(make_sipl_config()), std::runtime_error);
 }
 
@@ -91,7 +91,7 @@ TEST_CASE("the camera shows the GIF frame for its capture time while sequence an
     // Delays are in centiseconds: 4 is 40 ms.
     write_gif(gif.path(), 16, 16, { solid_frame(16, 16, kGifRed, 4), solid_frame(16, 16, kGifBlue, 4) });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
     ScopedEnv fps("SENSING_MOCK_FPS", "50"); // 20 ms per capture: two captures per GIF frame
 
     SiplCamera camera(make_sipl_config());
@@ -149,7 +149,7 @@ TEST_CASE("an enlarged GIF keeps its proportions on the sensor's geometry", "[un
     TempFile gif(".gif");
     write_gif(gif.path(), 32, 32, { square_frame(32, 32, 16, 100) });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
 
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -178,7 +178,7 @@ TEST_CASE("a wide GIF is reduced and cropped to the sensor's aspect", "[unit][gp
     TempFile gif(".gif");
     write_gif(gif.path(), 640, 320, { split_frame(640, 320, kGifRed, kGifBlue, 100) });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
 
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -203,7 +203,7 @@ TEST_CASE("a tall GIF is cropped top and bottom", "[unit][gpu][sensing]")
         std::fill_n(frame.pixels.begin() + y * 100, 100, kGifWhite);
     write_gif(gif.path(), 100, 400, { frame });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
 
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -222,7 +222,7 @@ TEST_CASE("a large reduction averages the source instead of skipping pixels", "[
     TempFile gif(".gif");
     write_gif(gif.path(), 200, 200, { split_frame(200, 200, kGifRed, kGifBlue, 100) });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "32");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
 
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -239,7 +239,7 @@ TEST_CASE("without a scale override the GIF is shown at the sensor's configured 
 {
     TempFile gif(".gif");
     write_gif(gif.path(), 32, 32, { square_frame(32, 32, 16, 100) });
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
     ScopedEnv fps("SENSING_MOCK_FPS", "5");
 
     SiplCamera camera(make_sipl_config());
@@ -260,29 +260,6 @@ TEST_CASE("without a scale override the GIF is shown at the sensor's configured 
     const int run_y = static_cast<int>(white_run_y(shot, shot.width / 2));
     CHECK(std::abs(run_x - 1280) <= 110);
     CHECK(std::abs(run_x - run_y) <= 4);
-}
-
-TEST_CASE("a sensor's GIF can be chosen by its module name", "[unit][gpu][sensing]")
-{
-    TempFile red(".gif");
-    TempFile blue(".gif");
-    write_gif(red.path(), 16, 16, { solid_frame(16, 16, kGifRed, 100) });
-    write_gif(blue.path(), 16, 16, { solid_frame(16, 16, kGifBlue, 100) });
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv everyone("SENSING_MOCK_GIF", red.path().c_str());
-    ScopedEnv one("SENSING_MOCK_GIF_SHW5G_MIX_L3", blue.path().c_str());
-
-    SiplCamera camera(make_sipl_config());
-    REQUIRE(camera.sensors().size() == 2);
-    REQUIRE(camera.sensors()[0].name == "SHW5G_MIX_L2");
-    REQUIRE(camera.sensors()[1].name == "SHW5G_MIX_L3");
-    camera.start();
-    const Shot first = grab(camera, 0);
-    const Shot second = grab(camera, 1);
-    camera.stop();
-
-    CHECK(near(first.at(first.width / 2, first.height / 2), 255, 0, 0));
-    CHECK(near(second.at(second.width / 2, second.height / 2), 0, 0, 255));
 }
 
 namespace
@@ -428,7 +405,7 @@ TEST_CASE("by default both sensors show the waving hand, one the mirror image of
     Frames explicit_first;
     Frames explicit_second;
     {
-        ScopedEnv hand("SENSING_MOCK_GIF", bundled("noto-waving-hand.gif").c_str());
+        ScopedPicture hand(bundled("noto-waving-hand.gif"));
         SiplCamera named(make_sipl_config());
         auto frames = record(named, kFrames);
         explicit_first = std::move(frames[0]);
@@ -446,7 +423,7 @@ TEST_CASE("by default both sensors show the waving hand, one the mirror image of
     // And it is not the robot.
     Frames robot;
     {
-        ScopedEnv face("SENSING_MOCK_GIF", bundled("noto-robot.gif").c_str());
+        ScopedPicture face(bundled("noto-robot.gif"));
         SiplCamera named(make_sipl_config());
         robot = std::move(record(named, kFrames)[0]);
     }
@@ -456,12 +433,12 @@ TEST_CASE("by default both sensors show the waving hand, one the mirror image of
         CHECK(mean_abs_diff(*shot, *face) > 15.0);
 }
 
-TEST_CASE("a GIF named in the environment is shown as it is, on every sensor", "[unit][gpu][sensing]")
+TEST_CASE("a test picture is shown as it is, on every sensor", "[unit][gpu][sensing]")
 {
     TempFile gif(".gif");
     write_gif(gif.path(), 16, 16, { split_frame(16, 16, kGifRed, kGifBlue, 100) });
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+    ScopedPicture source(gif.path());
 
     SiplCamera camera(make_sipl_config());
     camera.start();
@@ -469,79 +446,12 @@ TEST_CASE("a GIF named in the environment is shown as it is, on every sensor", "
     const Shot second = grab(camera, 1);
     camera.stop();
 
-    // Red on the left and blue on the right for both: the default flip belongs to the bundled hand.
+    // Red on the left and blue on the right for both: the mirror belongs to the fixed pictures.
     for (const Shot* shot : { &first, &second })
     {
         CHECK(near(shot->at(shot->width / 4, shot->height / 2), 255, 0, 0));
         CHECK(near(shot->at(shot->width * 3 / 4, shot->height / 2), 0, 0, 255));
     }
-}
-
-TEST_CASE("a flip can be asked for on any sensor and any GIF, and taken off the default", "[unit][gpu][sensing]")
-{
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv fps("SENSING_MOCK_FPS", "20");
-
-    SECTION("flipping a named GIF")
-    {
-        TempFile gif(".gif");
-        write_gif(gif.path(), 16, 16, { split_frame(16, 16, kGifRed, kGifBlue, 100) });
-        ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
-        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "1");
-
-        SiplCamera camera(make_sipl_config());
-        camera.start();
-        const Shot first = grab(camera, 0);
-        const Shot second = grab(camera, 1);
-        camera.stop();
-        CHECK(near(first.at(first.width / 4, first.height / 2), 255, 0, 0));
-        CHECK(near(second.at(second.width / 4, second.height / 2), 0, 0, 255)); // flipped: blue on the left
-    }
-
-    SECTION("taking the flip off the default hand leaves both sensors identical")
-    {
-        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "0");
-        SiplCamera camera(make_sipl_config());
-        const auto both = record(camera, kFrames);
-        const auto pairs = shared(both[0], both[1]);
-        REQUIRE(pairs.size() >= 8);
-        for (const auto& [sequence, first, second] : pairs)
-            CHECK(mean_abs_diff(*first, *second) < 3.0);
-    }
-
-    SECTION("choosing which sensor is flipped swaps the pictures")
-    {
-        ScopedEnv first_flipped("SENSING_MOCK_FLIP_SHW5G_MIX_L2", "1");
-        ScopedEnv second_plain("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "0");
-        SiplCamera camera(make_sipl_config());
-        const auto both = record(camera, kFrames);
-        const auto pairs = shared(both[0], both[1]);
-        REQUIRE(pairs.size() >= 8);
-        for (const auto& [sequence, first, second] : pairs)
-            CHECK(mean_abs_diff(*first, *second, true) < 3.0); // now the first is the mirror image
-    }
-
-    SECTION("a flip must be 0 or 1")
-    {
-        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L2", "yes");
-        CHECK_THROWS_WITH(SiplCamera(make_sipl_config()), Catch::Matchers::ContainsSubstring("must be 0 or 1"));
-    }
-}
-
-TEST_CASE("the robot is for a head camera and is chosen by module name", "[unit][gpu][sensing]")
-{
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv fps("SENSING_MOCK_FPS", "20");
-    ScopedEnv head("SENSING_MOCK_GIF_SHW5G_MIX_L3", bundled("noto-robot.gif").c_str());
-
-    SiplCamera camera(make_sipl_config());
-    const auto both = record(camera, kFrames);
-
-    // The other sensor still shows the default hand, so the two pictures are plainly different.
-    const auto pairs = shared(both[0], both[1]);
-    REQUIRE(pairs.size() >= 8);
-    for (const auto& [sequence, hand, robot] : pairs)
-        CHECK(mean_abs_diff(*hand, *robot) > 15.0);
 }
 
 namespace
@@ -655,7 +565,7 @@ TEST_CASE("a rig camera keeps its picture when another camera is masked off", "[
         CHECK(mean_abs_diff(*from_rig, *from_alone) < 3.0);
 }
 
-TEST_CASE("a module with no known picture needs one from the environment", "[unit][gpu][sensing]")
+TEST_CASE("a module with no known picture is an error", "[unit][gpu][sensing]")
 {
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
     TempFile config(".json");
@@ -666,5 +576,5 @@ TEST_CASE("a module with no known picture needs one from the environment", "[uni
     sipl.platform_config_json = config.path();
     sipl.platform_config_name = "P";
     sipl.link_masks = { 0x1 };
-    CHECK_THROWS_WITH(SiplCamera(sipl), Catch::Matchers::ContainsSubstring("SENSING_MOCK_GIF_UNKNOWN_CAM"));
+    CHECK_THROWS_WITH(SiplCamera(sipl), Catch::Matchers::ContainsSubstring("no mock picture for module 'UNKNOWN_CAM'"));
 }
