@@ -7,29 +7,8 @@
 # Repeat maintainers on specific rules if they should also count as code owners.
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax
 
-# Repository maintainers cover new paths and integrations awaiting a specialist.
+# Repository maintainers cover unmatched paths, including build and packaging.
 * @jiwenc-nv @aristarkhovNV
-
-# Build, packaging, dependencies, and releases.
-/.github/ @jiwenc-nv @aristarkhovNV
-/cmake/ @jiwenc-nv @aristarkhovNV
-/scripts/ @jiwenc-nv @aristarkhovNV
-/deps/ @jiwenc-nv @aristarkhovNV
-/src/core/python/ @jiwenc-nv @aristarkhovNV
-/src/compat/ @jiwenc-nv @aristarkhovNV
-/tests/python/compat/ @jiwenc-nv @aristarkhovNV
-/tests/python/packaging/ @jiwenc-nv @aristarkhovNV
-/tests/python/ci/ @jiwenc-nv @aristarkhovNV
-/CMakeLists.txt @jiwenc-nv @aristarkhovNV
-/src/CMakeLists.txt @jiwenc-nv @aristarkhovNV
-/src/python/CMakeLists.txt @jiwenc-nv @aristarkhovNV
-/pyproject.toml @jiwenc-nv @aristarkhovNV
-/.pre-commit-config.yaml @jiwenc-nv @aristarkhovNV
-/.gitlab-ci.yml @jiwenc-nv @aristarkhovNV
-/VERSION @jiwenc-nv @aristarkhovNV
-/REUSE.toml @jiwenc-nv @aristarkhovNV
-/LICENSE.md @jiwenc-nv @aristarkhovNV
-/LICENSES/ @jiwenc-nv @aristarkhovNV
 
 # Device I/O, recording, replay, and haptics.
 /src/core/deviceio_base/ @rwiltz @aristarkhovNV
