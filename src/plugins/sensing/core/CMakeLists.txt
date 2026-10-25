@@ -92,6 +92,20 @@ target_link_libraries(sensing_core
         oxr::oxr_utils
 )
 
+# The LiveKit output is optional: without it the camera compiles the same code minus the streaming path.
+if(SENSING_LIVEKIT)
+    target_sources(sensing_core PRIVATE
+        livekit_video_output.cpp
+        livekit_video_output.hpp
+        rgba_box_downscale.cu
+        rgba_box_downscale.cuh
+    )
+    target_link_libraries(sensing_core PUBLIC sensing::livekit)
+    target_compile_definitions(sensing_core PUBLIC SENSING_WITH_LIVEKIT=1)
+else()
+    target_compile_definitions(sensing_core PUBLIC SENSING_WITH_LIVEKIT=0)
+endif()
+
 if(SENSING_BACKEND_RESOLVED STREQUAL "JETSON")
     target_include_directories(sensing_core
         PRIVATE

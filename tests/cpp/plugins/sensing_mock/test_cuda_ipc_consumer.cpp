@@ -157,41 +157,6 @@ private:
     CUdeviceptr m_ptr = 0;
 };
 
-/// Runs SensingCamera::update() on its own thread, as the plugin's main loop would.
-class UpdateLoop
-{
-public:
-    explicit UpdateLoop(SensingCamera& camera)
-        : m_thread(
-              [this, &camera]
-              {
-                  while (!m_stop.load())
-                  {
-                      camera.update();
-                      ++m_ticks;
-                      std::this_thread::sleep_for(1ms);
-                  }
-              })
-    {
-    }
-
-    ~UpdateLoop()
-    {
-        m_stop.store(true);
-        m_thread.join();
-    }
-
-    uint64_t ticks() const
-    {
-        return m_ticks.load();
-    }
-
-private:
-    std::atomic<bool> m_stop{ false };
-    std::atomic<uint64_t> m_ticks{ 0 };
-    std::thread m_thread;
-};
-
 SensingConfig make_config()
 {
     SensingConfig config;

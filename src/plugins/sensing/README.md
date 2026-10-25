@@ -25,6 +25,7 @@ That guide owns the operating instructions; this README maps the source tree.
   host-side container setup.
 - [`configs/`](configs/): the platform configuration and its provenance.
 - [`core/mock_*`](core/): the mock backend (see below).
+- [`livekit/`](livekit/): the LiveKit SDK behind a small interface, for streaming (see below).
 
 ## Platform configuration provenance
 
@@ -101,3 +102,50 @@ Environment, read once at construction:
 
 A pass on the mock says nothing about SIPL, the ISP output format, NvSci buffer lifetime, the
 V4L2 encoder or real frame rates. Those are only checked on an Orin with SENSING cameras.
+
+## LiveKit streaming
+
+`livekit=<track>` on an `--add-stream` publishes that sensor as a LiveKit camera track, from the real
+cameras or the mock alike: the code is the same on both backends. It is off unless built with
+`-DSENSING_LIVEKIT=ON`, which downloads the pinned LiveKit C++ SDK package (Ubuntu 24.04, x64 or
+arm64, checked against its hash) at configure time; set `LIVEKIT_SDK_DIR` to use an unpacked copy
+instead.
+
+```bash
+camera_plugin_sensing --livekit-url=wss://livekit.example.org --livekit-token-file=join.token \
+    --add-stream=sensor=0,livekit=sensing-left --add-stream=sensor=1,livekit=sensing-right
+```
+
+- **Token.** The operator supplies it in a file, never on the command line. It names the room and
+  the participant and must allow publishing; viewers use a separate subscribe-only token. It is not
+  printed.
+- **Tracks.** One H.264 track per sensor, no simulcast, bitrate ceiling `--bitrate`. The default size
+  is the sensor's configured size. `--livekit-scale-div=N` reduces every track by an integer divisor
+  that must divide the sensor exactly and leave even sizes (2 gives 1280x992 from 2560x1984); it is
+  refused otherwise, never rounded or stretched. `--livekit-fps` caps the publication rate on the
+  capture clock (default 30). When bandwidth is short the encoder lowers the frame rate, not the
+  size.
+- **Frames.** `update()` takes a GPU snapshot of the camera frame and finishes that copy before
+  returning, because the camera may rewrite its slot at the second following poll. A worker per
+  sensor then reduces it if asked, converts it with the existing RGBA-to-NV12 kernel (BT.601 limited
+  range, which is what the video pipeline decodes NV12 as), copies it to the host and submits it. A
+  slow network drops frames and cannot hold up capture or the other sensor: one snapshot is being
+  published, one waits, and a newer capture replaces the waiting one.
+- **Metadata.** Each frame carries the camera's sequence as its frame ID, the capture time on the host
+  clock (CLOCK_MONOTONIC microseconds) as its user timestamp, and the sensor's capture TSC as eight
+  little-endian bytes of user data. Two separately published tracks are not exposure-synchronised;
+  the shared TSC is what pairs them.
+- **Streaming only.** A stream with only `livekit=` writes no file and builds no H.264 encoder.
+  `--mcap-filename` metadata is separate and unchanged.
+- **Failure.** Losing the room, or a failed publish, ends capture with an error; there is no
+  fallback to files or another transport. The SDK's own reconnection runs first; on loopback, losing
+  the server was reported after 15 to 30 s.
+
+**Not verified.** The encoder that ran in every test was the SDK's software OpenH264, including when
+the SDK was asked for NVENC or hardware encoding. It keeps up with two native 2560x1984 sensors on
+a laptop CPU, but nothing here says what an Orin's CPU or any hardware encoder will do; use
+`--livekit-fps` and `--livekit-scale-div` after measuring. The arm64 package is pinned but was not
+built or run, and neither was the `JETSON` backend with LiveKit.
+
+Tests that need a LiveKit service start a local `livekit-server` when `LIVEKIT_SERVER` names its
+binary, and are skipped without it; the rest need only a GPU.

@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <core/mock_test_hooks.hpp>
+#include <core/sensing_camera.hpp>
 #include <core/sipl_camera.hpp>
 
 extern "C"
@@ -15,6 +16,7 @@ extern "C"
 #include <libavutil/frame.h>
 }
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -347,5 +349,40 @@ inline std::vector<Decoded> decode_annex_b(const std::vector<uint8_t>& stream)
     avcodec_free_context(&context);
     return out;
 }
+
+/// Runs SensingCamera::update() on its own thread, as the plugin's main loop would.
+class UpdateLoop
+{
+public:
+    explicit UpdateLoop(plugins::sensing::SensingCamera& camera)
+        : m_thread(
+              [this, &camera]
+              {
+                  while (!m_stop.load())
+                  {
+                      camera.update();
+                      ++m_ticks;
+                      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                  }
+              })
+    {
+    }
+
+    ~UpdateLoop()
+    {
+        m_stop.store(true);
+        m_thread.join();
+    }
+
+    uint64_t ticks() const
+    {
+        return m_ticks.load();
+    }
+
+private:
+    std::atomic<bool> m_stop{ false };
+    std::atomic<uint64_t> m_ticks{ 0 };
+    std::thread m_thread;
+};
 
 } // namespace sensing_test

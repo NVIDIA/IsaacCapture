@@ -20,6 +20,8 @@ namespace sensing
 {
 
 class FrameSink;
+class LiveKitSession;
+class LiveKitVideoOutput;
 
 /**
  * @brief Multi-sensor SENSING camera manager.
@@ -63,6 +65,8 @@ private:
         std::unique_ptr<JetsonEncoder> encoder;
         /// Null when the stream requested no CUDA IPC socket.
         std::unique_ptr<CudaIpcPublisher> publisher;
+        /// Null when the stream requested no LiveKit track.
+        std::unique_ptr<LiveKitVideoOutput> livekit;
         /// SIPL publish counter of the frame already handled; skips re-reads.
         uint64_t last_sequence = 0;
         bool have_last_sequence = false;
@@ -83,6 +87,8 @@ private:
 
     SensingConfig m_config;
     std::unique_ptr<SiplCamera> m_camera;
+    /// Declared before the streams so it is destroyed after their tracks have been unpublished.
+    std::unique_ptr<LiveKitSession> m_livekit;
     std::vector<Stream> m_streams;
     std::unique_ptr<FrameSink> m_sink;
 };
