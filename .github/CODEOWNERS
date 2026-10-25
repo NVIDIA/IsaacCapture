@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Last matching rule wins. Keep subsystem rules after the broad defaults.
+# The last matching rule replaces earlier owners, including the "*" fallback.
+# Repeat maintainers on specific rules if they should also count as code owners.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax
 
 # Repository maintainers cover new paths and integrations awaiting a specialist.
 * @jiwenc-nv @aristarkhovNV
