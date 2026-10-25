@@ -26,6 +26,7 @@ target_link_libraries(sensing_mock_tests
 
 target_compile_definitions(sensing_mock_tests PRIVATE
     SENSING_PLATFORM_CONFIG="${CMAKE_SOURCE_DIR}/src/plugins/sensing/configs/shw5g.json"
+    SENSING_MOCK_RIG_CONFIG="${CMAKE_SOURCE_DIR}/src/plugins/sensing/mock_assets/mock_rig.json"
     SENSING_BUNDLED_GIF_DIR="${CMAKE_SOURCE_DIR}/src/plugins/sensing/mock_assets"
 )
 

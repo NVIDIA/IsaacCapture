@@ -8,14 +8,19 @@
 // YUV-to-RGBA kernel on a synthetic NV12 surface made from the GIF, so the
 // conversion code is exercised too.
 //
-// What a sensor shows: an animated GIF, chosen in this order
-//   SENSING_MOCK_GIF_<module name>=PATH     one sensor, by its module name
-//   SENSING_MOCK_GIF=PATH                   every sensor
-//   (neither)                               the bundled robot, in mock_assets/
-// A GIF that cannot be loaded, the bundled one included, is an error. It is scaled to cover the
-// sensor's configured size and centre-cropped, never stretched, and follows the capture clock: it
-// advances with each frame's time, and the sequence number and stamps advance on every capture even
-// while the GIF shows one image.
+// What a sensor shows is chosen by module name, never by pipeline index (which the link mask renumbers):
+//   S56C_HEAD     the robot, the two eyes offset against each other by a fixed disparity
+//   SHF3L_LEFT    the waving hand
+//   SHF3L_RIGHT   the waving hand, flipped left to right
+//   SHW5G_MIX_L2 / SHW5G_MIX_L3   as SHF3L_LEFT / SHF3L_RIGHT
+// A module not listed needs SENSING_MOCK_GIF or SENSING_MOCK_GIF_<module name>. Environment, in order:
+//   SENSING_MOCK_GIF_<module name>=PATH     one module's GIF
+//   SENSING_MOCK_GIF=PATH                   every sensor's GIF
+//   SENSING_MOCK_FLIP_<module name>=1|0     flip one module, whatever its GIF
+// A GIF named by the environment is shown as it is, with no eye offset. A GIF that cannot be loaded,
+// the bundled one included, is an error. It is scaled to cover the sensor's configured size and
+// centre-cropped, never stretched, and follows the capture clock: it advances with each frame's time,
+// and the sequence number and stamps advance on every capture even while the GIF shows one image.
 //
 // Other environment (read once, at construction):
 //   SENSING_MOCK_FPS=N          override the platform config's frame rate
@@ -52,6 +57,10 @@ namespace
 
 // Arbitrary offset so nothing can mistake the TSC for CLOCK_MONOTONIC.
 constexpr uint64_t kMockTscBaseNs = 1'000'000'000'000'000ull;
+
+// Total horizontal offset between the two eyes, as a fraction of the width: a 60 mm baseline seen at
+// about half a metre through a 140 degree lens.
+constexpr double kEyeDisparity = 0.02;
 
 uint64_t monotonic_ns()
 {
@@ -101,6 +110,8 @@ struct SiplCamera::Impl
         uint64_t published_capture_tsc_ns = 0;
 
         std::shared_ptr<MockGifSource> gif;
+        bool mirror = false;
+        int shift_x = 0;
 
         std::thread frame_thread;
 
@@ -139,7 +150,7 @@ struct SiplCamera::Impl
             auto sensor = std::make_unique<Sensor>();
             sensor->info = info;
             allocate(*sensor);
-            sensor->gif = gif_for(info);
+            choose_picture(info, *sensor);
             sensors.push_back(std::move(sensor));
         }
     }
@@ -165,21 +176,67 @@ struct SiplCamera::Impl
         check_cuda(cudaStreamCreateWithFlags(&sensor.stream, cudaStreamNonBlocking), "cudaStreamCreate");
     }
 
-    /// The GIF a sensor shows.
-    std::shared_ptr<MockGifSource> gif_for(const SensorInfo& info)
+    /// Sets the GIF a sensor shows, whether it is flipped and how far its picture is offset.
+    void choose_picture(const SensorInfo& info, Sensor& sensor)
     {
+        struct Look
+        {
+            const char* module;
+            const char* gif;
+            bool mirror;
+            bool stereo;
+        };
+        static constexpr Look kLooks[] = {
+            { "S56C_HEAD", "noto-robot.gif", false, true },
+            { "SHF3L_LEFT", "noto-waving-hand.gif", false, false },
+            { "SHF3L_RIGHT", "noto-waving-hand.gif", true, false },
+            { "SHW5G_MIX_L2", "noto-waving-hand.gif", false, false },
+            { "SHW5G_MIX_L3", "noto-waving-hand.gif", true, false },
+        };
+        const Look* look = nullptr;
+        for (const Look& candidate : kLooks)
+            look = info.name == candidate.module ? &candidate : look;
+
         const char* path = std::getenv(("SENSING_MOCK_GIF_" + info.name).c_str());
         if (!path)
             path = std::getenv("SENSING_MOCK_GIF");
-        const std::string bundled = std::string(SENSING_MOCK_ASSET_DIR) + "/noto-robot.gif";
+        std::string bundled;
         if (!path)
+        {
+            if (!look)
+            {
+                throw std::runtime_error("no mock picture for module '" + info.name + "': set SENSING_MOCK_GIF_" +
+                                         info.name + " or SENSING_MOCK_GIF");
+            }
+            bundled = std::string(SENSING_MOCK_ASSET_DIR) + "/" + look->gif;
             path = bundled.c_str();
+            sensor.mirror = look->mirror;
+            if (look->stereo)
+            {
+                // The sensors of one module are its left and right eyes, in that order. The left eye sees
+                // the scene further right, so its picture moves right and the right eye's moves left.
+                size_t eye = 0;
+                for (const SensorInfo& other : sensor_infos)
+                    eye += other.name == info.name && other.id < info.id ? 1 : 0;
+                const int half = static_cast<int>(info.width * kEyeDisparity / 2);
+                sensor.shift_x = eye == 0 ? half : -half;
+            }
+        }
 
         // Sensors showing the same file share one copy on the device.
         auto& slot = gif_cache[path];
         if (!slot)
             slot = std::make_shared<MockGifSource>(path);
-        return slot;
+        sensor.gif = slot;
+
+        const std::string flip_name = "SENSING_MOCK_FLIP_" + info.name;
+        if (const char* flip = std::getenv(flip_name.c_str()))
+        {
+            const std::string value = flip;
+            if (value != "0" && value != "1")
+                throw std::runtime_error(flip_name + " must be 0 or 1, got '" + value + "'");
+            sensor.mirror = value == "1";
+        }
     }
 
     Sensor* find(uint32_t id)
@@ -235,10 +292,11 @@ struct SiplCamera::Impl
         const int width = static_cast<int>(sensor.info.width);
         const int height = static_cast<int>(sensor.info.height);
 
-        launch_mock_gif_nv12(sensor.gif->frame(sensor.gif->frame_index_at(seconds)),
-                             static_cast<int>(sensor.gif->pitch()), static_cast<int>(sensor.gif->width()),
-                             static_cast<int>(sensor.gif->height()), sensor.luma.ptr, static_cast<int>(sensor.luma.pitch),
-                             sensor.chroma.ptr, static_cast<int>(sensor.chroma.pitch), width, height, sensor.stream);
+        launch_mock_gif_nv12(
+            sensor.gif->frame(sensor.gif->frame_index_at(seconds)), static_cast<int>(sensor.gif->pitch()),
+            static_cast<int>(sensor.gif->width()), static_cast<int>(sensor.gif->height()), sensor.luma.ptr,
+            static_cast<int>(sensor.luma.pitch), sensor.chroma.ptr, static_cast<int>(sensor.chroma.pitch), width,
+            height, sensor.mirror, sensor.shift_x, sensor.stream);
 
         // Same call, layout and colour matrix as the SIPL path: full-range
         // BT.709 semi-planar, from the surface the ISP would have written.

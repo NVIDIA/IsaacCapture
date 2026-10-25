@@ -12,8 +12,10 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <stdexcept>
+#include <tuple>
 
 using namespace plugins::sensing;
 using namespace sensing_test;
@@ -328,59 +330,341 @@ TEST_CASE("the bundled GIFs decode, animate and have their transparency composit
     }
 }
 
-TEST_CASE("by default every sensor shows the animated bundled robot", "[unit][gpu][sensing]")
+namespace
 {
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv fps("SENSING_MOCK_FPS", "20");
-    SiplCamera camera(make_sipl_config());
-    camera.start();
 
-    // Captures a second apart show different parts of the 2.5 s animation.
-    std::vector<Shot> shots;
-    uint64_t last = 0;
+// Every capture of every sensor, keyed by sequence, until each sensor has `count`. Capture n shows
+// the same moment of the animation on every sensor and in every camera, so a sequence number names
+// one picture and pictures can be compared across sensors and across cameras.
+using Frames = std::map<uint64_t, Shot>;
+
+std::vector<Frames> record(SiplCamera& camera, size_t count)
+{
+    std::vector<Frames> frames(camera.sensors().size());
+    camera.start();
     REQUIRE(wait_for(
         [&]
         {
-            if (auto view = camera.latest(0))
+            bool done = true;
+            for (size_t s = 0; s < frames.size(); ++s)
             {
-                if (view->sequence >= last + 10 || shots.empty())
+                if (auto view = camera.latest(static_cast<uint32_t>(s)))
                 {
                     Shot shot;
                     shot.width = view->width;
                     shot.height = view->height;
                     shot.sequence = view->sequence;
                     shot.rgba = download_rgba(view->ptr, view->pitch, view->width, view->height);
-                    shots.push_back(std::move(shot));
-                    last = view->sequence;
+                    frames[s][view->sequence] = std::move(shot);
                 }
+                done = done && frames[s].size() >= count;
             }
-            return shots.size() >= 4;
+            return done;
         },
-        10s));
+        15s));
     camera.stop();
-
-    // Transparent corners of the emoji read as the background gray, and the picture moves.
-    for (const auto& shot : shots)
-        CHECK(near(shot.at(2, 2), MockGifSource::kBackground, MockGifSource::kBackground, MockGifSource::kBackground, 8));
-    size_t differing = 0;
-    for (size_t i = 0; i < shots[0].rgba.size(); i += 4)
-        differing += shots[0].rgba[i] != shots[2].rgba[i] ? 1 : 0;
-    CHECK(differing > 500);
+    return frames;
 }
 
-TEST_CASE("the waving hand can be given to one sensor by module name", "[unit][gpu][sensing]")
+// Mean absolute difference per colour channel between two pictures, optionally reading `b` flipped.
+double mean_abs_diff(const Shot& a, const Shot& b, bool mirror_b = false)
+{
+    double sum = 0;
+    for (uint32_t y = 0; y < a.height; ++y)
+    {
+        for (uint32_t x = 0; x < a.width; ++x)
+        {
+            const Rgb pa = a.at(x, y);
+            const Rgb pb = b.at(mirror_b ? a.width - 1 - x : x, y);
+            sum += std::abs(pa.r - pb.r) + std::abs(pa.g - pb.g) + std::abs(pa.b - pb.b);
+        }
+    }
+    return sum / (static_cast<double>(a.width) * a.height * 3);
+}
+
+// The pictures two recordings have in common, as (sequence, first, second).
+std::vector<std::tuple<uint64_t, const Shot*, const Shot*>> shared(const Frames& a, const Frames& b)
+{
+    std::vector<std::tuple<uint64_t, const Shot*, const Shot*>> out;
+    for (const auto& [sequence, shot] : a)
+    {
+        auto it = b.find(sequence);
+        if (it != b.end())
+            out.emplace_back(sequence, &shot, &it->second);
+    }
+    return out;
+}
+
+constexpr size_t kFrames = 12;
+
+} // namespace
+
+TEST_CASE("by default both sensors show the waving hand, one the mirror image of the other", "[unit][gpu][sensing]")
 {
     ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv one("SENSING_MOCK_GIF_SHW5G_MIX_L3", bundled("noto-waving-hand.gif").c_str());
+    ScopedEnv fps("SENSING_MOCK_FPS", "20");
+    SiplCamera camera(make_sipl_config());
+    REQUIRE(camera.sensors().size() == 2);
+    const auto both = record(camera, kFrames);
+
+    // The two sensors show different pictures, and the second is the first flipped left to right.
+    const auto pairs = shared(both[0], both[1]);
+    REQUIRE(pairs.size() >= 8);
+    for (const auto& [sequence, first, second] : pairs)
+    {
+        INFO("capture " << sequence);
+        CHECK(mean_abs_diff(*second, *first, true) < 3.0);
+        CHECK(mean_abs_diff(*second, *first, false) > 6.0);
+    }
+
+    // The picture is the animated waving hand: transparent corners read as the background gray, and
+    // the picture moves with the clock.
+    for (const auto& [sequence, shot] : both[0])
+        CHECK(near(shot.at(2, 2), MockGifSource::kBackground, MockGifSource::kBackground, MockGifSource::kBackground, 8));
+    CHECK(mean_abs_diff(both[0].begin()->second, both[0].rbegin()->second) > 2.0);
+
+    // Same time, same picture as naming the bundled hand explicitly: the first sensor is the plain
+    // hand, and the explicit setting does not flip the second.
+    Frames explicit_first;
+    Frames explicit_second;
+    {
+        ScopedEnv hand("SENSING_MOCK_GIF", bundled("noto-waving-hand.gif").c_str());
+        SiplCamera named(make_sipl_config());
+        auto frames = record(named, kFrames);
+        explicit_first = std::move(frames[0]);
+        explicit_second = std::move(frames[1]);
+    }
+    const auto first_vs_named = shared(both[0], explicit_first);
+    REQUIRE(first_vs_named.size() >= 8);
+    for (const auto& [sequence, shot, named] : first_vs_named)
+        CHECK(mean_abs_diff(*shot, *named) < 3.0);
+    const auto second_vs_named = shared(both[1], explicit_second);
+    REQUIRE(second_vs_named.size() >= 8);
+    for (const auto& [sequence, shot, named] : second_vs_named)
+        CHECK(mean_abs_diff(*shot, *named, true) < 3.0); // flipped, as the default second sensor is
+
+    // And it is not the robot.
+    Frames robot;
+    {
+        ScopedEnv face("SENSING_MOCK_GIF", bundled("noto-robot.gif").c_str());
+        SiplCamera named(make_sipl_config());
+        robot = std::move(record(named, kFrames)[0]);
+    }
+    const auto first_vs_robot = shared(both[0], robot);
+    REQUIRE(first_vs_robot.size() >= 8);
+    for (const auto& [sequence, shot, face] : first_vs_robot)
+        CHECK(mean_abs_diff(*shot, *face) > 15.0);
+}
+
+TEST_CASE("a GIF named in the environment is shown as it is, on every sensor", "[unit][gpu][sensing]")
+{
+    TempFile gif(".gif");
+    write_gif(gif.path(), 16, 16, { split_frame(16, 16, kGifRed, kGifBlue, 100) });
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+
     SiplCamera camera(make_sipl_config());
     camera.start();
-    const Shot robot = grab(camera, 0);
-    const Shot hand = grab(camera, 1);
+    const Shot first = grab(camera, 0);
+    const Shot second = grab(camera, 1);
     camera.stop();
 
-    // Different pictures: the robot on one sensor, the hand on the other.
-    size_t differing = 0;
-    for (size_t i = 0; i < robot.rgba.size(); i += 4)
-        differing += std::abs(robot.rgba[i] - hand.rgba[i]) > 20 ? 1 : 0;
-    CHECK(differing > 2000);
+    // Red on the left and blue on the right for both: the default flip belongs to the bundled hand.
+    for (const Shot* shot : { &first, &second })
+    {
+        CHECK(near(shot->at(shot->width / 4, shot->height / 2), 255, 0, 0));
+        CHECK(near(shot->at(shot->width * 3 / 4, shot->height / 2), 0, 0, 255));
+    }
+}
+
+TEST_CASE("a flip can be asked for on any sensor and any GIF, and taken off the default", "[unit][gpu][sensing]")
+{
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    ScopedEnv fps("SENSING_MOCK_FPS", "20");
+
+    SECTION("flipping a named GIF")
+    {
+        TempFile gif(".gif");
+        write_gif(gif.path(), 16, 16, { split_frame(16, 16, kGifRed, kGifBlue, 100) });
+        ScopedEnv source("SENSING_MOCK_GIF", gif.path().c_str());
+        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "1");
+
+        SiplCamera camera(make_sipl_config());
+        camera.start();
+        const Shot first = grab(camera, 0);
+        const Shot second = grab(camera, 1);
+        camera.stop();
+        CHECK(near(first.at(first.width / 4, first.height / 2), 255, 0, 0));
+        CHECK(near(second.at(second.width / 4, second.height / 2), 0, 0, 255)); // flipped: blue on the left
+    }
+
+    SECTION("taking the flip off the default hand leaves both sensors identical")
+    {
+        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "0");
+        SiplCamera camera(make_sipl_config());
+        const auto both = record(camera, kFrames);
+        const auto pairs = shared(both[0], both[1]);
+        REQUIRE(pairs.size() >= 8);
+        for (const auto& [sequence, first, second] : pairs)
+            CHECK(mean_abs_diff(*first, *second) < 3.0);
+    }
+
+    SECTION("choosing which sensor is flipped swaps the pictures")
+    {
+        ScopedEnv first_flipped("SENSING_MOCK_FLIP_SHW5G_MIX_L2", "1");
+        ScopedEnv second_plain("SENSING_MOCK_FLIP_SHW5G_MIX_L3", "0");
+        SiplCamera camera(make_sipl_config());
+        const auto both = record(camera, kFrames);
+        const auto pairs = shared(both[0], both[1]);
+        REQUIRE(pairs.size() >= 8);
+        for (const auto& [sequence, first, second] : pairs)
+            CHECK(mean_abs_diff(*first, *second, true) < 3.0); // now the first is the mirror image
+    }
+
+    SECTION("a flip must be 0 or 1")
+    {
+        ScopedEnv flip("SENSING_MOCK_FLIP_SHW5G_MIX_L2", "yes");
+        CHECK_THROWS_WITH(SiplCamera(make_sipl_config()), Catch::Matchers::ContainsSubstring("must be 0 or 1"));
+    }
+}
+
+TEST_CASE("the robot is for a head camera and is chosen by module name", "[unit][gpu][sensing]")
+{
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    ScopedEnv fps("SENSING_MOCK_FPS", "20");
+    ScopedEnv head("SENSING_MOCK_GIF_SHW5G_MIX_L3", bundled("noto-robot.gif").c_str());
+
+    SiplCamera camera(make_sipl_config());
+    const auto both = record(camera, kFrames);
+
+    // The other sensor still shows the default hand, so the two pictures are plainly different.
+    const auto pairs = shared(both[0], both[1]);
+    REQUIRE(pairs.size() >= 8);
+    for (const auto& [sequence, hand, robot] : pairs)
+        CHECK(mean_abs_diff(*hand, *robot) > 15.0);
+}
+
+namespace
+{
+
+// Head stereo pair on link 0, left and right wrist on links 1 and 2. Pipelines: 0 and 1 are the eyes,
+// 2 the left wrist, 3 the right wrist.
+SiplConfig make_rig_config(std::vector<uint32_t> masks = { 0x0000, 0x0111 })
+{
+    SiplConfig config;
+    config.platform_config_json = SENSING_MOCK_RIG_CONFIG;
+    config.platform_config_name = "MOCK_S56C_2_SHF3L";
+    config.link_masks = std::move(masks);
+    return config;
+}
+
+} // namespace
+
+TEST_CASE("the mock rig has the sizes and aspects of the real cameras", "[unit][sensing]")
+{
+    const auto sensors = SiplCamera::query(SENSING_MOCK_RIG_CONFIG, "MOCK_S56C_2_SHF3L", { 0x0000, 0x0111 });
+    REQUIRE(sensors.size() == 4);
+    for (size_t eye = 0; eye < 2; ++eye)
+    {
+        CHECK(sensors[eye].name == "S56C_HEAD");
+        CHECK(sensors[eye].width == 2560);
+        CHECK(sensors[eye].height == 1984);
+    }
+    for (size_t wrist = 2; wrist < 4; ++wrist)
+    {
+        CHECK(sensors[wrist].width == 1920);
+        CHECK(sensors[wrist].height == 1536); // 5:4, not the head's 2560:1984
+    }
+    CHECK(sensors[2].name == "SHF3L_LEFT");
+    CHECK(sensors[3].name == "SHF3L_RIGHT");
+}
+
+TEST_CASE("each rig camera delivers frames of its configured aspect, and wrists mirror while eyes offset",
+          "[unit][gpu][sensing]")
+{
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    ScopedEnv fps("SENSING_MOCK_FPS", "20");
+    SiplCamera camera(make_rig_config());
+    REQUIRE(camera.sensors().size() == 4);
+    const auto frames = record(camera, kFrames);
+
+    for (size_t s = 0; s < 4; ++s)
+    {
+        const auto& info = camera.sensors()[s];
+        REQUIRE_FALSE(frames[s].empty());
+        const Shot& shot = frames[s].begin()->second;
+        CHECK(shot.width == info.width);
+        CHECK(shot.height == info.height);
+        CHECK(shot.width == (s < 2 ? 320u : 240u));
+        CHECK(shot.height == (s < 2 ? 248u : 192u));
+    }
+
+    // Left wrist plain, right wrist its mirror image.
+    const auto wrists = shared(frames[2], frames[3]);
+    REQUIRE(wrists.size() >= 8);
+    for (const auto& [sequence, left, right] : wrists)
+    {
+        CHECK(mean_abs_diff(*right, *left, true) < 3.0);
+        CHECK(mean_abs_diff(*right, *left, false) > 6.0);
+    }
+
+    // Head eyes show the same robot offset by the disparity: left(x) is right(x - d), and the eyes differ
+    // where they are not offset.
+    const auto eyes = shared(frames[0], frames[1]);
+    REQUIRE(eyes.size() >= 8);
+    const uint32_t d = 2 * static_cast<uint32_t>(320 * 0.02 / 2);
+    REQUIRE(d > 0);
+    for (const auto& [sequence, left, right] : eyes)
+    {
+        double sum = 0;
+        double unshifted = 0;
+        for (uint32_t y = 0; y < left->height; ++y)
+        {
+            for (uint32_t x = d + 4; x < left->width - 4; ++x)
+            {
+                const Rgb a = left->at(x, y);
+                const Rgb b = right->at(x - d, y);
+                const Rgb c = right->at(x, y);
+                sum += std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b);
+                unshifted += std::abs(a.r - c.r) + std::abs(a.g - c.g) + std::abs(a.b - c.b);
+            }
+        }
+        const double n = static_cast<double>(left->height) * (left->width - d - 8) * 3;
+        CHECK(sum / n < 3.0);
+        CHECK(unshifted / n > sum / n + 1.0);
+    }
+}
+
+TEST_CASE("a rig camera keeps its picture when another camera is masked off", "[unit][gpu][sensing]")
+{
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    ScopedEnv fps("SENSING_MOCK_FPS", "20");
+
+    SiplCamera full(make_rig_config());
+    const auto all = record(full, kFrames);
+
+    // Only link 2, the right wrist, is enabled: it becomes pipeline 0 but is still the mirrored hand.
+    SiplCamera alone(make_rig_config({ 0x0000, 0x0100 }));
+    REQUIRE(alone.sensors().size() == 1);
+    REQUIRE(alone.sensors()[0].name == "SHF3L_RIGHT");
+    const auto only = record(alone, kFrames);
+
+    const auto pairs = shared(all[3], only[0]);
+    REQUIRE(pairs.size() >= 8);
+    for (const auto& [sequence, from_rig, from_alone] : pairs)
+        CHECK(mean_abs_diff(*from_rig, *from_alone) < 3.0);
+}
+
+TEST_CASE("a module with no known picture needs one from the environment", "[unit][gpu][sensing]")
+{
+    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
+    TempFile config(".json");
+    std::ofstream(config.path()) << R"({"cameraConfigs":[
+      {"name":"P","cameraModules":[{"name":"UNKNOWN_CAM","linkIndex":0,"transportIndex":0}]},
+      {"name":"UNKNOWN_CAM","sensorInfo":[{"virtualChannels":[{"width":64,"height":48,"fps":30.0}]}]}]})";
+    SiplConfig sipl;
+    sipl.platform_config_json = config.path();
+    sipl.platform_config_name = "P";
+    sipl.link_masks = { 0x1 };
+    CHECK_THROWS_WITH(SiplCamera(sipl), Catch::Matchers::ContainsSubstring("SENSING_MOCK_GIF_UNKNOWN_CAM"));
 }
