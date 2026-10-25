@@ -1,0 +1,222 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Last matching rule wins. Keep subsystem rules after the broad defaults.
+
+# Repository maintainers cover new paths and integrations awaiting a specialist.
+* @jiwenc-nv @aristarkhovNV
+
+# Build, packaging, dependencies, and releases.
+/.github/ @jiwenc-nv @aristarkhovNV
+/cmake/ @jiwenc-nv @aristarkhovNV
+/scripts/ @jiwenc-nv @aristarkhovNV
+/deps/ @jiwenc-nv @aristarkhovNV
+/src/core/python/ @jiwenc-nv @aristarkhovNV
+/src/compat/ @jiwenc-nv @aristarkhovNV
+/tests/python/compat/ @jiwenc-nv @aristarkhovNV
+/tests/python/packaging/ @jiwenc-nv @aristarkhovNV
+/tests/python/ci/ @jiwenc-nv @aristarkhovNV
+/CMakeLists.txt @jiwenc-nv @aristarkhovNV
+/src/CMakeLists.txt @jiwenc-nv @aristarkhovNV
+/src/python/CMakeLists.txt @jiwenc-nv @aristarkhovNV
+/pyproject.toml @jiwenc-nv @aristarkhovNV
+/.pre-commit-config.yaml @jiwenc-nv @aristarkhovNV
+/.gitlab-ci.yml @jiwenc-nv @aristarkhovNV
+/VERSION @jiwenc-nv @aristarkhovNV
+/REUSE.toml @jiwenc-nv @aristarkhovNV
+/LICENSE.md @jiwenc-nv @aristarkhovNV
+/LICENSES/ @jiwenc-nv @aristarkhovNV
+
+# Documentation infrastructure; feature pages follow their subsystems below.
+/docs/ @jiwenc-nv @ivany-nv
+/docs/source/**/build_from_source/ @jiwenc-nv @aristarkhovNV
+/docs/source/**/license.rst @jiwenc-nv @aristarkhovNV
+/docs/source/**/migration.rst @jiwenc-nv @aristarkhovNV
+/docs/source/references/build.rst @jiwenc-nv @aristarkhovNV
+/docs/source/references/requirements.rst @jiwenc-nv @aristarkhovNV
+/docs/source/references/sbom.rst @jiwenc-nv @aristarkhovNV
+
+# Device integration fallback; hardware-specific assignments appear below.
+/src/plugins/ @jiwenc-nv @aristarkhovNV
+/tests/cpp/plugins/ @jiwenc-nv @aristarkhovNV
+/docs/source/device/ @jiwenc-nv @aristarkhovNV
+
+# Device I/O, recording, replay, and haptics.
+/src/core/deviceio_base/ @rwiltz @aristarkhovNV
+/src/core/deviceio_session/ @rwiltz @aristarkhovNV
+/src/core/deviceio_trackers/ @rwiltz @aristarkhovNV
+/src/core/live_trackers/ @rwiltz @aristarkhovNV
+/src/core/replay_trackers/ @rwiltz @aristarkhovNV
+/src/core/mcap/ @rwiltz @aristarkhovNV
+/src/python/isaaccapture/deviceio/ @rwiltz @aristarkhovNV
+/src/python/isaaccapture/deviceio_session/ @rwiltz @aristarkhovNV
+/src/python/isaaccapture/deviceio_trackers/ @rwiltz @aristarkhovNV
+/src/python/isaaccapture/mcap/ @rwiltz @aristarkhovNV
+/src/python/isaaccapture/haptic_devices/ @rwiltz @aristarkhovNV
+/tests/cpp/core/deviceio_trackers/ @rwiltz @aristarkhovNV
+/tests/cpp/core/live_trackers/ @rwiltz @aristarkhovNV
+/tests/cpp/core/replay_deviceio_session/ @rwiltz @aristarkhovNV
+/tests/cpp/core/mcap/ @rwiltz @aristarkhovNV
+/tests/python/core/deviceio_trackers/ @rwiltz @aristarkhovNV
+/examples/deviceio_live_view/ @rwiltz @aristarkhovNV
+/examples/mcap_record_replay/ @rwiltz @aristarkhovNV
+/examples/haptic_feedback/ @rwiltz @aristarkhovNV
+/examples/lerobot/ @rwiltz @aristarkhovNV
+/tests/python/examples/deviceio_live_view/ @rwiltz @aristarkhovNV
+/docs/source/device/trackers/ @rwiltz @aristarkhovNV
+/docs/source/device/trackers.rst @rwiltz @aristarkhovNV
+/docs/source/**/haptic_feedback.rst @rwiltz @aristarkhovNV
+/docs/source/references/mcap_record_replay.rst @rwiltz @aristarkhovNV
+/docs/source/references/device_provider_monitoring.rst @rwiltz @aristarkhovNV
+/docs/source/**/lerobot/ @rwiltz @aristarkhovNV
+
+# Schemas and generated contracts, including the tracker manifest override.
+/src/core/schema/ @lotusl-code @nv-mhaselton
+/src/core/schema_compat/ @lotusl-code @nv-mhaselton
+/src/core/codegen/ @lotusl-code @nv-mhaselton
+/src/core/deviceio_trackers/trackers.toml @lotusl-code @nv-mhaselton
+/src/python/isaaccapture/schema/ @lotusl-code @nv-mhaselton
+/cmake/GenerateFlatBuffers.cmake @lotusl-code @nv-mhaselton
+/cmake/GenerateTrackers.cmake @lotusl-code @nv-mhaselton
+/tests/cpp/core/schema/ @lotusl-code @nv-mhaselton
+/tests/cpp/core/tracker_metadata/ @lotusl-code @nv-mhaselton
+/tests/python/core/schema/ @lotusl-code @nv-mhaselton
+/examples/schemaio/ @lotusl-code @nv-mhaselton
+/examples/soma_body_publisher/ @lotusl-code @nv-mhaselton
+/examples/soma_hand_publisher/ @lotusl-code @nv-mhaselton
+/examples/tactile/ @lotusl-code @nv-mhaselton
+/tests/python/examples/soma_body_publisher/ @lotusl-code @nv-mhaselton
+/tests/python/examples/soma_hand_publisher/ @lotusl-code @nv-mhaselton
+/docs/source/references/generated_trackers.rst @lotusl-code @nv-mhaselton
+/docs/source/device/**/soma.rst @lotusl-code @nv-mhaselton
+/docs/source/device/tactile/index.rst @lotusl-code @nv-mhaselton
+
+# OpenXR, plugin infrastructure, and XR controller adapters.
+/src/core/oxr/ @aristarkhovNV @nvddr
+/src/core/oxr_utils/ @aristarkhovNV @nvddr
+/src/core/pusherio/ @aristarkhovNV @nvddr
+/src/core/plugin_manager/ @aristarkhovNV @nvddr
+/src/python/isaaccapture/oxr/ @aristarkhovNV @nvddr
+/src/python/isaaccapture/plugin_manager/ @aristarkhovNV @nvddr
+/src/plugins/plugin_utils/ @aristarkhovNV @nvddr
+/src/plugins/controller_se3_tracker/ @aristarkhovNV @nvddr
+/src/plugins/controller_synthetic_hands/ @aristarkhovNV @nvddr
+/deps/third_party/openxr_extensions/ @aristarkhovNV @nvddr
+/tests/cpp/core/plugin_manager/ @aristarkhovNV @nvddr
+/tests/cpp/plugins/plugin_utils/ @aristarkhovNV @nvddr
+/examples/native_openxr/ @aristarkhovNV @nvddr
+/examples/oxr/ @aristarkhovNV @nvddr
+/docs/source/device/add_device.rst @aristarkhovNV @nvddr
+/docs/source/device/xr/ @aristarkhovNV @nvddr
+
+# Retargeting graphs, source nodes, mappings, and tuning UI.
+/src/python/isaaccapture/retargeting_engine/ @sgrizan-nv @rwiltz
+/src/python/isaaccapture/retargeters/ @sgrizan-nv @rwiltz
+/src/python/isaaccapture/retargeting_engine_ui/ @sgrizan-nv @rwiltz
+/tests/python/core/retargeting_engine/ @sgrizan-nv @rwiltz
+/examples/retargeting/ @sgrizan-nv @rwiltz
+/docs/source/references/retargeting/ @sgrizan-nv @rwiltz
+
+# Teleoperation session orchestration and control transitions.
+/src/python/isaaccapture/teleop_session_manager/ @sgrizan-nv @ivany-nv
+/tests/python/core/teleop_session_manager/ @sgrizan-nv @ivany-nv
+/examples/teleop/ @sgrizan-nv @ivany-nv
+/examples/teleop_session_manager/ @sgrizan-nv @ivany-nv
+/tests/python/examples/teleop/ @sgrizan-nv @ivany-nv
+/tests/python/examples/teleop_keyboard/ @sgrizan-nv @ivany-nv
+/docs/source/teleop/ @sgrizan-nv @ivany-nv
+/docs/source/teleop/lerobot/ @rwiltz @aristarkhovNV
+/docs/source/getting_started/teleop_session.rst @sgrizan-nv @ivany-nv
+/docs/source/getting_started/teleop_control_state_machine.rst @sgrizan-nv @ivany-nv
+/docs/source/integrations/isaac_lab_sim.rst @sgrizan-nv @ivany-nv
+
+# CloudXR runtime, deployment, and remote control.
+/src/core/cloudxr/ @jiwenc-nv @aristarkhovNV
+/src/python/isaaccapture/cloudxr/ @jiwenc-nv @aristarkhovNV
+/src/python/isaaccapture/cloudxr_exp/ @jiwenc-nv @aristarkhovNV
+/deps/cloudxr/ @jiwenc-nv @aristarkhovNV
+/scripts/*cloudxr* @jiwenc-nv @aristarkhovNV
+/tests/python/core/cloudxr/ @jiwenc-nv @aristarkhovNV
+/examples/cloudxr_mujoco_teleop/ @jiwenc-nv @aristarkhovNV
+/docs/source/references/cloudxr.rst @jiwenc-nv @aristarkhovNV
+/docs/source/references/oob_teleop_control.rst @jiwenc-nv @aristarkhovNV
+
+# CloudXR web client and its build/publication integration.
+/deps/cloudxr/webxr_client/ @yanziz-nvidia @gareth-morgan-nv
+/.github/actions/build-cloudxr-web-client/ @yanziz-nvidia @gareth-morgan-nv
+/.github/workflows/promote-stable-client.yaml @yanziz-nvidia @gareth-morgan-nv
+/docs/source/**/build_from_source/webxr.rst @yanziz-nvidia @gareth-morgan-nv
+
+# Visualization and camera streaming share graphics expertise.
+/src/viz/ @farbod-nv @nv-mhaselton
+/src/python/isaaccapture/viz/ @farbod-nv @nv-mhaselton
+/tests/cpp/viz/ @farbod-nv @nv-mhaselton
+/tests/python/viz/ @farbod-nv @nv-mhaselton
+/examples/robot_viz/ @farbod-nv @nv-mhaselton
+/examples/camera_viz/ @farbod-nv @nv-mhaselton
+/tests/python/examples/camera_viz/ @farbod-nv @nv-mhaselton
+/docs/source/**/televiz.rst @farbod-nv @nv-mhaselton
+/docs/source/references/camera_streaming.rst @farbod-nv @nv-mhaselton
+
+# EgoPost remains one component, including its nested tests and model tooling.
+/src/python/isaaccapture_egopost/ @shaosu-nvidia @tifchen-nvda
+/docs/source/ego_post_processing/ @shaosu-nvidia @tifchen-nvda
+/docs/source/references/egocentric_hand_reconstruction.rst @shaosu-nvidia @tifchen-nvda
+
+# The native and Python logging halves share one contract.
+/src/core/log_bridge/ @lotusl-code @AndreusNvidius
+/src/python/isaaccapture/logging_config/ @lotusl-code @AndreusNvidius
+/tests/cpp/core/log_bridge/ @lotusl-code @AndreusNvidius
+/tests/python/core/logging_config/ @lotusl-code @AndreusNvidius
+
+# ROS 2 reference integration.
+/examples/teleop_ros2/ @sgrizan-nv @nv-mhaselton
+/tests/python/examples/teleop_ros2/ @sgrizan-nv @nv-mhaselton
+/docs/source/integrations/isaac_ros.rst @sgrizan-nv @nv-mhaselton
+
+# Native input devices and joint-space leaders.
+/src/plugins/gamepad/ @rwiltz @aristarkhovNV
+/src/plugins/spacemouse/ @rwiltz @aristarkhovNV
+/src/plugins/generic_3axis_pedal/ @rwiltz @aristarkhovNV
+/src/plugins/so101_leader/ @rwiltz @aristarkhovNV
+/tests/cpp/plugins/gamepad/ @rwiltz @aristarkhovNV
+/tests/cpp/plugins/spacemouse/ @rwiltz @aristarkhovNV
+/docs/source/device/gamepad.rst @rwiltz @aristarkhovNV
+/docs/source/device/gamepads/ @rwiltz @aristarkhovNV
+/docs/source/device/**/spacemouse.rst @rwiltz @aristarkhovNV
+/docs/source/device/joint_space.rst @rwiltz @aristarkhovNV
+/docs/source/device/joint_space/ @rwiltz @aristarkhovNV
+
+# Vendor integrations with eligible subsystem contributors.
+/src/plugins/manus/ @sgrizan-nv @jiwenc-nv
+/docs/source/device/**/manus.rst @sgrizan-nv @jiwenc-nv
+/src/plugins/oak/ @shaosu-nvidia @jiwenc-nv
+/docs/source/device/**/oak.rst @shaosu-nvidia @jiwenc-nv
+/src/plugins/sensing/ @jiwenc-nv @aristarkhovNV
+/docs/source/device/camera/sensing.rst @jiwenc-nv @aristarkhovNV
+/src/plugins/sharpa_avatar/ @lotusl-code @jiwenc-nv
+/examples/sharpa_avatar/ @lotusl-code @jiwenc-nv
+/docs/source/device/**/sharpa_avatar.rst @lotusl-code @jiwenc-nv
+/src/plugins/wuji_glove/ @sgrizan-nv @jiwenc-nv
+/docs/source/device/**/wuji_glove.rst @sgrizan-nv @jiwenc-nv
+
+# Vendor integrations awaiting a specialist with repository write access.
+/src/plugins/haptikos/ @jiwenc-nv @aristarkhovNV
+/docs/source/device/**/haptikos.rst @jiwenc-nv @aristarkhovNV
+/src/plugins/noitom_mocap/ @jiwenc-nv @aristarkhovNV
+/examples/noitom/ @jiwenc-nv @aristarkhovNV
+/src/plugins/oglo_tactile/ @jiwenc-nv @aristarkhovNV
+/tests/cpp/plugins/oglo_tactile/ @jiwenc-nv @aristarkhovNV
+/examples/oglo_tactile/ @jiwenc-nv @aristarkhovNV
+/docs/source/device/**/oglo.rst @jiwenc-nv @aristarkhovNV
+/src/plugins/rebot_devarm_leader/ @jiwenc-nv @aristarkhovNV
+/examples/rebot/ @jiwenc-nv @aristarkhovNV
+/docs/source/**/lerobot/rebot.rst @jiwenc-nv @aristarkhovNV
+/src/plugins/steering_wheel/ @jiwenc-nv @aristarkhovNV
+/examples/vehicle_teleop/ @jiwenc-nv @aristarkhovNV
+/src/plugins/vive_se3_tracker/ @jiwenc-nv @aristarkhovNV
+/docs/source/device/trackers/vive_ultimate_tracker.rst @jiwenc-nv @aristarkhovNV
+/src/plugins/xsens_full_body/ @jiwenc-nv @aristarkhovNV
+
+# Changes to ownership itself stay with repository maintainers.
+/.github/CODEOWNERS @jiwenc-nv @aristarkhovNV

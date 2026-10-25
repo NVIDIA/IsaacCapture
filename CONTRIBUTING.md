@@ -68,6 +68,23 @@ GitHub Actions builds the default targets and runs tests.
 3. Describe motivation, changes, and testing in the PR
 4. Link related issues
 
+### Code ownership
+
+[`.github/CODEOWNERS`](.github/CODEOWNERS) maps subsystems to reviewers, with
+repository maintainers covering unmatched paths. Keep each subsystem's source,
+bindings, tests, examples, and documentation assigned together when adding or
+moving files. Rules are ordered from broad defaults to specific overrides;
+the last matching rule wins.
+
+Owners must have repository write access. Initial assignments come from Git
+history; integrations without an eligible specialist use repository maintainers.
+Update the map as maintainers change, keeping a backup reviewer for each area.
+Multiple owners on a line are alternatives, not a requirement for both to approve.
+
+GitHub requests owner reviews for ready pull requests once the file is on their
+base branch. Requiring owner approval before merge is a separate repository
+ruleset or branch-protection setting; adding this file does not enable it.
+
 ## Signing Your Work
 
 * We require that all contributors "sign-off" on their commits. This certifies that the contribution is your original work, or you have rights to submit it under the same license, or a compatible license.
