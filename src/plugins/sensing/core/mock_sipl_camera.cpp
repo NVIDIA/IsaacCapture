@@ -8,19 +8,16 @@
 // YUV-to-RGBA kernel on a synthetic NV12 surface made from the GIF, so the
 // conversion code is exercised too.
 //
-// What a sensor shows is chosen by module name, never by pipeline index (which the link mask renumbers):
-//   S56C_HEAD     the robot, the two eyes offset against each other by a fixed disparity
+// What a sensor shows is fixed by its module name, never by pipeline index (which the link mask
+// renumbers):
+//   S56C_HEAD     the robot; its two sensors are the left and right eye, offset against each other
 //   SHF3L_LEFT    the waving hand
 //   SHF3L_RIGHT   the waving hand, flipped left to right
 //   SHW5G_MIX_L2 / SHW5G_MIX_L3   as SHF3L_LEFT / SHF3L_RIGHT
-// A module not listed needs SENSING_MOCK_GIF or SENSING_MOCK_GIF_<module name>. Environment, in order:
-//   SENSING_MOCK_GIF_<module name>=PATH     one module's GIF
-//   SENSING_MOCK_GIF=PATH                   every sensor's GIF
-//   SENSING_MOCK_FLIP_<module name>=1|0     flip one module, whatever its GIF
-// A GIF named by the environment is shown as it is, with no eye offset. A GIF that cannot be loaded,
-// the bundled one included, is an error. It is scaled to cover the sensor's configured size and
-// centre-cropped, never stretched, and follows the capture clock: it advances with each frame's time,
-// and the sequence number and stamps advance on every capture even while the GIF shows one image.
+// A module not listed is an error, and so is a GIF that cannot be loaded. The picture is scaled to cover
+// the sensor's configured size and centre-cropped, never stretched, and follows the capture clock: it
+// advances with each frame's time, and the sequence number and stamps advance on every capture even
+// while the GIF shows one image.
 //
 // Other environment (read once, at construction):
 //   SENSING_MOCK_FPS=N          override the platform config's frame rate
@@ -30,6 +27,7 @@
 #include "mock_gif_source.hpp"
 #include "mock_nv12_source.cuh"
 #include "mock_platform_config.hpp"
+#include "mock_test_hooks.hpp"
 #include "sipl_camera.hpp"
 #include "yuv_to_rgba.cuh"
 
@@ -58,8 +56,7 @@ namespace
 // Arbitrary offset so nothing can mistake the TSC for CLOCK_MONOTONIC.
 constexpr uint64_t kMockTscBaseNs = 1'000'000'000'000'000ull;
 
-// Total horizontal offset between the two eyes, as a fraction of the width: a 60 mm baseline seen at
-// about half a metre through a 140 degree lens.
+// Total horizontal offset between the two eyes, as a fraction of the width. Illustrative, not calibrated.
 constexpr double kEyeDisparity = 0.02;
 
 uint64_t monotonic_ns()
@@ -80,7 +77,14 @@ void check_cuda(cudaError_t err, const char* what)
         throw std::runtime_error(std::string("mock SIPL: ") + what + ": " + cudaGetErrorString(err));
 }
 
+std::string g_test_picture;
+
 } // namespace
+
+void mock_set_test_picture(const std::string& gif_path)
+{
+    g_test_picture = gif_path;
+}
 
 struct SiplCamera::Impl
 {
@@ -197,19 +201,12 @@ struct SiplCamera::Impl
         for (const Look& candidate : kLooks)
             look = info.name == candidate.module ? &candidate : look;
 
-        const char* path = std::getenv(("SENSING_MOCK_GIF_" + info.name).c_str());
-        if (!path)
-            path = std::getenv("SENSING_MOCK_GIF");
-        std::string bundled;
-        if (!path)
+        std::string path = g_test_picture;
+        if (path.empty())
         {
             if (!look)
-            {
-                throw std::runtime_error("no mock picture for module '" + info.name + "': set SENSING_MOCK_GIF_" +
-                                         info.name + " or SENSING_MOCK_GIF");
-            }
-            bundled = std::string(SENSING_MOCK_ASSET_DIR) + "/" + look->gif;
-            path = bundled.c_str();
+                throw std::runtime_error("no mock picture for module '" + info.name + "'");
+            path = std::string(SENSING_MOCK_ASSET_DIR) + "/" + look->gif;
             sensor.mirror = look->mirror;
             if (look->stereo)
             {
@@ -228,15 +225,6 @@ struct SiplCamera::Impl
         if (!slot)
             slot = std::make_shared<MockGifSource>(path);
         sensor.gif = slot;
-
-        const std::string flip_name = "SENSING_MOCK_FLIP_" + info.name;
-        if (const char* flip = std::getenv(flip_name.c_str()))
-        {
-            const std::string value = flip;
-            if (value != "0" && value != "1")
-                throw std::runtime_error(flip_name + " must be 0 or 1, got '" + value + "'");
-            sensor.mirror = value == "1";
-        }
     }
 
     Sensor* find(uint32_t id)
