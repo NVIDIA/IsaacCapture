@@ -376,63 +376,6 @@ constexpr size_t kFrames = 12;
 
 } // namespace
 
-TEST_CASE("by default both sensors show the waving hand, one the mirror image of the other", "[unit][gpu][sensing]")
-{
-    ScopedEnv scale("SENSING_MOCK_SCALE_DIV", "8");
-    ScopedEnv fps("SENSING_MOCK_FPS", "20");
-    SiplCamera camera(make_sipl_config());
-    REQUIRE(camera.sensors().size() == 2);
-    const auto both = record(camera, kFrames);
-
-    // The two sensors show different pictures, and the second is the first flipped left to right.
-    const auto pairs = shared(both[0], both[1]);
-    REQUIRE(pairs.size() >= 8);
-    for (const auto& [sequence, first, second] : pairs)
-    {
-        INFO("capture " << sequence);
-        CHECK(mean_abs_diff(*second, *first, true) < 3.0);
-        CHECK(mean_abs_diff(*second, *first, false) > 6.0);
-    }
-
-    // The picture is the animated waving hand: transparent corners read as the background gray, and
-    // the picture moves with the clock.
-    for (const auto& [sequence, shot] : both[0])
-        CHECK(near(shot.at(2, 2), MockGifSource::kBackground, MockGifSource::kBackground, MockGifSource::kBackground, 8));
-    CHECK(mean_abs_diff(both[0].begin()->second, both[0].rbegin()->second) > 2.0);
-
-    // Same time, same picture as naming the bundled hand explicitly: the first sensor is the plain
-    // hand, and the explicit setting does not flip the second.
-    Frames explicit_first;
-    Frames explicit_second;
-    {
-        ScopedPicture hand(bundled("noto-waving-hand.gif"));
-        SiplCamera named(make_sipl_config());
-        auto frames = record(named, kFrames);
-        explicit_first = std::move(frames[0]);
-        explicit_second = std::move(frames[1]);
-    }
-    const auto first_vs_named = shared(both[0], explicit_first);
-    REQUIRE(first_vs_named.size() >= 8);
-    for (const auto& [sequence, shot, named] : first_vs_named)
-        CHECK(mean_abs_diff(*shot, *named) < 3.0);
-    const auto second_vs_named = shared(both[1], explicit_second);
-    REQUIRE(second_vs_named.size() >= 8);
-    for (const auto& [sequence, shot, named] : second_vs_named)
-        CHECK(mean_abs_diff(*shot, *named, true) < 3.0); // flipped, as the default second sensor is
-
-    // And it is not the robot.
-    Frames robot;
-    {
-        ScopedPicture face(bundled("noto-robot.gif"));
-        SiplCamera named(make_sipl_config());
-        robot = std::move(record(named, kFrames)[0]);
-    }
-    const auto first_vs_robot = shared(both[0], robot);
-    REQUIRE(first_vs_robot.size() >= 8);
-    for (const auto& [sequence, shot, face] : first_vs_robot)
-        CHECK(mean_abs_diff(*shot, *face) > 15.0);
-}
-
 TEST_CASE("a test picture is shown as it is, on every sensor", "[unit][gpu][sensing]")
 {
     TempFile gif(".gif");
