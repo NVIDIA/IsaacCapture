@@ -147,5 +147,8 @@ a laptop CPU, but nothing here says what an Orin's CPU or any hardware encoder w
 `--livekit-fps` and `--livekit-scale-div` after measuring. The arm64 package is pinned but was not
 built or run, and neither was the `JETSON` backend with LiveKit.
 
+`cmake --install` copies `liblivekit.so` and `liblivekit_ffi.so` beside the plugin, which finds them
+through `$ORIGIN`; the SDK package ships no licence files, so take them from its release page.
+
 Tests that need a LiveKit service start a local `livekit-server` when `LIVEKIT_SERVER` names its
 binary, and are skipped without it; the rest need only a GPU.

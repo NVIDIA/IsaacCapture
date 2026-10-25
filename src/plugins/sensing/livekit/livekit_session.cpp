@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace plugins
@@ -50,8 +51,9 @@ const char* reason_name(livekit::DisconnectReason reason)
 LiveKitSdkReference::LiveKitSdkReference()
 {
     std::lock_guard<std::mutex> lock(g_sdk_mutex);
-    if (g_sdk_users++ == 0)
+    if (g_sdk_users == 0)
         livekit::initialize(livekit::LogLevel::Warn);
+    ++g_sdk_users;
 }
 
 LiveKitSdkReference::~LiveKitSdkReference()
@@ -198,31 +200,34 @@ public:
         }
     }
 
+    // Called from the polling thread, which must not wait on the network: this returns the last answer
+    // and starts, or collects, a stats request that was asked for earlier.
     std::string describe() override
     {
         try
         {
-            auto stats = m_track->getStats();
-            if (stats.wait_for(std::chrono::milliseconds(500)) != std::future_status::ready)
-                return {};
-            for (const auto& entry : stats.get())
+            if (m_stats.valid() && m_stats.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
             {
-                if (const auto* out = std::get_if<livekit::RtcOutboundRtpStats>(&entry.stats))
+                for (const auto& entry : m_stats.get())
                 {
-                    const auto& o = out->outbound;
-                    if (o.frame_width == 0)
+                    const auto* out = std::get_if<livekit::RtcOutboundRtpStats>(&entry.stats);
+                    if (!out || out->outbound.frame_width == 0)
                         continue;
-                    return "encoder " + o.encoder_implementation + ", " + std::to_string(o.frame_width) + "x" +
-                           std::to_string(o.frame_height) + " @ " +
-                           std::to_string(static_cast<int>(o.frames_per_second)) + " fps, " +
-                           std::to_string(static_cast<long>(o.target_bitrate / 1000)) + " kbps target";
+                    const auto& o = out->outbound;
+                    m_description = "encoder " + o.encoder_implementation + ", " + std::to_string(o.frame_width) + "x" +
+                                    std::to_string(o.frame_height) + " @ " +
+                                    std::to_string(static_cast<int>(o.frames_per_second)) + " fps, " +
+                                    std::to_string(static_cast<long>(o.target_bitrate / 1000)) + " kbps target";
+                    break;
                 }
             }
+            if (!m_stats.valid())
+                m_stats = m_track->getStats();
         }
         catch (const std::exception&)
         {
         }
-        return {};
+        return m_description;
     }
 
 private:
@@ -233,6 +238,8 @@ private:
     std::shared_ptr<livekit::VideoSource> m_source;
     std::shared_ptr<livekit::LocalVideoTrack> m_track;
     std::weak_ptr<livekit::LocalParticipant> m_participant;
+    decltype(std::declval<livekit::LocalVideoTrack&>().getStats()) m_stats;
+    std::string m_description;
 };
 
 } // namespace
