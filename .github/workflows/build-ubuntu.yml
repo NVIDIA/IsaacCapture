@@ -1139,6 +1139,7 @@ jobs:
 
   # Validation dependencies live here, including for runs that do not publish.
   # Only explicitly disabled GPU jobs may be skipped; failures still fail the gate.
+  # Publishing relies on this gate independently of which tests are enabled.
   wheel-gate:
     runs-on: ubuntu-22.04
     permissions: {}
@@ -1195,7 +1196,6 @@ jobs:
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
-      && needs.resolve-ci-config.outputs.gpu-tests == 'true'
       && needs.resolve-ci-config.outputs.wheel-publish == 'true'
       && github.repository_id == '1092046207'
       && startsWith(github.ref, 'refs/tags/v')
@@ -1290,13 +1290,11 @@ jobs:
     environment: dev
     timeout-minutes: 10
 
-    # A CPU-only gate pass must not publish wheels. Keep the same-repo PR check:
-    # github.repository identifies the base repository even for fork PRs.
-    # !cancelled() avoids inherited skip propagation; wheel-gate owns validation.
+    # github.repository identifies the base even for fork PRs; check the head too.
+    # !cancelled() avoids inherited skip propagation.
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
-      && needs.resolve-ci-config.outputs.gpu-tests == 'true'
       && needs.resolve-ci-config.outputs.wheel-publish == 'true'
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
