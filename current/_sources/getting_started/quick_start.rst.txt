@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../teleop/quick_start.html
+
 Quick Start
 ===========
 

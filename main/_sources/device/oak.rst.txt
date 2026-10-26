@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=cameras/oak.html
+
 OAK Camera Plugin
 =================
 
