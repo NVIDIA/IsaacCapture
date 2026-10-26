@@ -70,7 +70,10 @@ on the host.
 Optional desktop mirror
 -----------------------
 
-Select both extras with ``isaaccapture[ovxr,desktop-mirror]`` in the installation
+The desktop mirror requires **Python 3.12 or newer**. Isaac Capture's core
+continues to support Python 3.11; on that version the extra does not install OVUI
+and the desktop mirror is unavailable. Use a Python 3.12+ environment and select
+both extras with ``isaaccapture[ovxr,desktop-mirror]`` in the installation
 requirement or the application's optional dependencies to include the OVUI
 mirror. The mirror requires a desktop display associated with a CUDA device.
 The native camera helper is required only when camera panels are also enabled.
