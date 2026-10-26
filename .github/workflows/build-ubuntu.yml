@@ -28,6 +28,7 @@ env:
   VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc  # 2026.05.25
   # Keep capability settings and guidance in workflow env (1 disables, 0 enables).
   # Infrastructure defaults follow the canonical repository ID across renames.
+  # Test and publication controls remain independent, including on release tags.
   NO_GPU_TESTS: ${{ github.repository_id == '1092046207' && '0' || '1' }}
   NO_GPU_ARM: "1"
   NO_WHEEL_PUBLISH: ${{ github.repository_id == '1092046207' && '0' || '1' }}
@@ -538,8 +539,8 @@ jobs:
           uv run --python 3.11 --directory tests/python/packaging --extra dev \
           pytest -v test_wheel_contents.py
 
-  # Job conditions cannot read workflow env; resolve it into job outputs.
-  # Keep a nonempty matrix even when GPU jobs are disabled by their conditions.
+  # Job conditions cannot read workflow env or matrix; expose configuration as
+  # outputs and remove unsupported architectures before matrix expansion.
   resolve-ci-config:
     runs-on: ubuntu-22.04
     permissions: {}
@@ -553,7 +554,7 @@ jobs:
       run: |
         set -euo pipefail
         for flag in NO_GPU_TESTS NO_GPU_ARM NO_WHEEL_PUBLISH; do
-          case "${!flag}" in
+          case "${!flag-}" in
             0|1) ;;
             *) echo "::error::${flag} must be 0 or 1"; exit 1 ;;
           esac
@@ -811,11 +812,14 @@ jobs:
         ./scripts/run_tests_with_cloudxr.sh --python-version ${{ matrix.python_version }}
 
   test-teleop-ros2:
-    runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    # Unit tests and MCAP replay require no GPU; only live CloudXR does.
+    runs-on: >-
+      ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true'
+      && fromJSON(format('["self-hosted", "linux", "gpu", "{0}"]', matrix.arch))
+      || (matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04') }}
     permissions:
       contents: read
     needs: [build-ubuntu, resolve-ci-config]
-    if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
@@ -831,16 +835,6 @@ jobs:
 
     - name: Install uv
       uses: ./.github/actions/setup-uv
-
-    - name: Download install artifacts
-      uses: actions/download-artifact@v7
-      with:
-        name: isaacteleop-install-release-${{ matrix.arch }}-py${{ matrix.python_version }}
-
-    - name: Extract tarball to preserve permissions
-      run: |
-        mkdir -p install
-        tar -xvf isaacteleop-install.tar -C install
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
@@ -886,11 +880,8 @@ jobs:
           "source /usr/local/bin/teleop-env-setup && \
            exec uv run --with pytest --no-sync pytest -v --tb=short tests"
 
-    # MCAP replay path: feed a recorded fixture through the node
-    # (SessionMode.REPLAY, no CloudXR runtime / GPU) across all teleop modes and
-    # verify the published topics. The cheaper, deterministic check; runs before
-    # the live bring-up below, which reuses the same image and removes it on
-    # teardown.
+    # Replay a recorded fixture across teleop modes and verify published topics
+    # without a CloudXR runtime or GPU. Live bring-up reuses this image when enabled.
     - name: Verify application modes (MCAP replay)
       run: |
         set -euo pipefail
@@ -1007,6 +998,7 @@ jobs:
     # real in-process CloudXR runtime and requires the bundled Wuji plugin to
     # start through TeleopSession. No XR client or glove is required.
     - name: Verify live CloudXR bring-up
+      if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
       run: |
         set -euo pipefail
 
@@ -1037,7 +1029,6 @@ jobs:
         cleanup() {
           docker logs "$RUN_NAME" > "$LOG_FILE" 2>&1 || true
           docker rm -f "$RUN_NAME" >/dev/null 2>&1 || true
-          docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
         }
         trap cleanup EXIT
 
@@ -1137,6 +1128,10 @@ jobs:
         cat "$LOG_FILE" 2>/dev/null || echo "No log captured"
         echo "Live CloudXR and Wuji plugin bring-up verified for mode $MODE (${{ env.ROS_DISTRO }}, ${{ matrix.arch }})."
 
+    - name: Remove teleop_ros2 image
+      if: ${{ always() }}
+      run: docker image rm -f teleop_ros2_ref:${{ env.ROS_DISTRO }} >/dev/null 2>&1 || true
+
   # Validation dependencies live here, including for runs that do not publish.
   # Only explicitly disabled GPU jobs may be skipped; failures still fail the gate.
   # Publishing relies on this gate independently of which tests are enabled.
@@ -1158,16 +1153,19 @@ jobs:
       env:
         NEEDS_JSON: ${{ toJson(needs) }}
         GPU_TESTS: ${{ needs.resolve-ci-config.outputs.gpu-tests }}
+        WHEEL_PUBLISH: ${{ needs.resolve-ci-config.outputs.wheel-publish }}
       run: |
         set -euo pipefail
 
+        # Keep the skipped-job allowlist aligned with the job-level GPU conditions.
+        # test-teleop-ros2 remains required because its CPU checks always run.
         failed_jobs="$(
           jq -r --arg gpu_tests "$GPU_TESTS" '
             to_entries[]
             | select(.value.result != "success")
             | select((
                 $gpu_tests == "false" and .value.result == "skipped"
-                and (.key == "test-viz-gpu" or .key == "test-cloudxr" or .key == "test-teleop-ros2")
+                and (.key == "test-viz-gpu" or .key == "test-cloudxr")
               ) | not)
             | "\(.key) completed with result: \(.value.result)"
           ' <<< "${NEEDS_JSON}"
@@ -1176,6 +1174,17 @@ jobs:
         if [[ -n "${failed_jobs}" ]]; then
           echo "${failed_jobs}"
           exit 1
+        fi
+
+        if [[ "$GPU_TESTS" == "false" ]]; then
+          skipped_jobs="$(jq -r '[to_entries[] | select(.value.result == "skipped") | .key] | join(", ")' <<< "$NEEDS_JSON")"
+          message="NO_GPU_TESTS=1: skipped jobs: ${skipped_jobs:-none}; test-teleop-ros2 runs CPU checks only, without live CloudXR."
+          echo "::notice::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$WHEEL_PUBLISH" == "true" ]]; then
+            echo "::warning::Wheel publishing is enabled without GPU validation."
+            echo "Wheel publishing is enabled without GPU validation." >> "$GITHUB_STEP_SUMMARY"
+          fi
         fi
 
         echo "All required wheel dependency jobs completed successfully"
@@ -1290,8 +1299,11 @@ jobs:
     environment: dev
     timeout-minutes: 10
 
+    # Skips propagate through the full dependency chain, even past a successful
+    # wheel-gate. publish-wheel, kitmaker, and kitmaker-status need !cancelled()
+    # plus their immediate dependency's result to continue after intentional skips.
+    # Keep folded-scalar continuations equally indented so YAML folds to one line.
     # github.repository identifies the base even for fork PRs; check the head too.
-    # !cancelled() avoids inherited skip propagation.
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
@@ -1494,7 +1506,7 @@ jobs:
     environment: release
     permissions:
       contents: read
-    if: ${{ github.event_name == 'push' && needs.publish-wheel.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.publish-wheel.result == 'success' }}
 
     steps:
     - name: Submit wheel release to Kitmaker
@@ -1604,7 +1616,7 @@ jobs:
       - kitmaker
     permissions:
       contents: read
-    if: ${{ needs.kitmaker.result == 'success' }}
+    if: ${{ !cancelled() && needs.kitmaker.result == 'success' }}
 
     steps:
     - name: Monitor Kitmaker release status

@@ -194,8 +194,8 @@ that library to compose fixtures. Today:
 - **`test-viz-gpu`** (self-hosted GPU runner, x64 + arm64): downloads
   the `viz-tests-${arch}` artifact and runs each binary with the
   `[gpu]` filter. This is where the GPU paths actually execute.
-- **`publish-wheel`** depends on `test-viz-gpu` succeeding — wheels are
-  not published if any `[gpu]` test fails.
+- **`publish-wheel`** requires `wheel-gate` to pass. Enabled GPU tests must
+  succeed; `NO_GPU_TESTS=1` explicitly exempts the GPU jobs.
 
 When you add a new `viz_<sub>_tests` executable, no CI changes needed:
 the package step globs `viz_*_tests` and the runner loops over them.
