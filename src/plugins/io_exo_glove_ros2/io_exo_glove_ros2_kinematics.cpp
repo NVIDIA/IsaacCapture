@@ -17,8 +17,8 @@ namespace io_exo_glove_ros2
 namespace
 {
 
-//! Revolute joints read per finger, in chain order: F1..F4. The thumb has a fifth joint (Thumb4)
-//! beyond the last anatomy joint the skeleton builder drives, so only ThumbBase..Thumb3 are read.
+//! Revolute joints read per finger, in chain order: the knuckle spread F1 and the bends F2..F4.
+//! The thumb's are Thumb1..Thumb4 (ThumbBase is its fixed mount).
 constexpr std::size_t kRigSlotCount = 4;
 
 //! Which hand a table row belongs to.
@@ -39,15 +39,16 @@ struct RigJointSpec
     //! anatomy is driven. See the derivation above the table.
     float zero;
     //! +1 when flexion increases the URDF angle, -1 when it decreases it. Slot 0 is the knuckle
-    //! spread and uses the hand sign instead (+ left, - right); see the note above the table.
+    //! spread, which is not a flexion axis, so it uses the hand sign instead (+ left, - right).
     float sign;
 };
 
 //! Rest rotation, revolute axis, open-hand zero and flexion sign for the four joints per finger that
 //! drive the anatomy: the knuckle (F1 -> spread) and the three bends (F2 -> MCP, F3 -> PIP,
-//! F4 -> DIP). For the thumb those are ThumbBase, Thumb1, Thumb2 and Thumb3.
+//! F4 -> DIP). For the thumb those are Thumb1 (spread) and Thumb2..Thumb4 (CMC, MCP, IP).
 //!
-//! Derivation (validated against a 58.7 s recording of both hands opening and closing):
+//! Derivation (performed by ``io_exo_glove_ros2_kinematics_tables.py`` on a 7251-message recording
+//! of both hands opening and closing):
 //!
 //!  - The v5 URDF is
 //!    ``.../io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/blender_human_skeleton_v5.urdf``.
@@ -57,105 +58,95 @@ struct RigJointSpec
 //!    ``R_rel = conj(q_parent) * q_child`` and ``theta = signed_angle(conj(q_rest) * R_rel, axis)``
 //!    is the joint's absolute angle relative to the URDF zero pose. ``read_hand_angles`` computes it
 //!    that way; no frame position, frame ordering or first-frame capture is involved.
-//!  - ``zero`` is the open-hand angle of that joint, in degrees, read from
-//!    ``raw_tf_both.jsonl``: for each finger, the frame where its fingertip was furthest from the
-//!    palm (largest ``dot(tip - F1, dorsal)``, with dorsal taken from the knuckle row and the F1->F2
-//!    direction), then every joint's angle at that frame. All 7251 recorded TF messages were used.
-//!    The open-hand zeros, F1/F2/F3/F4 (degrees):
-//!    - left thumb: -31.11 / -24.17 / 50.48 / -130.03
-//!    - left index: -17.95 / -64.99 / -101.56 / -60.32
-//!    - left middle: 5.69 / -66.71 / -104.02 / -59.16
-//!    - left ring: 1.69 / -64.73 / -107.26 / -76.79
-//!    - left little: 7.08 / -59.58 / -113.52 / -67.71
-//!    - right thumb: 15.03 / 2.09 / 48.85 / -115.31
-//!    - right index: 11.46 / 59.93 / -121.90 / 26.62
-//!    - right middle: -5.97 / -73.54 / -98.84 / -74.99
-//!    - right ring: -8.05 / -68.01 / -107.51 / -78.74
-//!    - right little: -13.43 / -61.02 / -110.70 / -79.34
-//!
-//!    A joint's zero is therefore a constant calibration: two sessions of the same rig produce
-//!    identical anatomical output for identical frame quaternions.
-//!  - ``sign`` turns the absolute angle into the anatomy's flexion-positive convention: +1 when the
-//!    joint angle grows from the most-open to the most-closed frame of the recording, -1 when it
-//!    shrinks. The validated mirror is left + / right - for the index MCP, but the rig's linkage does
-//!    not mirror every joint: one sign per hand would clamp the right middle/ring/little MCPs and two
-//!    thumb joints to zero, so the measured sign is stored per joint. Slot 0 (spread) is not a
-//!    flexion axis and always uses the hand sign.
+//!  - Openness is measured along the finger: from each knuckle (the first bend joint) to the
+//!    published fingertip. The recording's longest steady open plateau gives the zero, and its
+//!    longest steady closed plateau gives the sign, at each plateau's medoid frame so a drifting
+//!    pose cannot bias either. The previous table instead maximised ``dot(tip - MCP, dorsal)``,
+//!    which is the palm normal, so it picked the most flexed frames and most of its zeros were
+//!    fists: the injected hand then bent as the glove opened.
+//!  - ``sign`` is +1 when the joint angle grows from the verified open pose towards the fist, -1
+//!    when it shrinks. Both hands need the same mix (MCP +, PIP -, DIP +), including the right
+//!    index, whose chain matches the other right fingers rather than mirroring the left one. Slot 0
+//!    is the spread, which is not a flexion axis: its zero is the open-hand angle and its sign is
+//!    the hand sign (+ left, - right).
+//!  - The derivation checks that the open zero places each model fingertip one finger-length ahead
+//!    of its MCP (thumb 4.9 cm, index 8.2 cm, middle 8.9 cm, ring 8.3 cm, little 6.9 cm) and that
+//!    every mapped MCP/PIP/DIP reads positive at the fist on both hands.
 constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
     // left
     {
         {
             // thumb
-            { { 0.00000f, 0.00000f, 0.99442f }, { 1.00000f, 0.00000f, 0.00000f }, -0.54289f, 1.00000f },
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, -0.42177f, -1.00000f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.88109f, -1.00000f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.26941f, 1.00000f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, -0.28837f, 1.0f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.66229f, 1.0f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.93764f, -1.0f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 1.15219f, 1.0f },
         },
         {
             // index
-            { { 0.00000f, 0.26180f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.31324f, 1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.13436f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.77253f, -1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.05282f, 1.00000f },
+            { { 0.00000f, 0.26180f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.27738f, 1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.04983f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.86301f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.13192f, 1.0f },
         },
         {
             // middle
-            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.09928f, 1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.16431f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.81542f, 1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.03251f, 1.00000f },
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.02953f, 1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.15469f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.61346f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.03451f, 1.0f },
         },
         {
             // ring
-            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.02944f, 1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.12981f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.87196f, 1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.34022f, 1.00000f },
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.04644f, 1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.14160f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.66886f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.05541f, 1.0f },
         },
         {
             // little
-            { { 0.00000f, -0.17453f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.12354f, 1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.03989f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.98132f, -1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.18170f, 1.00000f },
+            { { 0.00000f, -0.17453f, 0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.05504f, 1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.48432f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.35083f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.85100f, 1.0f },
         },
     },
     // right
     {
         {
             // thumb
-            { { 3.14160f, 0.00000f, 2.14720f }, { 1.00000f, 0.00000f, 0.00000f }, 0.26231f, -1.00000f },
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, 0.03640f, 1.00000f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.85258f, -1.00000f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.01247f, 1.00000f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.00000f, 0.00000f, 1.00000f }, 0.37937f, -1.0f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.38808f, 1.0f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.21146f, -1.0f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.06686f, 1.0f },
         },
         {
             // index
-            { { 0.00000f, -0.26180f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.19998f, -1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 1.04597f, -1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.12763f, 1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.46464f, -1.00000f },
+            { { 0.00000f, -0.26180f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.19091f, -1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.03796f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.67321f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.04263f, 1.0f },
         },
         {
             // middle
-            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.10419f, -1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.28344f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.72500f, 1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.30885f, 1.00000f },
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, 0.01183f, -1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.45659f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.25074f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.38185f, 1.0f },
         },
         {
             // ring
-            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.14056f, -1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.18702f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.87643f, 1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.37421f, 1.00000f },
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.05478f, -1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.03685f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.60046f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -0.05488f, 1.0f },
         },
         {
             // little
-            { { 0.00000f, 0.17453f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.23439f, -1.00000f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.06498f, 1.00000f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.93203f, -1.00000f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -1.38471f, 1.00000f },
+            { { 0.00000f, 0.17453f, -0.11990f }, { 0.00000f, 0.00000f, 1.00000f }, -0.23324f, -1.0f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.39179f, 1.0f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, -2.18509f, -1.0f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.00000f, 0.00000f, 0.00000f }, 0.42326f, 1.0f },
         },
     },
 };
@@ -164,11 +155,12 @@ constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
 constexpr float kMaxSpread = 0.436332f;
 
 //! Human bend limits, radians, per bend slot (MCP, PIP, DIP): 0..100 deg, 0..110 deg, 0..110 deg.
-//! Negative values are extension and are clamped to the joint's URDF zero, which is the open hand.
+//! Negative values are extension and are clamped to the open-hand zero.
 constexpr std::array<float, 3> kFingerBendLimit = { 1.745329f, 1.919862f, 1.919862f };
 
 //! Thumb limits, radians, per bend slot (CMC, MCP, IP): 0..60 deg, 0..60 deg, 0..80 deg. "As
-//! appropriate": the rig's thumb is a five-link chain mapped onto the anatomy's three thumb bends.
+//! appropriate": the rig's thumb is a four-joint chain (spread plus three bends) mapped onto the
+//! anatomy's three thumb bends.
 constexpr std::array<float, 3> kThumbBendLimit = { 1.047198f, 1.047198f, 1.396263f };
 
 //! Dorsal direction of the anatomy's rest frame, i.e. the back of the hand (OpenXR's +Y).
@@ -295,8 +287,9 @@ RawHandAngles read_raw_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand han
 {
     RawHandAngles raw;
 
-    // The root frame anchors both "is this glove streaming" and the parent of every F1 joint. The
-    // driver publishes both `link_<Side>SkeletonBase` and `joint_<Side>SkeletonBase`; accept either.
+    // The root frame anchors "is this glove streaming"; every finger's first joint hangs off it,
+    // except the thumb's, which hangs off the mount read below. The driver publishes both
+    // `link_<Side>SkeletonBase` and `joint_<Side>SkeletonBase`; accept either.
     const geometry_msgs::msg::TransformStamped* root = find_frame(msg, mechanism_root_frame(hand));
     if (root == nullptr)
     {
@@ -312,7 +305,23 @@ RawHandAngles read_raw_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand han
     {
         bool complete = true;
         XrQuaternionf parent_rotation = root_rotation;
-        for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
+        // The thumb's first joint hangs off its fixed mount, not the mechanism root; the mount's own
+        // published frame is its parent, so Thumb1's angle is independent of the mount.
+        if (kRigFingers[finger].parent[0] != '\0')
+        {
+            const std::string parent_name =
+                std::string("link_") + side_prefix(hand) + "Skeleton" + kRigFingers[finger].parent;
+            const geometry_msgs::msg::TransformStamped* parent = find_frame(msg, parent_name);
+            if (parent == nullptr)
+            {
+                complete = false;
+            }
+            else
+            {
+                parent_rotation = frame_rotation(*parent);
+            }
+        }
+        for (std::size_t slot = 0; complete && slot < kRigSlotCount; ++slot)
         {
             const std::string name =
                 std::string("link_") + side_prefix(hand) + "Skeleton" + kRigFingers[finger].links[slot];
@@ -376,8 +385,8 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
 
         FingerAngles& out = angles.fingers[finger];
 
-        // Knuckle spread: the angle of the F1 joint, mirrored into "positive towards the index". Its
-        // table sign is the hand sign (+ left, - right); it is not a flexion axis.
+        // Knuckle spread: the angle of the spread joint (F1, or Thumb1), mirrored into "positive
+        // towards the index". Its table sign is the hand sign (+ left, - right).
         const RigJointSpec& knuckle = kRigJoints[side][finger][0];
         out.spread = std::clamp(knuckle.sign * (raw.joint[finger][0] - knuckle.zero), -kMaxSpread, kMaxSpread);
 
@@ -428,42 +437,32 @@ HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand)
         XrVector3f position{ 0.0f, 0.0f, 0.0f };
         XrVector3f forward{ 0.0f, 0.0f, -1.0f };
 
+        // The first joint of the chain sits on landmark 1 for a finger (the MCP) and on landmark 0
+        // for the thumb (the CMC); the tip landmark carries no joint.
+        const std::size_t first_joint = is_thumb ? 0 : 1;
+
         for (std::size_t landmark = 0; landmark < anatomy.count; ++landmark)
         {
-            // Bending happens *at* a joint, about the current bone's axes: flexion about +X (curl
-            // towards the palm, i.e. -Y) and spread about +Y (towards the index).
-            if (is_thumb)
-            {
-                if (landmark == 0)
-                {
-                    rotation = multiply_quaternions(
-                        rotation, axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, -articulation.bend[0]));
-                    rotation = multiply_quaternions(
-                        rotation, axis_angle(XrVector3f{ 0.0f, 1.0f, 0.0f }, -articulation.spread * mirror));
-                }
-                else if (landmark <= 2)
-                {
-                    rotation = multiply_quaternions(
-                        rotation, axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, -articulation.bend[landmark]));
-                }
-            }
-            else if (landmark == 1)
-            {
-                rotation = multiply_quaternions(
-                    rotation, axis_angle(XrVector3f{ 0.0f, 1.0f, 0.0f }, -articulation.spread * mirror));
-                rotation =
-                    multiply_quaternions(rotation, axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, -articulation.bend[0]));
-            }
-            else if (landmark <= 3)
-            {
-                rotation = multiply_quaternions(
-                    rotation, axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, -articulation.bend[landmark - 1]));
-            }
-
+            // Place the landmark first. A joint rotates the segment *after* its own landmark, so
+            // flexing the MCP cannot move the MCP itself.
             const XrVector3f offset{ anatomy.landmarks[landmark].offset.x * mirror,
                                      anatomy.landmarks[landmark].offset.y, anatomy.landmarks[landmark].offset.z };
             const XrVector3f bone = rotate_vector(rotation, offset);
             position = XrVector3f{ position.x + bone.x, position.y + bone.y, position.z + bone.z };
+
+            // Then bend the following bone: flexion about +X (curl towards the palm, i.e. -Y), with
+            // the knuckle spread about +Y (towards the index) at the same landmark.
+            if (landmark >= first_joint && landmark + 1 < anatomy.count)
+            {
+                const std::size_t slot = landmark - first_joint;
+                if (slot == 0)
+                {
+                    rotation = multiply_quaternions(
+                        rotation, axis_angle(XrVector3f{ 0.0f, 1.0f, 0.0f }, -articulation.spread * mirror));
+                }
+                rotation =
+                    multiply_quaternions(rotation, axis_angle(XrVector3f{ 1.0f, 0.0f, 0.0f }, -articulation.bend[slot]));
+            }
 
             if (landmark + 1 < anatomy.count)
             {
@@ -471,6 +470,7 @@ HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand)
                     XrVector3f{ anatomy.landmarks[landmark + 1].offset.x * mirror,
                                 anatomy.landmarks[landmark + 1].offset.y, anatomy.landmarks[landmark + 1].offset.z };
             }
+            // The tip has no following bone, so it keeps the last bone's direction.
             const XrVector3f forward_world = normalized(rotate_vector(rotation, forward));
             const XrVector3f dorsal_world = rotate_vector(rotation, kDorsal);
             const XrQuaternionf orientation = orientation_along(forward_world, dorsal_world);

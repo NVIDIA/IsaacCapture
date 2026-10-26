@@ -203,9 +203,10 @@ rest rotation (`rpy`) and a revolute axis, so the relative rotation of a child f
 gives that joint's angle relative to the URDF zero pose. A constant open-hand zero per joint and a
 per-joint flexion sign turn it into the anatomy's angles, so moving, rotating or reordering the
 mechanism's frames cannot move the injected hand. The constants and their derivation live in
-`io_exo_glove_ros2_kinematics.cpp`; the landmark table lives in the `.hpp`, and a rig with different
-links only needs those files changed. The plugin logs, once, how many joints each hand filled and the
-mechanism root it bound to.
+`io_exo_glove_ros2_kinematics.cpp`, and `io_exo_glove_ros2_kinematics_tables.py` re-derives the
+zero/sign table from a recorded `/io_fusion/tf_exoskeleton` stream; the landmark table lives in the
+`.hpp`, and a rig with different links only needs those files changed. The plugin logs, once, how
+many joints each hand filled and the mechanism root it bound to.
 
 The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
 is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,

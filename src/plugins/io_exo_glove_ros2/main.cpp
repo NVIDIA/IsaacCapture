@@ -5,10 +5,12 @@
 #include "io_exo_glove_ros2_pack.hpp"
 #include "io_exo_glove_ros2_plugin.hpp"
 
+#include <log_bridge/logger.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +19,15 @@ using namespace plugins::io_exo_glove_ros2;
 
 namespace
 {
+
+//! This executable's diagnostics go through the same logger as the plugin's; --help and
+//! --print-config stay on stdout because they are the program's output, not a log line.
+std::shared_ptr<spdlog::logger> logger()
+{
+    static const std::shared_ptr<spdlog::logger> instance =
+        isaaccapture::Logger::get("isaaccapture.plugins.io_exo_glove_ros2.Main");
+    return instance;
+}
 
 //! Values taken from the command line. A field left unset keeps whatever the config file or the
 //! built-in default provided.
@@ -328,7 +339,7 @@ try
 
     if (!resolution.loaded_path.empty())
     {
-        std::cout << "Loaded config: " << resolution.loaded_path << std::endl;
+        logger()->info("Loaded config: {}", resolution.loaded_path);
     }
 
     // ROS gets only the arguments it owns: our own flags and the launcher-injected
@@ -342,9 +353,9 @@ try
     ros_argv.push_back(nullptr);
     rclcpp::init(static_cast<int>(ros_args.size()), ros_argv.data());
 
-    std::cout << "IoExoGloveRos2Plugin (joints: " << options.joints_topic << " -> " << options.joints_left_collection_id
-              << ", " << options.joints_right_collection_id << ", tips: " << options.links_topic << " -> "
-              << options.tips_left_collection_id << " / " << options.tips_right_collection_id << ")" << std::endl;
+    logger()->info("IoExoGloveRos2Plugin (joints: {} -> {}, {}, tips: {} -> {} / {})", options.joints_topic,
+                   options.joints_left_collection_id, options.joints_right_collection_id, options.links_topic,
+                   options.tips_left_collection_id, options.tips_right_collection_id);
 
     auto node = std::make_shared<IoExoGloveRos2Plugin>(options);
     rclcpp::spin(node);
@@ -353,11 +364,11 @@ try
 }
 catch (const std::exception& e)
 {
-    std::cerr << argv[0] << ": " << e.what() << std::endl;
+    logger()->error("{}: {}", argv[0], e.what());
     return 1;
 }
 catch (...)
 {
-    std::cerr << argv[0] << ": Unknown error" << std::endl;
+    logger()->error("{}: Unknown error", argv[0]);
     return 1;
 }

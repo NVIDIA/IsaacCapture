@@ -33,9 +33,11 @@ namespace io_exo_glove_ros2
  *
  *  - ``blender_human_skeleton_v5.urdf`` gives the mechanism's chain: ``joint_<side>SkeletonBase`` is
  *    the fixed root, and each finger is ``joint_<F>1`` (the knuckle spread) followed by ``joint_<F>2``,
- *    ``3``, ``4`` (the bends). Every joint carries an ``<origin rpy>`` rest rotation and a revolute
- *    ``<axis>``, so the published child frame is parent * R_rest(rpy) * R(axis, theta); the joint's
- *    absolute angle follows from the two frames' quaternions (see the table in the .cpp).
+ *    ``3``, ``4`` (the bends). The thumb repeats that pattern one link further out: ``ThumbBase`` is
+ *    its fixed mount, and ``Thumb1`` is the spread while ``Thumb2``..``Thumb4`` are the three bends.
+ *    Every joint carries an ``<origin rpy>`` rest rotation and a revolute ``<axis>``, so the published
+ *    child frame is parent * R_rest(rpy) * R(axis, theta); the joint's absolute angle follows from the
+ *    two frames' quaternions (see the table in the .cpp).
  *  - ``blender_human.urdf`` gives the anatomy: the wrist frame is ``link_<side>Hand_Y``, each finger
  *    starts at ``joint_<side>InHand<F>`` (the metacarpal base) and continues through
  *    ``joint_<side>Hand<F>1`` (MCP), ``2`` (PIP) and ``3`` (DIP).
@@ -117,23 +119,27 @@ inline constexpr HumanFinger kHumanFingers[] = {
 };
 
 //! The mechanism's frame suffixes per finger, in chain order. ``mechanism`` names are
-//! ``link_<Side>Skeleton<...>``. The first four entries are the revolute joints whose angles drive the
-//! anatomy (for the thumb: ThumbBase, Thumb1..3). The fifth names the thumb's last revolute joint,
-//! Thumb4, which the anatomy does not use; it is empty for the other fingers, whose fingertip frame is
-//! named separately.
+//! ``link_<Side>Skeleton<...>``. The four entries are the revolute joints whose angles drive the
+//! anatomy: the knuckle spread (F1, or Thumb1 for the thumb) then the three bends (F2..F4, or
+//! Thumb2..Thumb4). @c parent is the frame the first joint hangs off (the thumb's fixed mount); it
+//! is empty when the first joint hangs off the mechanism root.
 struct RigFinger
 {
     const char* name;
-    std::array<const char*, 5> links; //!< F1, F2, F3, F4, Thumb4 (thumb only)
+    std::array<const char*, 4> links; //!< F1, F2, F3, F4
+    const char* parent;
 };
 
 //! Mechanism chain per finger (left; the right hand's names differ only in ``Left``/``Right``).
+//! ``ThumbBase`` is the fixed mount whose child is ``Thumb1``, so the thumb's spread is ``Thumb1``
+//! and the three bends are ``Thumb2``, ``Thumb3`` and ``Thumb4`` -- the same F1..F4 pattern as the
+//! fingers, shifted one link out.
 inline constexpr RigFinger kRigFingers[] = {
-    { "thumb", { "ThumbBase", "Thumb1", "Thumb2", "Thumb3", "Thumb4" } },
-    { "index", { "Index1", "Index2", "Index3", "Index4", "" } },
-    { "middle", { "Middle1", "Middle2", "Middle3", "Middle4", "" } },
-    { "ring", { "Ring1", "Ring2", "Ring3", "Ring4", "" } },
-    { "little", { "Pinky1", "Pinky2", "Pinky3", "Pinky4", "" } },
+    { "thumb", { "Thumb1", "Thumb2", "Thumb3", "Thumb4" }, "ThumbBase" },
+    { "index", { "Index1", "Index2", "Index3", "Index4" }, "" },
+    { "middle", { "Middle1", "Middle2", "Middle3", "Middle4" }, "" },
+    { "ring", { "Ring1", "Ring2", "Ring3", "Ring4" }, "" },
+    { "little", { "Pinky1", "Pinky2", "Pinky3", "Pinky4" }, "" },
 };
 
 //! Articulation read from one frame of the mechanism: per finger, the knuckle spread and the bends.
@@ -142,7 +148,7 @@ struct FingerAngles
     //! Knuckle spread, radians, positive towards the index finger.
     float spread = 0.0f;
     //! Bends along the chain, radians, positive towards the palm. Fingers: MCP, PIP, DIP. Thumb:
-    //! CMC, MCP, IP.
+    //! CMC, MCP, IP (mechanism Thumb2, Thumb3, Thumb4).
     std::array<float, 3> bend{ 0.0f, 0.0f, 0.0f };
 };
 
