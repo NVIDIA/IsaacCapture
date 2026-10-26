@@ -51,6 +51,9 @@ SPDX-License-Identifier: Apache-2.0
 - In pinned SDK 1.7.3 wireless mode, `DeviceInfo.online` means recent joint
   activity, not an independent physical/RF connection signal. Report it as an
   SDK stream signal and keep sample freshness and USB dongle presence separate.
+- Track health freshness independently for HUMAN, RAW, and ROBOT outputs; one
+  advancing category must not keep another category healthy. Replace cached SDK
+  inventory only after a complete refresh succeeds.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
   production SDK's landmark order. Do not read joint names from
   `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring

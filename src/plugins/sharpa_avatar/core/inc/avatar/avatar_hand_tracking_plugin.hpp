@@ -34,6 +34,8 @@ using DeviceSide = ::avatar::DeviceSide;
 using DeviceDataCategory = ::avatar::DeviceDataCategory;
 
 inline constexpr std::array<DeviceSide, 2> kDeviceSides{ DeviceSide::LEFT, DeviceSide::RIGHT };
+inline constexpr std::array<DeviceDataCategory, 3> kDataCategories{ DeviceDataCategory::HUMAN, DeviceDataCategory::RAW,
+                                                                    DeviceDataCategory::ROBOT };
 inline constexpr std::array<DeviceDataCategory, 2> kJointDataCategories{ DeviceDataCategory::RAW,
                                                                          DeviceDataCategory::ROBOT };
 
@@ -104,8 +106,8 @@ struct GloveState
     ::avatar::AvatarDataFrame robot_frame;
     // Empty until start() or a successful fetch; drives the data-timeout window.
     std::optional<std::chrono::steady_clock::time_point> last_successful_fetch;
-    // The first stamp is a baseline; only a later stamp proves the glove is streaming.
-    std::optional<::avatar::Stamp> last_sample_stamp;
+    // The first stamp is a baseline; only a later stamp proves that stream is advancing.
+    std::array<std::optional<::avatar::Stamp>, kDataCategories.size()> last_sample_stamps;
     bool streaming = false;
 };
 
@@ -162,8 +164,8 @@ private:
     std::array<bool, 2> m_inventory_present{};
     std::array<bool, 2> m_ever_observed{};
     std::array<bool, 2> m_sdk_online{};
-    std::array<bool, 2> m_ever_received_fresh_data{};
-    std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_fresh_data;
+    std::array<std::array<bool, kDataCategories.size()>, 2> m_ever_received_fresh_data{};
+    std::array<std::array<std::optional<std::chrono::steady_clock::time_point>, kDataCategories.size()>, 2> m_last_fresh_data;
     std::optional<std::chrono::steady_clock::time_point> m_last_sdk_health_refresh;
     std::optional<std::chrono::steady_clock::time_point> m_last_dongle_check;
     UsbDevicePresence m_dongle_presence = UsbDevicePresence::UNKNOWN;

@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -36,7 +37,6 @@ namespace
 {
 
 constexpr size_t kJointFlatbufferSize = 4096;
-constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
 constexpr auto kSdkHealthRefreshInterval = std::chrono::milliseconds(100);
@@ -91,6 +91,16 @@ size_t joint_category_index(::avatar::DeviceDataCategory category)
         break;
     }
     throw std::invalid_argument("HUMAN data is not a joint stream");
+}
+
+size_t data_category_index(::avatar::DeviceDataCategory category)
+{
+    const auto it = std::find(kDataCategories.begin(), kDataCategories.end(), category);
+    if (it == kDataCategories.end())
+    {
+        throw std::invalid_argument("Unsupported Avatar data category");
+    }
+    return static_cast<size_t>(std::distance(kDataCategories.begin(), it));
 }
 
 const char* collection_id(::avatar::DeviceSide side, ::avatar::DeviceDataCategory category)
@@ -271,7 +281,7 @@ void GloveState::reset() noexcept
     robot_frame = {};
     device.reset();
     last_successful_fetch.reset();
-    last_sample_stamp.reset();
+    last_sample_stamps = {};
     streaming = false;
 }
 
@@ -456,14 +466,19 @@ void AvatarTracker::refresh_sdk_health()
     const auto now = std::chrono::steady_clock::now();
     if (!m_last_sdk_health_refresh || now - *m_last_sdk_health_refresh >= kSdkHealthRefreshInterval)
     {
-        m_inventory_present.fill(false);
-        m_sdk_online.fill(false);
+        std::array<bool, 2> next_inventory_present{};
+        std::array<bool, 2> next_sdk_online{};
         for (const auto& info : m_sdk.get().list_device_info(::avatar::DeviceType::GLOVE))
         {
             const size_t index = side_index(info.device_side);
-            m_inventory_present[index] = true;
-            m_ever_observed[index] = true;
-            m_sdk_online[index] = info.online;
+            next_inventory_present[index] = true;
+            next_sdk_online[index] = info.online;
+        }
+        m_inventory_present = next_inventory_present;
+        m_sdk_online = next_sdk_online;
+        for (size_t index = 0; index < m_ever_observed.size(); ++index)
+        {
+            m_ever_observed[index] = m_ever_observed[index] || m_inventory_present[index];
         }
         m_last_sdk_health_refresh = now;
     }
@@ -490,18 +505,24 @@ void AvatarTracker::refresh_data()
 
         // fetch_data() keeps returning a silent glove's last sample, so only a newer
         // sample stamp counts as data for the timeout below.
+        const size_t side_idx = side_index(side);
+        const auto now = std::chrono::steady_clock::now();
         bool fetched_any = false;
-        const auto note_stamp = [&state, &fetched_any](const ::avatar::Stamp& stamp)
+        const auto note_stamp = [this, &state, &fetched_any, side_idx, now](
+                                    ::avatar::DeviceDataCategory category, const ::avatar::Stamp& stamp)
         {
-            if (!state.last_sample_stamp)
+            const size_t category_idx = data_category_index(category);
+            auto& last_stamp = state.last_sample_stamps[category_idx];
+            if (!last_stamp)
             {
-                state.last_sample_stamp = stamp;
+                last_stamp = stamp;
             }
-            else if (std::tie(stamp.sec, stamp.nanosec) >
-                     std::tie(state.last_sample_stamp->sec, state.last_sample_stamp->nanosec))
+            else if (std::tie(stamp.sec, stamp.nanosec) > std::tie(last_stamp->sec, last_stamp->nanosec))
             {
-                state.last_sample_stamp = stamp;
+                last_stamp = stamp;
                 fetched_any = true;
+                m_last_fresh_data[side_idx][category_idx] = now;
+                m_ever_received_fresh_data[side_idx][category_idx] = true;
             }
         };
         if (m_config.human)
@@ -511,7 +532,7 @@ void AvatarTracker::refresh_data()
                 state.device->fetch_data(frame, ::avatar::DeviceDataCategory::HUMAN) == ::avatar::ErrorCode::SUCCESS;
             if (fetched)
             {
-                note_stamp(frame.skeleton.header.stamp);
+                note_stamp(::avatar::DeviceDataCategory::HUMAN, frame.skeleton.header.stamp);
                 state.landmarks = std::move(frame.skeleton.landmark);
             }
             else
@@ -530,7 +551,7 @@ void AvatarTracker::refresh_data()
             ::avatar::AvatarDataFrame& cached = cached_joint_frame(state, category);
             if (fetched)
             {
-                note_stamp(hand_payload(frame, category).header.stamp);
+                note_stamp(category, hand_payload(frame, category).header.stamp);
                 cached = std::move(frame);
             }
             else
@@ -538,7 +559,6 @@ void AvatarTracker::refresh_data()
                 cached = {};
             }
         }
-        const auto now = std::chrono::steady_clock::now();
         if (fetched_any)
         {
             if (!state.streaming)
@@ -548,9 +568,6 @@ void AvatarTracker::refresh_data()
                     ->info("{} glove connected and streaming.", to_string(side));
             }
             state.last_successful_fetch = now;
-            const size_t index = side_index(side);
-            m_last_fresh_data[index] = now;
-            m_ever_received_fresh_data[index] = true;
         }
         else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
         {
@@ -575,26 +592,26 @@ void AvatarTracker::publish_device_status()
     for (const ::avatar::DeviceSide side : kDeviceSides)
     {
         const size_t index = side_index(side);
-        const bool fresh_data = m_last_fresh_data[index] && now - *m_last_fresh_data[index] < kAvatarDataTimeout;
-        const GloveHealthInput base_input{
-            .inventory_present = m_inventory_present[index],
-            .ever_observed = m_ever_observed[index],
-            .sdk_online = m_sdk_online[index],
-            .fresh_data = fresh_data,
-            .ever_received_fresh_data = m_ever_received_fresh_data[index],
+        const auto make_input = [this, index, now](::avatar::DeviceDataCategory category, bool enabled)
+        {
+            const size_t category_idx = data_category_index(category);
+            const auto& last_fresh_data = m_last_fresh_data[index][category_idx];
+            return GloveHealthInput{
+                .enabled = enabled,
+                .inventory_present = m_inventory_present[index],
+                .ever_observed = m_ever_observed[index],
+                .sdk_online = m_sdk_online[index],
+                .fresh_data = last_fresh_data && now - *last_fresh_data < kAvatarDataTimeout,
+                .ever_received_fresh_data = m_ever_received_fresh_data[index][category_idx],
+            };
         };
 
-        auto hand_input = base_input;
-        hand_input.enabled = m_config.human;
-        entries.push_back(make_glove_status(kHandDevicePaths[index], hand_input));
-
-        auto raw_input = base_input;
-        raw_input.enabled = m_config.raw;
-        entries.push_back(make_glove_status(kRawDevicePaths[index], raw_input));
-
-        auto robot_input = base_input;
-        robot_input.enabled = m_config.robot;
-        entries.push_back(make_glove_status(kRobotDevicePaths[index], robot_input));
+        entries.push_back(make_glove_status(
+            kHandDevicePaths[index], make_input(::avatar::DeviceDataCategory::HUMAN, m_config.human)));
+        entries.push_back(
+            make_glove_status(kRawDevicePaths[index], make_input(::avatar::DeviceDataCategory::RAW, m_config.raw)));
+        entries.push_back(make_glove_status(
+            kRobotDevicePaths[index], make_input(::avatar::DeviceDataCategory::ROBOT, m_config.robot)));
     }
 
     m_status_publisher->publish_if_changed(entries, core::os_monotonic_now_ns());

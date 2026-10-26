@@ -66,10 +66,18 @@ plugin_utils::PluginDeviceStatusEntry make_glove_status(std::string path, const 
     }
     else if (!input.fresh_data)
     {
-        entry.state = input.ever_received_fresh_data ? core::PluginDeviceState_DEGRADED : core::PluginDeviceState_UNKNOWN;
         entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
-        entry.error =
-            input.ever_received_fresh_data ? "glove has no fresh samples" : "waiting for the first fresh glove sample";
+        if (input.ever_received_fresh_data)
+        {
+            entry.state = core::PluginDeviceState_DEGRADED;
+            entry.error = "glove has no newer samples within the " + std::to_string(kAvatarDataTimeout.count()) +
+                          "-second freshness window";
+        }
+        else
+        {
+            entry.state = core::PluginDeviceState_UNKNOWN;
+            entry.error = "waiting for the first fresh glove sample";
+        }
     }
     else
     {

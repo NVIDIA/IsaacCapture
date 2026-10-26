@@ -123,6 +123,24 @@ TEST_CASE("Glove health preserves startup, stream, and configuration states", "[
         const auto status = plugins::avatar::make_glove_status("/hand/left", input);
         CHECK(status.state == core::PluginDeviceState_DEGRADED);
         CHECK(status.reason == core::PluginDeviceReason_NO_CURRENT_DATA);
+        CHECK(status.error.find("3-second freshness window") != std::string::npos);
+    }
+
+    SECTION("published paths can report independent freshness")
+    {
+        input.inventory_present = true;
+        input.ever_observed = true;
+        input.sdk_online = true;
+        input.ever_received_fresh_data = true;
+
+        input.fresh_data = true;
+        const auto human = plugins::avatar::make_glove_status("/hand/left", input);
+        input.fresh_data = false;
+        const auto raw = plugins::avatar::make_glove_status("/glove/avatar_raw_left", input);
+
+        CHECK(human.state == core::PluginDeviceState_CONNECTED);
+        CHECK(raw.state == core::PluginDeviceState_DEGRADED);
+        CHECK(raw.reason == core::PluginDeviceReason_NO_CURRENT_DATA);
     }
 }
 
