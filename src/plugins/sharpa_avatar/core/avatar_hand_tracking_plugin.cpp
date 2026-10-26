@@ -39,6 +39,15 @@ constexpr size_t kJointFlatbufferSize = 4096;
 constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
+constexpr auto kSdkHealthRefreshInterval = std::chrono::milliseconds(100);
+constexpr auto kDonglePresenceInterval = std::chrono::seconds(1);
+constexpr uint16_t kAvatarDongleVendorId = 0x1915;
+constexpr uint16_t kAvatarDongleProductId = 0x520F;
+constexpr std::string_view kUsbDevicesRoot = "/sys/bus/usb/devices";
+
+constexpr std::array<const char*, 2> kHandDevicePaths{ "/hand/left", "/hand/right" };
+constexpr std::array<const char*, 2> kRawDevicePaths{ "/glove/avatar_raw_left", "/glove/avatar_raw_right" };
+constexpr std::array<const char*, 2> kRobotDevicePaths{ "/glove/avatar_robot_left", "/glove/avatar_robot_right" };
 
 const std::shared_ptr<spdlog::logger>& logger()
 {
@@ -277,6 +286,11 @@ AvatarTracker::AvatarTracker(AvatarPluginConfig config) : m_config(std::move(con
 
 void AvatarTracker::initialize_openxr()
 {
+    if (m_config.monitoring_plugin_root_id && m_config.monitoring_plugin_root_id->empty())
+    {
+        throw std::invalid_argument("AvatarTracker monitoring_plugin_root_id must not be empty");
+    }
+
     plugin_utils::WristSourceConfig wrist_config;
     wrist_config.mode = plugin_utils::WristSourceMode::Auto;
     wrist_config.left_aim_to_wrist = kLeftHandOffset;
@@ -310,6 +324,13 @@ void AvatarTracker::initialize_openxr()
     {
         add_extension(XR_NVX1_DEVICE_INTERFACE_BASE_EXTENSION_NAME);
     }
+    if (m_config.monitoring_plugin_root_id)
+    {
+        for (const auto& extension : plugin_utils::PluginDeviceStatusPublisher::get_required_extensions())
+        {
+            add_extension(extension);
+        }
+    }
     for (const char* extension : wrist_requirements.extensions)
     {
         add_extension(extension);
@@ -318,6 +339,12 @@ void AvatarTracker::initialize_openxr()
     const bool wait_for_openxr_system = false;
     m_session = std::make_shared<core::OpenXRSession>(m_config.app_name, extensions, wait_for_openxr_system);
     m_handles = m_session->get_handles();
+
+    if (m_config.monitoring_plugin_root_id)
+    {
+        m_status_publisher =
+            std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(m_handles, *m_config.monitoring_plugin_root_id);
+    }
 
     m_time_converter.emplace(m_handles);
 
@@ -419,6 +446,34 @@ void AvatarTracker::try_connect_missing_gloves()
     m_glove_wait_logged = waiting;
 }
 
+void AvatarTracker::refresh_sdk_health()
+{
+    if (!m_status_publisher)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (!m_last_sdk_health_refresh || now - *m_last_sdk_health_refresh >= kSdkHealthRefreshInterval)
+    {
+        m_inventory_present.fill(false);
+        m_sdk_online.fill(false);
+        for (const auto& info : m_sdk.get().list_device_info(::avatar::DeviceType::GLOVE))
+        {
+            const size_t index = side_index(info.device_side);
+            m_inventory_present[index] = true;
+            m_ever_observed[index] = true;
+            m_sdk_online[index] = info.online;
+        }
+        m_last_sdk_health_refresh = now;
+    }
+    if (!m_last_dongle_check || now - *m_last_dongle_check >= kDonglePresenceInterval)
+    {
+        m_dongle_presence = detect_usb_device_presence(kUsbDevicesRoot, kAvatarDongleVendorId, kAvatarDongleProductId);
+        m_last_dongle_check = now;
+    }
+}
+
 void AvatarTracker::refresh_data()
 {
     for (const ::avatar::DeviceSide side : kDeviceSides)
@@ -493,6 +548,9 @@ void AvatarTracker::refresh_data()
                     ->info("{} glove connected and streaming.", to_string(side));
             }
             state.last_successful_fetch = now;
+            const size_t index = side_index(side);
+            m_last_fresh_data[index] = now;
+            m_ever_received_fresh_data[index] = true;
         }
         else if (!state.last_successful_fetch || now - *state.last_successful_fetch >= kAvatarDataTimeout)
         {
@@ -500,6 +558,46 @@ void AvatarTracker::refresh_data()
             state.reset();
         }
     }
+}
+
+void AvatarTracker::publish_device_status()
+{
+    if (!m_status_publisher)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<plugin_utils::PluginDeviceStatusEntry> entries;
+    entries.reserve(7);
+    entries.push_back(make_dongle_status(m_dongle_presence));
+
+    for (const ::avatar::DeviceSide side : kDeviceSides)
+    {
+        const size_t index = side_index(side);
+        const bool fresh_data = m_last_fresh_data[index] && now - *m_last_fresh_data[index] < kAvatarDataTimeout;
+        const GloveHealthInput base_input{
+            .inventory_present = m_inventory_present[index],
+            .ever_observed = m_ever_observed[index],
+            .sdk_online = m_sdk_online[index],
+            .fresh_data = fresh_data,
+            .ever_received_fresh_data = m_ever_received_fresh_data[index],
+        };
+
+        auto hand_input = base_input;
+        hand_input.enabled = m_config.human;
+        entries.push_back(make_glove_status(kHandDevicePaths[index], hand_input));
+
+        auto raw_input = base_input;
+        raw_input.enabled = m_config.raw;
+        entries.push_back(make_glove_status(kRawDevicePaths[index], raw_input));
+
+        auto robot_input = base_input;
+        robot_input.enabled = m_config.robot;
+        entries.push_back(make_glove_status(kRobotDevicePaths[index], robot_input));
+    }
+
+    m_status_publisher->publish_if_changed(entries, core::os_monotonic_now_ns());
 }
 
 const GloveState& AvatarTracker::glove(::avatar::DeviceSide side) const
@@ -514,9 +612,51 @@ GloveState& AvatarTracker::glove(::avatar::DeviceSide side)
 
 void AvatarTracker::update()
 {
+    try
+    {
+        refresh_sdk_health();
+        m_status_refresh_error_logged = false;
+    }
+    catch (const std::exception& error)
+    {
+        if (!m_status_refresh_error_logged)
+        {
+            logger()->warn("Device status refresh failed; tracking will continue: {}", error.what());
+            m_status_refresh_error_logged = true;
+        }
+    }
+    catch (...)
+    {
+        if (!m_status_refresh_error_logged)
+        {
+            logger()->warn("Device status refresh failed; tracking will continue.");
+            m_status_refresh_error_logged = true;
+        }
+    }
     try_connect_missing_gloves();
     m_deviceio_session->update();
     refresh_data();
+    try
+    {
+        publish_device_status();
+        m_status_publish_error_logged = false;
+    }
+    catch (const std::exception& error)
+    {
+        if (!m_status_publish_error_logged)
+        {
+            logger()->warn("Device status publishing failed; tracking will continue: {}", error.what());
+            m_status_publish_error_logged = true;
+        }
+    }
+    catch (...)
+    {
+        if (!m_status_publish_error_logged)
+        {
+            logger()->warn("Device status publishing failed; tracking will continue.");
+            m_status_publish_error_logged = true;
+        }
+    }
     if (m_haptic_reader)
     {
         const auto now = std::chrono::steady_clock::now();
