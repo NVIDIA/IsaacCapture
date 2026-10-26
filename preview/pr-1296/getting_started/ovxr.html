@@ -491,9 +491,13 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </pre></div>
 </div>
 <p>Install the generated wheel with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra using the instructions
-above. The extra includes the CUDA Python bindings used for GPU camera output;
+above. The extra requires CUDA 13 Python bindings for GPU camera output;
 <code class="docutils literal notranslate"><span class="pre">BUILD_OVXR_CAMERA_QUADS</span></code> controls whether the wheel contains the native helper.
 The helper is disabled by default.</p>
+<p>Use a CUDA 13-compatible NVIDIA driver (R580 or newer), meeting any stricter
+requirements of the selected bindings and renderer. See the
+<a class="reference external" href="https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html" rel="noopener noreferrer" target="_blank">CUDA compatibility requirements</a>.
+Installing Python packages or a CUDA Toolkit does not update the host driver.</p>
 <p>Install the Vulkan development SDK before configuring camera support. Linux
 builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
 Use <code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select a CUDA Toolkit installation and <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code>
@@ -507,7 +511,8 @@ continues to support Python 3.11; on that version the extra does not install OVU
 and the desktop mirror is unavailable. Use a Python 3.12+ environment and select
 both extras with <code class="docutils literal notranslate"><span class="pre">isaaccapture[ovxr,desktop-mirror]</span></code> in the installation
 requirement or the application’s optional dependencies to include the OVUI
-mirror. The mirror requires a desktop display associated with a CUDA device.
+mirror. The mirror requires CUDA 13 Python bindings, a compatible NVIDIA driver
+as described above, and a desktop display associated with a CUDA device.
 The native camera helper is required only when camera panels are also enabled.</p>
 <p>Initialize the renderer before starting the mirror. The mirror uses the OpenGL
 backend and defaults <code class="docutils literal notranslate"><span class="pre">OMNIUI_BACKEND</span></code> to <code class="docutils literal notranslate"><span class="pre">opengl</span></code> when it is unset. Configure

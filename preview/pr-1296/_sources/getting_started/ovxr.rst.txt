@@ -57,9 +57,14 @@ then enable camera support and rebuild the wheel:
    cmake --build build --target python_package python_stubs python_wheel --parallel
 
 Install the generated wheel with its ``ovxr`` extra using the instructions
-above. The extra includes the CUDA Python bindings used for GPU camera output;
+above. The extra requires CUDA 13 Python bindings for GPU camera output;
 ``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
 The helper is disabled by default.
+
+Use a CUDA 13-compatible NVIDIA driver (R580 or newer), meeting any stricter
+requirements of the selected bindings and renderer. See the
+`CUDA compatibility requirements <https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html>`_.
+Installing Python packages or a CUDA Toolkit does not update the host driver.
 
 Install the Vulkan development SDK before configuring camera support. Linux
 builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
@@ -75,7 +80,8 @@ continues to support Python 3.11; on that version the extra does not install OVU
 and the desktop mirror is unavailable. Use a Python 3.12+ environment and select
 both extras with ``isaaccapture[ovxr,desktop-mirror]`` in the installation
 requirement or the application's optional dependencies to include the OVUI
-mirror. The mirror requires a desktop display associated with a CUDA device.
+mirror. The mirror requires CUDA 13 Python bindings, a compatible NVIDIA driver
+as described above, and a desktop display associated with a CUDA device.
 The native camera helper is required only when camera panels are also enabled.
 
 Initialize the renderer before starting the mirror. The mirror uses the OpenGL
