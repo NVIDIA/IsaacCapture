@@ -26,7 +26,11 @@ env:
   # commit only needs to be recent enough to contain that baseline. Update the
   # commit and its release-date comment together.
   VCPKG_COMMIT: d015e31e90838a4c9dfa3eed45979bc70d9357fc  # 2026.05.25
-  NO_GPU_ARM: "1"
+  # Repository variables use 1 to disable, 0 to enable; see CONTRIBUTING.md.
+  # Infrastructure defaults follow the canonical repository ID across renames.
+  NO_GPU_TESTS: ${{ vars.NO_GPU_TESTS || (github.repository_id == '1092046207' && '0' || '1') }}
+  NO_GPU_ARM: ${{ vars.NO_GPU_ARM || '1' }}
+  NO_WHEEL_PUBLISH: ${{ vars.NO_WHEEL_PUBLISH || (github.repository_id == '1092046207' && '0' || '1') }}
 
 jobs:
   build-ubuntu:
@@ -534,19 +538,29 @@ jobs:
           uv run --python 3.11 --directory tests/python/packaging --extra dev \
           pytest -v test_wheel_contents.py
 
-  # Jobs `if:` conditions cannot see the `matrix` context, so arm64 GPU test
-  # runs are skipped by computing the test matrix here instead: when
-  # NO_GPU_ARM=1, arm64 drops out of the matrix entirely (no self-hosted arm64
-  # GPU runner is claimed) while build-ubuntu still builds arm64 unconditionally.
-  resolve-test-arches:
+  # Job conditions cannot read workflow env; resolve it into job outputs.
+  # Keep a nonempty matrix even when GPU jobs are disabled by their conditions.
+  resolve-ci-config:
     runs-on: ubuntu-22.04
     permissions: {}
     outputs:
       arches: ${{ steps.resolve.outputs.arches }}
+      gpu-tests: ${{ steps.resolve.outputs.gpu-tests }}
+      wheel-publish: ${{ steps.resolve.outputs.wheel-publish }}
     steps:
-    - name: Resolve GPU test architectures
+    - name: Resolve CI capabilities and GPU test architectures
       id: resolve
       run: |
+        set -euo pipefail
+        for flag in NO_GPU_TESTS NO_GPU_ARM NO_WHEEL_PUBLISH; do
+          case "${!flag}" in
+            0|1) ;;
+            *) echo "::error::${flag} must be 0 or 1"; exit 1 ;;
+          esac
+        done
+        # Boolean outputs fail closed: a missing expression value can equal '0'.
+        echo "gpu-tests=$([[ "$NO_GPU_TESTS" == "0" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        echo "wheel-publish=$([[ "$NO_WHEEL_PUBLISH" == "0" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
         if [[ "$NO_GPU_ARM" == "1" ]]; then
           echo 'arches=["x64"]' >> "$GITHUB_OUTPUT"
         else
@@ -561,12 +575,13 @@ jobs:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
     permissions:
       contents: read
-    needs: [build-ubuntu, resolve-test-arches]
+    needs: [build-ubuntu, resolve-ci-config]
+    if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
-        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
+        arch: ${{ fromJson(needs.resolve-ci-config.outputs.arches) }}
 
     steps:
     - name: Download viz test binaries
@@ -753,13 +768,14 @@ jobs:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
     permissions:
       contents: read
-    needs: [build-ubuntu, resolve-test-arches]
+    needs: [build-ubuntu, resolve-ci-config]
+    if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         python_version: ['3.11', '3.12', '3.13']
-        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
+        arch: ${{ fromJson(needs.resolve-ci-config.outputs.arches) }}
 
     steps:
     - name: Checkout code
@@ -798,13 +814,14 @@ jobs:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
     permissions:
       contents: read
-    needs: [build-ubuntu, resolve-test-arches]
+    needs: [build-ubuntu, resolve-ci-config]
+    if: ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true' }}
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         python_version: ['3.12']
-        arch: ${{ fromJson(needs.resolve-test-arches.outputs.arches) }}
+        arch: ${{ fromJson(needs.resolve-ci-config.outputs.arches) }}
 
     steps:
     - name: Checkout code
@@ -1120,13 +1137,13 @@ jobs:
         cat "$LOG_FILE" 2>/dev/null || echo "No log captured"
         echo "Live CloudXR and Wuji plugin bring-up verified for mode $MODE (${{ env.ROS_DISTRO }}, ${{ matrix.arch }})."
 
-  # These are the actual dependency jobs for publish-wheel. publish-wheel
-  # depends only on wheel-gate so the dependency list lives in one place, while
-  # this gate still runs for fork PRs where publish-wheel is intentionally skipped.
+  # Validation dependencies live here, including for runs that do not publish.
+  # Only explicitly disabled GPU jobs may be skipped; failures still fail the gate.
   wheel-gate:
     runs-on: ubuntu-22.04
     permissions: {}
     needs:
+      - resolve-ci-config
       - build-ubuntu
       - test-sbom-collector
       - test-viz-gpu
@@ -1139,13 +1156,18 @@ jobs:
     - name: Require wheel dependencies success
       env:
         NEEDS_JSON: ${{ toJson(needs) }}
+        GPU_TESTS: ${{ needs.resolve-ci-config.outputs.gpu-tests }}
       run: |
         set -euo pipefail
 
         failed_jobs="$(
-          jq -r '
+          jq -r --arg gpu_tests "$GPU_TESTS" '
             to_entries[]
             | select(.value.result != "success")
+            | select((
+                $gpu_tests == "false" and .value.result == "skipped"
+                and (.key == "test-viz-gpu" or .key == "test-cloudxr" or .key == "test-teleop-ros2")
+              ) | not)
             | "\(.key) completed with result: \(.value.result)"
           ' <<< "${NEEDS_JSON}"
         )"
@@ -1155,13 +1177,14 @@ jobs:
           exit 1
         fi
 
-        echo "All wheel dependency jobs completed successfully"
+        echo "All required wheel dependency jobs completed successfully"
 
   publish-sbom-evidence:  # durable copies attached to the GitHub release
     # Attach durable evidence to releases; Actions artifacts expire.
     runs-on: ubuntu-22.04
     needs:
       - wheel-gate
+      - resolve-ci-config
     permissions:
       contents: write
     timeout-minutes: 20
@@ -1172,6 +1195,8 @@ jobs:
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
+      && needs.resolve-ci-config.outputs.gpu-tests == 'true'
+      && needs.resolve-ci-config.outputs.wheel-publish == 'true'
       && github.repository_id == '1092046207'
       && startsWith(github.ref, 'refs/tags/v')
 
@@ -1259,25 +1284,20 @@ jobs:
     permissions: {}
     needs:
       - wheel-gate
+      - resolve-ci-config
     outputs:
       wheel_paths: ${{ steps.upload-artifactory.outputs.wheel_paths }}
     environment: dev
     timeout-minutes: 10
 
-    # Publish only for same-repo runs (pushes or non-fork PRs). github.repository
-    # is the base repo even for fork PRs, so compare the PR head repo instead.
-    # `!cancelled()` because a skip propagates through the whole dependency
-    # chain, not one level: a test job that does not run -- an empty arch matrix,
-    # say -- skips `wheel-gate`'s dependents even though `wheel-gate` itself
-    # succeeded through `always()`. The result check below is what should gate
-    # this job, and without a status function it never gets the chance.
-    #
-    # Continuations sit at the block's indentation: a folded scalar keeps the
-    # newline of a more-indented line, so the expression would reach the
-    # evaluator with a newline inside it.
+    # A CPU-only gate pass must not publish wheels. Keep the same-repo PR check:
+    # github.repository identifies the base repository even for fork PRs.
+    # !cancelled() avoids inherited skip propagation; wheel-gate owns validation.
     if: >-
       !cancelled()
       && needs.wheel-gate.result == 'success'
+      && needs.resolve-ci-config.outputs.gpu-tests == 'true'
+      && needs.resolve-ci-config.outputs.wheel-publish == 'true'
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
 
