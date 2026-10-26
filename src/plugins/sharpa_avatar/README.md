@@ -97,6 +97,19 @@ The gloves do not provide a world-space wrist pose. Downstream consumers that
 need a display frame (the example) place both skeletons locally; a headset
 wrist source is used when one is available.
 
+## Health reporting
+
+When launched by `TeleopSession`, the plugin reports the USB dongle and every
+manifest data path through the standard plugin health interface. Left and right
+states are independent. A path is connected only while Avatar SDK
+`DeviceInfo.online` is true and fresh samples are arriving; missing current data
+is reported as degraded rather than diagnosed as a physical glove disconnect.
+
+In the pinned Avatar SDK 1.7.3 wireless transport, `DeviceInfo.online` follows
+recent joint-frame activity. It does not independently distinguish an RF-linked
+glove that stopped streaming from a disconnected glove. Dongle insertion is
+reported separately from Linux USB enumeration (`1915:520f`).
+
 ## Troubleshooting
 
 | Symptom | Resolution |

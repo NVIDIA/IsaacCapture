@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "avatar_health.hpp"
+
 #include <avatar_sdk/AvatarSDK.h>
 #include <deviceio_session/deviceio_session.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
@@ -10,6 +12,7 @@
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/oxr_time.hpp>
 #include <plugin_utils/hand_injector.hpp>
+#include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <plugin_utils/wrist_pose_source.hpp>
 #include <pusherio/schema_pusher.hpp>
 
@@ -65,6 +68,7 @@ inline constexpr uint32_t kAvatarHumanLandmarkCount = 25;
 struct AvatarPluginConfig
 {
     std::string app_name = "AvatarHandPlugin";
+    std::optional<std::string> monitoring_plugin_root_id;
     std::string sdk_config_path;
     bool human = true;
     bool raw = true;
@@ -118,7 +122,9 @@ private:
     void initialize_openxr();
     void try_connect_missing_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
+    void refresh_sdk_health();
     void refresh_data();
+    void publish_device_status();
     void inject_hand_data();
     void push_joint_frames();
     void push_joint_frame(const GloveState& glove,
@@ -141,6 +147,7 @@ private:
     std::shared_ptr<core::OpenXRSession> m_session;
     core::OpenXRSessionHandles m_handles;
     std::array<std::unique_ptr<plugin_utils::HandInjector>, 2> m_injectors;
+    std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> m_status_publisher;
     std::shared_ptr<core::HapticCommandReaderTracker> m_haptic_reader;
     std::unique_ptr<core::DeviceIOSession> m_deviceio_session;
     std::optional<core::XrTimeConverter> m_time_converter;
@@ -152,7 +159,17 @@ private:
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;
+    std::array<bool, 2> m_inventory_present{};
+    std::array<bool, 2> m_ever_observed{};
+    std::array<bool, 2> m_sdk_online{};
+    std::array<bool, 2> m_ever_received_fresh_data{};
+    std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_fresh_data;
+    std::optional<std::chrono::steady_clock::time_point> m_last_sdk_health_refresh;
+    std::optional<std::chrono::steady_clock::time_point> m_last_dongle_check;
+    UsbDevicePresence m_dongle_presence = UsbDevicePresence::UNKNOWN;
     bool m_glove_wait_logged = false;
+    bool m_status_refresh_error_logged = false;
+    bool m_status_publish_error_logged = false;
 };
 
 } // namespace avatar

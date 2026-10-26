@@ -388,6 +388,21 @@ def _fmt_optional(group, *, kind: str, hand_input_index) -> str:
         return f"error:{type(exc).__name__}"
 
 
+def _print_health_changes(snapshot, previous: dict[str, tuple]) -> None:
+    for device in snapshot.devices:
+        if not device.id.startswith(f"{PLUGIN_ROOT_ID}/"):
+            continue
+        current = (device.status, device.reason, device.error)
+        if previous.get(device.id) == current:
+            continue
+        previous[device.id] = current
+        detail = f": {device.error}" if device.error else ""
+        print(
+            f"[HEALTH] {device.id}: {device.status.value} "
+            f"({device.reason.value}){detail}"
+        )
+
+
 def _build_haptic_pipeline(hands, mapping, sinks, hands_source_cls) -> None:
     from isaaccapture.haptic_devices.glove import haptic_glove_device
     from isaaccapture.retargeters.tactile_retargeters import (
@@ -488,6 +503,11 @@ def main() -> int:
         type=float,
         default=DEFAULT_PRINT_HZ,
         help="Terminal status rate. 0 silences prints.",
+    )
+    parser.add_argument(
+        "--print-health",
+        action="store_true",
+        help="Print Sharpa device health initially and whenever it changes.",
     )
     parser.add_argument(
         "--haptic",
@@ -621,6 +641,7 @@ def main() -> int:
     print_period = (1.0 / args.print_hz) if args.print_hz > 0 else None
     next_print = time.monotonic()
     last_offline_hint = 0.0
+    previous_health: dict[str, tuple] = {}
     upright = not args.world_frame
 
     print("=" * 72)
@@ -644,13 +665,21 @@ def main() -> int:
         print(f"  viser:   http://{args.host}:{args.port}  (Ctrl+C to exit)")
     else:
         print("  viser:   off (--no-viz); terminal + haptic only. Ctrl+C to exit.")
+    print(f"  health:  {'changes' if args.print_health else 'off'}")
     print("=" * 72)
 
     with CloudXRLauncher.launch_context(args), TeleopSession(config) as session:
         if args.viz:
             _server, viz_left, viz_right = _start_viser(args)
         while True:
-            result = session.step()
+            try:
+                result = session.step()
+            except Exception:
+                if args.print_health:
+                    _print_health_changes(session.get_status(), previous_health)
+                raise
+            if args.print_health:
+                _print_health_changes(session.get_status(), previous_health)
             n_l = n_r = 0
             if viz_left is not None and viz_right is not None:
                 pts, mask, n_l = _hand_points(

@@ -48,6 +48,9 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
+- In pinned SDK 1.7.3 wireless mode, `DeviceInfo.online` means recent joint
+  activity, not an independent physical/RF connection signal. Report it as an
+  SDK stream signal and keep sample freshness and USB dongle presence separate.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
   production SDK's landmark order. Do not read joint names from
   `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring
