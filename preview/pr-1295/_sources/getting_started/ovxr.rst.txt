@@ -54,9 +54,14 @@ then enable camera support and rebuild the wheel:
    cmake --build build --target python_package python_stubs python_wheel --parallel
 
 Install the generated wheel with its ``ovxr`` extra using the instructions
-above. The extra includes the CUDA Python bindings used for GPU camera output;
+above. The extra requires CUDA 13 Python bindings for GPU camera output;
 ``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
 The helper is disabled by default.
+
+Use a CUDA 13-compatible NVIDIA driver (R580 or newer), meeting any stricter
+requirements of the selected bindings and renderer. See the
+`CUDA compatibility requirements <https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html>`_.
+Installing Python packages or a CUDA Toolkit does not update the host driver.
 
 Install the Vulkan development SDK before configuring camera support. Linux
 builds also require the CUDA Toolkit. CMake discovers these installed dependencies.

@@ -379,6 +379,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -487,9 +488,13 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </pre></div>
 </div>
 <p>Install the generated wheel with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra using the instructions
-above. The extra includes the CUDA Python bindings used for GPU camera output;
+above. The extra requires CUDA 13 Python bindings for GPU camera output;
 <code class="docutils literal notranslate"><span class="pre">BUILD_OVXR_CAMERA_QUADS</span></code> controls whether the wheel contains the native helper.
 The helper is disabled by default.</p>
+<p>Use a CUDA 13-compatible NVIDIA driver (R580 or newer), meeting any stricter
+requirements of the selected bindings and renderer. See the
+<a class="reference external" href="https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html" rel="noopener noreferrer" target="_blank">CUDA compatibility requirements</a>.
+Installing Python packages or a CUDA Toolkit does not update the host driver.</p>
 <p>Install the Vulkan development SDK before configuring camera support. Linux
 builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
 Use <code class="docutils literal notranslate"><span class="pre">CUDAToolkit_ROOT</span></code> to select a CUDA Toolkit installation and <code class="docutils literal notranslate"><span class="pre">VULKAN_SDK</span></code>
@@ -498,7 +503,7 @@ on the host.</p>
 </section>
 <section id="use-from-another-application">
 <h2>Use from another application<a class="headerlink" href="#use-from-another-application" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">isaaccapture.ovxr_session_manager.ovxr_session</span></code> provides <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code>
+<p><code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">ovxr_</span><wbr><span class="pre">session_</span><wbr><span class="pre">manager.</span><wbr><span class="pre">ovxr_</span><wbr><span class="pre">session</span></code> provides <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code>
 and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> to supply the
 application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.</p>
 <p>For a uv-managed application, declare Isaac Capture with its <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra and
@@ -681,7 +686,7 @@ with its own OVXR/OVRTX/OVStage combination.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 26, 2026.
       <br/>
     
   </p>
