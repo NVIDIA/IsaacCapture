@@ -123,16 +123,27 @@ UsbDevicePresence detect_usb_device_presence(const std::filesystem::path& device
 
     const std::string expected_vendor = hex_id(vendor_id);
     const std::string expected_product = hex_id(product_id);
+    bool incomplete_scan = false;
     for (const auto& device : devices)
     {
+        // USB interface rows such as 1-2:1.0 do not own VID/PID files.
+        if (device.path().filename().string().find(':') != std::string::npos)
+        {
+            continue;
+        }
         const auto vendor = read_trimmed(device.path() / "idVendor");
         const auto product = read_trimmed(device.path() / "idProduct");
-        if (vendor && product && *vendor == expected_vendor && *product == expected_product)
+        if (!vendor || !product)
+        {
+            incomplete_scan = true;
+            continue;
+        }
+        if (*vendor == expected_vendor && *product == expected_product)
         {
             return UsbDevicePresence::PRESENT;
         }
     }
-    return UsbDevicePresence::ABSENT;
+    return incomplete_scan ? UsbDevicePresence::UNKNOWN : UsbDevicePresence::ABSENT;
 }
 
 } // namespace avatar
