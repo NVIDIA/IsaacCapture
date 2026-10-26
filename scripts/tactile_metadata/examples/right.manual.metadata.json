@@ -1,0 +1,208 @@
+{
+  "format": "isaaccapture.tactile-values",
+  "version": 1,
+  "segment_source": {
+    "type": "HandSkeletonRef",
+    "joint_ids": [
+      "WRIST",
+      "INDEX_DISTAL"
+    ]
+  },
+  "geometry_mapping": {
+    "type": "LBS",
+    "segment_bind_poses": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        -0.01913680360001739,
+        0.02885,
+        0.12279588249293394,
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "taxel_bind_poses": [
+      [
+        -0.0285269938437384,
+        0.028598422094853596,
+        0.1110936193860315,
+        0.5403242644894826,
+        -0.07359691022019113,
+        0.8353964352560078,
+        0.06889107323518424
+      ],
+      [
+        -0.028778087723080478,
+        0.028535639777453617,
+        0.11160177226580607,
+        0.539333165683027,
+        -0.07159522265652718,
+        0.82827563389724,
+        0.1339900547772561
+      ],
+      [
+        -0.028162818466945648,
+        0.028937695458205417,
+        0.11126356464592047,
+        0.41472559389049124,
+        -0.5360755895015209,
+        0.6512057539931734,
+        0.3414040276255667
+      ]
+    ],
+    "taxel_segment_indices": [
+      [
+        1,
+        1,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        1,
+        1
+      ]
+    ],
+    "taxel_segment_weights": [
+      [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ]
+    ]
+  },
+  "editor": {
+    "version": 1,
+    "device_id": "c34d21b8-6f4f-5440-a26f-5974a284f43d",
+    "side": "right",
+    "model": {
+      "path": "../model/right/linkerhand_FFG_right.urdf",
+      "sides": "right",
+      "packages": {},
+      "asset_hashes": {
+        "urdf": "d3d919db4059288ecfe5f6c1a5546b536a0042723975e43b07318507d56109cf",
+        "meshes/hand_base_link.STL": "94c50cfcc29be7179f9e6d8352ab5a3213c21e4795cb8d58a346ebfff74ee8bc",
+        "meshes/thumb_metacarpals_base1.STL": "dfdaebb2b720a4949986740bbadc3da519fe46c09bff8e145ead0640977256bc",
+        "meshes/thumb_metacarpals.STL": "f5b61b2e29e6eaa5623980d00465fb3a4f93c3b6d978fc0f50a703827cb2642c",
+        "meshes/thumb_metacarpals_base2.STL": "2d4a436027f4b5ade7c50d15a334a109a3a4562073118ef5382784748ef55600",
+        "meshes/thumb_proximal.STL": "45237da8babd57d1b32b250d8bd6d313679e8fad313e1f9a793fba82c5e35a60",
+        "meshes/thumb_distal.STL": "4f857160f2c186bd105f29ac90a630d6918612cbd97a010654e12d873c0546cf",
+        "meshes/index_metacarpals.STL": "df03f980f92a0c66662081fb4c147294c60b9acdf8cc7905e21a9790d6c7720d",
+        "meshes/index_proximal.STL": "57b1aa6fc7a303a6b18417eb078092c332fa577f548d5747b500253a9daecae1",
+        "meshes/index_middle.STL": "17f81c7ad8297dac033dded0f0c89a521f766208a8efadb1b0f7c57d3e7c374a",
+        "meshes/index_distal.STL": "b806badc8765acb6ed9401a0fb23d90e7ae6ff2f3a77ff40b014e063140b8e06",
+        "meshes/middle_metacarpals.STL": "a2583b7237b2a33a7ad2ddc17f1ff61c6ec5d38335e8ba1340d43e6efecc1256",
+        "meshes/middle_proximal.STL": "8cff8d8a4a6b719b77fc525351ad0fbb0c961a73b859b0b0a4c07190a0aa186a",
+        "meshes/middle_middle.STL": "2e533f80d298bf783b5a20c30bae383fe53fe1d3b4430268070655f363ace2ba",
+        "meshes/middle_distal.STL": "459a2b44a893cb42eb2b4671f17985f1dabaa9bce6371f190e69a60badd1299f",
+        "meshes/ring_metacarpals.STL": "b4b7d52ccc032e6c3c3061bdfe2478ebf6d68bc0ddcbb37723f77e18e2059532",
+        "meshes/ring_proximal.STL": "5f726495555c728c61759f710d864f4688c0d9a8c3df6fb07bca02840b9498c8",
+        "meshes/ring_middle.STL": "5e079aa92ed3362b0e0bdbf6d2467927804df65c2d2a333a70f57dc7c6a60ff8",
+        "meshes/ring_distal.STL": "1953f24ce5d1b99658c64ef589c4ad5ae51f4538833d5dfa4b18514d3cc39fc7",
+        "meshes/pinky_metacarpals.STL": "a9d130c833b07a827a6ea194fcf3844dcc0947c7aad9f6c954d7ec7c3c9aefaa",
+        "meshes/pinky_proximal.STL": "201bd33cc07460751846b8ca8e355c30d55c82d986874e8db73f8cdd40e33609",
+        "meshes/pinky_middle.STL": "45ce34033924e8a5392bbacbd9f7af752110606c68ff33f24daad8f3941fc8ab",
+        "meshes/pinky_distal.STL": "ca40e877cf35deaea1ccdb6880ded2f1d85460d47d8c1e31cdd36f0ef1c1d05c"
+      },
+      "link_adjustments": {}
+    },
+    "bind_configuration": {
+      "thumb_cmc_roll": 0.0,
+      "thumb_cmc_pitch": 0.0,
+      "thumb_cmc_yaw": 0.0,
+      "thumb_mcp": 0.0,
+      "thumb_ip": 0.0,
+      "index_mcp_roll": 0.0,
+      "index_mcp_pitch": 0.0,
+      "index_pip": 0.0,
+      "index_dip": 0.0,
+      "middle_mcp_roll": 0.0,
+      "middle_mcp_pitch": 0.0,
+      "middle_pip": 0.0,
+      "middle_dip": 0.0,
+      "ring_mcp_roll": 0.0,
+      "ring_mcp_pitch": 0.0,
+      "ring_pip": 0.0,
+      "ring_dip": 0.0,
+      "pinky_mcp_roll": 0.0,
+      "pinky_mcp_pitch": 0.0,
+      "pinky_pip": 0.0,
+      "pinky_dip": 0.0
+    },
+    "wrist_mount": {
+      "link": "hand_base_link",
+      "pose": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "segment_ids": [
+      "2f0b7346-8e9b-510b-a258-c1f3b1047cec",
+      "8db3ae32-a489-5509-af5c-55f01a4da879"
+    ],
+    "segment_links": [
+      "hand_base_link",
+      "index_distal"
+    ],
+    "taxel_ids": [
+      "30bc767f-88e7-5b0a-8da7-22badcdd321a",
+      "b9b25812-e463-5ca7-a6a1-910fac29f279",
+      "388e5a33-d560-50e6-ab9b-829070d42cda"
+    ],
+    "taxel_hints": [
+      {
+        "surface_attachment": null,
+        "generation_issue": null,
+        "provenance": "manual",
+        "input_ref": null
+      },
+      {
+        "surface_attachment": null,
+        "generation_issue": null,
+        "provenance": "manual",
+        "input_ref": null
+      },
+      {
+        "surface_attachment": null,
+        "generation_issue": null,
+        "provenance": "manual",
+        "input_ref": null
+      }
+    ],
+    "application_binding": null
+  }
+}

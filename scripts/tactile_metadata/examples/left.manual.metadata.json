@@ -1,0 +1,180 @@
+{
+  "format": "isaaccapture.tactile-values",
+  "version": 1,
+  "segment_source": {
+    "type": "HandSkeletonRef",
+    "joint_ids": [
+      "WRIST",
+      "INDEX_DISTAL"
+    ]
+  },
+  "geometry_mapping": {
+    "type": "LBS",
+    "segment_bind_poses": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        -0.019136805704482132,
+        -0.031156338118399258,
+        0.12279624331783398,
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "taxel_bind_poses": [
+      [
+        -0.02852699594820314,
+        -0.03140791602354566,
+        0.11109398021093154,
+        0.5403242644894826,
+        -0.07359691022019113,
+        0.8353964352560078,
+        0.06889107323518424
+      ],
+      [
+        -0.02877808982754522,
+        -0.03147069834094564,
+        0.11160213309070612,
+        0.539333165683027,
+        -0.07159522265652718,
+        0.82827563389724,
+        0.1339900547772561
+      ]
+    ],
+    "taxel_segment_indices": [
+      [
+        1,
+        1,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        1,
+        1
+      ]
+    ],
+    "taxel_segment_weights": [
+      [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ]
+    ]
+  },
+  "editor": {
+    "version": 1,
+    "device_id": "613ecd96-fc6f-5232-ac9f-488bbd5b1830",
+    "side": "left",
+    "model": {
+      "path": "../model/left/linkerhand_FFG_left.urdf",
+      "sides": "left",
+      "packages": {},
+      "asset_hashes": {
+        "urdf": "0417c9d34542d098d32f123211f3048b51fc51d3c66f4ec71dd23acbcb209b5d",
+        "meshes/base_link.STL": "7c8168b89ad9f225f29bf409719dabab78885fefefffdf2820845937fa9bc542",
+        "meshes/thumb_metacarpals_base1.STL": "90414281d61e1bad2073836dd754d5b0e0ce8b9179f3c23aefe95f0e0e3624dd",
+        "meshes/thumb_metacarpals.STL": "7857b0bf11381e343c66ee63ec8c5289e294dd20adc04c78125e26ec45f8c083",
+        "meshes/thumb_metacarpals_base2.STL": "b225b009ac9803e6f59476316e037710f0a86fa4d920272c2a4e865126630229",
+        "meshes/thumb_proximal.STL": "6fbba678d35ba609a3abc62c4dececab1e3d0104ae5a6bdee918e89905eb65dc",
+        "meshes/thumb_distal.STL": "833a95573cf8de2e33b40896fc6de36ab9af8bccad9b8f6c8a9ac5c2699b5a62",
+        "meshes/index_metacarpals.STL": "37c0c7070aa833f085bcf7120d903977abdafe3cbf95173eecd684be794afdd7",
+        "meshes/index_proximal.STL": "87ddd901598bab2e64a11ec61193c3056ebfdd259d32fc4ed0da208e844b83a6",
+        "meshes/index_middle.STL": "60c01971d5558a913db3431b3186245bccec6cd296800685b5324faa5833c725",
+        "meshes/index_distal.STL": "719d02f83aa1b69693f1b478ca9de4afb804a02630cd6920977c3f75b9a45a99",
+        "meshes/middle_metacarpals.STL": "f74d86cc7e7290ff7ed873ce038c7b33718b0d0d157deaaa4ff964ece0abc828",
+        "meshes/middle_proximal.STL": "da4562a6e80b940e89ce26c9a12828d2eadba1cd4d4987995c2d484de1b326ba",
+        "meshes/middle_middle.STL": "abd61a575ea84c33362107e90c8964b4bd6f544cbda8ac2098651be8482947db",
+        "meshes/middle_distal.STL": "a1bf0b18f6a6e77089cc8f392e78bb832415570e388f9c61e98f956d5604a61f",
+        "meshes/ring_metacarpals.STL": "819a47007b09596026a4b9454a8fe5c101a3e88c4c83eb3d8b448ea3bcf6a161",
+        "meshes/ring_proximal.STL": "8df7a9d6a15fd254ef66307f2044457abad5d6b439617718ff03209d29584d8b",
+        "meshes/ring_middle.STL": "888c84e49b57a86626cc797bf71c5a7a7cfc867d80ee0f5e8591fdad3164bcd1",
+        "meshes/ring_distal.STL": "9e4a4001c3797a4294c43a5902c5efc495136eaf3d6e8555552ef8ed8c850b59",
+        "meshes/pinky_metacarpals.STL": "0d00911724b3d736d22c79d2cc3b52cf4b7449e3635a4b328b90370452b9cb67",
+        "meshes/pinky_proximal.STL": "9fc1bf89257a7a0b6d735d10178c33ea9e3347c7419ce9ac45830b7b2e042486",
+        "meshes/pinky_middle.STL": "e72ffa11712ece3a77441d11876dc8dd0c881570e49b6c32f909b6d6e3d0d7da",
+        "meshes/pinky_distal.STL": "502aa6ff2d997975546a0b244af2969046c3e5b286d13ae482f4498e0deeb638"
+      },
+      "link_adjustments": {}
+    },
+    "bind_configuration": {
+      "thumb_cmc_roll": 0.0,
+      "thumb_cmc_pitch": 0.0,
+      "thumb_cmc_yaw": 0.0,
+      "thumb_mcp": 0.0,
+      "thumb_ip": 0.0,
+      "index_mcp_roll": 0.0,
+      "index_mcp_pitch": 0.0,
+      "index_pip": 0.0,
+      "index_dip": 0.0,
+      "middle_mcp_roll": 0.0,
+      "middle_mcp_pitch": 0.0,
+      "middle_pip": 0.0,
+      "middle_dip": 0.0,
+      "ring_mcp_roll": 0.0,
+      "ring_mcp_pitch": 0.0,
+      "ring_pip": 0.0,
+      "ring_dip": 0.0,
+      "pinky_mcp_roll": 0.0,
+      "pinky_mcp_pitch": 0.0,
+      "pinky_pip": 0.0,
+      "pinky_dip": 0.0
+    },
+    "wrist_mount": {
+      "link": "base_link",
+      "pose": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "segment_ids": [
+      "52a77c3e-962a-561f-89ee-c9e90dff20c3",
+      "a4f4821f-3c1c-54ef-9206-cee613c0a33e"
+    ],
+    "segment_links": [
+      "base_link",
+      "index_distal"
+    ],
+    "taxel_ids": [
+      "5b011459-3437-553d-9a34-63a9ffa103a0",
+      "43d84442-9db0-5a66-a7f0-0ecfa3b21700"
+    ],
+    "taxel_hints": [
+      {
+        "surface_attachment": null,
+        "generation_issue": null,
+        "provenance": "manual",
+        "input_ref": null
+      },
+      {
+        "surface_attachment": null,
+        "generation_issue": null,
+        "provenance": "manual",
+        "input_ref": null
+      }
+    ],
+    "application_binding": null
+  }
+}
