@@ -104,6 +104,10 @@ manifest data path through the standard plugin health interface. Left and right
 states are independent. A path is connected only while Avatar SDK
 `DeviceInfo.online` is true and fresh samples are arriving; missing current data
 is reported as degraded rather than diagnosed as a physical glove disconnect.
+HUMAN, RAW, and ROBOT freshness are tracked independently from their sample
+timestamps. A path becomes stale after three seconds without a newer timestamp;
+the elapsed timeout uses `std::chrono::steady_clock` and is unaffected by wall
+clock adjustments.
 
 In the pinned Avatar SDK 1.7.3 wireless transport, `DeviceInfo.online` follows
 recent joint-frame activity. It does not independently distinguish an RF-linked

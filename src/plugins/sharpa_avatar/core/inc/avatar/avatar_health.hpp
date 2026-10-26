@@ -5,6 +5,7 @@
 
 #include <plugin_utils/plugin_device_status_publisher.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -13,6 +14,8 @@ namespace plugins
 {
 namespace avatar
 {
+
+inline constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 
 enum class UsbDevicePresence
 {
