@@ -85,11 +85,12 @@ example) declares that description as the tracker's ``metadata`` table:
 
    [[tracker]]
    name = "tactile"
-   table = "TactileData"
-   metadata = "TactileShape"
+   table = "TactileDataArray"
+   schema = "tactile_array"
+   metadata = "TactileMetadata"
 
 The metadata table is the ``root_type`` of a schema of its own, named after the table in snake case
-(``tactile_shape.fbs``), with no Record wrapper: MCAP records the table itself. Like the data table,
+(``tactile_metadata.fbs``), with no Record wrapper: MCAP records the table itself. Like the data table,
 it needs a hand-written ``schema/python/*_bindings.h`` before ``get_metadata()`` can return it to
 Python. Only ``direction = "pull"`` supports ``metadata``.
 
