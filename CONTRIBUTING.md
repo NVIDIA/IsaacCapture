@@ -60,29 +60,7 @@ file location, preserving existing attribution and explicit third-party exceptio
 Review and stage any automatic edits, then commit again.
 
 ## CI
-
 GitHub Actions builds the default targets and runs tests.
-
-The Build Ubuntu workflow reads repository variables from **Settings → Secrets and
-variables → Actions → Variables**. Set a flag to `1` to disable that capability or
-`0` to enable it; unset variables use these defaults:
-
-| Variable | Canonical repository | Other repositories | Controls |
-|----------|----------------------|--------------------|----------|
-| `NO_GPU_TESTS` | `0` | `1` | Self-hosted visualization, CloudXR, and ROS2 GPU tests |
-| `NO_GPU_ARM` | `1` | `1` | ARM64 GPU tests; CPU builds still cover ARM64 |
-| `NO_WHEEL_PUBLISH` | `0` | `1` | Artifactory wheels, release SBOM evidence, and the downstream Kitmaker chain |
-
-Defaults follow the repository running the workflow, so pull requests targeting
-the canonical repository retain GPU validation even when their source is a fork.
-
-CPU builds, unit tests, sanitizers, and SBOM checks remain enabled. The wheel gate
-accepts GPU jobs skipped by `NO_GPU_TESTS=1`, but still rejects failures,
-cancellations, and unexpected skips. Publishing also requires GPU tests to be
-enabled and successful; a CPU-only run cannot publish wheels. Existing event,
-repository, and environment restrictions still apply. Only enable a capability
-after its runners and credentials are configured. Docs deployment has separate
-canonical-repository guards.
 
 ## Pull Requests
 1. Create a feature branch
