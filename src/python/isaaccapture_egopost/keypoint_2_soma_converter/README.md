@@ -39,9 +39,9 @@ cd src/python/isaaccapture_egopost/keypoint_2_soma_converter
 Run the remaining commands from this directory.
 
 Use Linux and an NVIDIA CUDA GPU. The default preset targets `cuda:0` with the
-Triton renderer. The supplied requirements use PyTorch 2.7.1 and torchvision
-0.22.1 with CUDA 12.8;
-your NVIDIA driver must support that runtime. The sample was tested on an
+Triton renderer. The supplied requirements select PyTorch 2.13.0 through
+torchvision 0.28.0 and use Triton 3.7.1. Your NVIDIA driver must support the
+installed PyTorch wheel's CUDA runtime. The sample was tested on an
 RTX 6000 Ada. A separate CUDA toolkit installation is not needed for this preset.
 
 Create a Conda environment:
