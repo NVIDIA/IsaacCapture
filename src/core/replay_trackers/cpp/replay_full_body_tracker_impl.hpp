@@ -22,9 +22,7 @@ using FullBodyMcapViewers = McapTrackerViewers<FullBodyPoseRecord>;
 class ReplayFullBodyTrackerImpl : public IFullBodyTrackerImpl
 {
 public:
-    ReplayFullBodyTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                              std::string_view base_name,
-                              const RecordedSchemas& recorded);
+    ReplayFullBodyTrackerImpl(TrackerSampleSource source, std::string_view base_name);
 
     ReplayFullBodyTrackerImpl(const ReplayFullBodyTrackerImpl&) = delete;
     ReplayFullBodyTrackerImpl& operator=(const ReplayFullBodyTrackerImpl&) = delete;

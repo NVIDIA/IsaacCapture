@@ -14,16 +14,14 @@
 namespace core
 {
 
-ReplayKeyboardTrackerImpl::ReplayKeyboardTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
+ReplayKeyboardTrackerImpl::ReplayKeyboardTrackerImpl(TrackerSampleSource source,
                                                      std::string_view base_name,
-                                                     const RecordedSchemas& recorded,
                                                      std::shared_ptr<KeyboardInputState> state)
     : mcap_viewers_(std::make_unique<KeyboardMcapViewers>(
-          std::move(reader),
+          std::move(source),
           base_name,
           std::vector<std::string>(
-              KeyboardRecordingTraits::replay_channels.begin(), KeyboardRecordingTraits::replay_channels.end()),
-          recorded)),
+              KeyboardRecordingTraits::replay_channels.begin(), KeyboardRecordingTraits::replay_channels.end()))),
       state_(std::move(state)),
       base_name_(base_name),
       logger_(isaaccapture::Logger::get("isaaccapture.core.ReplayKeyboardTrackerImpl"))

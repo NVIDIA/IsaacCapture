@@ -138,6 +138,14 @@ def _gen_replay_dispatch_rows(entries: list[dict[str, Any]]) -> Iterator[str]:
         yield f"    &try_create_{ctx.name}_impl,"
 
 
+def _gen_replay_stream_refusals(entries: list[dict[str, Any]]) -> Iterator[str]:
+    # Trackers whose replay impl reads metadata at construction (replay_factory_pull.template).
+    for entry in entries:
+        ctx = enrich_context(entry)
+        if ctx.record and ctx.metadata is not None:
+            yield f'    refuse_metadata_tracker<{ctx.cls}>(tracker, "{ctx.cls}");'
+
+
 def _gen_factory_decls(entries: list[dict[str, Any]]) -> Iterator[str]:
     for entry in entries:
         ctx = enrich_context(entry)
@@ -249,6 +257,9 @@ def emit_inc_fragments(entries: list[dict[str, Any]]) -> dict[str, str]:
         ),
         "inc/generated_replay_dispatch_rows.inc": _join_lines(
             _gen_replay_dispatch_rows(entries)
+        ),
+        "inc/generated_replay_stream_refusals.inc": _join_lines(
+            _gen_replay_stream_refusals(entries)
         ),
         "inc/generated_replay_factory_declarations.inc": _join_lines(
             _gen_factory_decls(entries)

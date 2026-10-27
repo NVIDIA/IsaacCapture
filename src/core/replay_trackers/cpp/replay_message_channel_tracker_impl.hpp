@@ -48,9 +48,7 @@ using MessageChannelMcapViewers = McapTrackerViewers<MessageChannelMessagesRecor
 class ReplayMessageChannelTrackerImpl : public IMessageChannelTrackerImpl
 {
 public:
-    ReplayMessageChannelTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                                    std::string_view base_name,
-                                    const RecordedSchemas& recorded);
+    ReplayMessageChannelTrackerImpl(TrackerSampleSource source, std::string_view base_name);
 
     ReplayMessageChannelTrackerImpl(const ReplayMessageChannelTrackerImpl&) = delete;
     ReplayMessageChannelTrackerImpl& operator=(const ReplayMessageChannelTrackerImpl&) = delete;

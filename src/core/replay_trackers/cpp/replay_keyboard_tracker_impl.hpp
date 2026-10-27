@@ -25,9 +25,8 @@ using KeyboardMcapViewers = McapTrackerViewers<KeyboardOutputRecord>;
 class ReplayKeyboardTrackerImpl : public IKeyboardTrackerImpl
 {
 public:
-    ReplayKeyboardTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
+    ReplayKeyboardTrackerImpl(TrackerSampleSource source,
                               std::string_view base_name,
-                              const RecordedSchemas& recorded,
                               std::shared_ptr<KeyboardInputState> state);
 
     ReplayKeyboardTrackerImpl(const ReplayKeyboardTrackerImpl&) = delete;
