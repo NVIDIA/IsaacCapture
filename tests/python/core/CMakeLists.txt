@@ -12,4 +12,5 @@ if(BUILD_PYTHON_BINDINGS)
     # built under tests/cpp/core/log_bridge.
     add_subdirectory(logging_config)
     add_subdirectory(remote_session)
+    add_subdirectory(teleop_session_server)
 endif()
