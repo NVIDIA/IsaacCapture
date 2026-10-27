@@ -100,11 +100,6 @@ class Editor:
                 self.calibrate_button = self.button(
                     "Preview / set wrist reference", self.calibrate
                 )
-                self.link = g.add_dropdown("Display link", ("",))
-                self.opacity = g.add_slider("Link opacity", 0.0, 1.0, 0.05, 1.0)
-                self.visible = g.add_checkbox("Link visible", True)
-                self.watch(self.opacity, lambda _: self.link_style())
-                self.watch(self.visible, lambda _: self.link_style())
                 self.resources = g.add_markdown("")
                 self.button("Reset cameras", self.camera)
             with tabs.add_tab("Segments"):
@@ -374,9 +369,7 @@ class Editor:
             for h in self.model.handles.values():
                 h.remove()
         self.model = model
-        self.wrist.options = self.link.options = self.segment_link.options = tuple(
-            model.links
-        )
+        self.wrist.options = self.segment_link.options = tuple(model.links)
         self.joint.options = self.target_joint.options = tuple(
             j.name for j in model.joints
         ) or ("",)
@@ -416,7 +409,6 @@ class Editor:
         self.q, self.resources.content = {}, ""
         for w in (
             self.wrist,
-            self.link,
             self.joint,
             self.segment_link,
             self.target_joint,
@@ -519,7 +511,6 @@ class Editor:
             n
             for n, (link, _) in self.model.surfaces.items()
             if link in self.d.editor.get("allowed_links", [])
-            and self.model.style.get(link, (True, 1))[0]
         ]
 
     def set_links(self):
@@ -527,10 +518,6 @@ class Editor:
         if not self.model or any(v not in self.model.links for v in links):
             raise ValueError("Choose links from the loaded model")
         self.change(self.d.editor.update, allowed_links=links)
-
-    def link_style(self):
-        if self.model:
-            self.model.style[self.link.value] = (self.visible.value, self.opacity.value)
 
     def camera(self):
         for client in self.server.get_clients().values():
@@ -1170,11 +1157,7 @@ class Editor:
                 and getattr(self, "display_model", False)
                 and not self.through.value
             ):
-                surfaces = [
-                    n
-                    for n, (link, _) in self.model.surfaces.items()
-                    if all(self.model.style.get(link, (True, 1)))
-                ]
+                surfaces = list(self.model.surfaces)
                 hit = self.model.hit(origin, direction, surfaces, self.display_fk)
                 inside = (
                     hit is None

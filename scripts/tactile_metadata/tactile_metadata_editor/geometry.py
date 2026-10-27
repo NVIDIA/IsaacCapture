@@ -56,7 +56,7 @@ def frames(rows, root):
 class Model:
     def __init__(self, path, packages):
         self.path, self.missing, self.surfaces = Path(path).resolve(), [], {}
-        self.handles, self.style, self.attachments = {}, {}, {}
+        self.handles, self.attachments = {}, {}
 
         # yourdfpy invokes this resolver using the keyword fname.
         def resource(fname):
@@ -139,13 +139,13 @@ class Model:
                     mesh.vertices,
                     mesh.faces,
                     color=(170, 175, 180),
+                    opacity=0.6,
                     side="double",
                 )
             h = self.handles[name]
-            shown, opacity = self.style.get(link, (True, 1.0))
-            h.visible = visible and shown
-            h.opacity = (
-                opacity if not highlight or link in highlight else opacity * 0.15
+            h.visible = visible
+            h.color = (
+                (255, 220, 0) if highlight and link in highlight else (170, 175, 180)
             )
             h.position, h.wxyz = fk[link][:3, 3], tf.quaternion_from_matrix(fk[link])
         return fk

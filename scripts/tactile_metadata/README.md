@@ -36,9 +36,10 @@ system; see the [tactile device documentation](../../docs/source/device/tactile/
 
 1. In **Model**, choose the wrist link (`base_link` in the supplied left model).
    Enter allowed links, for example `base_link,index_distal`, and apply them.
-   Inspect the resource list and joint tree. Visibility and opacity affect only
-   the drawing. Package mappings are a JSON object of package names to local
-   directories, used to resolve `package://` resources without network access.
+   Inspect the resource list and joint tree. All URDF links use fixed opacity
+   0.6; highlighting changes color. Package mappings are a JSON object of package
+   names to local directories, used to resolve `package://` resources without
+   network access.
 2. Use **Pick target** and **Pick on q0 model** to pick `Wrist O`, `Wrist F`
    toward the forearm, and `Wrist D` toward the back of the hand. Preview and
    confirm the wrist reference. Both hands use the same right-handed axes.
