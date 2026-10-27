@@ -299,7 +299,6 @@ class PluginConfig:
         enabled: Whether to load and use this plugin
         plugin_args: Optional list of arguments passed to the plugin process
         required: Whether session startup should fail if the plugin cannot be found
-        shutdown_timeout_seconds: Grace period before forcing the process to stop
     """
 
     plugin_name: str
@@ -308,14 +307,6 @@ class PluginConfig:
     enabled: bool = True
     plugin_args: List[str] = field(default_factory=list)
     required: bool = False
-    shutdown_timeout_seconds: float = 2.0
-
-    def __post_init__(self) -> None:
-        if (
-            not math.isfinite(self.shutdown_timeout_seconds)
-            or self.shutdown_timeout_seconds <= 0.0
-        ):
-            raise ValueError("shutdown_timeout_seconds must be finite and positive")
 
 
 @dataclass

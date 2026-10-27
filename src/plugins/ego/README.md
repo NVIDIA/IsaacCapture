@@ -281,7 +281,6 @@ config.plugins.append(PluginConfig(
     plugin_root_id="ego_camera",
     search_paths=[Path("build-ego-py3.11/src/plugins").resolve()],
     required=True,
-    shutdown_timeout_seconds=15.0,
     plugin_args=[
         "--collection-prefix=ego", "--width=1600", "--height=1300", "--fps=30",
         f"--add-stream=camera=ColorLeft,output={run}/raw/ColorLeft.h264,format=h264",
@@ -299,8 +298,8 @@ with TeleopSession(config) as session:
 ```
 
 Plugin search paths point to the parent containing plugin folders; for an
-installation, use `install-ego-py3.11/plugins`. Keep the 15-second EGO shutdown
-budget and absolute output paths. Collection prefixes and MCAP source names
+installation, use `install-ego-py3.11/plugins`. Keep absolute output paths; the
+plugin's `plugin.yaml` sets its 15-second shutdown timeout. Collection prefixes and MCAP source names
 serve different purposes; retain these canonical names for the EGO offline reader.
 
 For audio, add `(dt.OrbbecEgoAudioTracker("ego/Audio"), "orbbec_ego_audio")` to `ego_entries`

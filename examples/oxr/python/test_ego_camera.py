@@ -62,9 +62,7 @@ def main() -> int:
     if "orbbec_ego_camera" not in manager.get_plugin_names():
         raise RuntimeError("orbbec_ego_camera plugin was not discovered")
 
-    with manager.start(
-        "orbbec_ego_camera", "ego_camera", plugin_args, shutdown_timeout_seconds=15.0
-    ) as plugin:
+    with manager.start("orbbec_ego_camera", "ego_camera", plugin_args) as plugin:
         if args.mode != "schema-pusher":
             deadline = time.monotonic() + args.duration
             while time.monotonic() < deadline:

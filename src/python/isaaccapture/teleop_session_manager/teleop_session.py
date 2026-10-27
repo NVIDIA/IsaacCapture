@@ -1393,7 +1393,6 @@ class TeleopSession:
                 plugin_config.plugin_name,
                 plugin_config.plugin_root_id,
                 plugin_config.plugin_args,
-                plugin_config.shutdown_timeout_seconds,
             )
             stack.enter_context(context)
             self.plugin_contexts.append(context)

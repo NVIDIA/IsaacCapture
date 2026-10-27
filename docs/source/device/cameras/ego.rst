@@ -177,8 +177,8 @@ Add the EGO trackers to a
 :doc:`TeleopSession <../../teleop/teleop_session>` configuration and its
 ``McapRecordingConfig``, alongside the hand, head, or
 controller trackers. Configure ``orbbec_ego_camera`` through ``PluginConfig`` with
-``--collection-prefix=ego`` and ``shutdown_timeout_seconds=15.0`` to allow
-capture cleanup. Complete the full source build and install its Python wheel before
+``--collection-prefix=ego``. Its ``plugin.yaml`` gives the plugin 15 seconds to
+close its files when the session stops. Complete the full source build and install its Python wheel before
 using the EGO tracker bindings and recording helper; the wrapper's
 ``build`` command builds only the native plugin tools.
 

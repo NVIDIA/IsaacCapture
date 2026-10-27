@@ -5,6 +5,7 @@ name: orbbec_ego_camera
 description: "EGO stereo video, IMU, audio, calibration, and state plugin"
 command: "./ego_camera_plugin"
 version: "1.0.0"
+shutdown_timeout_seconds: 15
 devices:
   - path: "/camera/ego"
     type: "camera"
