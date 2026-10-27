@@ -52,6 +52,7 @@ PYBIND11_MODULE(_plugin_manager, m)
         .def_readonly("command", &PluginInfo::command)
         .def_readonly("version", &PluginInfo::version)
         .def_readonly("working_dir", &PluginInfo::working_dir)
+        .def_readonly("shutdown_timeout_seconds", &PluginInfo::shutdown_timeout_seconds)
         .def_property_readonly("args",
                                [](const PluginInfo& info)
                                {
@@ -73,13 +74,20 @@ PYBIND11_MODULE(_plugin_manager, m)
                                    return devices;
                                });
 
+    // stop() can wait up to the plugin's shutdown timeout, so it runs without the GIL.
     py::class_<Plugin, std::unique_ptr<Plugin>>(m, "Plugin")
-        .def("stop", &Plugin::stop, "Explicitly stop the plugin (throws PluginCrashException if crashed)")
+        .def("stop", &Plugin::stop, py::call_guard<py::gil_scoped_release>(),
+             "Explicitly stop the plugin (throws PluginCrashException if crashed)")
         .def("check_health", &Plugin::check_health, "Check if plugin has crashed (throws PluginCrashException if crashed)")
         .def("get_process_snapshot", &Plugin::get_process_snapshot,
              "Poll and return the cached process state without throwing process-health exceptions")
         .def("__enter__", [](Plugin* self) { return self; })
-        .def("__exit__", [](Plugin* self, py::object, py::object, py::object) { self->stop(); });
+        .def("__exit__",
+             [](Plugin* self, py::object, py::object, py::object)
+             {
+                 py::gil_scoped_release release;
+                 self->stop();
+             });
 
     py::class_<PluginManager>(m, "PluginManager")
         .def(py::init<const std::vector<std::string>&>(), py::arg("search_paths"),

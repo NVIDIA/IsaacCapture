@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -56,6 +57,21 @@ int main(int argc, char** argv)
     if (arguments.size() < 3)
     {
         return 2;
+    }
+
+    // finalize <marker> <ms>: write <marker>.ready once SIGINT is handled; after SIGINT,
+    // keep working for <ms>, then write <marker>.
+    if (arguments[0] == "finalize")
+    {
+        std::signal(SIGINT, request_stop);
+        std::ofstream(arguments[1] + ".ready") << "ready\n";
+        while (!stop_requested)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(arguments[2])));
+        std::ofstream(arguments[1]) << "finalized\n";
+        return 0;
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(arguments[2])));

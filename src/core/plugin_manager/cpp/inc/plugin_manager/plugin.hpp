@@ -7,6 +7,7 @@
 #    include <sys/types.h>
 #endif
 
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -16,6 +17,17 @@
 
 namespace core
 {
+
+// How long stop() waits after SIGINT before it sends SIGKILL, unless the
+// plugin's plugin.yaml sets shutdown_timeout_seconds.
+inline constexpr double DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS = 2.0;
+inline constexpr double MAX_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS = 3600.0;
+
+/**
+ * @brief Throw std::invalid_argument unless seconds is greater than 0 and at most
+ * MAX_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS.
+ */
+void validate_plugin_shutdown_timeout(double seconds);
 
 enum class ProcessState
 {
@@ -68,11 +80,14 @@ public:
      * @param working_dir The directory to run the plugin in (where metadata was found)
      * @param plugin_root_id The root ID for the plugin
      * @param plugin_args Optional list of arguments to append to the command
+     * @param shutdown_timeout_seconds Time stop() allows between SIGINT and SIGKILL
+     * @throws std::invalid_argument if shutdown_timeout_seconds is out of range
      */
     Plugin(const std::string& command,
            const std::string& working_dir,
            const std::string& plugin_root_id,
-           const std::vector<std::string>& plugin_args = {});
+           const std::vector<std::string>& plugin_args = {},
+           double shutdown_timeout_seconds = DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS);
 
     /**
      * @brief Destructor - stops the plugin process
@@ -114,6 +129,7 @@ private:
     int m_pid = -1;
 #endif
     bool m_stop_requested = false;
+    std::chrono::duration<double> m_shutdown_timeout;
     ProcessSnapshot m_process_snapshot;
     std::mutex m_process_mutex;
 };
