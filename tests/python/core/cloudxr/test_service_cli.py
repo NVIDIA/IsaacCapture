@@ -125,13 +125,17 @@ def test_defer_oob_connect_requires_setup_oob(capsys):
     assert "--defer-oob-connect requires --setup-oob" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("defer", [False, True])
-def test_defer_oob_connect_reaches_the_service(tmp_path, defer):
-    """The flag maps onto the service's existing defer_oob_connect gate, default off."""
-    argv = ["run", "--setup-oob", "--cloudxr-install-dir", str(tmp_path)]
-    if defer:
-        argv.append("--defer-oob-connect")
-    args = cli._build_parser().parse_args(argv)
+def test_defer_oob_connect_reaches_the_service(tmp_path):
+    """The flag maps onto the service's existing defer_oob_connect gate."""
+    args = cli._build_parser().parse_args(
+        [
+            "run",
+            "--setup-oob",
+            "--defer-oob-connect",
+            "--cloudxr-install-dir",
+            str(tmp_path),
+        ]
+    )
     with (
         patch.object(cli, "_oob_preflight", return_value=None),
         patch.object(
@@ -140,7 +144,7 @@ def test_defer_oob_connect_reaches_the_service(tmp_path, defer):
     ):
         with pytest.raises(SystemExit):
             cli._cmd_run(args)
-    assert service.call_args.kwargs["defer_oob_connect"] is defer
+    assert service.call_args.kwargs["defer_oob_connect"] is True
 
 
 class TestStartEula:

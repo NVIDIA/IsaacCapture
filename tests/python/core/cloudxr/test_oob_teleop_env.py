@@ -217,42 +217,29 @@ def test_build_headset_bookmark_url_with_token() -> None:
 
 
 def test_build_headset_bookmark_url_with_replay_overrides() -> None:
-    """Replay-related fields reach the headset URL so a run is reproducible without hand-editing it."""
-    u = build_headset_bookmark_url(
-        web_client_base="https://h.test/",
-        stream_config={
-            "serverIP": "10.0.0.1",
-            "port": 48322,
-            "immersiveMode": "vr",
-            "referenceSpace": "local",
-            "replayPacing": "frame",
-            "showRecordingControls": True,
-        },
-    )
-    q = parse_qs(urlparse(u).query)
-    assert q["immersiveMode"] == ["vr"]
-    assert q["referenceSpace"] == ["local"]
-    assert q["replayPacing"] == ["frame"]
-    assert q["showRecordingControls"] == ["true"]
+    """The replay fields reach the headset URL, and are left out when unset."""
+    base = {"serverIP": "10.0.0.1", "port": 48322}
+    overrides = {
+        "immersiveMode": "vr",
+        "referenceSpace": "local",
+        "replayPacing": "frame",
+        "showRecordingControls": True,
+    }
 
+    def query(stream_config):
+        url = build_headset_bookmark_url(
+            web_client_base="https://h.test/", stream_config=stream_config
+        )
+        return parse_qs(urlparse(url).query)
 
-def test_build_headset_bookmark_url_omits_unset_replay_overrides() -> None:
-    """Without the overrides the query is unchanged - existing callers keep today's URL."""
-    q = parse_qs(
-        urlparse(
-            build_headset_bookmark_url(
-                web_client_base="https://h.test/",
-                stream_config={"serverIP": "10.0.0.1", "port": 48322},
-            )
-        ).query
-    )
-    for key in (
-        "immersiveMode",
-        "referenceSpace",
-        "replayPacing",
-        "showRecordingControls",
-    ):
-        assert key not in q
+    q = query({**base, **overrides})
+    assert {k: q[k] for k in overrides} == {
+        "immersiveMode": ["vr"],
+        "referenceSpace": ["local"],
+        "replayPacing": ["frame"],
+        "showRecordingControls": ["true"],
+    }
+    assert not set(overrides) & set(query(base))
 
 
 def test_build_headset_bookmark_url_with_codec() -> None:
@@ -417,48 +404,26 @@ def test_client_ui_fields_from_env_panel_hidden(
     assert fields["panelHiddenAtStart"] is True
 
 
-@pytest.mark.parametrize(
-    ("env_name", "key", "value"),
-    [
-        ("TELEOP_CLIENT_IMMERSIVE_MODE", "immersiveMode", "vr"),
-        ("TELEOP_CLIENT_REFERENCE_SPACE", "referenceSpace", "local"),
-        ("TELEOP_CLIENT_REPLAY_PACING", "replayPacing", "frame"),
-    ],
-)
-def test_client_ui_fields_from_env_passthrough_strings(
-    clear_teleop_env: None,
-    monkeypatch: pytest.MonkeyPatch,
-    env_name: str,
-    key: str,
-    value: str,
-) -> None:
-    """Each string override reaches the matching client field verbatim."""
-    monkeypatch.setenv(env_name, value)
-    assert client_ui_fields_from_env()[key] == value
-
-
-def test_client_ui_fields_from_env_show_recording_controls(
+def test_client_ui_fields_from_env_replay_settings(
     clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """TELEOP_CLIENT_SHOW_RECORDING_CONTROLS parses both truthy and falsey spellings."""
+    """The four replay settings map onto client fields; unset ones add no keys."""
+    keys = ("immersiveMode", "referenceSpace", "replayPacing", "showRecordingControls")
+    assert not set(keys) & set(client_ui_fields_from_env())
+
+    monkeypatch.setenv("TELEOP_CLIENT_IMMERSIVE_MODE", "vr")
+    monkeypatch.setenv("TELEOP_CLIENT_REFERENCE_SPACE", "local")
+    monkeypatch.setenv("TELEOP_CLIENT_REPLAY_PACING", "frame")
     monkeypatch.setenv("TELEOP_CLIENT_SHOW_RECORDING_CONTROLS", "on")
-    assert client_ui_fields_from_env()["showRecordingControls"] is True
+    fields = client_ui_fields_from_env()
+    assert {k: fields[k] for k in keys} == {
+        "immersiveMode": "vr",
+        "referenceSpace": "local",
+        "replayPacing": "frame",
+        "showRecordingControls": True,
+    }
     monkeypatch.setenv("TELEOP_CLIENT_SHOW_RECORDING_CONTROLS", "off")
     assert client_ui_fields_from_env()["showRecordingControls"] is False
-
-
-def test_client_ui_fields_from_env_unset_stays_absent(
-    clear_teleop_env: None,
-) -> None:
-    """Unset overrides add no keys: an operator who sets none sees the URL they see today."""
-    fields = client_ui_fields_from_env()
-    for key in (
-        "immersiveMode",
-        "referenceSpace",
-        "replayPacing",
-        "showRecordingControls",
-    ):
-        assert key not in fields
 
 
 def test_client_ui_fields_from_env_never_sets_reconnect_enabled(
@@ -960,14 +925,10 @@ def test_print_hosted_client_line_hides_credentials() -> None:
     assert "port=48322" in out
 
 
-def test_oob_replay_recording_unset_is_empty(clear_teleop_env: None) -> None:
-    """No recording configured is the default: nothing is pushed or selected."""
-    assert oob_replay_recording_from_env() == ""
-
-
 def test_oob_replay_recording_from_env(
     clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The configured host path is returned stripped."""
+    """Unset means no recording; a set value is returned stripped."""
+    assert oob_replay_recording_from_env() == ""
     monkeypatch.setenv("TELEOP_OOB_RECORDING", "  /tmp/take-7.json  ")
     assert oob_replay_recording_from_env() == "/tmp/take-7.json"

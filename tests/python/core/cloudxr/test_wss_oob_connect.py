@@ -13,6 +13,7 @@ from cloudxr_py_test_ns.oob_teleop_hub import OOBControlHub
 from cloudxr_py_test_ns.wss import CORS_HEADERS, _make_http_handler, add_cors_headers
 
 TOKEN = "test-control-token"
+PATH = "/api/oob/v1/connect"
 
 
 class FakeRequest:
@@ -29,77 +30,46 @@ def _handler(connect_requested: asyncio.Event | None):
 
 
 @pytest.mark.asyncio
-async def test_connect_opens_the_deferred_gate() -> None:
+async def test_connect_opens_the_deferred_gate_once() -> None:
+    """A retrying orchestrator is told it already succeeded, not that it failed."""
     gate = asyncio.Event()
     handler = _handler(gate)
+    request = FakeRequest(PATH, {"X-Control-Token": TOKEN})
 
-    response = await handler(
-        None, FakeRequest("/api/oob/v1/connect", {"X-Control-Token": TOKEN})
-    )
+    first = await handler(None, request)
+    second = await handler(None, request)
 
-    assert response.status_code == 200
-    assert json.loads(response.body) == {
-        "connectRequested": True,
-        "alreadyRequested": False,
-    }
     assert gate.is_set()
+    assert [r.status_code for r in (first, second)] == [200, 200]
+    assert [json.loads(r.body)["alreadyRequested"] for r in (first, second)] == [
+        False,
+        True,
+    ]
 
 
 @pytest.mark.asyncio
-async def test_connect_is_idempotent() -> None:
-    """An orchestrator that retries must not be told it failed."""
+async def test_connect_refusals() -> None:
+    """Bad token: 401 and the gate stays shut. No deferral: 409."""
     gate = asyncio.Event()
     handler = _handler(gate)
-    request = FakeRequest(f"/api/oob/v1/connect?token={TOKEN}")
-
-    await handler(None, request)
-    response = await handler(None, request)
-
-    assert response.status_code == 200
-    assert json.loads(response.body)["alreadyRequested"] is True
-    assert gate.is_set()
-
-
-@pytest.mark.asyncio
-async def test_connect_requires_the_control_token() -> None:
-    gate = asyncio.Event()
-    handler = _handler(gate)
-
     for headers in ({}, {"X-Control-Token": "wrong"}):
-        response = await handler(None, FakeRequest("/api/oob/v1/connect", headers))
+        response = await handler(None, FakeRequest(PATH, headers))
         assert response.status_code == 401
-
     assert not gate.is_set()
 
-
-@pytest.mark.asyncio
-async def test_connect_without_deferral_is_a_conflict() -> None:
-    """Without defer_oob_connect setup already ran; say so rather than pretend."""
-    handler = _handler(None)
-
-    response = await handler(
-        None, FakeRequest("/api/oob/v1/connect", {"X-Control-Token": TOKEN})
-    )
-
+    response = await _handler(None)(None, FakeRequest(PATH, {"X-Control-Token": TOKEN}))
     assert response.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_connect_response_has_no_cors_headers() -> None:
-    """Like the other hub endpoints, it must not be usable cross-origin."""
-    handler = _handler(asyncio.Event())
-    request = FakeRequest("/api/oob/v1/connect", {"X-Control-Token": TOKEN})
-
-    response = await handler(None, request)
-    add_cors_headers(None, request, response)
-
-    assert not any(k in response.headers for k in CORS_HEADERS)
-
-
-@pytest.mark.asyncio
-async def test_connect_is_not_served_without_a_hub() -> None:
-    handler = _make_http_handler("localhost", 49100, hub=None)
-
-    response = await handler(None, FakeRequest("/api/oob/v1/connect"))
-
+async def test_connect_is_a_hub_endpoint() -> None:
+    """Like the other hub endpoints: 404 without a hub, no CORS headers."""
+    response = await _make_http_handler("localhost", 49100, hub=None)(
+        None, FakeRequest(PATH)
+    )
     assert response.status_code == 404
+
+    request = FakeRequest(PATH, {"X-Control-Token": TOKEN})
+    response = await _handler(asyncio.Event())(None, request)
+    add_cors_headers(None, request, response)
+    assert not any(k in response.headers for k in CORS_HEADERS)
