@@ -1,0 +1,25 @@
+# Isaac Capture
+
+> Shared capture infrastructure for teleoperation and egocentric data. Isaac Teleop is the robot-in-the-loop component: teleoperation sessions for controlling robots and collecting demonstrations. The Ego Pipeline captures and post-processes egocentric human data. Both build on a shared core of device plugins, retargeters, and data utilities for recording, replaying, and converting data.
+
+Isaac Capture installs as the `isaaccapture` Python package from PyPI. Skill links are relative to this file. Docs links point at the Markdown copy of each page of the `main` documentation.
+
+## Install
+
+- [isaac-capture-install](skills/isaac-capture-install/SKILL.md): skill that creates a uv virtual environment, chooses extras, installs from PyPI, and checks the import
+- [Quick Start](https://nvidia.github.io/IsaacCapture/main/teleop/quick_start.md): installation, headset setup, and a first teleoperation session with CloudXR
+
+## Skills
+
+- [Skills index](skills/README.md): every Isaac Capture skill and what it covers
+- [rebot-orin-setup](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/rebot/SKILL.md): bring up a reBot B601-RS arm from a Jetson AGX Orin over its built-in CAN
+
+## Docs
+
+- [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.md): components, shared infrastructure, and integration environments
+- [Teleop Session](https://nvidia.github.io/IsaacCapture/main/teleop/teleop_session.md): the declarative, configuration-based API for setting up complete teleop pipelines
+- [Add a New Device](https://nvidia.github.io/IsaacCapture/main/device/add_device.md): write a device plugin for hardware that needs its own driver or SDK
+- [Device Conformance Testing](https://nvidia.github.io/IsaacCapture/main/conformance/overview.md): check a device that publishes hand poses against what retargeters need
+- [Retargeting Interface](https://nvidia.github.io/IsaacCapture/main/references/retargeting/index.md): the graph-based pipeline from source nodes through retargeters to a single action tensor
+- [MCAP Recording & Replay](https://nvidia.github.io/IsaacCapture/main/references/mcap_record_replay.md): record live tracking data to MCAP and replay it offline through the same retargeting pipeline
+- [Full documentation index](https://nvidia.github.io/IsaacCapture/main/llms.txt): every page of the `main` documentation as Markdown

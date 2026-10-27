@@ -32,7 +32,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # llms.txt files stay plain Markdown for agents, so their REUSE info lives here.
 [[annotations]]
-path = "docs/llms.txt"
+path = ["llms.txt", "docs/llms.txt"]
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved."
 SPDX-License-Identifier = "Apache-2.0"
