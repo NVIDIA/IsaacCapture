@@ -26,7 +26,10 @@ def test_shared_profiles(path):
             sent["output"]["height"],
         )
         assert stream.stereo == (sent["type"] == "stereo")
-        assert stream.ipc_names == ("head.left", "head.right")
+        assert stream.ipc_names == (
+            ("head.left", "head.right") if stream.stereo else ("head",)
+        )
+        assert len(sent["cameras"]) == (2 if stream.stereo else 1)
 
 
 def test_multiple_streams_share_order_geometry_and_port(tmp_path):

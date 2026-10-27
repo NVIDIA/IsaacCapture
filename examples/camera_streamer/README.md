@@ -172,7 +172,50 @@ Do not assume S56 mode indices apply to SHW5G.
 | Highest resolution exposed by this S56 driver | `s56-stereo-2560x1984-30` | 2560×1984, 30 fps |
 | Highest frame rate exposed by this S56 driver | `s56-stereo-1080p60` | 1920×1080, 60 fps |
 
-Both use 30 Mbps per eye. At 60 fps, a hardware-triggered rig must also have its
+### Mono profiles
+
+Use one S56 sensor to exercise the mono capture, HEVC, network and viewer path.
+Here, mono means one color camera stream, not grayscale. The supplied profiles
+select device 0; select device 1 instead to use the other eye.
+
+| PROFILE | Output resolution / rate | Capture mode / geometry |
+|---|---|---|
+| `s56-mono-2560x1984-30` | 2560×1984, 30 fps | Mode 1, native dimensions |
+| `s56-mono-1080p30` | 1920×1080, 30 fps | Mode 0, native dimensions |
+| `s56-mono-1080p60` | 1920×1080, 60 fps | Mode 0, native dimensions |
+| `s56-mono-720p30` | 1280×720, 30 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-720p60` | 1280×720, 60 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-2400x1440-30` | 2400×1440, 30 fps | Mode 1, center-cropped/scaled from 2560×1984 |
+
+Set `PROFILE` to the same mono profile in the Robot Send and Host Receive commands
+below. The viewer automatically displays the single `head` stream. No runtime
+code or separate receiver configuration is needed. All mono profiles use 30 Mbps.
+
+### SHW5G profiles
+
+SENSING lists SHW5G as a monocular camera with 2560×1984 at 30 fps and
+2400×1440 at 60 fps ([SHW5G specifications](https://www.sgwrd.com/products/3mp-global-shutter-monocular-camera-shw5g)).
+The [S56 specifications](https://wiki.sensing-world.com/docs/6_1_Camera/Binocular_Camera/S56)
+list 2560×1984 at 30 fps per eye. Argus modes depend on the installed driver;
+vendor specifications do not define their numeric indices.
+
+`configs/templates/` contains one shared YAML for each published SHW5G mode:
+
+- `shw5g-mono-2560x1984-30.yaml`
+- `shw5g-mono-2400x1440-60.yaml`
+
+Copy the desired template into `configs/`, set `cameras[].device` for your rig,
+and replace `mode: SET_FROM_LIST_MODES` with the matching Argus mode index.
+Then copy the edited YAML to both computers and use its basename as `PROFILE`.
+The placeholder intentionally prevents starting a sender with a guessed mode.
+
+The supplied S56 driver's 60 fps mode is 1920×1080, not 2400×1440. Its
+2400×1440 mono profile uses the full-resolution sensor mode at 30 fps; it
+exercises that output geometry without claiming the SHW5G 60 fps capture mode.
+Smaller scaled outputs are not additional native sensor modes. Use
+`--list-modes` as the source of truth for a particular camera/driver combination.
+
+Stereo profiles use 30 Mbps per eye. At 60 fps, a hardware-triggered rig must also have its
 vendor PWM/sync configured for 60 Hz; changing YAML alone does not change PWM.
 
 ### Robot Install
@@ -237,7 +280,7 @@ PROFILE=s56-stereo-2560x1984-30
   --host "${ROBOT_IP:?Set ROBOT_IP first}"
 ```
 
-This decodes both eyes using NVDEC and publishes GPU frames through local CUDA
+This decodes the configured mono or stereo stream using NVDEC and publishes GPU frames through local CUDA
 IPC. It does not open a display window.
 
 ### Host Viewer
@@ -250,7 +293,7 @@ cd ~/IsaacCapture/examples/camera_streamer
   --socket /tmp/isaac-camera-streamer.sock
 ```
 
-Expect `head.left` and `head.right` in the desktop viewer. This command is not a
+Expect `head.left` and `head.right` for stereo, or `head` for mono. This command is not a
 CloudXR launcher; headset display needs a compatible AVS1 CUDA IPC source in
 camera_viz. See [viewer options](televiz/cuda_ipc_consumer/README.md).
 Close the window, press q/Esc with the window focused, or Ctrl+C in its terminal.

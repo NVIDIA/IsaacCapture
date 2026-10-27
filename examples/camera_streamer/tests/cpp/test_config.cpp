@@ -101,7 +101,9 @@ int main()
         TEST_CHECK(test, commandLine.checkConfig);
     }
 
-    for (const char* profile : { "s56-stereo-2560x1984-30.yaml", "s56-stereo-1080p60.yaml" })
+    for (const char* profile : { "s56-stereo-2560x1984-30.yaml", "s56-stereo-1080p60.yaml",
+                                 "s56-mono-2560x1984-30.yaml", "s56-mono-1080p30.yaml", "s56-mono-1080p60.yaml",
+                                 "s56-mono-720p30.yaml", "s56-mono-720p60.yaml", "s56-mono-2400x1440-30.yaml" })
     {
         argus_sender::AppConfig shared;
         TEST_CHECK(test, argus_sender::loadConfigFile(
@@ -109,6 +111,13 @@ int main()
         TEST_CHECK_EQ(test, shared.network.port, 5000U);
         TEST_CHECK_EQ(test, shared.streams.size(), static_cast<size_t>(1));
         TEST_CHECK_EQ(test, shared.streams[0].id, std::string("head"));
+    }
+
+    for (const char* profile : { "shw5g-mono-2560x1984-30.yaml", "shw5g-mono-2400x1440-60.yaml" })
+    {
+        argus_sender::AppConfig unresolved;
+        TEST_CHECK(test, !argus_sender::loadConfigFile(
+                             std::string(CAMERA_STREAMER_CONFIG_DIR) + "/templates/" + profile, &unresolved, &error));
     }
 
     argus_sender::AppConfig invalid;

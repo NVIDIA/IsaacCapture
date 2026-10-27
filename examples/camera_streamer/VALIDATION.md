@@ -55,3 +55,22 @@ launcher dry-runs, C++ formatting and repository pre-commit checks. An isolated
 Orin build passed all 12 native tests, including loading both shared profiles.
 Tests now live in `tests/cpp`, `tests/python` and `tests/hardware`.
 No camera capture was started and the operational Orin deployment was unchanged.
+
+
+## Mono profile basis — 2026-10-27
+
+S56 devices 0/1 on the Orin enumerate mode 0 as 1920×1080 at 30–60 fps and
+mode 1 as 2560×1984 at 30 fps. The mono profiles use device 0. 720p profiles
+scale mode 0; 2400×1440/30 center-crops/scales mode 1. Enumeration alone does
+not establish live mono capture or end-to-end performance; no new capture was
+started for this profile addition.
+
+The vendor SHW5G page lists 2560×1984/30 and 2400×1440/60. Its templates require
+the operator to supply an Argus mode index, since no SHW5G is attached locally.
+These are the published modes, not a claim to enumerate every driver variant.
+See the linked vendor specifications in README.md.
+
+Profile validation passed 41 Python tests, all six mono receiver dry-runs, and
+the isolated Orin native config test covering all runnable profiles and rejecting
+SHW5G templates until their mode placeholders are replaced. C++ formatting and
+repository pre-commit checks passed. Live mono validation remains a separate step.
