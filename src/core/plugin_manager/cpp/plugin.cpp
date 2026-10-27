@@ -474,6 +474,9 @@ void Plugin::start_process(const std::string& command,
 void Plugin::stop_process()
 {
 #ifndef _WIN32
+    // A concurrent caller waits here for the stop in progress, then finds the process
+    // gone, instead of sending a second SIGINT into the plugin's cleanup.
+    std::lock_guard<std::mutex> stop_lock(m_stop_mutex);
     std::unique_lock<std::mutex> lock(m_process_mutex);
     if (m_pid == -1)
     {

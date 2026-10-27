@@ -13,11 +13,12 @@
 namespace
 {
 
+// Counts SIGINTs; only the signal handler writes it.
 volatile std::sig_atomic_t stop_requested = 0;
 
 void request_stop(int)
 {
-    stop_requested = 1;
+    stop_requested = stop_requested + 1;
 }
 
 std::vector<std::string> plugin_arguments(int argc, char** argv)
@@ -60,7 +61,8 @@ int main(int argc, char** argv)
     }
 
     // finalize <marker> <ms>: write <marker>.ready once SIGINT is handled; after SIGINT,
-    // keep working for <ms>, then write <marker>.
+    // keep working for <ms>, then write <marker>. A second SIGINT abandons the work, as a
+    // second Ctrl-C does in many plugins.
     if (arguments[0] == "finalize")
     {
         std::signal(SIGINT, request_stop);
@@ -69,7 +71,15 @@ int main(int argc, char** argv)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(arguments[2])));
+        const auto done = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::stoi(arguments[2]));
+        while (std::chrono::steady_clock::now() < done)
+        {
+            if (stop_requested > 1)
+            {
+                return 4;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         std::ofstream(arguments[1]) << "finalized\n";
         return 0;
     }

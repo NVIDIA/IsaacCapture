@@ -187,6 +187,22 @@ TEST_CASE("stop uses the shutdown timeout from plugin.yaml", "[plugin_manager][p
         REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
     }
 
+    SECTION("a concurrent stop waits for the shutdown already in progress")
+    {
+        const std::unique_ptr<core::Plugin> plugin = start("5", 500);
+        std::thread second_caller(
+            [&]
+            {
+                // Let the first stop's SIGINT reach the plugin before this one starts.
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                plugin->stop();
+            });
+        REQUIRE_NOTHROW(plugin->stop());
+        second_caller.join();
+        REQUIRE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+    }
+
     SECTION("a plugin that outlives its timeout is killed when it expires")
     {
         const std::unique_ptr<core::Plugin> plugin = start("0.2", 5000);

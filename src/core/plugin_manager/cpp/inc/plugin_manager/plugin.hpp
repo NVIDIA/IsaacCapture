@@ -132,6 +132,7 @@ private:
     std::chrono::duration<double> m_shutdown_timeout;
     ProcessSnapshot m_process_snapshot;
     std::mutex m_process_mutex;
+    std::mutex m_stop_mutex; // Held for a whole stop_process(); taken before m_process_mutex.
 };
 
 } // namespace core
