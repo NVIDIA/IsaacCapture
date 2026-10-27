@@ -9,6 +9,32 @@
 namespace py = pybind11;
 using namespace core;
 
+namespace
+{
+
+// ~Plugin() stops a running plugin and can wait up to its shutdown timeout, so a
+// Python-owned Plugin is destroyed without the GIL. (pybind11 2.13 has no
+// release_gil_before_calling_cpp_dtor.)
+struct ReleaseGilDeleter
+{
+    void operator()(Plugin* plugin) const
+    {
+        if (PyGILState_Check())
+        {
+            py::gil_scoped_release release;
+            delete plugin;
+        }
+        else
+        {
+            delete plugin;
+        }
+    }
+};
+
+using PythonPlugin = std::unique_ptr<Plugin, ReleaseGilDeleter>;
+
+} // namespace
+
 PYBIND11_MODULE(_plugin_manager, m)
 {
     m.doc() = "Isaac Teleop Plugin Manager bindings";
@@ -75,7 +101,7 @@ PYBIND11_MODULE(_plugin_manager, m)
                                });
 
     // stop() can wait up to the plugin's shutdown timeout, so it runs without the GIL.
-    py::class_<Plugin, std::unique_ptr<Plugin>>(m, "Plugin")
+    py::class_<Plugin, PythonPlugin>(m, "Plugin")
         .def("stop", &Plugin::stop, py::call_guard<py::gil_scoped_release>(),
              "Explicitly stop the plugin (throws PluginCrashException if crashed)")
         .def("check_health", &Plugin::check_health, "Check if plugin has crashed (throws PluginCrashException if crashed)")
@@ -97,7 +123,11 @@ PYBIND11_MODULE(_plugin_manager, m)
              "Get the complete immutable descriptor for a discovered plugin")
         .def("query_devices", &PluginManager::query_devices, py::arg("plugin_name"),
              "Query available devices from a plugin")
-        .def("start", &PluginManager::start, py::arg("plugin_name"), py::arg("plugin_root_id"),
-             py::arg("plugin_args") = std::vector<std::string>{},
-             "Start a plugin and return a RAII handle. plugin_args are appended after plugin.yaml args.");
+        .def(
+            "start",
+            [](PluginManager& self, const std::string& plugin_name, const std::string& plugin_root_id,
+               const std::vector<std::string>& plugin_args)
+            { return PythonPlugin(self.start(plugin_name, plugin_root_id, plugin_args).release()); },
+            py::arg("plugin_name"), py::arg("plugin_root_id"), py::arg("plugin_args") = std::vector<std::string>{},
+            "Start a plugin and return a RAII handle. plugin_args are appended after plugin.yaml args.");
 }
