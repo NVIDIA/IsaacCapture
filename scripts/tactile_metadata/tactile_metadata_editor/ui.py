@@ -57,7 +57,7 @@ class Editor:
             False,
         )
         self.sdk_result, self.sdk_revision = "not checked", None
-        self.server = viser.ViserServer(host="127.0.0.1", port=args.port)
+        self.server = viser.ViserServer(host="0.0.0.0", port=args.port)
         g = self.server.gui
         g.configure_theme(control_width="medium", show_share_button=False)
         g.main_panel.dock_right()

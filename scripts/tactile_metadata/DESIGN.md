@@ -184,7 +184,7 @@ python -m tactile_metadata_editor.cli check left.metadata.json --sdk
 python -m tactile_metadata_editor.cli export left.metadata.json --sides left --format sdk --out package
 ```
 
-GUI 不带参数时进入启动页，默认监听 127.0.0.1:8080，可用 --port 修改。JSON 不携带手侧或 URDF 配置：GUI 通过界面或 `--sides` 明确手侧，CLI export 通过 `--sides left/right/both` 分配输入文件，手侧重复明确拒绝；纯数值 CLI 检查不需要手侧。检查结果输出到界面或 CLI 标准输出，不提供 `--report` 文件输出。实时连接在当前 GUI 会话中配置；`--demo` 使用内置合成数据验证实时交互，不是额外文件导入。
+GUI 不带参数时进入启动页，默认监听 0.0.0.0:8080，可用 --port 修改。JSON 不携带手侧或 URDF 配置：GUI 通过界面或 `--sides` 明确手侧，CLI export 通过 `--sides left/right/both` 分配输入文件，手侧重复明确拒绝；纯数值 CLI 检查不需要手侧。检查结果输出到界面或 CLI 标准输出，不提供 `--report` 文件输出。实时连接在当前 GUI 会话中配置；`--demo` 使用内置合成数据验证实时交互，不是额外文件导入。
 
 ## 2 依赖
 
