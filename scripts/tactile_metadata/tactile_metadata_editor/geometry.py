@@ -92,7 +92,7 @@ class Model:
                 self.surfaces[f"{link}/{node}/{i}"] = (link, part)
 
     def fk(self, cfg):
-        configuration = tuple(cfg.get(j.name, 0) for j in self.joints)
+        configuration = tuple(float(cfg.get(j.name, 0.0)) for j in self.joints)
         result = self._fk_cache.pop(configuration, None)
         if result is None:
             self.urdf.update_cfg(

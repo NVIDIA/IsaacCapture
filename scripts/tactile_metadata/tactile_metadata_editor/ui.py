@@ -67,205 +67,205 @@ class Editor:
         self.mode = g.add_dropdown("Mode", ("EDIT", "PREVIEW", "LIVE", "PAUSED"))
         self.watch(self.side, lambda _: self.switch())
         self.watch(self.mode, lambda _: None)
-        with g.add_tab_group() as tabs:
-            with tabs.add_tab("Model"):
-                self.urdf = g.add_text("URDF", state.model.get("urdf", ""))
-                self.packages = g.add_text(
-                    "Local package map JSON",
-                    json.dumps(state.model.get("packages", {})),
-                )
-                self.sides = g.add_dropdown(
-                    "New model hands",
-                    ("left", "right", "both"),
-                    initial_value="both"
-                    if len(state.documents) == 2
-                    else self.side.value,
-                )
-                self.button("New document", lambda: self.guard(self.reset))
-                self.button("Load URDF", lambda: self.guard(self.load_new))
-                self.open_path = g.add_text("Metadata JSON", args.metadata or "")
-                self.json_side = g.add_dropdown(
-                    "Assign JSON to", ("left", "right"), initial_value=self.side.value
-                )
-                self.button("Open JSON", lambda: self.guard(self.open))
-                self.wrist = g.add_dropdown("Wrist link", ("",))
-                self.allowed = g.add_text("Allowed links, comma separated", "")
-                self.button("Apply allowed links", self.set_links)
-                self.pick = g.add_dropdown(
-                    "Pick target",
-                    (
-                        "O",
-                        "C",
-                        "R",
-                        "Wrist O",
-                        "Wrist F",
-                        "Wrist D",
-                        "Segment",
-                        "Move selected",
-                        "Single tangent",
-                    ),
-                )
-                self.pick_button = self.button(
-                    "Pick on q0 model",
-                    lambda: setattr(self, "pick_target", self.pick.value),
-                )
-                self.calibrate_button = self.button(
-                    "Preview / set wrist reference", self.calibrate
-                )
-                self.resources = g.add_markdown("")
-                self.button("Reset cameras", self.camera)
-            with tabs.add_tab("Segments"):
-                self.joint = g.add_dropdown("URDF free joint", ("",))
-                self.angle = g.add_slider("Preview joint", -3.15, 3.15, 0.001, 0.0)
-                self.angle_number = g.add_number("Preview joint value", 0.0)
-                self.watch(self.joint, lambda _: self.joint_controls())
-                for w in (self.angle, self.angle_number):
-                    self.watch(w, self.preview_joint)
-                self.button("Set shared binding pose q0", self.confirm_q0)
-                self.button("Return to q0", lambda: setattr(self.mode, "value", "EDIT"))
-                self.segment = g.add_dropdown("Segment row", ("",))
-                self.semantic = g.add_dropdown("HandJoint", tuple(JOINTS))
-                self.segment_link = g.add_dropdown("Associated link", ("",))
-                self.watch(self.segment, lambda _: self.select_segment())
-                self.button("Add segment", self.add_segment)
-                self.button("Set semantic / link", self.associate)
-                self.order = g.add_text("Segment row order", "[]")
-                self.button(
-                    "Reorder / delete omitted segments",
-                    self.reorder_segments,
-                )
-                self.segment_table = g.add_markdown("")
-            with tabs.add_tab("Layout"):
-                self.surface = g.add_dropdown("Projection surface", ("",))
-                self.rows = g.add_number("Rows", 4, min=1)
-                self.cols = g.add_number("Columns", 4, min=1)
-                self.centers = [
-                    g.add_vector3(k + " world center", (0.0, 0.0, 0.0))
-                    for k in ("O", "C", "R")
-                ]
-                for key, w in zip(("O", "C", "R"), self.centers):
-                    self.watch(w, lambda v, key=key: self.points.update({key: list(v)}))
-                self.spans = [
-                    g.add_number(k + " span (m)", 0.03) for k in ("Column", "Row")
-                ]
-                self.button("Apply spans along picked directions", self.spans_apply)
-                self.scan = g.add_dropdown(
-                    "Scan", ("row-major", "column-major", "row-snake", "column-snake")
-                )
-                self.reverse = [
-                    g.add_checkbox(k, False)
-                    for k in ("Reverse rows", "Reverse columns")
-                ]
-                self.excluded = g.add_text("Exclude cells [row,column]", "[]")
-                self.start = g.add_number("Start output index (-1 = unused)", -1)
-                self.influences = g.add_text("New taxel segment rows (1–4)", "[]")
-                self.grid_button = self.button("Preview grid", self.grid)
-                self.button("Apply candidates", self.apply_grid)
-                self.button("Cancel candidates", self.clear_layout)
-                self.layout_info = g.add_markdown("")
-                self.selection = g.add_text("Select output indices / ranges", "")
-                self.button("Select indices", self.select_indices)
-                self.rectangle = g.add_checkbox("Rectangle selection (drag)", False)
-                self.through = g.add_checkbox("Select through mesh", False)
-                self.watch(self.rectangle, self.rectangle_mode)
-                self.button(
-                    "Delete selected taxels",
-                    self.delete_taxels,
-                )
-                self.reproject_button = self.button(
-                    "Reproject selected", self.reproject
-                )
-                self.indices = g.add_text("New selected output indices", "[]")
-                self.button("Preview / apply output indices", self.reindex)
-                self.page = g.add_number("List page (25 rows)", 0, min=0)
-                self.watch(self.page, lambda _: None)
-                self.table = g.add_markdown("")
-            with tabs.add_tab("Binding"):
-                self.binding_info = g.add_markdown("")
-                self.button(
-                    "Assign segment rows equally",
-                    lambda: self.change(
-                        self.d.assign, self.selected, json.loads(self.influences.value)
-                    ),
-                )
-                self.slots = []
-                for k in range(4):
-                    with g.add_folder(f"Slot {k}"):
-                        segment = g.add_dropdown("Segment", ("",))
-                        index = g.add_number("Set raw index", 0)
-                        slider = g.add_slider("Weight", 0.0, 1.0, 0.001, 0.0)
-                        number = g.add_number("Set weight", 0.0)
-                        self.watch(
-                            segment,
-                            lambda v, k=k: (
-                                self.set_slot(k, int(v.split(":")[0]))
-                                if not v.startswith("Raw")
-                                else None
-                            ),
-                        )
-                        self.watch(index, lambda v, k=k: self.set_slot(k, v))
-                        for w in (slider, number):
-                            self.watch(w, lambda v, k=k: self.weight(k, v))
-                        self.slots.append((segment, index, slider, number))
-            with tabs.add_tab("Live"):
-                self.collection = g.add_text("Tactile collection_id", "tactile")
-                self.hand = g.add_dropdown("HandTracker output", ("left", "right"))
-                self.joint_enabled = g.add_checkbox("Enable JointState", False)
-                self.joint_id = g.add_text("JointState collection_id", "")
-                self.button(
-                    "Apply this hand's source configuration", self.configure_source
-                )
-                self.source_joint = g.add_text("Source joint name", "")
-                self.target_joint = g.add_dropdown("URDF target joint", ("",))
-                self.scale = g.add_number("Scale", 1.0)
-                self.offset = g.add_number("Offset", 0.0)
-                self.button("Add / update mapping", self.mapping)
-                self.button("Remove mapping", lambda: self.mapping(True))
-                self.mapping_info = g.add_markdown("")
-                self.button("Connect / disconnect", self.connect)
-                self.button(
-                    "Play / pause",
-                    lambda: setattr(
-                        self.mode,
-                        "value",
-                        "PAUSED" if self.mode.value == "LIVE" else "LIVE",
-                    ),
-                )
-                self.source = g.add_dropdown(
-                    "Visualization metadata", ("Received", "Draft")
-                )
-                self.force_max = g.add_number(
-                    "Force color maximum (N)", 30.0, min=0.001
-                )
-                self.groups = {name: g.add_checkbox(name, True) for name in GROUPS}
-                self.button("Record metadata groups", self.record)
-                self.live_info = g.add_markdown("")
-            with tabs.add_tab("Export"):
-                self.paths = {
-                    s: g.add_text(
-                        s + " save JSON", state.paths.get(s, s + ".metadata.json")
-                    )
-                    for s in ("left", "right")
-                }
-                self.button("Save all metadata", self.save)
-                self.all_sides = g.add_checkbox("Check / export all hands", True)
-                self.destination = g.add_text("New output directory", "package")
-                self.binary = g.add_checkbox("Include SDK binary", False)
-                self.button("Local check", self.local_check)
-                self.button("SDK check", lambda: self.background(False))
-                self.button("Export snapshot", lambda: self.background(True))
-                self.check_info = g.add_markdown("")
-                with g.add_folder("Advanced schema repair"):
-                    self.schema = g.add_text("Schema JSON", "", multiline=True)
-                    self.button(
-                        "Copy draft into repair field",
-                        lambda: setattr(
-                            self.schema,
-                            "value",
-                            json.dumps(storage.metadata(self.d), indent=2),
+        tabs = g.add_tab_group()
+        with tabs.add_tab("Model"):
+            self.urdf = g.add_text("URDF", state.model.get("urdf", ""))
+            self.packages = g.add_text(
+                "Local package map JSON",
+                json.dumps(state.model.get("packages", {})),
+            )
+            self.sides = g.add_dropdown(
+                "New model hands",
+                ("left", "right", "both"),
+                initial_value="both"
+                if len(state.documents) == 2
+                else self.side.value,
+            )
+            self.button("New document", lambda: self.guard(self.reset))
+            self.button("Load URDF", lambda: self.guard(self.load_new))
+            self.open_path = g.add_text("Metadata JSON", args.metadata or "")
+            self.json_side = g.add_dropdown(
+                "Assign JSON to", ("left", "right"), initial_value=self.side.value
+            )
+            self.button("Open JSON", lambda: self.guard(self.open))
+            self.wrist = g.add_dropdown("Wrist link", ("",))
+            self.allowed = g.add_text("Allowed links, comma separated", "")
+            self.button("Apply allowed links", self.set_links)
+            self.pick = g.add_dropdown(
+                "Pick target",
+                (
+                    "O",
+                    "C",
+                    "R",
+                    "Wrist O",
+                    "Wrist F",
+                    "Wrist D",
+                    "Segment",
+                    "Move selected",
+                    "Single tangent",
+                ),
+            )
+            self.pick_button = self.button(
+                "Pick on q0 model",
+                lambda: setattr(self, "pick_target", self.pick.value),
+            )
+            self.calibrate_button = self.button(
+                "Preview / set wrist reference", self.calibrate
+            )
+            self.resources = g.add_markdown("")
+            self.button("Reset cameras", self.camera)
+        with tabs.add_tab("Segments"):
+            self.joint = g.add_dropdown("URDF free joint", ("",))
+            self.angle = g.add_slider("Preview joint", -3.15, 3.15, 0.001, 0.0)
+            self.angle_number = g.add_number("Preview joint value", 0.0)
+            self.watch(self.joint, lambda _: self.joint_controls())
+            for w in (self.angle, self.angle_number):
+                self.watch(w, self.preview_joint)
+            self.button("Set shared binding pose q0", self.confirm_q0)
+            self.button("Return to q0", lambda: setattr(self.mode, "value", "EDIT"))
+            self.segment = g.add_dropdown("Segment row", ("",))
+            self.semantic = g.add_dropdown("HandJoint", tuple(JOINTS))
+            self.segment_link = g.add_dropdown("Associated link", ("",))
+            self.watch(self.segment, lambda _: self.select_segment())
+            self.button("Add segment", self.add_segment)
+            self.button("Set semantic / link", self.associate)
+            self.order = g.add_text("Segment row order", "[]")
+            self.button(
+                "Reorder / delete omitted segments",
+                self.reorder_segments,
+            )
+            self.segment_table = g.add_markdown("")
+        with tabs.add_tab("Layout"):
+            self.surface = g.add_dropdown("Projection surface", ("",))
+            self.rows = g.add_number("Rows", 4, min=1)
+            self.cols = g.add_number("Columns", 4, min=1)
+            self.centers = [
+                g.add_vector3(k + " world center", (0.0, 0.0, 0.0))
+                for k in ("O", "C", "R")
+            ]
+            for key, w in zip(("O", "C", "R"), self.centers):
+                self.watch(w, lambda v, key=key: self.points.update({key: list(v)}))
+            self.spans = [
+                g.add_number(k + " span (m)", 0.03) for k in ("Column", "Row")
+            ]
+            self.button("Apply spans along picked directions", self.spans_apply)
+            self.scan = g.add_dropdown(
+                "Scan", ("row-major", "column-major", "row-snake", "column-snake")
+            )
+            self.reverse = [
+                g.add_checkbox(k, False)
+                for k in ("Reverse rows", "Reverse columns")
+            ]
+            self.excluded = g.add_text("Exclude cells [row,column]", "[]")
+            self.start = g.add_number("Start output index (-1 = unused)", -1)
+            self.influences = g.add_text("New taxel segment rows (1–4)", "[]")
+            self.grid_button = self.button("Preview grid", self.grid)
+            self.button("Apply candidates", self.apply_grid)
+            self.button("Cancel candidates", self.clear_layout)
+            self.layout_info = g.add_markdown("")
+            self.selection = g.add_text("Select output indices / ranges", "")
+            self.button("Select indices", self.select_indices)
+            self.rectangle = g.add_checkbox("Rectangle selection (drag)", False)
+            self.through = g.add_checkbox("Select through mesh", False)
+            self.watch(self.rectangle, self.rectangle_mode)
+            self.button(
+                "Delete selected taxels",
+                self.delete_taxels,
+            )
+            self.reproject_button = self.button(
+                "Reproject selected", self.reproject
+            )
+            self.indices = g.add_text("New selected output indices", "[]")
+            self.button("Preview / apply output indices", self.reindex)
+            self.page = g.add_number("List page (25 rows)", 0, min=0)
+            self.watch(self.page, lambda _: None)
+            self.table = g.add_markdown("")
+        with tabs.add_tab("Binding"):
+            self.binding_info = g.add_markdown("")
+            self.button(
+                "Assign segment rows equally",
+                lambda: self.change(
+                    self.d.assign, self.selected, json.loads(self.influences.value)
+                ),
+            )
+            self.slots = []
+            for k in range(4):
+                with g.add_folder(f"Slot {k}"):
+                    segment = g.add_dropdown("Segment", ("",))
+                    index = g.add_number("Set raw index", 0)
+                    slider = g.add_slider("Weight", 0.0, 1.0, 0.001, 0.0)
+                    number = g.add_number("Set weight", 0.0)
+                    self.watch(
+                        segment,
+                        lambda v, k=k: (
+                            self.set_slot(k, int(v.split(":")[0]))
+                            if not v.startswith("Raw")
+                            else None
                         ),
                     )
-                    self.button("Replace draft from repair field", self.repair)
+                    self.watch(index, lambda v, k=k: self.set_slot(k, v))
+                    for w in (slider, number):
+                        self.watch(w, lambda v, k=k: self.weight(k, v))
+                    self.slots.append((segment, index, slider, number))
+        with tabs.add_tab("Live"):
+            self.collection = g.add_text("Tactile collection_id", "tactile")
+            self.hand = g.add_dropdown("HandTracker output", ("left", "right"))
+            self.joint_enabled = g.add_checkbox("Enable JointState", False)
+            self.joint_id = g.add_text("JointState collection_id", "")
+            self.button(
+                "Apply this hand's source configuration", self.configure_source
+            )
+            self.source_joint = g.add_text("Source joint name", "")
+            self.target_joint = g.add_dropdown("URDF target joint", ("",))
+            self.scale = g.add_number("Scale", 1.0)
+            self.offset = g.add_number("Offset", 0.0)
+            self.button("Add / update mapping", self.mapping)
+            self.button("Remove mapping", lambda: self.mapping(True))
+            self.mapping_info = g.add_markdown("")
+            self.button("Connect / disconnect", self.connect)
+            self.button(
+                "Play / pause",
+                lambda: setattr(
+                    self.mode,
+                    "value",
+                    "PAUSED" if self.mode.value == "LIVE" else "LIVE",
+                ),
+            )
+            self.source = g.add_dropdown(
+                "Visualization metadata", ("Received", "Draft")
+            )
+            self.force_max = g.add_number(
+                "Force color maximum (N)", 30.0, min=0.001
+            )
+            self.groups = {name: g.add_checkbox(name, True) for name in GROUPS}
+            self.button("Record metadata groups", self.record)
+            self.live_info = g.add_markdown("")
+        with tabs.add_tab("Export"):
+            self.paths = {
+                s: g.add_text(
+                    s + " save JSON", state.paths.get(s, s + ".metadata.json")
+                )
+                for s in ("left", "right")
+            }
+            self.button("Save all metadata", self.save)
+            self.all_sides = g.add_checkbox("Check / export all hands", True)
+            self.destination = g.add_text("New output directory", "package")
+            self.binary = g.add_checkbox("Include SDK binary", False)
+            self.button("Local check", self.local_check)
+            self.button("SDK check", lambda: self.background(False))
+            self.button("Export snapshot", lambda: self.background(True))
+            self.check_info = g.add_markdown("")
+            with g.add_folder("Advanced schema repair"):
+                self.schema = g.add_text("Schema JSON", "", multiline=True)
+                self.button(
+                    "Copy draft into repair field",
+                    lambda: setattr(
+                        self.schema,
+                        "value",
+                        json.dumps(storage.metadata(self.d), indent=2),
+                    ),
+                )
+                self.button("Replace draft from repair field", self.repair)
         with g.add_folder("Draft property inspector"):
             self.entity = g.add_dropdown("Edit entity", ("Taxels", "Segment"))
             self.watch(self.entity, lambda _: None)
