@@ -23,7 +23,7 @@ if(BUILD_EXAMPLE_TELEOP_ROS2)
 endif()
 
 if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
-    add_subdirectory(examples/mcap_record_replay)
+    add_subdirectory(examples/orbbec_ego)
 endif()
 
 if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)

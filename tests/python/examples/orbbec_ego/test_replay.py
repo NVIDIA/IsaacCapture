@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from mcap.writer import CompressionType, IndexType, Writer
 
-from isaaccapture_examples.mcap_record_replay import replay_ego
+from isaaccapture_examples.orbbec_ego import replay
 from isaaccapture.schema import (
     OrbbecEgoRecoveryEvent,
     OrbbecEgoRecoveryStage,
@@ -96,12 +96,10 @@ def mock_trackers(monkeypatch):
         "OrbbecEgoCalibrationTracker",
         "OrbbecEgoDeviceStateTracker",
     ):
-        monkeypatch.setattr(replay_ego, name, Tracker)
+        monkeypatch.setattr(replay, name, Tracker)
     session = Replay()
-    monkeypatch.setattr(
-        replay_ego, "ReplaySession", SimpleNamespace(run=lambda _: session)
-    )
-    monkeypatch.setattr(replay_ego, "McapReplayConfig", lambda *_: None)
+    monkeypatch.setattr(replay, "ReplaySession", SimpleNamespace(run=lambda _: session))
+    monkeypatch.setattr(replay, "McapReplayConfig", lambda *_: None)
     return session
 
 
@@ -112,7 +110,7 @@ def test_gap_does_not_end_replay_and_tracked_topics_do_not_extend_it(
     recording = tmp_path / "gap.mcap"
     write_recording(recording, summary)
     session = mock_trackers(monkeypatch)
-    counts = replay_ego.replay(recording, 0)
+    counts = replay.replay(recording, 0)
     assert session.updates == 3
     assert session.closed
     assert set(counts.values()) == {2}
@@ -123,7 +121,7 @@ def test_explicit_update_limit_includes_gaps(tmp_path, monkeypatch):
     recording = tmp_path / "gap.mcap"
     write_recording(recording, True)
     session = mock_trackers(monkeypatch)
-    counts = replay_ego.replay(recording, 2)
+    counts = replay.replay(recording, 2)
     assert session.updates == 2
     assert set(counts.values()) == {1}
 
@@ -132,7 +130,7 @@ def test_recording_without_raw_topics_finishes_immediately(tmp_path, monkeypatch
     recording = tmp_path / "other.mcap"
     write_recording(recording, True, {"head/head"})
     session = mock_trackers(monkeypatch)
-    counts = replay_ego.replay(recording, 0)
+    counts = replay.replay(recording, 0)
     assert session.updates == 0
     assert set(counts.values()) == {0}
 
@@ -146,7 +144,7 @@ def test_recorded_policy_controls_diagnostic_tracker_registration(
         writer = Writer(stream, compression=CompressionType.NONE)
         writer.start()
         writer.add_metadata(
-            "ego.recording",
+            "orbbec_ego.recording",
             {
                 "record_device_diagnostics": "on" if enabled else "off",
                 "diagnostic_version": "2",
@@ -158,7 +156,7 @@ def test_recorded_policy_controls_diagnostic_tracker_registration(
         writer.add_message(channel, 1, b"test", 1)
         writer.finish()
     mock_trackers(monkeypatch)
-    counts = replay_ego.replay(path, 0)
+    counts = replay.replay(path, 0)
     assert ("DeviceState" in counts) == enabled
 
 
@@ -168,7 +166,7 @@ def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
         writer = Writer(stream, compression=CompressionType.NONE)
         writer.start()
         writer.add_metadata(
-            "ego.recording",
+            "orbbec_ego.recording",
             {"record_device_diagnostics": "off", "diagnostic_version": "2"},
         )
         schema = writer.register_schema(
@@ -177,7 +175,7 @@ def test_off_rejects_diagnostic_channel_under_a_different_topic(tmp_path):
         writer.register_channel("custom/topic", "flatbuffer", schema)
         writer.finish()
     with pytest.raises(ValueError, match="channel exists"):
-        replay_ego.replay(path, 0)
+        replay.replay(path, 0)
 
 
 @pytest.mark.parametrize("version", ["0", "1", "99"])
@@ -187,9 +185,9 @@ def test_unsupported_diagnostic_policy_is_rejected(tmp_path, version):
         writer = Writer(stream, compression=CompressionType.NONE)
         writer.start()
         writer.add_metadata(
-            "ego.recording",
+            "orbbec_ego.recording",
             {"record_device_diagnostics": "on", "diagnostic_version": version},
         )
         writer.finish()
     with pytest.raises(ValueError, match="Unsupported EGO"):
-        replay_ego.replay(path, 0)
+        replay.replay(path, 0)

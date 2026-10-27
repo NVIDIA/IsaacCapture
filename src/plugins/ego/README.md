@@ -249,6 +249,7 @@ Python package. Complete the full build and install the wheel first:
 cmake --build build-ego-py3.11 --parallel
 cmake --install build-ego-py3.11 --prefix install-ego-py3.11
 uv pip install --reinstall install-ego-py3.11/wheels/isaaccapture-*.whl
+uv pip install -e ./examples/orbbec_ego
 ```
 
 This extends an existing live `TeleopSessionConfig` named `config`, with its
@@ -259,7 +260,7 @@ added yet. It requests stereo RGB and IMU and preserves existing manual recordin
 from pathlib import Path
 import isaaccapture.deviceio_trackers as dt
 from isaaccapture.deviceio_session import McapRecordingConfig
-from isaaccapture.ego import configure_recording
+from isaaccapture_examples.orbbec_ego import configure_recording
 from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession
 
 run = Path("recordings/teleop_ego").resolve()
@@ -342,7 +343,7 @@ If that configuration includes audio, replace `--audio-output=...` with
 `--enable-audio` for embedded-only PCM, or explicitly retain media sidecars.
 
 ```python
-from isaaccapture.ego import embedded_recording
+from isaaccapture_examples.orbbec_ego import embedded_recording
 
 fragment = run / "ego_fragment.mcap"
 config.mcap_config.filename = str(run / "final.mcap")
@@ -556,8 +557,8 @@ exported paths. Opening video and WAV separately does not demonstrate synchroniz
 With the installed Python package, inspect an audio-enabled recording using:
 
 ```bash
-uv pip install -e ./examples/mcap_record_replay
-python -m isaaccapture_examples.mcap_record_replay.replay_ego \
+uv pip install -e ./examples/orbbec_ego
+python -m isaaccapture_examples.orbbec_ego.replay \
   /absolute/path/to/audio_enabled_recording/metadata.mcap
 ```
 
@@ -566,12 +567,11 @@ channels. A missing Audio channel is expected for audio-disabled recordings;
 it does not make them invalid. Replay reads structured records, not decoded
 video or synchronized sound, and one update is not a synchronized bundle.
 
-For sample-time association, install the offline extra and select only the
+For sample-time association, use the same example package and select only the
 streams needed, supplying a validated model when none was recorded:
 
 ```bash
-uv pip install 'isaaccapture[ego]'
-python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
+python -m isaaccapture_examples.orbbec_ego.analyze_sync \
   "$RUN" --required-streams left_rgb right_rgb accel gyro \
   --alignment /absolute/path/to/alignment.json --output "$RUN/sync_audit.json"
 ```
@@ -613,7 +613,7 @@ they do not rewrite MCAP or automatically become reusable capture profiles.
 To fit such a model from independently annotated events:
 
 ```bash
-python -m isaaccapture_examples.mcap_record_replay.calibrate_ego_sync \
+python -m isaaccapture_examples.orbbec_ego.calibrate_sync \
   "$RUN/events.json" --output "$RUN/alignment.json"
 ```
 

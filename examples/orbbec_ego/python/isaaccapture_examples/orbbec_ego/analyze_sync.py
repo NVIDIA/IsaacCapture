@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-from isaaccapture.ego import analyze_recording_sync
+from isaaccapture_examples.orbbec_ego import analyze_recording_sync
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from isaaccapture_examples.mcap_record_replay import calibrate_ego_sync
+from isaaccapture_examples.orbbec_ego import calibrate_sync
 
 
 ORIGIN = 1_700_000_000_000_000_000
@@ -83,7 +83,7 @@ def test_manifest_paths_resolve_independently_of_working_directory(
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.chdir(other)
-    result = calibrate_ego_sync.calibrate_manifest(path)
+    result = calibrate_sync.calibrate_manifest(path)
     assert result["status"] == "validated"
     assert result["epochs"][0]["streams"]["gyro"]["scale"] == 1
     assert result["recording_fingerprint"] == {
@@ -100,7 +100,7 @@ def test_manifest_paths_resolve_independently_of_working_directory(
 def test_cli_writes_new_validated_document(tmp_path, capsys):
     path, _ = write_manifest(tmp_path)
     output = tmp_path / "alignment.json"
-    assert calibrate_ego_sync.main([str(path), "--output", str(output)]) == 0
+    assert calibrate_sync.main([str(path), "--output", str(output)]) == 0
     assert json.loads(output.read_text())["status"] == "validated"
     assert "status=validated" in capsys.readouterr().out
 
@@ -108,7 +108,7 @@ def test_cli_writes_new_validated_document(tmp_path, capsys):
 def test_failed_independent_validation_is_saved_but_returns_failure(tmp_path):
     path, _ = write_manifest(tmp_path, error_ns=20_000_000)
     output = tmp_path / "alignment.json"
-    assert calibrate_ego_sync.main([str(path), "--output", str(output)]) == 2
+    assert calibrate_sync.main([str(path), "--output", str(output)]) == 2
     result = json.loads(output.read_text())
     assert result["status"] == "unverified"
     assert result["validation"]["max_abs_error_ns"] == 20_000_000
@@ -122,7 +122,7 @@ def test_audio_needs_independent_continuity_proof(tmp_path, continuity):
         segment["continuity_verified"] = continuity
     save_manifest(path, manifest)
     output = tmp_path / "alignment.json"
-    assert calibrate_ego_sync.main([str(path), "--output", str(output)]) == (
+    assert calibrate_sync.main([str(path), "--output", str(output)]) == (
         0 if continuity else 2
     )
     result = json.loads(output.read_text())
@@ -143,7 +143,7 @@ def test_cli_refuses_existing_output_without_changing_it(tmp_path, symlink):
     else:
         output.write_text("keep this calibration")
     with pytest.raises(SystemExit) as failure:
-        calibrate_ego_sync.main([str(path), "--output", str(output)])
+        calibrate_sync.main([str(path), "--output", str(output)])
     assert failure.value.code == 2
     if symlink:
         assert output.is_symlink()
@@ -159,7 +159,7 @@ def test_manifest_rejects_ambiguous_json(tmp_path, bad_key):
         '{"version":1,"version":2}' if bad_key == "duplicate" else '{"version":NaN}'
     )
     with pytest.raises(ValueError, match=r"Duplicate|Nonfinite"):
-        calibrate_ego_sync.calibrate_manifest(path)
+        calibrate_sync.calibrate_manifest(path)
 
 
 @pytest.mark.parametrize("coordinate", ["version", "fps", "source_value"])
@@ -175,7 +175,7 @@ def test_manifest_rejects_boolean_integer_coordinates(tmp_path, coordinate):
         ] = True
     save_manifest(path, manifest)
     with pytest.raises(ValueError, match="integer"):
-        calibrate_ego_sync.calibrate_manifest(path)
+        calibrate_sync.calibrate_manifest(path)
 
 
 def test_missing_raw_evidence_does_not_create_a_model(tmp_path):
@@ -183,7 +183,7 @@ def test_missing_raw_evidence_does_not_create_a_model(tmp_path):
     (tmp_path / "events.csv").unlink()
     output = tmp_path / "alignment.json"
     with pytest.raises(SystemExit) as failure:
-        calibrate_ego_sync.main([str(path), "--output", str(output)])
+        calibrate_sync.main([str(path), "--output", str(output)])
     assert failure.value.code == 2
     assert not output.exists()
 
@@ -193,7 +193,7 @@ def test_audio_annotations_must_belong_to_declared_sample_segment(tmp_path):
     manifest["epochs"][0]["streams"]["audio"]["segments"][0]["sample_count"] = 48_000
     save_manifest(path, manifest)
     with pytest.raises(ValueError, match="outside its declared sample segment"):
-        calibrate_ego_sync.calibrate_manifest(path)
+        calibrate_sync.calibrate_manifest(path)
 
 
 def test_effective_epoch_cannot_exceed_validation_interval(tmp_path):
@@ -201,7 +201,7 @@ def test_effective_epoch_cannot_exceed_validation_interval(tmp_path):
     manifest["epochs"][0]["valid_to_ns"] = ORIGIN + DURATION + 1
     save_manifest(path, manifest)
     with pytest.raises(ValueError, match="independent validation bounds"):
-        calibrate_ego_sync.calibrate_manifest(path)
+        calibrate_sync.calibrate_manifest(path)
 
 
 def test_effective_epoch_can_select_part_of_validated_interval(tmp_path):
@@ -209,7 +209,7 @@ def test_effective_epoch_can_select_part_of_validated_interval(tmp_path):
     manifest["epochs"][0]["valid_from_ns"] = ORIGIN + 60 * 10**9
     manifest["epochs"][0]["valid_to_ns"] = ORIGIN + 900 * 10**9
     save_manifest(path, manifest)
-    result = calibrate_ego_sync.calibrate_manifest(path)
+    result = calibrate_sync.calibrate_manifest(path)
     assert result["status"] == "validated"
     mapping = result["epochs"][0]["streams"]["gyro"]
     assert mapping["validation_start_ns"] == ORIGIN
@@ -223,4 +223,4 @@ def test_audio_continuity_flag_must_be_boolean(tmp_path):
     )
     save_manifest(path, manifest)
     with pytest.raises(ValueError, match="continuity_verified must be a boolean"):
-        calibrate_ego_sync.calibrate_manifest(path)
+        calibrate_sync.calibrate_manifest(path)

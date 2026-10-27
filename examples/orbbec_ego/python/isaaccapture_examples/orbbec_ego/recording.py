@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("isaaccapture.examples.orbbec_ego.recording")
 
 
 def _option(args: list[str], name: str) -> str | None:

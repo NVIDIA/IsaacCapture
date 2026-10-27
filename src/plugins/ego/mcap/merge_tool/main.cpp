@@ -41,7 +41,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& error)
     {
-        isaaccapture::Logger::get("isaaccapture.ego.merge")->error("{}", error.what());
+        isaaccapture::Logger::get("isaaccapture.plugins.ego.merge")->error("{}", error.what());
         return 1;
     }
 }

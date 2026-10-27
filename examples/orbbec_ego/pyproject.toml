@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-orbbec-ego"
+version = "0.0.0"
+description = "Orbbec EGO recording helpers, structured replay, and offline sync analysis"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "isaaccapture[cloudxr]",
+    "mcap>=1.2,<2",
+    "numpy>=1.23.0",
+]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/orbbec_ego"]
+sources = ["python"]
+
+[tool.uv.sources]
+isaaccapture = { path = "../..", editable = true }

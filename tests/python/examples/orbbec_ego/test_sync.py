@@ -14,7 +14,7 @@ import pytest
 import numpy as np
 from mcap.writer import CompressionType, Writer
 
-from isaaccapture.ego.sync import (
+from isaaccapture_examples.orbbec_ego.sync import (
     analyze_recording_sync,
     iter_sync_windows,
     recording_fingerprint,
@@ -930,7 +930,7 @@ def test_recording_bound_clock_drift_remains_supported(recording):
 
 def test_populated_spatial_calibration_is_decoded_with_timing_provenance(recording):
     from mcap.reader import make_reader
-    from isaaccapture.ego._records import RecordDecoder
+    from isaaccapture_examples.orbbec_ego._records import RecordDecoder
 
     path, _ = recording()
     with path.open("rb") as source:
@@ -995,7 +995,7 @@ def test_zero_length_audio_is_rejected(recording):
 
 def test_imu_vectors_are_immutable_views_without_per_sample_dicts(recording):
     from mcap.reader import make_reader
-    from isaaccapture.ego._records import RecordDecoder
+    from isaaccapture_examples.orbbec_ego._records import RecordDecoder
 
     path, _ = recording(imu_samples=2000)
     with path.open("rb") as source:
@@ -1102,7 +1102,7 @@ def test_sidecar_truncation_still_rejects_missing_indexed_bytes(
 
 def test_truncated_flatbuffer_is_rejected(recording):
     from mcap.reader import make_reader
-    from isaaccapture.ego._records import RecordDecoder
+    from isaaccapture_examples.orbbec_ego._records import RecordDecoder
 
     path, _ = recording()
     with path.open("rb") as source:

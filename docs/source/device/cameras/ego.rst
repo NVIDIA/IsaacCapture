@@ -168,7 +168,7 @@ recovery events, and device snapshots for diagnosis.
 Diagnostic recording is enabled by default. To omit these events from MCAP,
 pass ``--record-device-diagnostics=off`` to the recording wrapper. For
 ``TeleopSession``, pass ``record_device_diagnostics=False`` to
-``isaaccapture.ego.configure_recording`` or ``embedded_recording`` and exclude
+``isaaccapture_examples.orbbec_ego.configure_recording`` or ``embedded_recording`` and exclude
 diagnostic trackers from the recording configuration. This option leaves
 availability monitoring, recovery, and logging enabled.
 
@@ -180,15 +180,15 @@ Add the EGO trackers to a
 ``McapRecordingConfig``, alongside the hand, head, or
 controller trackers. Configure ``orbbec_ego_camera`` through ``PluginConfig`` with
 ``--collection-prefix=ego``. Its ``plugin.yaml`` gives the plugin 15 seconds to
-close its files when the session stops. Complete the full source build and install its Python wheel before
-using the EGO tracker bindings and recording helper; the wrapper's
-``build`` command builds only the native plugin tools.
+close its files when the session stops. Complete the full source build and install its Python wheel
+before using the EGO tracker bindings, then ``uv pip install -e ./examples/orbbec_ego`` for the
+recording helper; the wrapper's ``build`` command builds only the native plugin tools.
 
-Apply ``config = isaaccapture.ego.configure_recording(config)`` before opening
+Apply ``config = isaaccapture_examples.orbbec_ego.configure_recording(config)`` before opening
 the session to include the calibration tracker and any EGO time-model snapshots.
 
 For one self-contained multi-device MCAP, use
-``isaaccapture.ego.embedded_recording`` with exactly one EGO plugin configured
+``isaaccapture_examples.orbbec_ego.embedded_recording`` with exactly one EGO plugin configured
 for embedded media. The full configuration, matching media-spool path, and
 clean-stop procedure are documented under "TeleopSession: one MCAP with other
 trackers" in the :code-file:`plugin README <src/plugins/ego/README.md>`.
@@ -202,8 +202,8 @@ and any enabled diagnostic channels, so use an audio-enabled recording:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
-   python -m isaaccapture_examples.mcap_record_replay.replay_ego \
+   uv pip install -e ./examples/orbbec_ego
+   python -m isaaccapture_examples.orbbec_ego.replay \
      recordings/ego_with_audio/metadata.mcap
 
 A recording without audio is valid; this example reports a missing Audio
@@ -237,21 +237,20 @@ for video, IMU, and audio. For sample-time association, use the EGO offline
 reader with a validated time model for the recording's device, profile, and
 capture intervals.
 
-Install the ``ego`` extra into an environment containing the built package.
+Install the EGO example into an environment containing the built package.
 If no validated model was recorded during capture, supply one explicitly:
 
 .. code-block:: bash
 
-   uv pip install 'isaaccapture[ego]'
-   uv pip install -e ./examples/mcap_record_replay
-   python -m isaaccapture_examples.mcap_record_replay.analyze_ego_sync \
+   uv pip install -e ./examples/orbbec_ego
+   python -m isaaccapture_examples.orbbec_ego.analyze_sync \
      "$RUN" --required-streams left_rgb right_rgb accel gyro \
      --alignment /absolute/path/to/alignment.json \
      --output "$RUN/sync_audit.json"
 
 The audit supports standard sidecar directories and embedded MCAP. It reports
 coverage, gaps, and incomplete associations without decoding or playing media.
-Python consumers can use ``isaaccapture.ego.sync.iter_sync_windows`` to obtain
+Python consumers can use ``isaaccapture_examples.orbbec_ego.sync.iter_sync_windows`` to obtain
 frame references and sensor samples grouped into reference-frame intervals.
 Missing required streams or a validated model cause an error.
 

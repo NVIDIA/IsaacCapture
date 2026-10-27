@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from isaaccapture.ego.calibration import (
+from isaaccapture_examples.orbbec_ego.calibration import (
     PairedTimeEvent,
     VALIDATION_DURATION_NS,
     evidence_sha256,

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "isaaccapture-ego-tests"
+name = "isaaccapture-orbbec-ego-tests"
 version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 

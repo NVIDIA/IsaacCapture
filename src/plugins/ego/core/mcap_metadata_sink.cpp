@@ -54,7 +54,7 @@ public:
             throw std::runtime_error("Ego MCAP output already exists: " + filename);
         try
         {
-            mcap::McapWriterOptions options("ego");
+            mcap::McapWriterOptions options("orbbec_ego");
             options.compression = mcap::Compression::None;
             const std::filesystem::path output_path(filename);
             if (!output_path.parent_path().empty())
@@ -93,7 +93,7 @@ public:
                         writer_, "orbbec_ego_device", std::vector<std::string>{ "DeviceState" });
             }
             mcap::Metadata policy;
-            policy.name = "ego.recording";
+            policy.name = "orbbec_ego.recording";
             policy.metadata = { { "record_device_diagnostics", record_device_diagnostics ? "on" : "off" },
                                 { "diagnostic_version", "2" } };
             const auto policy_status = writer_.write(policy);

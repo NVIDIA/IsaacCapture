@@ -151,7 +151,7 @@ def _load(recording):
         from mcap.reader import make_reader
     except ImportError as error:
         raise ImportError(
-            "EGO offline synchronization requires isaaccapture[ego]"
+            "EGO offline synchronization requires mcap; install examples/orbbec_ego"
         ) from error
 
     path = _path(recording)
@@ -229,7 +229,7 @@ def _load(recording):
             else:
                 records[stream].append(item)
         for metadata in reader.iter_metadata():
-            if metadata.name == "ego.time_alignment":
+            if metadata.name == "orbbec_ego.time_alignment":
                 encoded = metadata.metadata.get("json")
                 if encoded:
                     models.append(json.loads(encoded))

@@ -4,7 +4,7 @@
 """Replay all structured EGO trackers from a recorded MCAP file.
 
 Pass the ``metadata.mcap`` produced by ``ego.sh record``, or the
-final archive produced by ``isaaccapture.ego.embedded_recording``.
+final archive produced by ``isaaccapture_examples.orbbec_ego.embedded_recording``.
 """
 
 import argparse
@@ -28,7 +28,7 @@ from isaaccapture.schema import (
 )
 from mcap.reader import make_reader
 
-logger = logging.getLogger("isaaccapture.examples.mcap_record_replay.replay_ego")
+logger = logging.getLogger("isaaccapture.examples.orbbec_ego.replay")
 
 
 def _update_count(path: Path, topics: set[str]) -> int:
@@ -59,7 +59,7 @@ def _diagnostic_policy(path: Path, expected: bool | None) -> bool:
     with path.open("rb") as stream:
         reader = make_reader(stream)
         for metadata in reader.iter_metadata():
-            if metadata.name != "ego.recording":
+            if metadata.name != "orbbec_ego.recording":
                 continue
             value = metadata.metadata.get("record_device_diagnostics")
             if (

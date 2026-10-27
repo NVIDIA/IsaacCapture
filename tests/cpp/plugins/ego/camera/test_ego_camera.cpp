@@ -1032,7 +1032,7 @@ TEST_CASE("EGO diagnostics off omits schema channel and messages but preserves s
     unsigned policies = 0;
     records.onMetadata = [&](const mcap::Metadata& metadata, auto)
     {
-        if (metadata.name == "ego.recording")
+        if (metadata.name == "orbbec_ego.recording")
         {
             ++policies;
             CHECK(metadata.metadata.at("record_device_diagnostics") == "off");

@@ -9,8 +9,8 @@ import pytest
 
 from isaaccapture import plugin_manager, teleop_session_manager
 from isaaccapture.deviceio_session import McapRecordingConfig
-from isaaccapture.ego import configure_recording, embedded_recording
-from isaaccapture.ego import recording
+from isaaccapture_examples.orbbec_ego import configure_recording, embedded_recording
+from isaaccapture_examples.orbbec_ego import recording
 from isaaccapture.teleop_session_manager import (
     PluginConfig,
     SessionMode,

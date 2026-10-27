@@ -84,7 +84,7 @@ void write_fixture(const fs::path& file,
     if (!diagnostic_policy.empty())
     {
         mcap::Metadata policy;
-        policy.name = "ego.recording";
+        policy.name = "orbbec_ego.recording";
         policy.metadata = { { "record_device_diagnostics", diagnostic_policy }, { "diagnostic_version", "2" } };
         REQUIRE(writer.write(policy).ok());
     }
@@ -166,7 +166,7 @@ TEST_CASE("ego_mcap_merge preserves opaque records and host observations", "[ego
     records.onMetadata = [&](const mcap::Metadata& record, auto)
     {
         ++metadata;
-        if (record.name == "ego.merge")
+        if (record.name == "orbbec_ego.merge")
             REQUIRE(record.metadata.at("recording.library").size() > 0);
         else
             REQUIRE(record.metadata.contains("file"));
@@ -327,7 +327,7 @@ TEST_CASE("ego_mcap_merge preserves off policy and every other record", "[ego][u
     unsigned policy_count = 0;
     records.onMetadata = [&](const mcap::Metadata& metadata, auto)
     {
-        if (metadata.name == "ego.recording")
+        if (metadata.name == "orbbec_ego.recording")
         {
             ++policy_count;
             CHECK(metadata.metadata.at("record_device_diagnostics") == "off");

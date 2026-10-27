@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from isaaccapture_examples.mcap_record_replay import analyze_ego_sync
+from isaaccapture_examples.orbbec_ego import analyze_sync
 
 
 def _report(status="validated", incomplete=0):
@@ -31,9 +31,9 @@ def test_requested_scope_and_bounds_reach_audit(tmp_path, monkeypatch):
         calls.append((path, kwargs))
         return _report()
 
-    monkeypatch.setattr(analyze_ego_sync, "analyze_recording_sync", audit)
+    monkeypatch.setattr(analyze_sync, "analyze_recording_sync", audit)
     assert (
-        analyze_ego_sync.main(
+        analyze_sync.main(
             [
                 str(recording),
                 "--required-streams",
@@ -79,12 +79,12 @@ def test_failed_acceptance_still_preserves_report(
 ):
     output = tmp_path / "audit.json"
     monkeypatch.setattr(
-        analyze_ego_sync,
+        analyze_sync,
         "analyze_recording_sync",
         lambda *_args, **_kwargs: _report(status, incomplete),
     )
     assert (
-        analyze_ego_sync.main(
+        analyze_sync.main(
             [
                 "take.mcap",
                 "--required-streams",
@@ -106,9 +106,9 @@ def test_output_is_not_overwritten_or_audited(tmp_path, monkeypatch):
     def unexpected(*_args, **_kwargs):
         pytest.fail("Existing output should be rejected before loading a recording")
 
-    monkeypatch.setattr(analyze_ego_sync, "analyze_recording_sync", unexpected)
+    monkeypatch.setattr(analyze_sync, "analyze_recording_sync", unexpected)
     with pytest.raises(SystemExit, match="2"):
-        analyze_ego_sync.main(
+        analyze_sync.main(
             ["take.mcap", "--required-streams", "left_rgb", "--output", str(output)]
         )
     assert output.read_text() == "retained evidence"
@@ -116,7 +116,7 @@ def test_output_is_not_overwritten_or_audited(tmp_path, monkeypatch):
 
 def test_required_streams_cannot_be_implicit(tmp_path):
     with pytest.raises(SystemExit, match="2"):
-        analyze_ego_sync.main(["take.mcap", "--output", str(tmp_path / "audit.json")])
+        analyze_sync.main(["take.mcap", "--output", str(tmp_path / "audit.json")])
 
 
 def test_missing_recording_error_creates_no_report(tmp_path, monkeypatch):
@@ -125,9 +125,9 @@ def test_missing_recording_error_creates_no_report(tmp_path, monkeypatch):
     def audit(*_args, **_kwargs):
         raise ValueError("Required stream is absent: gyro")
 
-    monkeypatch.setattr(analyze_ego_sync, "analyze_recording_sync", audit)
+    monkeypatch.setattr(analyze_sync, "analyze_recording_sync", audit)
     with pytest.raises(SystemExit, match="2"):
-        analyze_ego_sync.main(
+        analyze_sync.main(
             [
                 "take.mcap",
                 "--required-streams",

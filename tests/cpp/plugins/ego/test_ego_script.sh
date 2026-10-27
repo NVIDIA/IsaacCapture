@@ -666,7 +666,7 @@ class _Reader:
         return iter(
             [
                 SimpleNamespace(
-                    name="ego.recording",
+                    name="orbbec_ego.recording",
                     metadata={
                         "record_device_diagnostics": "on",
                         "diagnostic_version": "2",

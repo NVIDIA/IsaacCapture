@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-from isaaccapture.ego.calibration import (
+from isaaccapture_examples.orbbec_ego.calibration import (
     PairedTimeEvent,
     evidence_sha256,
     fit_time_alignment,

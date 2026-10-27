@@ -13,4 +13,4 @@ sys.path.insert(0, str(_tests_python))
 
 from repo_paths import repo_root  # noqa: E402
 
-sys.path.insert(0, str(repo_root() / "examples" / "mcap_record_replay" / "python"))
+sys.path.insert(0, str(repo_root() / "examples" / "orbbec_ego" / "python"))

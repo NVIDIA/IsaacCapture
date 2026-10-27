@@ -303,7 +303,7 @@ diagnostic_count = 0
 with open(path, "rb") as stream:
     reader = make_reader(stream)
     for metadata in reader.iter_metadata():
-        if metadata.name != "ego.recording":
+        if metadata.name != "orbbec_ego.recording":
             continue
         value = metadata.metadata.get("record_device_diagnostics")
         if (

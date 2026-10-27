@@ -34,7 +34,6 @@ keep a viewer local. Replay repeats until Ctrl+C; no loop flag is needed.
 | Full body | `live_full_body` | `record_full_body` | `replay_full_body` |
 | Raw hand joint SE3 poses | `live_joint_se3_pose` | `record_joint_se3_pose` | `replay_joint_se3_pose` |
 | VIVE SE3 trackers | — | `record_se3_vive` | `replay_se3_vive` |
-| EGO structured data | — | [EGO recording CLI](../../src/plugins/ego/README.md) | [replay_ego MCAP](../../src/plugins/ego/README.md#structured-replay-and-offline-reading) (headless; stops at EOF) |
 
 `record_*` takes an optional duration in seconds and an optional output path.
 Recording needs a live OpenXR runtime; replay needs only the file.

@@ -129,7 +129,7 @@ Counts scan(Source& source, mcap::McapWriter* output = nullptr)
     records.onMetadata = [&](const mcap::Metadata& metadata, auto)
     {
         ++counts.metadata;
-        if (metadata.name == "ego.recording")
+        if (metadata.name == "orbbec_ego.recording")
         {
             const auto flag = metadata.metadata.find("record_device_diagnostics");
             const auto version = metadata.metadata.find("diagnostic_version");
@@ -291,7 +291,7 @@ void merge_recording(const std::filesystem::path& recording_path,
     {
         mcap::McapWriterOptions options(recording.reader.header()->profile);
         options.compression = mcap::Compression::None;
-        options.library = "isaaccapture.ego.merge";
+        options.library = "isaaccapture.plugins.ego.merge";
         output.open(stream, options);
         // The fragment includes capture-tail samples that the host may not poll.
         // Preserve overlapping host observations under session_observed/.
@@ -300,7 +300,7 @@ void merge_recording(const std::filesystem::path& recording_path,
         scan(recording, &output);
         scan(media, &output);
         mcap::Metadata provenance;
-        provenance.name = "ego.merge";
+        provenance.name = "orbbec_ego.merge";
         provenance.metadata = { { "recording", recording_file.string() },
                                 { "media", media_file.string() },
                                 { "recording.library", recording.reader.header()->library },
