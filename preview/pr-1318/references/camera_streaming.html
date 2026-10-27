@@ -378,6 +378,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -949,8 +950,8 @@ VRAM (reported at startup); <code class="docutils literal notranslate"><span cla
 </pre></div>
 </div>
 <p>Limits are <code class="docutils literal notranslate"><span class="pre">plane_distance_min_cm</span></code>, <code class="docutils literal notranslate"><span class="pre">plane_distance_max_cm</span></code>, <code class="docutils literal notranslate"><span class="pre">size_range_m</span></code>,
-<code class="docutils literal notranslate"><span class="pre">offset_y_range_m</span></code>, <code class="docutils literal notranslate"><span class="pre">cylinder_angle_range_deg</span></code>, <code class="docutils literal notranslate"><span class="pre">equirect_h_range_deg</span></code>, and
-<code class="docutils literal notranslate"><span class="pre">equirect_v_half_range_deg</span></code>. Defaults stay within what the layers accept; see
+<code class="docutils literal notranslate"><span class="pre">offset_y_range_m</span></code>, <code class="docutils literal notranslate"><span class="pre">cylinder_</span><wbr><span class="pre">angle_</span><wbr><span class="pre">range_</span><wbr><span class="pre">deg</span></code>, <code class="docutils literal notranslate"><span class="pre">equirect_h_range_deg</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">equirect_</span><wbr><span class="pre">v_</span><wbr><span class="pre">half_</span><wbr><span class="pre">range_</span><wbr><span class="pre">deg</span></code>. Defaults stay within what the layers accept; see
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/configs/zed.yaml" rel="noopener noreferrer" target="_blank">configs/zed.yaml</a> for a commented example.</p>
 <p>A quad’s <code class="docutils literal notranslate"><span class="pre">distance</span></code> and a cylinder’s <code class="docutils literal notranslate"><span class="pre">cylinder_radius_m</span></code> stay YAML-only. Apparent size is
 <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">atan((width</span> <span class="pre">/</span> <span class="pre">2)</span> <span class="pre">/</span> <span class="pre">distance)</span></code> and arc width is <code class="docutils literal notranslate"><span class="pre">radius</span> <span class="pre">*</span> <span class="pre">angle</span></code> (angle in radians),
@@ -959,7 +960,7 @@ apparent size. The real distance to the surface still affects stereo depth.</p>
 </section>
 <section id="stereo-plane-distance">
 <h3><a class="toc-backref" href="#id17" role="doc-backlink">Stereo plane distance</a><a class="headerlink" href="#stereo-plane-distance" title="Link to this heading">#</a></h3>
-<p>A stereo layer draws each eye’s image on its own plane. <code class="docutils literal notranslate"><span class="pre">stereo_plane_distance_cm</span></code> sets
+<p>A stereo layer draws each eye’s image on its own plane. <code class="docutils literal notranslate"><span class="pre">stereo_</span><wbr><span class="pre">plane_</span><wbr><span class="pre">distance_</span><wbr><span class="pre">cm</span></code> sets
 the gap between them:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
@@ -982,7 +983,7 @@ restores it when switching back to stereo.</p>
 <p>The gap has no effect on the equirect sphere at its default infinite radius, so the right
 stick pans that shape instead. Televiz also offers <code class="docutils literal notranslate"><span class="pre">stereo_convergence_deg</span></code>, a rotation-based
 equivalent for curved layers that works at any radius. Live gap adjustment requires
-<code class="docutils literal notranslate"><span class="pre">Layer.set_stereo_baseline_mm</span></code>; when using an older wheel without that method, the binding
+<code class="docutils literal notranslate"><span class="pre">Layer.</span><wbr><span class="pre">set_</span><wbr><span class="pre">stereo_</span><wbr><span class="pre">baseline_</span><wbr><span class="pre">mm</span></code>; when using an older wheel without that method, the binding
 disables itself with a notice while <code class="docutils literal notranslate"><span class="pre">A</span></code>, <code class="docutils literal notranslate"><span class="pre">B</span></code>, <code class="docutils literal notranslate"><span class="pre">X</span></code>, and <code class="docutils literal notranslate"><span class="pre">Y</span></code> remain available.</p>
 </section>
 </section>
@@ -1246,9 +1247,9 @@ the viewer prints one line every five seconds with the same numbers.</p>
 <li><p><strong>The XR session fails to create</strong> — check <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code> and
 <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/runtime_worker_stderr.log</span></code> (<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> with
 <code class="docutils literal notranslate"><span class="pre">ISAACCAPTURE_LOGGING=off</span></code>) for the startup failure.
-<code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code>
+<code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">ERROR_</span><wbr><span class="pre">FORM_</span><wbr><span class="pre">FACTOR_</span><wbr><span class="pre">UNAVAILABLE</span></code>
 (-35) means the runtime is up but no headset has clicked CONNECT yet; XR mode waits
-according to <code class="docutils literal notranslate"><span class="pre">display.xr.system_wait_seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
+according to <code class="docutils literal notranslate"><span class="pre">display.</span><wbr><span class="pre">xr.</span><wbr><span class="pre">system_</span><wbr><span class="pre">wait_</span><wbr><span class="pre">seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
 indefinitely; <code class="docutils literal notranslate"><span class="pre">0</span></code> fails fast; positive values wait that many seconds;
 override with <code class="docutils literal notranslate"><span class="pre">--xr-wait</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to
 render to a desktop window instead (no runtime involved).</p></li>
@@ -1348,7 +1349,7 @@ sets each frame.</p></li>
 <p>Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> owns the session and hands its handles to <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> / <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code>,
 which then skip creating their own. The viewer builds the session with the trackers’ required
-extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.oxr_handles</span></code>:</p>
+extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">oxr_</span><wbr><span class="pre">handles</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cfg</span><span class="o">.</span><span class="n">required_extensions</span> <span class="o">=</span> <span class="n">DeviceIOSession</span><span class="o">.</span><span class="n">get_required_extensions</span><span class="p">(</span><span class="n">trackers</span><span class="p">)</span>
 <span class="n">viz_session</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSession</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
 
@@ -1363,7 +1364,7 @@ extensions and forwards the handles through <code class="docutils literal notran
 (imports, frame loop, and how the two sessions’ lifecycles relate), and
 <a class="reference internal" href="../teleop/teleop_session.html"><span class="doc">Teleop Session</span></a> for the <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> side.</p>
 <p><code class="docutils literal notranslate"><span class="pre">viz_session.get_oxr_handles()</span></code> returns <code class="docutils literal notranslate"><span class="pre">(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> as raw
-<code class="docutils literal notranslate"><span class="pre">uint64</span></code> values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> outside <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz.DisplayMode.kXr</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">uint64</span></code> values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> outside <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">viz.</span><wbr><span class="pre">DisplayMode.</span><wbr><span class="pre">kXr</span></code>.</p>
 </section>
 <section id="next-steps">
 <h2><a class="toc-backref" href="#id28" role="doc-backlink">Next steps</a><a class="headerlink" href="#next-steps" title="Link to this heading">#</a></h2>
@@ -1549,7 +1550,7 @@ the <a class="reference internal" href="retargeting/index.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 27, 2026.
       <br/>
     
   </p>

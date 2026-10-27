@@ -381,6 +381,7 @@
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
@@ -592,16 +593,16 @@ this frame. Before that first update the handle is empty like any other.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">available_time_local_common_clock</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">available_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>System monotonic time when the sample became available to the recording
 system. Useful for measuring pipeline latency.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sample_time_local_common_clock</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>System monotonic time when the sample was captured. Enables
 cross-device synchronization (values from different devices share the
 same clock domain).</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sample_time_raw_device_clock</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">raw_</span><wbr><span class="pre">device_</span><wbr><span class="pre">clock</span></code></p></td>
 <td><p>Timestamp from the device’s own clock. Values from different devices
 are <strong>not</strong> directly comparable.</p></td>
 </tr>
@@ -676,7 +677,7 @@ axis inputs. Uses standard OpenXR action bindings.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/controller.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/controller.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/controller_tracker.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">ControllerTracker</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_controller</span></code>, <code class="docutils literal notranslate"><span class="pre">right_controller</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.ControllerSnapshotRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">left_controller</span></code>, <code class="docutils literal notranslate"><span class="pre">right_controller</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">ControllerSnapshotRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/cpp/core/schema/test_controller.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_controller.cpp</a></p></li>
@@ -769,7 +770,7 @@ dependencies, renders the SOMA public hierarchy, and offers launch-time
 body-schema selection. It does not map SOMA into <code class="docutils literal notranslate"><span class="pre">FullBodyPose</span></code>.</p>
 <ul class="simple">
 <li><p>Schemas: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_body_common.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_body_common.fbs</a>, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_body_joint_rotations.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_body_joint_rotations.fbs</a>, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_body_joint_poses.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_body_joint_poses.fbs</a></p></li>
-<li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">soma_body_joint_rotations</span></code> and <code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses</span></code>)</p></li>
+<li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">body_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code> and <code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses</span></code>)</p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/soma_body_joint_rotations_tracker.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio_trackers</span> <span class="pre">import</span> <span class="pre">SomaBodyJointRotationsTracker</span></code></p></li>
 <li><p>Evaluated-pose C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/soma_body_joint_poses_tracker.hpp&gt;</span></code></p></li>
@@ -777,8 +778,8 @@ body-schema selection. It does not map SOMA into <code class="docutils literal n
 <li><p>Graph source: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/retargeting_engine/deviceio_source_nodes/soma_body_source.py" rel="noopener noreferrer" target="_blank">src/python/isaaccapture/retargeting_engine/deviceio_source_nodes/soma_body_source.py</a></p></li>
 <li><p>Live-view example: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a></p></li>
 <li><p>Demo publisher: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/soma_body_publisher/README.md" rel="noopener noreferrer" target="_blank">examples/soma_body_publisher/README.md</a></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">soma_body_joint_rotations</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_body_joint_rotations_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.SomaBodyJointRotationsRecord</span></code></p></li>
-<li><p>Evaluated-pose record channels: <code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.SomaBodyJointPosesRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">body_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">body_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations_</span><wbr><span class="pre">tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">SomaBodyJointRotationsRecord</span></code></p></li>
+<li><p>Evaluated-pose record channels: <code class="docutils literal notranslate"><span class="pre">soma_body_joint_poses</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">body_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">poses_</span><wbr><span class="pre">tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">SomaBodyJointPosesRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/cpp/core/schema/test_soma_body_joint_rotations.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_soma_body_joint_rotations.cpp</a></p></li>
@@ -808,7 +809,7 @@ The DeviceIO live-view example selects body and hand inputs independently and cr
 each hand.</p>
 <ul class="simple">
 <li><p>Schemas: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_common.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_common.fbs</a>, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_hand_joint_rotations.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_hand_joint_rotations.fbs</a>, <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/soma_hand_joint_poses.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/soma_hand_joint_poses.fbs</a></p></li>
-<li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">soma_hand_joint_rotations</span></code> and <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses</span></code>)</p></li>
+<li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code> and <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses</span></code>)</p></li>
 <li><p>Rotation C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/soma_hand_joint_rotations_tracker.hpp&gt;</span></code></p></li>
 <li><p>Rotation Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio_trackers</span> <span class="pre">import</span> <span class="pre">SomaHandJointRotationsTracker</span></code></p></li>
 <li><p>Evaluated-pose C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/soma_hand_joint_poses_tracker.hpp&gt;</span></code></p></li>
@@ -816,8 +817,8 @@ each hand.</p>
 <li><p>Graph source: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/retargeting_engine/deviceio_source_nodes/soma_hand_source.py" rel="noopener noreferrer" target="_blank">src/python/isaaccapture/retargeting_engine/deviceio_source_nodes/soma_hand_source.py</a></p></li>
 <li><p>Live-view example: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a></p></li>
 <li><p>Demo publisher: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/soma_hand_publisher/README.md" rel="noopener noreferrer" target="_blank">examples/soma_hand_publisher/README.md</a></p></li>
-<li><p>Rotation record channels: <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_rotations</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_rotations_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.SomaHandJointRotationsRecord</span></code></p></li>
-<li><p>Evaluated-pose record channels: <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.SomaHandJointPosesRecord</span></code></p></li>
+<li><p>Rotation record channels: <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations_</span><wbr><span class="pre">tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">SomaHandJointRotationsRecord</span></code></p></li>
+<li><p>Evaluated-pose record channels: <code class="docutils literal notranslate"><span class="pre">soma_hand_joint_poses</span></code>, <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">poses_</span><wbr><span class="pre">tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">SomaHandJointPosesRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/cpp/core/schema/test_soma_hand_joint_rotations.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_soma_hand_joint_rotations.cpp</a></p></li>
@@ -841,7 +842,7 @@ utility internally.</p>
 <li><p>Manifest: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml" rel="noopener noreferrer" target="_blank">src/core/deviceio_trackers/trackers.toml</a> (<code class="docutils literal notranslate"><span class="pre">frame_metadata_oak</span></code>)</p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/frame_metadata_tracker_oak.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">FrameMetadataTrackerOak</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">oak</span></code>, <code class="docutils literal notranslate"><span class="pre">oak_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.FrameMetadataOakRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">oak</span></code>, <code class="docutils literal notranslate"><span class="pre">oak_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">FrameMetadataOakRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/cpp/core/schema/test_oak.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_oak.cpp</a></p></li>
@@ -865,7 +866,7 @@ utility internally.</p>
 <li><p>Schema: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/pedals.fbs" rel="noopener noreferrer" target="_blank">src/core/schema/fbs/pedals.fbs</a></p></li>
 <li><p>C++ header: <code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;deviceio_trackers/generic_3axis_pedal_tracker.hpp&gt;</span></code></p></li>
 <li><p>Python import: <code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">isaaccapture.deviceio</span> <span class="pre">import</span> <span class="pre">Generic3AxisPedalTracker</span></code></p></li>
-<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code>, <code class="docutils literal notranslate"><span class="pre">pedals_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.Generic3AxisPedalOutputRecord</span></code></p></li>
+<li><p>Record channels: <code class="docutils literal notranslate"><span class="pre">pedals</span></code>, <code class="docutils literal notranslate"><span class="pre">pedals_tracked</span></code> | MCAP schema: <code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">Generic3AxisPedalOutputRecord</span></code></p></li>
 <li><p>Tests:</p>
 <ul>
 <li><p><a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/cpp/core/schema/test_pedals.cpp" rel="noopener noreferrer" target="_blank">tests/cpp/core/schema/test_pedals.cpp</a></p></li>
@@ -1096,7 +1097,7 @@ construction; see <a class="reference internal" href="../../teleop/teleop_sessio
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 23, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 27, 2026.
       <br/>
     
   </p>

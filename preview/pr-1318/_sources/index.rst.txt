@@ -97,6 +97,7 @@ Table of Contents
    device/gamepads/index
    Spatial trackers <device/trackers/index>
    device/add_device
+   Device Conformance <conformance/overview>
 
 .. toctree::
    :maxdepth: 2

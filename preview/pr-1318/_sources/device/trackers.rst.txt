@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=trackers/index.html
+
 Spatial Trackers and Device Data
 ================================
 
