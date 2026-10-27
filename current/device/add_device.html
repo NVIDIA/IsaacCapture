@@ -541,6 +541,9 @@ which uses <code class="docutils literal notranslate"><span class="pre">SchemaPu
 <code class="docutils literal notranslate"><span class="pre">Pack()</span></code>, then call <code class="docutils literal notranslate"><span class="pre">pusher_.push_buffer(ptr,</span> <span class="pre">size,</span> <span class="pre">sample_time_local_common_clock_ns,</span>
 <span class="pre">sample_time_raw_device_clock_ns)</span></code>. Use a monotonic clock (e.g. <code class="docutils literal notranslate"><span class="pre">core::os_monotonic_now_ns()</span></code>)
 for the local common clock; use the device’s own clock for the raw device clock if available.</p></li>
+<li><p><strong>Shutdown</strong> — To stop a plugin, the plugin manager sends <code class="docutils literal notranslate"><span class="pre">SIGINT</span></code> and kills the process if
+it is still running 2 seconds later. A plugin that needs longer to close its files sets
+<code class="docutils literal notranslate"><span class="pre">shutdown_</span><wbr><span class="pre">timeout_</span><wbr><span class="pre">seconds</span></code> (greater than 0, at most 3600) in its <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>.</p></li>
 </ul>
 <p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
 <code class="docutils literal notranslate"><span class="pre">core::SchemaPusher</span></code> member, opens the Linux joystick device, maps axes to
