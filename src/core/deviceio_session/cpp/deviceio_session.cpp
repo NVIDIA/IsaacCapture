@@ -4,6 +4,7 @@
 #include "inc/deviceio_session/deviceio_session.hpp"
 
 #include <live_trackers/live_deviceio_factory.hpp>
+#include <mcap/sample_stream.hpp>
 #include <mcap/writer.hpp>
 #include <openxr/openxr.h>
 #include <oxr_utils/os_time.hpp>
@@ -82,16 +83,24 @@ DeviceIOSession::DeviceIOSession(const std::vector<std::shared_ptr<ITracker>>& t
         }
 
         mcap_writer_ = std::make_unique<mcap::McapWriter>();
-        mcap::McapWriterOptions options("teleop");
-        options.compression = mcap::Compression::None;
-
-        auto status = mcap_writer_->open(recording_config->filename, options);
-        if (!status.ok())
+        if (recording_config->sample_stream != nullptr)
         {
-            throw std::runtime_error("DeviceIOSession: failed to open MCAP file '" + recording_config->filename +
-                                     "': " + status.message);
+            mcap_writer_->open(*recording_config->sample_stream, TrackerSampleStreamWriter::writer_options());
+            logger_->info("DeviceIOSession: recording to a sample stream");
         }
-        logger_->info("DeviceIOSession: recording to {}", recording_config->filename);
+        else
+        {
+            mcap::McapWriterOptions options("teleop");
+            options.compression = mcap::Compression::None;
+
+            auto status = mcap_writer_->open(recording_config->filename, options);
+            if (!status.ok())
+            {
+                throw std::runtime_error("DeviceIOSession: failed to open MCAP file '" + recording_config->filename +
+                                         "': " + status.message);
+            }
+            logger_->info("DeviceIOSession: recording to {}", recording_config->filename);
+        }
 
         tracker_names = std::move(recording_config->tracker_names);
     }
