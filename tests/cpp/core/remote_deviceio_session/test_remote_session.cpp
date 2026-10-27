@@ -9,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <deviceio_session/remote_session.hpp>
+#include <deviceio_session/remote_session_host.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
 #include <deviceio_trackers/joint_se3_pose_tracker.hpp>
@@ -19,6 +20,7 @@
 #include <mcap/tracker_channels.hpp>
 #include <mcap/writer.hpp>
 #include <oxr_utils/os_time.hpp>
+#include <remote_link/messages.hpp>
 #include <schema/hand_generated.h>
 #include <schema/head_generated.h>
 #include <schema/joint_se3_pose_generated.h>
@@ -308,4 +310,42 @@ TEST_CASE("RemoteSession: ticks are ordered by tick_seq", "[remote][session]")
     CHECK_FALSE(stream->add_samples(first, 1, now));
     session->update();
     CHECK(head.get_head(*session)->pose()->position().x() == 2.0f);
+}
+
+TEST_CASE("RemoteSession: merged SAMPLES payloads keep the newer prefix and every channel's newest record",
+          "[remote][session]")
+{
+    Server server;
+    HeadChannels head_ch(server.writer, "0", to_string_vec(core::HeadRecordingTraits::recording_channels));
+    JointSe3PoseChannels tips_ch(
+        server.writer, "1", to_string_vec(core::JointSe3PoseRecordingTraits::recording_channels));
+
+    write_head(head_ch, 1.0f);
+    write_joint_se3_pose(tips_ch, 3.0f);
+    const auto setup = server.out.take_setup();
+    const auto older = core::encode_samples_payload({ 1, 100 }, server.out.take_samples());
+    // No new tips sample in the newer tick.
+    write_head(head_ch, 2.0f);
+    const auto newer = core::encode_samples_payload({ 2, 200 }, server.out.take_samples());
+
+    const std::vector<uint8_t> merged = core::merge_samples_payloads(older, newer);
+    const core::SamplesPrefix prefix = core::decode_samples_prefix(merged);
+    CHECK(prefix.tick_seq == 2);
+    CHECK(prefix.tick_time_ns == 200);
+
+    core::HeadTracker head;
+    core::JointSe3PoseTracker tips("manus_sensors_left");
+    auto stream = std::make_shared<core::TrackerSampleStreamReader>();
+    auto session = core::RemoteSession::run({ stream, { { &head, "0" }, { &tips, "1" } } });
+    stream->add_setup(setup);
+    REQUIRE(stream->add_samples(std::span<const uint8_t>(merged).subspan(core::kSamplesPrefixSize), prefix.tick_seq,
+                                core::os_monotonic_now_ns()));
+    session->update();
+    REQUIRE(head.get_head(*session));
+    CHECK(head.get_head(*session)->pose()->position().x() == 2.0f);
+    REQUIRE(tips.get_data(*session));
+    CHECK(tips.get_data(*session)->joints()->Get(0)->pose().position().x() == 3.0f);
+
+    CHECK_THROWS(core::merge_samples_payloads({ 1, 2, 3 }, newer));
+    CHECK_THROWS(core::merge_samples_payloads(older, { 1, 2, 3 }));
 }

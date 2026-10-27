@@ -5,15 +5,19 @@ cmake_minimum_required(VERSION 3.20)
 
 # DeviceIOSession — wires trackers to the live factory and runs the update loop.
 # ReplaySession — reads recorded tracker data from an MCAP file.
-# RemoteSession — reads tracker data from a sample stream.
+# RemoteSession, RemoteSessionClient, RemoteSessionHost — tracker data over a network link.
 add_library(deviceio_session STATIC
     mcap_impl.cpp
     deviceio_session.cpp
     replay_session.cpp
     remote_session.cpp
+    remote_session_client.cpp
+    remote_session_host.cpp
     inc/deviceio_session/deviceio_session.hpp
     inc/deviceio_session/replay_session.hpp
     inc/deviceio_session/remote_session.hpp
+    inc/deviceio_session/remote_session_client.hpp
+    inc/deviceio_session/remote_session_host.hpp
 )
 
 target_include_directories(deviceio_session
@@ -24,13 +28,15 @@ target_include_directories(deviceio_session
 # Public headers include oxr_funcs.hpp and oxr_session_handles.hpp. Propagate
 # oxr::oxr_utils (OpenXR headers + oxr inc/) and Teleop::openxr_extensions (NVIDIA
 # extension headers) so consumers (Python bindings, apps) compile without linking
-# live_trackers.
+# live_trackers. The remote session headers expose remote_link types (LinkOptions,
+# ClockEstimate, ITransport).
 target_link_libraries(deviceio_session
     PUBLIC
         deviceio::deviceio_base
         oxr::oxr_utils
         Teleop::openxr_extensions
         log_bridge::log_bridge_core
+        remote_link::remote_link
     PRIVATE
         deviceio::deviceio_trackers
         deviceio::live_trackers
