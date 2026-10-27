@@ -40,7 +40,7 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
   estimation using the [SOMA-Hand representation](https://github.com/NVlabs/SOMA-X).
   Get started with [pretrained models](https://huggingface.co/nvidia/EgoHand-v1),
   the [inference example](#example),
-  [fine-tuning with GEM-X](https://github.com/NVlabs/GEM-X), and the
+  [fine-tuning EgoHand with GEM-X](https://github.com/NVlabs/GEM-X), and the
   [paper](https://arxiv.org/abs/2610.30293).
 
 <a id="overview"></a>
