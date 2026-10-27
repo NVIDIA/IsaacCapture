@@ -61,7 +61,6 @@ class Editor:
         g = self.server.gui
         g.configure_theme(control_width="medium", show_share_button=False)
         g.main_panel.dock_right()
-        self.header = g.add_markdown("")
         self.side = g.add_dropdown("Edit hand", tuple(state.documents))
         self.both = g.add_checkbox("Show both hands", True)
         self.mode = g.add_dropdown("Mode", ("EDIT", "PREVIEW", "LIVE", "PAUSED"))
@@ -112,7 +111,6 @@ class Editor:
             self.calibrate_button = self.button(
                 "Preview / set wrist reference", self.calibrate
             )
-            self.resources = g.add_markdown("")
             self.button("Reset cameras", self.camera)
         with tabs.add_tab("Segments"):
             self.joint = g.add_dropdown("URDF free joint", ("",))
@@ -309,7 +307,6 @@ class Editor:
                     geo.Model(state.model["urdf"], state.model.get("packages", {}))
                 )
             except (OSError, ValueError) as exc:
-                self.resources.content = str(exc)
                 self.log(
                     "URDF unavailable; numerical draft editing remains available: "
                     + str(exc)
@@ -391,15 +388,6 @@ class Editor:
             j.name for j in model.joints
         ) or ("",)
         self.q = copy.deepcopy(self.state.model.get("q0", {}))
-        self.resources.content = (
-            "Missing resources: "
-            + str(model.missing)
-            + "\n\n"
-            + "\n\n".join(
-                f"{j.name}: {j.parent} → {j.child}; {j.type}; limits={j.limit}; mimic={j.mimic}"
-                for j in model.urdf.robot.joints
-            )
-        )
         self.sides.disabled = True
         self.sides.value = "both" if len(self.state.documents) == 2 else self.side.value
         self.joint_controls()
@@ -423,7 +411,7 @@ class Editor:
             {},
             {},
         )
-        self.q, self.resources.content = {}, ""
+        self.q = {}
         for w in (
             self.wrist,
             self.joint,
@@ -972,7 +960,6 @@ class Editor:
         self.angle.disabled = self.angle_number.disabled = self.model is None
         self.selected = [i for i in self.selected if 0 <= i < len(d.arrays[FIELDS[1]])]
         self.side.visible = self.both.visible = len(self.state.documents) == 2
-        self.header.content = f"{Path(self.state.model.get('urdf', 'No URDF')).name}; hands: {', '.join(self.state.documents)}; {self.mode.value}\n\n{self.state.paths.get(d.side, 'Unsaved draft')}{' *' if self.state.dirty() else ''}; revision {self.state.revision}"
         self.segment.options = self.segment_options()
         links = d.editor.get("segment_links", {})
         self.segment_table.content = "\n\n".join(
@@ -1547,7 +1534,7 @@ class Editor:
                     last_error = None
                     time.sleep(1 / 30)
                 except KeyboardInterrupt:
-                    self.guard(lambda: setattr(self, "closing", True))
+                    self.closing = True
                 except Exception as exc:
                     message = f"{type(exc).__name__}: {exc}"
                     if message != last_error:
