@@ -62,9 +62,9 @@ script:
 ```bash
 uv pip install -e ./examples/noitom
 python -m isaaccapture_examples.noitom.record_noitom_full_body \
-  10 examples/noitom/recordings/noitom_full_body.mcap
+  10 recordings/noitom_full_body.mcap
 
 uv pip install -e ./examples/mcap_record_replay
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
-  examples/noitom/recordings/noitom_full_body.mcap
+  recordings/noitom_full_body.mcap
 ```

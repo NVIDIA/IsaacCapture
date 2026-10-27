@@ -168,8 +168,7 @@ def _noitom_settings_from_env() -> NoitomG1Settings:
 
 
 def _plugin_search_paths() -> list[Path]:
-    # Six levels up is the repo root -- or the install prefix, which has the
-    # same shape under examples/<name>/python/isaaccapture_examples/<name>/.
+    # Six levels up is the repo root.
     base = Path(__file__).resolve().parents[5]
     candidates = [
         base / "plugins",

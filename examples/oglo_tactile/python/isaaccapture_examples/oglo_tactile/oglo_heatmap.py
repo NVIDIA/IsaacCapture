@@ -12,7 +12,7 @@ Taxel index convention (firmware ``sample_order = "finger,row,col"``):
 Row 0 is the fingertip (distal); rows are flipped so the fingertip draws at the top.
 
 Standalone preview (writes a PNG you can open):
-    python oglo_heatmap.py
+    python -m isaaccapture_examples.oglo_tactile.oglo_heatmap
 """
 
 from __future__ import annotations

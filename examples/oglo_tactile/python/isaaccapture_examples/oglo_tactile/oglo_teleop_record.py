@@ -16,7 +16,7 @@ advertising; the project built with -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON and
 the Python wheel installed. ``cupy`` is required for the headset overlay
 (recording still works without it).
 
-    python oglo_teleop_record.py --plugin-bin <path-to>/oglo_tactile_plugin
+    python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record --plugin-bin <path-to>/oglo_tactile_plugin
 """
 
 from __future__ import annotations
