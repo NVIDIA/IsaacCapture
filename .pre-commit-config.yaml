@@ -76,3 +76,10 @@ repos:
         # src/python/, so a package rename cannot leave copy-pasteable examples
         # that raise ModuleNotFoundError. .rst and .md both carry those.
         files: ^(docs/source/.*\.rst|(?!.*/(build|_build|\.venv|node_modules)/).*\.md)$
+      - id: check-agent-docs
+        name: Check llms.txt and skills match the tree
+        entry: python3 scripts/check_agent_docs.py
+        language: system
+        pass_filenames: false
+        # docs/source/ is in the list because moving a page breaks links to it.
+        files: ^(llms\.txt|docs/llms\.txt|skills/.*|docs/source/.*\.rst)$
