@@ -164,36 +164,36 @@ Stereo GMSL2 → Argus → Jetson hardware HEVC → AVS1/TCP. Dimensions are per
 The sender uses Argus device IDs and sensor modes for Sensing cameras, including
 SHW5G and S56. Device models are not hard-coded in the sender.
 
-The supplied profiles describe the local S56 adapter (sensor indices 0/1).
-For SHW5G, copy a profile to `configs/shw5g-stereo-RESOLUTION-FPS.yaml`, enumerate
-`--list-modes`, and set its camera IDs, modes, dimensions and rate for that rig.
-Do not assume S56 mode indices apply to SHW5G.
+### S56 stereo profiles
 
-| Goal | PROFILE | Resolution / rate per eye |
-|---|---|---|
-| Highest resolution exposed by this S56 driver | `s56-stereo-2560x1984-30` | 2560×1984, 30 fps |
-| Highest frame rate exposed by this S56 driver | `s56-stereo-1080p60` | 1920×1080, 60 fps |
+The supplied stereo profiles use sensor indices 0/1 on the S56 adapter.
+Resolution and frame rate below apply to each eye.
 
-### Mono profiles
+| PROFILE | Output resolution | Frame rate | Capture mode / notes |
+|---|---|---|---|
+| `s56-stereo-2560x1984-30` | 2560×1984 | 30 fps | Mode 1, native dimensions; highest resolution exposed by this driver |
+| `s56-stereo-1080p60` | 1920×1080 | 60 fps | Mode 0, native dimensions; highest frame rate exposed by this driver |
+
+### S56 mono profiles
 
 Use one S56 sensor to exercise the mono capture, HEVC, network and viewer path.
 Here, mono means one color camera stream, not grayscale. The supplied profiles
 select device 0; select device 1 instead to use the other eye.
 
-| PROFILE | Output resolution / rate | Capture mode / geometry |
-|---|---|---|
-| `s56-mono-2560x1984-30` | 2560×1984, 30 fps | Mode 1, native dimensions |
-| `s56-mono-1080p30` | 1920×1080, 30 fps | Mode 0, native dimensions |
-| `s56-mono-1080p60` | 1920×1080, 60 fps | Mode 0, native dimensions |
-| `s56-mono-720p30` | 1280×720, 30 fps | Mode 0, scaled from 1920×1080 |
-| `s56-mono-720p60` | 1280×720, 60 fps | Mode 0, scaled from 1920×1080 |
-| `s56-mono-2400x1440-30` | 2400×1440, 30 fps | Mode 1, center-cropped/scaled from 2560×1984 |
+| PROFILE | Output resolution | Frame rate | Capture mode / notes |
+|---|---|---|---|
+| `s56-mono-2560x1984-30` | 2560×1984 | 30 fps | Mode 1, native dimensions |
+| `s56-mono-1080p30` | 1920×1080 | 30 fps | Mode 0, native dimensions |
+| `s56-mono-1080p60` | 1920×1080 | 60 fps | Mode 0, native dimensions |
+| `s56-mono-720p30` | 1280×720 | 30 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-720p60` | 1280×720 | 60 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-2400x1440-30` | 2400×1440 | 30 fps | Mode 1, center-cropped/scaled from 2560×1984 |
 
 Set `PROFILE` to the same mono profile in the Robot Send and Host Receive commands
 below. The viewer automatically displays the single `head` stream. No runtime
 code or separate receiver configuration is needed. All mono profiles use 30 Mbps.
 
-### SHW5G profiles
+### SHW5G mono profiles
 
 SENSING lists SHW5G as a monocular camera with 2560×1984 at 30 fps and
 2400×1440 at 60 fps ([SHW5G specifications](https://www.sgwrd.com/products/3mp-global-shutter-monocular-camera-shw5g)).
@@ -203,8 +203,10 @@ vendor specifications do not define their numeric indices.
 
 `configs/` contains one shared YAML for each published SHW5G mode:
 
-- `shw5g-mono-2560x1984-30.yaml`
-- `shw5g-mono-2400x1440-60.yaml`
+| PROFILE | Output resolution | Frame rate | Capture mode / notes |
+|---|---|---|---|
+| `shw5g-mono-2560x1984-30` | 2560×1984 | 30 fps | Set mode from `--list-modes`; highest published resolution |
+| `shw5g-mono-2400x1440-60` | 2400×1440 | 60 fps | Set mode from `--list-modes`; highest published frame rate |
 
 Edit the desired profile in `configs/`: set `cameras[].device` for your rig,
 and replace `mode: SET_FROM_LIST_MODES` with the matching Argus mode index.

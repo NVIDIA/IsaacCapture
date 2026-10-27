@@ -34,3 +34,4 @@ SPDX-License-Identifier: Apache-2.0
 - Public setup instructions target main; describe pre-merge branch overrides separately.
 - Do not infer Argus mode indices from vendor specifications or another model; keep unknown modes explicit in profiles.
 - Keep camera YAMLs directly under configs/ with model-prefixed filenames so profile selection needs no subdirectory.
+- Use matching columns for all camera profile tables so resolution, frame rate and capture constraints are directly comparable.
