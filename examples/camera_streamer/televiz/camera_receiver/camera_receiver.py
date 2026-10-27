@@ -1317,14 +1317,41 @@ def _load_config(path: Path) -> dict:
         cfg = yaml.safe_load(f)
     if not isinstance(cfg, dict):
         raise ValueError(f"config must be a YAML mapping: {path}")
+    if "network" in cfg:
+        # AVS1 stream indices follow sender list order; geometry and port are shared.
+        receiver = dict(cfg.get("receiver", {}))
+        if "port" in receiver:
+            raise ValueError("shared config uses network.port, not receiver.port")
+        receiver["port"] = cfg["network"].get("port", 5000)
+        streams = []
+        for index, stream in enumerate(cfg.get("streams", [])):
+            settings = dict(stream.get("receiver", {}))
+            if set(settings) & {"index", "name", "type", "width", "height"}:
+                raise ValueError(
+                    "shared stream identity and geometry belong in id/type/output"
+                )
+            output = stream["output"]
+            if int(output.get("width", 0)) <= 0 or int(output.get("height", 0)) <= 0:
+                raise ValueError(
+                    "shared config requires explicit positive output width and height"
+                )
+            streams.append(
+                dict(
+                    settings,
+                    index=index,
+                    name=stream["id"],
+                    type=stream["type"],
+                    width=output["width"],
+                    height=output["height"],
+                )
+            )
+        cfg = dict(cfg, receiver=receiver, streams=streams)
     return cfg
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     default_config = (
-        Path(__file__).resolve().parents[2]
-        / "configs"
-        / "s56-stereo-2560x1984-30-receiver.yaml"
+        Path(__file__).resolve().parents[2] / "configs" / "s56-stereo-2560x1984-30.yaml"
     )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(default_config))

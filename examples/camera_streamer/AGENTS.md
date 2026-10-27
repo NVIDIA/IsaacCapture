@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Standalone Sensing/Argus streamer
+# Standalone GMSL/Argus streamer
 
-- Keep this example scoped to Sensing/Argus capture, AVS1/TCP, NVDEC and CUDA IPC.
+- Keep this example scoped to GMSL/Argus capture, AVS1/TCP, NVDEC and CUDA IPC.
   Do not restore unrelated camera wrappers, USB senders, RTP/recording paths or
   rig-specific deployment assets without an explicit scope change.
 - Preserve original hashes and license notices for retained imports. Public review is
@@ -28,3 +28,6 @@ SPDX-License-Identifier: Apache-2.0
 - Preview loops must handle window-close events before rendering another frame.
 - CuPy pixel diagnostics need matching NVRTC; exclude first-use JIT from timing.
 - Normalize final newlines and imported executable permissions before staging.
+- Describe camera support generically; separate upstream device testing from local validation.
+- Use one shared profile per device/resolution; define wire geometry and port once.
+- Keep tests under the example-level tests/ directory, split by language and hardware needs.

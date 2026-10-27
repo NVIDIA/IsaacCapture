@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "camera-streamer-tests"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "numpy>=1.24,<2", "PyYAML>=6"]
+
+[tool.pytest.ini_options]
+testpaths = ["python"]

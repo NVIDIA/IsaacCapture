@@ -18,7 +18,7 @@ The matching receiver parser tests are:
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
-.venv/bin/python -m pytest televiz/camera_receiver/tests -q
+.venv/bin/python -m pytest tests/python -q
 ```
 
 ## 120-frame hardware smoke test

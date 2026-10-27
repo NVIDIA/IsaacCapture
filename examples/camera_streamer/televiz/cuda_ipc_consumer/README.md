@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sensing CUDA IPC viewer
+# GMSL CUDA IPC viewer
 
 Use the [host viewer instructions](../../README.md) after starting the receiver.
 The viewer shares the host environment with the receiver. It uses CuPy to open

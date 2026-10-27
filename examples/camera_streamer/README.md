@@ -3,17 +3,17 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Isaac Camera Streamer — Sensing / Argus
+# Isaac Camera Streamer — GMSL / Argus
 
-Stream Sensing S56 stereo video from a Jetson Orin robot computer to an NVIDIA
+Stream Argus-compatible GMSL stereo video from a Jetson Orin robot computer to an NVIDIA
 workstation: **Argus → hardware HEVC → AVS1/TCP → NVDEC → CUDA IPC viewer**.
 This standalone example runs independently of robot control software.
 
 | Camera | Robot Install | Robot Preview | Robot Send | Host Receive | Host Viewer |
 |---|---|---|---|---|---|
-| Sensing S56 stereo (GMSL2) | Required: driver + native build | Optional: external Argus app | Jetson HEVC/TCP | NVDEC receiver | Stereo desktop view |
+| Sensing SHW5G / S56 (GMSL) | Required: driver + native build | Optional: external Argus app | Jetson HEVC/TCP | NVDEC receiver | Stereo desktop view |
 
-Complete common setup once, then follow the five Sensing sections below.
+Complete common setup once, then follow the five GMSL sections below.
 Network streaming uses three terminals: Robot Send, Host Receive, Host Viewer.
 
 ## Common setup — once per computer
@@ -103,8 +103,8 @@ and the rest of the checkout.
 
 ### Install the shared host receiver and viewer
 
-Do this once, for either Sensing mode. The host needs Linux, an NVIDIA NVDEC-capable
-GPU, CUDA development tools, CMake, a C++ compiler and `uv`. Argus and the Sensing drivers are needed only on the robot. The native build downloads a pinned NVIDIA Video
+Do this once, for any supported GMSL mode. The host needs Linux, an NVIDIA NVDEC-capable
+GPU, CUDA development tools, CMake, a C++ compiler and `uv`. Argus and the camera vendor drivers are needed only on the robot. The native build downloads a pinned NVIDIA Video
 Codec SDK archive from the source-configured NVIDIA artifact server.
 
 ```bash
@@ -122,8 +122,12 @@ named `.venv`.
 
 ### How to select and switch modes
 
-Each mode has a matched pair: `configs/PROFILE-sender.yaml` and
-`configs/PROFILE-receiver.yaml`. Select the **same PROFILE on both computers**.
+Each device/resolution has one shared `configs/PROFILE.yaml`. Copy the same file
+to both computers and select the **same PROFILE on both computers**.
+`network.port` and `streams[].id/type/output` define the common wire format.
+`cameras`, `capture`, `runtime` and `alignment` control capture; `receiver`, `ipc`
+and `streams[].receiver` control decoding and local IPC. Stream order determines
+the AVS1 index. The receiver derives dimensions from `output` without a second copy.
 Set `PROFILE` again in each new terminal; shell variables are not shared.
 No Python copy/modify script is needed for the supplied profiles.
 
@@ -135,12 +139,20 @@ pipeline at a time. TCP is unauthenticated; use a trusted LAN or VPN.
 
 Mode tables distinguish **tested here** from **candidate** profiles. A sensor's
 maximum rate is not a guarantee of the complete capture/encode/network/display
-rate. USB link speed, lighting, driver modes and hardware sync can limit it.
+rate. Link bandwidth, lighting, driver modes and hardware sync can limit it.
 
-## Sensing S56
+## GMSL cameras: Sensing SHW5G and S56
 
 Stereo GMSL2 → Argus → Jetson hardware HEVC → AVS1/TCP. Dimensions are per eye.
-These choices match sensor indices 0/1 on the test adapter; other rigs may differ.
+The sender was originally developed and tested for Sensing SHW5G (upstream team
+report); this standalone extraction was tested locally with Sensing S56. We do
+not have a local SHW5G test result for this revision. Neither device model is
+hard-coded in the sender: Argus device IDs and mode indices come from the driver.
+
+The supplied profiles describe the local S56 adapter (sensor indices 0/1).
+For SHW5G, copy a profile to `configs/shw5g-stereo-RESOLUTION-FPS.yaml`, enumerate
+`--list-modes`, and set its camera IDs, modes, dimensions and rate for that rig.
+Do not assume S56 mode indices apply to SHW5G.
 
 | Goal | PROFILE | Resolution / rate per eye | Status |
 |---|---|---|---|
@@ -165,7 +177,7 @@ cmake --build televiz/argus_sender/build --parallel 2
 televiz/argus_sender/build/argus_sender --list-modes
 ```
 
-Verify both eye devices and mode indices against the chosen sender YAML. The
+Verify both eye devices and mode indices against the chosen shared YAML. The
 build downloads pinned yaml-cpp. Build initially and after source changes; after
 moving the source directory, use a fresh build directory rather than an old
 CMake cache. Do not assume supplied rig calibration maps fit your camera.
@@ -191,9 +203,9 @@ cd ~/isaac-camera-streamer/camera_streamer
 PROFILE=s56-stereo-2560x1984-30
 # Alternative: PROFILE=s56-stereo-1080p60
 televiz/argus_sender/build/argus_sender \
-  --config "configs/${PROFILE}-sender.yaml" --check-config
+  --config "configs/${PROFILE}.yaml" --check-config
 televiz/argus_sender/build/argus_sender \
-  --config "configs/${PROFILE}-sender.yaml"
+  --config "configs/${PROFILE}.yaml"
 ```
 
 The sender opens no preview and waits for the receiver before capturing.
@@ -208,7 +220,7 @@ cd ~/IsaacCapture/examples/camera_streamer
 PROFILE=s56-stereo-2560x1984-30
 # Alternative: PROFILE=s56-stereo-1080p60
 .venv/bin/python televiz/camera_receiver/camera_receiver.py \
-  --config "configs/${PROFILE}-receiver.yaml" \
+  --config "configs/${PROFILE}.yaml" \
   --host "${ROBOT_IP:?Set ROBOT_IP first}"
 ```
 
@@ -232,9 +244,9 @@ Close the window, press q/Esc with the window focused, or Ctrl+C in its terminal
 
 ## Tuning and diagnostics
 
-To add a Sensing mode, copy a sender/receiver YAML pair under a new profile name.
+To add a camera mode, copy one shared YAML under a new device/resolution profile name.
 Change `streams[].output` and choose the matching `cameras[].mode` from
-`--list-modes`. Match the receiver dimensions and FPS warning threshold, and
+`--list-modes`. Dimensions are shared; adjust the receiver FPS warning threshold and
 configure hardware PWM for the capture rate. Save changes on the host and
 transfer profiles before restarting the sender, receiver and viewer.
 
@@ -261,7 +273,8 @@ sender, receiver and consumer. The direct commands above are the primary workflo
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
-.venv/bin/python -m pytest televiz/camera_receiver/tests
+uv pip install --python .venv/bin/python -e ".[test]"
+.venv/bin/python -m pytest tests
 ctest --test-dir televiz/argus_sender/build --output-on-failure
 ```
 
@@ -273,16 +286,17 @@ are not promoted to tested modes by configuration checks alone.
 
 | Directory | Purpose |
 |---|---|
-| `televiz/argus_sender` | Native Argus capture, hardware HEVC, AVS1/TCP and sender tests |
-| `televiz/camera_receiver` | AVS1 parsing, NVDEC extension, GPU rings, CUDA IPC and receiver tests |
+| `televiz/argus_sender` | Native Argus capture, hardware HEVC and AVS1/TCP |
+| `televiz/camera_receiver` | AVS1 parsing, NVDEC extension, GPU rings and CUDA IPC |
 | `televiz/cuda_ipc_consumer` | Standalone viewer and timing diagnostics |
-| `configs` | Matched Sensing sender/receiver profiles |
+| `tests` | C++ unit tests, Python receiver/config tests and opt-in hardware tests |
+| `configs` | Shared device/resolution profiles for sender and receiver |
 
 `UPSTREAM_FILES.json` preserves the original repository, commit and hashes for
 retained imports. The receiver private header moved from `codec/inc/` to `codec/`.
-This review branch contains only the Sensing/Argus pipeline.
+This review branch contains only the GMSL/Argus pipeline.
 
 Explicit upstream license notices are preserved. Files without a license grant
 remain `LicenseRef-NVIDIA-Internal-Review` in REUSE metadata. The owners have approved
-public review of this Sensing-only extraction; maintainers should finalize the
+public review of this GMSL/Argus extraction; maintainers should finalize the
 license metadata before merging. This example is not included in Isaac Capture wheels.

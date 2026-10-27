@@ -101,6 +101,23 @@
   },
   "scope": "Sensing/Argus HEVC sender, AVS1 receiver and CUDA IPC consumer",
   "file_renames": {
-    "tianji_televiz/camera_receiver/codec/inc/nv_video_decoder.hpp": "televiz/camera_receiver/codec/nv_video_decoder.hpp"
+    "tianji_televiz/camera_receiver/codec/inc/nv_video_decoder.hpp": "televiz/camera_receiver/codec/nv_video_decoder.hpp",
+    "tianji_televiz/argus_sender/tests/TestHarness.h": "tests/cpp/TestHarness.h",
+    "tianji_televiz/argus_sender/tests/hardware/avs1_smoke.py": "tests/hardware/avs1_smoke.py",
+    "tianji_televiz/argus_sender/tests/test_alignment_policy.cpp": "tests/cpp/test_alignment_policy.cpp",
+    "tianji_televiz/argus_sender/tests/test_avs1_wire.cpp": "tests/cpp/test_avs1_wire.cpp",
+    "tianji_televiz/argus_sender/tests/test_bundle_assembler.cpp": "tests/cpp/test_bundle_assembler.cpp",
+    "tianji_televiz/argus_sender/tests/test_capture_domain_plan.cpp": "tests/cpp/test_capture_domain_plan.cpp",
+    "tianji_televiz/argus_sender/tests/test_capture_priority_policy.cpp": "tests/cpp/test_capture_priority_policy.cpp",
+    "tianji_televiz/argus_sender/tests/test_config.cpp": "tests/cpp/test_config.cpp",
+    "tianji_televiz/argus_sender/tests/test_frame_alignment_policy.cpp": "tests/cpp/test_frame_alignment_policy.cpp",
+    "tianji_televiz/argus_sender/tests/test_geometry_scheduler.cpp": "tests/cpp/test_geometry_scheduler.cpp",
+    "tianji_televiz/argus_sender/tests/test_nv_remap.cpp": "tests/cpp/test_nv_remap.cpp",
+    "tianji_televiz/argus_sender/tests/test_priority_frame_handoff.cpp": "tests/cpp/test_priority_frame_handoff.cpp",
+    "tianji_televiz/argus_sender/tests/test_rate_limiter.cpp": "tests/cpp/test_rate_limiter.cpp",
+    "tianji_televiz/argus_sender/tests/test_tcp_transport.cpp": "tests/cpp/test_tcp_transport.cpp",
+    "tianji_televiz/camera_receiver/tests/test_nv_video_decode.py": "tests/python/test_nv_video_decode.py",
+    "tianji_televiz/camera_receiver/tests/test_reconnect.py": "tests/python/test_reconnect.py",
+    "tianji_televiz/camera_receiver/tests/test_wire_format.py": "tests/python/test_wire_format.py"
   }
 }

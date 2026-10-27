@@ -3,12 +3,12 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sensing Argus sender
+# GMSL Argus sender
 
 The native sender captures configured Argus sensors, hardware-encodes HEVC,
 and publishes AVS1 bundles over TCP. It also supports raw NV12 output.
 
-Use the [standalone setup and Sensing commands](../../README.md).
+Use the [standalone setup and GMSL commands](../../README.md).
 The supplied profiles select stereo sensors 0/1 at 2560×1984/30 or 1920×1080/60;
 verify mode enumeration and hardware PWM for your adapter before starting.
 

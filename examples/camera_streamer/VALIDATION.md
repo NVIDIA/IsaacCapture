@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Standalone import validation — 2026-10-26
 
 Original source hashes for retained files are in `UPSTREAM_FILES.json`.
-The review scope retains the native Sensing/Argus sender, NVDEC receiver and
+The review scope retains the native GMSL/Argus sender, NVDEC receiver and
 CUDA IPC consumer. The complete multi-camera snapshot is preserved on a separate local branch.
 
 | Check | Result |
@@ -41,3 +41,17 @@ default configuration passed `--dry-run`, and the reduced package installed
 editable without camera SDK dependencies. The retained native sender code was
 unchanged; its 12 tests passed on the existing Orin build. Full pre-commit checks
 passed. No live hardware capture was repeated for this scope-only change.
+
+## Device coverage
+
+The upstream team reports SHW5G testing of the original sender. Local hardware
+validation in this extraction used Sensing S56; SHW5G has not been retested here.
+
+## Shared GMSL profiles and test layout — 2026-10-27
+
+The example uses one profile per device/resolution for sender and receiver.
+Workstation validation passed 35 Python tests, both receiver config dry-runs,
+launcher dry-runs, C++ formatting and repository pre-commit checks. An isolated
+Orin build passed all 12 native tests, including loading both shared profiles.
+Tests now live in `tests/cpp`, `tests/python` and `tests/hardware`.
+No camera capture was started and the operational Orin deployment was unchanged.
