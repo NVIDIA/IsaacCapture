@@ -9,6 +9,11 @@ Use the [host viewer instructions](../../README.md) after starting the receiver.
 The viewer shares the host environment with the receiver. It uses CuPy to open
 CUDA IPC rings and copies frames to host memory only for OpenCV display.
 
+Display defaults to full resolution (`--scale 1.0`) and all streams. Use
+`--scale` to reduce preview size and `--streams` to select IPC names. See
+[display size and stream selection](../../README.md#display-size-and-stream-selection)
+for mono and stereo examples. These options do not change decoded resolution.
+
 From `examples/camera_streamer`, useful variants are:
 
 ```bash

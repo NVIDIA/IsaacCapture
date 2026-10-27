@@ -645,7 +645,12 @@ def main() -> int:
         "--streams",
         help="comma-separated IPC stream names to subscribe to; default subscribes to all",
     )
-    ap.add_argument("--scale", type=float, default=0.35, help="OpenCV display scale")
+    ap.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="OpenCV display scale (default: 1.0, full resolution)",
+    )
     ap.add_argument("--window-name", default="camera_receiver CUDA IPC")
     ap.add_argument("--no-display", action="store_true", help="print stats only")
     ap.add_argument(

@@ -298,6 +298,35 @@ CloudXR launcher; headset display needs a compatible AVS1 CUDA IPC source in
 camera_viz. See [viewer options](televiz/cuda_ipc_consumer/README.md).
 Close the window, press q/Esc with the window focused, or Ctrl+C in its terminal.
 
+#### Display size and stream selection
+
+`--scale` controls each image's display dimensions. The default is `1.0`, which
+preserves the decoded resolution before window display. A 2560×1984 stream
+produces a 2560×1984 image at `1.0`, or 1280×992 at `0.5`. This affects only the
+local preview, not capture, encoding, transmission or the decoded CUDA IPC frames.
+The desktop may fit the window to your screen; full-resolution stereo can exceed
+its available space. Restart only the viewer to change these options.
+
+`--streams` selects a comma-separated list of IPC stream names. Omit it to display
+all streams. For the supplied profiles, stereo names are `head.left` and
+`head.right`; mono uses `head`.
+
+```bash
+# Show both eyes at half size to fit a smaller screen.
+.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+  --socket /tmp/isaac-camera-streamer.sock \
+  --scale 0.5 --streams head.left,head.right
+
+# Inspect one eye at full resolution (1.0 is also the default).
+.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+  --socket /tmp/isaac-camera-streamer.sock \
+  --scale 1.0 --streams head.left
+
+# Display the single stream from a mono profile.
+.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+  --socket /tmp/isaac-camera-streamer.sock --streams head
+```
+
 ## Tuning and diagnostics
 
 To add a camera mode, copy one shared YAML under a new device/resolution profile name.
