@@ -35,6 +35,7 @@ try:
     from websockets.asyncio.client import connect as ws_connect
     from websockets.asyncio.server import serve as ws_serve
     from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidMessage
     from websockets.http11 import Response
 except ImportError:
     sys.exit(
@@ -73,6 +74,33 @@ def _patch_request_parser_for_cors():
 _patch_request_parser_for_cors()
 
 log = logging.getLogger("isaaccapture.cloudxr.wss")
+
+
+class _WSSServerLogger(logging.LoggerAdapter):
+    """Keep empty connection probes out of operator error logs."""
+
+    def log(self, level, msg, *args, **kwargs):
+        exc_info = kwargs.get("exc_info")
+        exc = sys.exc_info()[1] if exc_info is True else None
+        if isinstance(exc_info, tuple):
+            exc = exc_info[1]
+        if (
+            level == logging.ERROR
+            and msg == "opening handshake failed"
+            and isinstance(exc, InvalidMessage)
+            and isinstance(exc.__cause__, EOFError)
+            and str(exc.__cause__)
+            == "connection closed while reading HTTP request line"
+            and isinstance(exc.__cause__.__cause__, EOFError)
+            and str(exc.__cause__.__cause__)
+            == "stream ends after 0 bytes, before end of line"
+        ):
+            # Match both EOFs: zero bytes while reading headers is a truncated
+            # request, not an idle browser connection or a port probe.
+            level = logging.DEBUG
+            msg = "Client disconnected before sending an HTTP request"
+            kwargs["exc_info"] = None
+        super().log(level, msg, *args, **kwargs)
 
 
 class _WssSessionFormatter(logging.Formatter):
@@ -724,6 +752,7 @@ async def run(
 
         async with ws_serve(
             handler,
+            logger=_WSSServerLogger(log, {}),
             host="",
             port=resolved_port,
             ssl=ssl_ctx,
