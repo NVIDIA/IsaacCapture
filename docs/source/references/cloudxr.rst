@@ -396,8 +396,8 @@ logs ``OpenXR HMD form factor is unavailable; waiting for a system...`` once and
 retries every second until one appears. That is what lets you start an app before
 putting the headset on — and an app that appears to hang at start-up is usually
 sitting in this wait, so work the list above. Nothing times it out, and in Python
-``Ctrl-C`` is not delivered until a system turns up — the binding holds the GIL
-through the wait. C++ callers can pass
-``wait_for_system=false`` for the error instead; the Python binding does not
-expose it. ``VizSessionConfig`` is unaffected and stays fail-fast at
+``Ctrl-C`` is not delivered until a system turns up; other Python threads keep
+running, since the binding releases the GIL through the wait. Pass
+``wait_for_system=False`` (C++: ``false``) for the error instead, and retry.
+``VizSessionConfig`` is unaffected and stays fail-fast at
 ``xr_system_wait_seconds = 0``.
