@@ -26,8 +26,8 @@ foreach(test_file ${TEST_FILES})
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
-    # Set the environment to ensure the built package is available
+    # Importing isaaccapture makes the test a logging session leader: keep its log files in the build tree.
     set_tests_properties("teleop_session_manager_${test_name}" PROPERTIES
-        ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/python_package/$<CONFIG>"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/python_package/$<CONFIG>;ISAACCAPTURE_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/logs"
     )
 endforeach()

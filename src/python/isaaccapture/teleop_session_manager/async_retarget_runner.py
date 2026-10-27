@@ -26,7 +26,12 @@ from isaaccapture.retargeting_engine.interface.execution_events import (
 from .config import RetargetingExecutionConfig
 
 
-StepExecutor = Callable[["StepRequest"], tuple[RetargeterIO, ComputeContext]]
+# Returns outputs and context, optionally followed by the remote tick age in seconds.
+StepExecutor = Callable[
+    ["StepRequest"],
+    tuple[RetargeterIO, ComputeContext]
+    | tuple[RetargeterIO, ComputeContext, float | None],
+]
 
 
 @dataclass(frozen=True)
@@ -51,6 +56,7 @@ class RetargetFrame:
     started_time_s: float
     completed_time_s: float
     compute_duration_s: float
+    remote_tick_age_s: float | None = None
 
 
 class AsyncRetargetWorkerError(RuntimeError):
@@ -335,7 +341,7 @@ class AsyncRetargetRunner:
 
             try:
                 started = time.monotonic()
-                outputs, context = self._step_fn(request)
+                outputs, context, *remote_tick_age_s = self._step_fn(request)
                 completed = time.monotonic()
                 frame = RetargetFrame(
                     frame_id=request.frame_id,
@@ -345,6 +351,9 @@ class AsyncRetargetRunner:
                     started_time_s=started,
                     completed_time_s=completed,
                     compute_duration_s=completed - started,
+                    remote_tick_age_s=(
+                        remote_tick_age_s[0] if remote_tick_age_s else None
+                    ),
                 )
             except BaseException as exc:
                 with self._cond:
