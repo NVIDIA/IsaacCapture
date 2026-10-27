@@ -13,6 +13,7 @@ target_link_libraries(mcap_test_support INTERFACE
 )
 
 add_executable(mcap_tests
+    test_mcap_sample_stream.cpp
     test_mcap_tracker_channels.cpp
     test_schema_compat.cpp
 )

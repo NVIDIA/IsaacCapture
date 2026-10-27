@@ -10,8 +10,10 @@ cmake_minimum_required(VERSION 3.20)
 # deviceio_core (deviceio_session.cpp).
 add_library(mcap_core STATIC
     recorded_schemas.cpp
+    sample_stream.cpp
     inc/mcap/recorded_schemas.hpp
     inc/mcap/recording_traits.hpp
+    inc/mcap/sample_stream.hpp
     inc/mcap/tracker_channels.hpp
 )
 
