@@ -35,81 +35,15 @@ try:
     from websockets.asyncio.client import connect as ws_connect
     from websockets.asyncio.server import serve as ws_serve
     from websockets.datastructures import Headers
-    from websockets.exceptions import InvalidMessage
     from websockets.http11 import Response
 except ImportError:
     sys.exit(
-        "Missing dependency: websockets >= 14\n"
-        f"Install with: uv pip install --python {sys.executable} 'websockets>=14'"
+        "Missing dependency: websockets >= 17.3\n"
+        f"Install with: uv pip install --python {sys.executable} 'websockets>=17.3'"
     )
 
 
-def _patch_request_parser_for_cors():
-    """Allow HTTP OPTIONS through the websockets request parser.
-
-    ``websockets >= 14`` rejects non-GET methods in ``Request.parse`` before
-    ``process_request`` fires.  This wraps the parser so that OPTIONS requests
-    (CORS preflight) are surfaced as a normal ``Request`` — the existing
-    ``process_request`` hook in ``_make_http_handler`` already returns the
-    correct 200 + CORS-headers response for them.
-    """
-    from websockets.http11 import Request, parse_headers
-
-    _orig_parse = Request.parse.__func__
-
-    @classmethod
-    def _cors_aware_parse(cls, read_line):
-        """Monkey-patched ``Request.parse`` that maps OPTIONS requests to a synthetic CORS path."""
-        try:
-            return (yield from _orig_parse(cls, read_line))
-        except ValueError as exc:
-            if "got OPTIONS" not in str(exc):
-                raise
-            headers = yield from parse_headers(read_line)
-            return cls("/__cors_preflight__", headers)
-
-    Request.parse = _cors_aware_parse
-
-
-_patch_request_parser_for_cors()
-
 log = logging.getLogger("isaaccapture.cloudxr.wss")
-
-
-class _WSSServerLogger(logging.LoggerAdapter):
-    """Keep empty connection probes out of operator error logs."""
-
-    def isEnabledFor(self, level):
-        """Disable wire DEBUG logs, which can include control tokens."""
-        if level <= logging.DEBUG:
-            return False
-        return super().isEnabledFor(level)
-
-    def log(self, level, msg, *args, **kwargs):
-        """Downgrade only empty request-line disconnects from older servers."""
-        exc_info = kwargs.get("exc_info")
-        exc = sys.exc_info()[1] if exc_info is True else None
-        if isinstance(exc_info, tuple):
-            exc = exc_info[1]
-        if (
-            level == logging.ERROR
-            and msg == "opening handshake failed"
-            and isinstance(exc, InvalidMessage)
-            and isinstance(exc.__cause__, EOFError)
-            and str(exc.__cause__)
-            == "connection closed while reading HTTP request line"
-            and isinstance(exc.__cause__.__cause__, EOFError)
-            and str(exc.__cause__.__cause__)
-            == "stream ends after 0 bytes, before end of line"
-        ):
-            # Match both EOFs: zero bytes while reading headers is a truncated
-            # request, not an idle browser connection or a port probe.
-            level = logging.DEBUG
-            msg = "Client disconnected before sending an HTTP request"
-            kwargs["exc_info"] = None
-            self.logger.log(level, msg, *args, **kwargs)
-            return
-        super().log(level, msg, *args, **kwargs)
 
 
 class _WssSessionFormatter(logging.Formatter):
@@ -700,6 +634,7 @@ async def run(
     try:
         resolved_port = wss_proxy_port() if proxy_port is None else proxy_port
 
+        # Wire DEBUG logs include headers and query strings containing tokens.
         logging.getLogger("websockets").setLevel(logging.WARNING)
         cert_paths = default_cert_paths()
 
@@ -761,7 +696,6 @@ async def run(
 
         async with ws_serve(
             handler,
-            logger=_WSSServerLogger(log, {}),
             host="",
             port=resolved_port,
             ssl=ssl_ctx,
