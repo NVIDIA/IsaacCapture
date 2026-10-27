@@ -265,7 +265,7 @@ image or separate detector and reconstruction images.
 
 ## 📚 Citation
 
-If you use EgoHand in your research, please cite:
+If you use EgoHand in your work, please cite the following paper:
 
 ```bibtex
 @misc{EgoHand2026,
