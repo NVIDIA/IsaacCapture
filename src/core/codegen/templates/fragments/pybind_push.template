@@ -4,6 +4,9 @@
     @NAME@_push
         .def(py::init<std::string, std::string, std::size_t>(), py::arg("collection_id"), py::arg("tensor_identifier"),
              py::arg("max_payload_size") = core::@CLASS@::DEFAULT_MAX_PAYLOAD_SIZE)
+        .def_property_readonly("collection_id", &core::@CLASS@::collection_id)
+        .def_property_readonly("tensor_identifier", &core::@CLASS@::tensor_identifier)
+        .def_property_readonly("max_payload_size", &core::@CLASS@::max_payload_size)
         .def(
             "push",
             [](const core::@CLASS@& self, const core::ITrackerSession& session,
