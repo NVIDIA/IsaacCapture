@@ -38,8 +38,16 @@ try {
 } catch {}
 // Source of truth for the CloudXR SDK is deps/cloudxr/.env.default's
 // CXR_WEB_SDK_VERSION (also controls which tarball `npm install`
-// consumes); package.json.version is just a local-dev fallback.
-const CLIENT_SDK_VERSION = process.env.SDK_VERSION || require('./package.json').version;
+// consumes). Local builds that don't set SDK_VERSION report the installed SDK's own version;
+// this package's version is not the SDK's.
+function installedSdkVersion() {
+  try {
+    return require('@nvidia/cloudxr/package.json').version;
+  } catch {
+    return 'unknown';
+  }
+}
+const CLIENT_SDK_VERSION = process.env.SDK_VERSION || installedSdkVersion();
 const CLIENT_GIT_REF =
   process.env.CLIENT_GIT_REF || git('rev-parse --abbrev-ref HEAD') || 'unknown';
 const CLIENT_GIT_SHA = (process.env.CLIENT_GIT_SHA || git('rev-parse HEAD') || 'unknown').slice(
