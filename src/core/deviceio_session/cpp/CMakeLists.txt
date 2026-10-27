@@ -5,12 +5,15 @@ cmake_minimum_required(VERSION 3.20)
 
 # DeviceIOSession — wires trackers to the live factory and runs the update loop.
 # ReplaySession — reads recorded tracker data from an MCAP file.
+# RemoteSession — reads tracker data from a sample stream.
 add_library(deviceio_session STATIC
     mcap_impl.cpp
     deviceio_session.cpp
     replay_session.cpp
+    remote_session.cpp
     inc/deviceio_session/deviceio_session.hpp
     inc/deviceio_session/replay_session.hpp
+    inc/deviceio_session/remote_session.hpp
 )
 
 target_include_directories(deviceio_session
@@ -33,6 +36,7 @@ target_link_libraries(deviceio_session
         deviceio::live_trackers
         deviceio::replay_trackers
         mcap::mcap
+        mcap::mcap_core
 )
 
 add_library(deviceio::deviceio_session ALIAS deviceio_session)

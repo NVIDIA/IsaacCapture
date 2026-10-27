@@ -21,6 +21,7 @@
 // Consumers of deviceio_core do not need to link against mcap::mcap.
 namespace mcap
 {
+class IWritable;
 class McapWriter;
 } // namespace mcap
 
@@ -39,6 +40,9 @@ struct McapRecordingConfig
 {
     std::string filename;
     std::vector<std::pair<const ITracker*, std::string>> tracker_names;
+    //! When set, records go to this writable, unchunked, instead of to `filename`. It must
+    //! outlive the session, whose writer writes the end of the recording when it is destroyed.
+    mcap::IWritable* sample_stream = nullptr;
 };
 
 /**
