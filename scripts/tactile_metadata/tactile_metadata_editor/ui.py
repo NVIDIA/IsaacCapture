@@ -34,6 +34,8 @@ def common_number(values):
 
 
 class Editor:
+    INITIAL_CAMERA_POSE = ((0.3, -0.4, 0.3), (0, 0, 0))
+
     def __init__(self, state, args):
         self.state, self.args, self.started = state, args, bool(state.documents)
         if not state.documents:
@@ -58,6 +60,10 @@ class Editor:
         )
         self.sdk_result, self.sdk_revision = "not checked", None
         self.server = viser.ViserServer(host="0.0.0.0", port=args.port)
+        (
+            self.server.initial_camera.position,
+            self.server.initial_camera.look_at,
+        ) = self.INITIAL_CAMERA_POSE
         g = self.server.gui
         g.configure_theme(control_width="medium", show_share_button=False)
         g.main_panel.dock_right()
@@ -513,7 +519,7 @@ class Editor:
 
     def camera(self):
         for client in self.server.get_clients().values():
-            client.camera.position, client.camera.look_at = (0.3, -0.4, 0.3), (0, 0, 0)
+            client.camera.position, client.camera.look_at = self.INITIAL_CAMERA_POSE
 
     def calibrate(self):
         o, f, d = [
