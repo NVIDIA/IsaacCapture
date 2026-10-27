@@ -1780,10 +1780,21 @@ class TestRecording:
 
     @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_run")
     def test_a_host_path_is_pushed_to_download(self, mock_adb, tmp_path):
+        rec = tmp_path / "isaacteleop-input-recording (7).json"
+        rec.write_text("{}", encoding="utf-8")
+        assert (
+            adb_module._resolve_recording(str(rec))
+            == "/sdcard/Download/isaacteleop-input-recording (7).json"
+        )
+        assert mock_adb.call_args.args[0][:2] == ["adb", "push"]
+
+    @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_run")
+    def test_a_file_not_saved_by_the_client_is_refused(self, mock_adb, tmp_path):
         rec = tmp_path / "take-7.json"
         rec.write_text("{}", encoding="utf-8")
-        assert adb_module._resolve_recording(str(rec)) == "/sdcard/Download/take-7.json"
-        assert mock_adb.call_args.args[0][:2] == ["adb", "push"]
+        with pytest.raises(OobAdbError, match="not a client recording"):
+            adb_module._resolve_recording(str(rec))
+        mock_adb.assert_not_called()
 
     def test_a_missing_recording_is_named_in_the_error(self, tmp_path):
         with pytest.raises(OobAdbError, match="recording not found"):
@@ -1791,10 +1802,14 @@ class TestRecording:
 
     @patch(
         "cloudxr_py_test_ns.oob_teleop_adb._run_adb",
-        return_value="/sdcard/Download/take-9.json\n",
+        return_value="/sdcard/Download/isaacteleop-input-recording (9).json\n",
     )
-    def test_latest_picks_the_newest_on_the_headset(self, _mock):
-        assert adb_module._resolve_recording("latest") == "/sdcard/Download/take-9.json"
+    def test_latest_picks_the_newest_on_the_headset(self, mock_run):
+        assert (
+            adb_module._resolve_recording("latest")
+            == "/sdcard/Download/isaacteleop-input-recording (9).json"
+        )
+        assert "isaacteleop-input-recording*.json" in mock_run.call_args.args[1][2]
 
     @patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb", return_value="")
     def test_latest_without_recordings_fails(self, _mock):

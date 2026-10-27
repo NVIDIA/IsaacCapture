@@ -47,7 +47,7 @@ appears.
 
    python -m isaaccapture.cloudxr.service run --accept-eula --setup-oob --defer-oob-connect
    # once the application has its OpenXR session:
-   curl -k -H "X-Control-Token: $CONTROL_TOKEN" https://localhost:48322/api/oob/v1/connect
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/connect
 
 Ordinary headset absence, an ``offline`` or ``unauthorized`` transport, and
 browser recovery failures leave the host running with a degraded OOB status.
@@ -639,7 +639,9 @@ Environment variables
        proximity sensor) when the service reports that it is asleep.
    * - ``TELEOP_OOB_RECORDING``
      - Recording to select in the client before CONNECT: a host path, pushed to
-       the headset, or ``latest``, the newest ``*.json`` in its Download folder.
+       the headset, or ``latest``, the newest in its Download folder. Only
+       files named like the client's Save, ``isaacteleop-input-recording*.json``,
+       are accepted.
        Starting the replay is left to the operator. Unset by default.
    * - ``TELEOP_HEADSET_BROWSER_PACKAGE``
      - Headset browser package. Unset, the vendor's browser is used. On PICO,

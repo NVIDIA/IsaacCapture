@@ -1550,16 +1550,24 @@ async def _cdp_send_reset_panel_key(ws_url: str) -> None:
 
 _HEADSET_RECORDING_DIR = "/sdcard/Download"
 LATEST_RECORDING = "latest"
+# The client's Save names files isaacteleop-input-recording.json; the browser
+# adds " (N)" to repeats.
+_RECORDING_PREFIX = "isaacteleop-input-recording"
+
+
+def _is_recording_name(name: str) -> bool:
+    return name.startswith(_RECORDING_PREFIX) and name.endswith(".json")
 
 
 def _newest_recording_on_headset() -> str:
-    """Path of the most recent ``*.json`` in the headset's Download folder."""
+    """Path of the newest client recording in the headset's Download folder."""
     out = _run_adb(
         "newest recording",
         [
             "adb",
             "shell",
-            f"ls -t {_HEADSET_RECORDING_DIR}/*.json 2>/dev/null | head -n 1",
+            f"ls -t {_HEADSET_RECORDING_DIR}/{_RECORDING_PREFIX}*.json 2>/dev/null"
+            " | head -n 1",
         ],
         timeout=10.0,
     )
@@ -1589,6 +1597,11 @@ def _push_recording_to_headset(host_path: str) -> str:
     src = Path(host_path)
     if not src.is_file():
         raise OobAdbError(f"recording not found: {src}")
+    if not _is_recording_name(src.name):
+        raise OobAdbError(
+            f"{src.name} is not a client recording; expected "
+            f"{_RECORDING_PREFIX}*.json, as saved by the client"
+        )
     device_path = f"{_HEADSET_RECORDING_DIR}/{src.name}"
     try:
         _adb_run(
@@ -2093,8 +2106,6 @@ async def _find_and_click_teleop_tab(
 
     ws_url: str | None = None
     am_start_retried = False
-    # Socket the re-scan below last forwarded _CDP_LOCAL_PORT to.
-    forwarded_socket: str | None = None
     # Re-fire am start once if we don't see the tab in the first half
     # of the deadline. Cold-launch can swallow the first VIEW intent
     # (browser was being woken up), and a second intent reliably
@@ -2109,15 +2120,14 @@ async def _find_and_click_teleop_tab(
         rescan_tick += 1
         if rescan_tick % 3 == 0:
             rescanned = await asyncio.to_thread(_discover_devtools_socket)
-            if rescanned and rescanned != forwarded_socket:
+            # Discovery probes by forwarding, so the port may not point at it.
+            if rescanned:
                 try:
                     await asyncio.to_thread(
                         _adb_forward_cdp, rescanned, _CDP_LOCAL_PORT
                     )
                 except (OobAdbError, subprocess.CalledProcessError, OSError) as exc:
                     log.debug("CDP: re-forward to @%s failed: %s", rescanned, exc)
-                else:
-                    forwarded_socket = rescanned
         for tab in await asyncio.to_thread(_cdp_list_tabs, _CDP_LOCAL_PORT):
             if "id" not in tab or not tab.get("webSocketDebuggerUrl"):
                 continue
@@ -2270,6 +2280,12 @@ async def run_oob_connect(
     phase; callers should treat this as non-fatal and ask the user to tap
     CONNECT manually.
     """
+    # Before the deadline: a push can be slow, and a bad path should fail
+    # before the browser is launched.
+    recording = oob_replay_recording_from_env()
+    recording_device_path = (
+        await asyncio.to_thread(_resolve_recording, recording) if recording else None
+    )
     deadline = time.monotonic() + timeout
 
     # --- Step 0: close any stale teleop tabs from a prior session -----------
@@ -2351,12 +2367,6 @@ async def run_oob_connect(
 
     try:
         # --- Steps 3+4: find the teleop tab, load any recording, click CONNECT -
-        recording = oob_replay_recording_from_env()
-        recording_device_path = (
-            await asyncio.to_thread(_resolve_recording, recording)
-            if recording
-            else None
-        )
         ws_url = await _find_and_click_teleop_tab(
             resolved_port=resolved_port,
             deadline=deadline,
