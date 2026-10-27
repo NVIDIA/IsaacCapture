@@ -261,8 +261,7 @@ Exit the preview before sending. No host process is needed for this check.
 
 ```bash
 cd ~/isaac-camera-streamer/camera_streamer
-PROFILE=s56-stereo-2560x1984-30
-# Alternative: PROFILE=s56-stereo-1080p60
+PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
 televiz/argus_sender/build/argus_sender \
   --config "configs/${PROFILE}.yaml" --check-config
 televiz/argus_sender/build/argus_sender \
@@ -278,8 +277,7 @@ After the shared host installation, run in the first host terminal:
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
-PROFILE=s56-stereo-2560x1984-30
-# Alternative: PROFILE=s56-stereo-1080p60
+PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
 .venv/bin/python televiz/camera_receiver/camera_receiver.py \
   --config "configs/${PROFILE}.yaml" \
   --host "${ROBOT_IP:?Set ROBOT_IP first}"
