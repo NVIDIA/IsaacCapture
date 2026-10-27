@@ -35,3 +35,4 @@ SPDX-License-Identifier: Apache-2.0
 - Do not infer Argus mode indices from vendor specifications or another model; keep unknown modes explicit in profiles.
 - Keep camera YAMLs directly under configs/ with model-prefixed filenames so profile selection needs no subdirectory.
 - Use matching columns for all camera profile tables so resolution, frame rate and capture constraints are directly comparable.
+- Preserve HEVC ordering through TCP enqueue and bound receiver work queues; backpressure must remain interruptible during shutdown.

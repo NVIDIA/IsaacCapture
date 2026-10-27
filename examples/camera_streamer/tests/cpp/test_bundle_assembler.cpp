@@ -9,8 +9,12 @@
 #include "PacketSink.h"
 #include "TestHarness.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -40,6 +44,26 @@ public:
 
     std::vector<std::vector<uint8_t>> packets;
     std::vector<argus_sender::PacketTiming> timings;
+};
+
+class BlockingPacketSink : public FakePacketSink
+{
+public:
+    bool enqueueFramedWithTiming(std::vector<uint8_t>&& packet, const argus_sender::PacketTiming& timing) override
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!entered)
+        {
+            entered = true;
+            changed.notify_all();
+            changed.wait(lock, [this] { return released; });
+        }
+        return FakePacketSink::enqueueFramedWithTiming(std::move(packet), timing);
+    }
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false;
+    bool released = false;
 };
 
 std::vector<argus_sender::Avs1StreamRecord> templates()
@@ -181,5 +205,48 @@ int main()
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_CLOCK_VALID));
     TEST_CHECK(test, !(parsed.flags & argus_sender::AVS1_BUNDLE_SENDER_TSC_VALID));
     TEST_CHECK_EQ(test, parsed.senderCaptureReadyTscNs, 0ULL);
+    // Hold the first enqueue while another encoder callback completes the next bundle.
+    BlockingPacketSink blockedSink;
+    argus_sender::FrameBundleAssembler concurrent(&blockedSink, 88, templates());
+    TEST_CHECK(test, concurrent.beginBundle(1, bundle3, 6000, 6100, argus_sender::SENDER_CLOCK_UNKNOWN, 0));
+    TEST_CHECK(test, concurrent.beginBundle(2, bundle3, 6000, 6100, argus_sender::SENDER_CLOCK_UNKNOWN, 0));
+    std::atomic<bool> firstOk(false), secondOk(false), secondStarted(false);
+    std::thread first(
+        [&]
+        {
+            firstOk =
+                concurrent.submitRaw(1, 0, 1, std::vector<uint8_t>(12, 0x80), 6200, argus_sender::SENDER_CLOCK_REALTIME);
+        });
+    {
+        std::unique_lock<std::mutex> lock(blockedSink.mutex);
+        TEST_CHECK(
+            test, blockedSink.changed.wait_for(lock, std::chrono::seconds(2), [&] { return blockedSink.entered; }));
+    }
+    std::thread second(
+        [&]
+        {
+            secondStarted = true;
+            secondOk =
+                concurrent.submitRaw(1, 0, 2, std::vector<uint8_t>(12, 0x80), 6200, argus_sender::SENDER_CLOCK_REALTIME);
+        });
+    while (!secondStarted)
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    TEST_CHECK(test, !secondOk);
+    {
+        std::lock_guard<std::mutex> lock(blockedSink.mutex);
+        blockedSink.released = true;
+    }
+    blockedSink.changed.notify_all();
+    first.join();
+    second.join();
+    TEST_CHECK(test, firstOk && secondOk);
+    TEST_CHECK_EQ(test, blockedSink.packets.size(), static_cast<size_t>(2));
+    for (size_t i = 0; i < blockedSink.packets.size(); ++i)
+    {
+        TEST_CHECK(test, argus_sender::parseAvs1WireRecord(
+                             blockedSink.packets[i].data(), blockedSink.packets[i].size(), &parsed, &error));
+        TEST_CHECK_EQ(test, parsed.sequence, i + 1);
+    }
     return test.finish();
 }

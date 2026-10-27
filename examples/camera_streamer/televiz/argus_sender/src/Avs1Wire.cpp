@@ -411,7 +411,7 @@ bool parseAvs1WireRecord(const uint8_t* data, size_t size, Avs1Bundle* bundle, c
     for (uint16_t streamIndex = 0; streamIndex < streamCount; ++streamIndex)
     {
         Avs1StreamRecord& stream = parsed.streams[streamIndex];
-        for (uint16_t cameraIndex = 0; cameraIndex < stream.samples.size(); ++cameraIndex)
+        for (size_t cameraIndex = 0; cameraIndex < stream.samples.size(); ++cameraIndex)
         {
             const size_t flat = firstSamples[streamIndex] + cameraIndex;
             const uint64_t end = static_cast<uint64_t>(locations[flat].offset) + locations[flat].size;

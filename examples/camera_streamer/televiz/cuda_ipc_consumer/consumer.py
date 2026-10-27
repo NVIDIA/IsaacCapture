@@ -42,6 +42,7 @@ class IpcMemory:
         try:
             self.close()
         except Exception:
+            # CUDA/Python modules may already be torn down during finalization.
             pass
 
 
@@ -78,7 +79,8 @@ class CudaIpcClient:
         if self.sock is not None:
             try:
                 self.sock.close()
-            except Exception:
+            except OSError:
+                # A socket close failure must not prevent releasing CUDA mappings.
                 pass
             self.sock = None
         for slot in self.slots.values():

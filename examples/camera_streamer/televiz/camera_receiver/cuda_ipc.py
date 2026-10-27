@@ -183,8 +183,8 @@ class CudaIpcFramePublisher:
         if self._server is not None:
             try:
                 self._server.close()
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("CUDA IPC: socket close failed", exc_info=True)
             self._server = None
         with self._lock:
             clients = list(self._clients)
@@ -193,8 +193,8 @@ class CudaIpcFramePublisher:
         for client in clients:
             try:
                 client.sock.close()
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("CUDA IPC: socket close failed", exc_info=True)
         for thread in (self._accept_thread, self._broadcast_thread):
             if thread is not None:
                 thread.join(timeout=2.0)
@@ -235,6 +235,7 @@ class CudaIpcFramePublisher:
             try:
                 self._queue.get_nowait()
             except queue.Empty:
+                # The broadcaster already drained the notification queue.
                 pass
             try:
                 self._queue.put_nowait(msg)
@@ -261,6 +262,7 @@ class CudaIpcFramePublisher:
 
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(self._socket_path)
+        os.chmod(self._socket_path, 0o600)
         srv.listen(8)
         srv.settimeout(0.5)
         self._server = srv
@@ -359,8 +361,10 @@ class CudaIpcFramePublisher:
                 logger.info("CUDA IPC: rejecting consumer (%s)", exc)
                 try:
                     self._send_json(client, {"type": "error", "error": str(exc)})
-                except Exception:
-                    pass
+                except OSError:
+                    logger.debug(
+                        "CUDA IPC: cannot notify rejected client", exc_info=True
+                    )
                 client.close()
                 continue
             with self._lock:
@@ -401,8 +405,8 @@ class CudaIpcFramePublisher:
                 for client in dead:
                     try:
                         client.sock.close()
-                    except Exception:
-                        pass
+                    except OSError:
+                        logger.debug("CUDA IPC: client close failed", exc_info=True)
 
     @staticmethod
     def _send_json(sock: socket.socket, msg: dict[str, Any]) -> None:
@@ -433,4 +437,5 @@ class CudaIpcFramePublisher:
         try:
             signal.signal(sigpipe, signal.SIG_IGN)
         except (ValueError, OSError):
+            # Worker threads cannot change signal handlers; sends use MSG_NOSIGNAL.
             pass

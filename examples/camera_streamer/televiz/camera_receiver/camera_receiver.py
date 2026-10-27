@@ -399,6 +399,7 @@ class _StreamRuntime:
             max_workers=1,
             thread_name_prefix=f"camera_receiver_stream_{config.name}",
         )
+        self.inflight = threading.BoundedSemaphore(config.ring_depth)
         self.block = (16, 16, 1)
         self.grid = (
             (config.width + 15) // 16,
@@ -451,6 +452,23 @@ class _StreamRuntime:
                         exc_info=True,
                     )
                 self.decoders[index] = None
+
+    def submit(self, stop: threading.Event, fn, *args) -> bool:
+        """Bound decode and reset work while allowing shutdown to interrupt waiting."""
+        while not stop.is_set():
+            if not self.inflight.acquire(timeout=0.1):
+                continue
+            if stop.is_set():
+                self.inflight.release()
+                return False
+            try:
+                future = self.executor.submit(fn, *args)
+            except BaseException:
+                self.inflight.release()
+                raise
+            future.add_done_callback(lambda _future: self.inflight.release())
+            return True
+        return False
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True)
@@ -571,8 +589,8 @@ class Avs1TcpReceiver:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Failed to close receiver socket", exc_info=True)
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -618,14 +636,14 @@ class Avs1TcpReceiver:
                 finally:
                     try:
                         conn.close()
-                    except Exception:
-                        pass
+                    except OSError:
+                        logger.debug("Failed to close sender connection", exc_info=True)
                     self._conn = None
                     if self._receive_fps_monitor is not None:
                         self._receive_fps_monitor.stop()
                     self._session_id = None
                     for runtime in self._runtimes.values():
-                        runtime.executor.submit(runtime.reset_decoders)
+                        runtime.submit(self._stop, runtime.reset_decoders)
 
     def _connect(self) -> Optional[socket.socket]:
         next_wait_log_at = 0.0
@@ -709,7 +727,7 @@ class Avs1TcpReceiver:
                     bundle.session_id,
                 )
                 for runtime in self._runtimes.values():
-                    runtime.executor.submit(runtime.reset_decoders)
+                    runtime.submit(self._stop, runtime.reset_decoders)
             self._session_id = bundle.session_id
 
         dispatch_items: list[tuple[Avs1Stream, _StreamRuntime]] = []
@@ -723,7 +741,8 @@ class Avs1TcpReceiver:
                 runtime.config.name for _, runtime in dispatch_items
             )
         for stream, runtime in dispatch_items:
-            runtime.executor.submit(
+            runtime.submit(
+                self._stop,
                 self._process_stream_safe,
                 received,
                 bundle,

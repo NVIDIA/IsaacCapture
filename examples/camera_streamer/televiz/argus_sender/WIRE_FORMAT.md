@@ -208,8 +208,10 @@ def recv_exact(sock, size):
     return bytes(data)
 
 
-def recv_record(sock):
+def recv_record(sock, max_record_bytes=256 * 1024 * 1024):
     (record_length,) = struct.unpack("!I", recv_exact(sock, 4))
+    if not 0 < record_length <= max_record_bytes:
+        raise ValueError(f"invalid AVS1 record length: {record_length}")
     record = recv_exact(sock, record_length)
     header = HEADER.unpack_from(record)
     if header[0] != b"AVS1" or header[1] != 1 or header[3] != HEADER.size:
