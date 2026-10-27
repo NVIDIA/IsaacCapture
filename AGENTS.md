@@ -239,6 +239,9 @@ pre-commit install --hook-type commit-msg
 
 ## Remote pushes
 
+- Create topic branches from remote base refs with `git switch --no-track -c`
+  so they do not inherit `origin/main` as their upstream. Set the upstream
+  to the matching topic branch and verify `git push --dry-run` before handoff.
 - When moving a focused fix from a release branch onto `main`, identify its
   original base and replay only the fix commits. Do not carry release-only CI
   changes or duplicate upstream features into the new branch.
