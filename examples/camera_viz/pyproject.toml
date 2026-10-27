@@ -47,10 +47,12 @@ rtp = [
     # time dep for the native codec.
     "pybind11>=2.11",
 ]
+# The viewer imports isaaccapture and Pillow; the sender must run without
+# isaaccapture, so they are not base dependencies.
+viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 
 # Native NVENC/NVDEC codec lives in ./python/isaaccapture_examples/camera_viz/codec/.
-# Build with
-# its build.sh; ``./camera_viz.sh setup`` does this automatically.
+# Build with its build.sh; ``./camera_viz.sh setup`` does this automatically.
 # Requires CUDA toolkit + NVIDIA driver (libnvidia-encode + libnvcuvid).
 
 # `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
@@ -59,10 +61,12 @@ rtp = [
 # bare top-level `camera_viz/`.
 #
 # The native codec's .so is built in place by codec/build.sh, so it is picked up
-# from the source tree rather than shipped by this build.
+# from the source tree rather than shipped by this build. Hatchling reads only
+# this directory's .gitignore, so the codec build tree is excluded here.
 [tool.hatch.build.targets.wheel]
 only-include = ["python/isaaccapture_examples/camera_viz"]
 sources = ["python"]
+exclude = ["/python/isaaccapture_examples/camera_viz/codec/build", "*.so"]
 
 [tool.uv]
 python-preference = "only-managed"

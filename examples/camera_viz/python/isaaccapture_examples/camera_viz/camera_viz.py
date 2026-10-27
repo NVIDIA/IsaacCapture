@@ -12,7 +12,7 @@ The same YAML file drives ``camera_streamer.py``, so both ends of an
 RTP-mode deployment share one config.
 
 Usage:
-    python camera_viz.py configs/v4l2.yaml
+    python -m isaaccapture_examples.camera_viz configs/v4l2.yaml
 """
 
 from __future__ import annotations

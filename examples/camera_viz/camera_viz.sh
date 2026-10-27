@@ -163,6 +163,10 @@ _require_local_config() {
         log_error "no venv at $LOCAL_VENV — run ./camera_viz.sh setup first"
         exit 1
     }
+    "$LOCAL_VENV/bin/python" -c 'import isaaccapture_examples.camera_viz' >/dev/null 2>&1 || {
+        log_error "camera_viz is not installed in $LOCAL_VENV — rerun ./camera_viz.sh setup"
+        exit 1
+    }
 }
 
 # RTP deps are opt-in at setup time (``--with-rtp``), so a venv provisioned

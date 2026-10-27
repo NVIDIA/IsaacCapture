@@ -72,12 +72,14 @@ There is no need to install the ``isaaccapture`` pip package yourself. ``setup``
 sample's own environment: ``isaaccapture[cloudxr]`` — the ``cloudxr`` extra is not optional here,
 since XR is the default display mode and the viewer launches the runtime itself — plus every
 other Python dependency, into an isolated ``.venv/`` via ``uv`` (no ``--system-site-packages``).
-It resolves a release matching the checkout's major/minor version, falling back to a release
-candidate and then, after asking, to a source build
-of the surrounding checkout (see :code-file:`scripts/_install_deps.sh
+For ``isaaccapture`` it resolves a release matching the checkout's major/minor version, falling
+back to a release candidate and then, after asking, to a source build of the surrounding
+checkout (see :code-file:`scripts/_install_deps.sh
 <examples/camera_viz/scripts/_install_deps.sh>`; ``--wheel`` and ``--build-from-source`` override
-the choice). When required system packages are missing, it prints the exact ``apt-get`` line
-to approve — declining, or a non-interactive run, aborts.
+the choice). It also installs the sample itself there as an editable package, which is what
+``python -m isaaccapture_examples.camera_viz`` imports. When required system packages are
+missing, it prints the exact ``apt-get`` line to approve — declining, or a non-interactive run,
+aborts.
 
 Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
 ``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
@@ -190,7 +192,8 @@ path, such as ``configs/replay.yaml``:
    * - Command
      - Purpose
    * - ``./camera_viz.sh run CONFIG [VIEWER_FLAGS]``
-     - Run the viewer; flags after ``CONFIG`` are forwarded to ``camera_viz.py``.
+     - Run the viewer; flags after ``CONFIG`` are forwarded to
+       ``python -m isaaccapture_examples.camera_viz``.
    * - ``./camera_viz.sh loopback CONFIG``
      - Run a local sender and receiver to test RTP. Requires ``setup --with-rtp``.
    * - ``./camera_viz.sh deploy CONFIG [DEPLOY_FLAGS]``
@@ -206,7 +209,8 @@ path, such as ``configs/replay.yaml``:
 The ``service-*`` commands manage the robot's RTP sender; CloudXR has separate
 :ref:`service commands <camera-cloudxr-runtime>`.
 
-Run ``.venv/bin/python camera_viz.py --help`` for viewer and CloudXR launcher flags.
+Run ``.venv/bin/python -m isaaccapture_examples.camera_viz --help`` for viewer and CloudXR
+launcher flags.
 
 .. _camera-streaming-web-client:
 
@@ -685,8 +689,8 @@ interactively keeps it out of shell history and the command line.
 
 ``--no-service`` stops after source sync and dependency installation. In that case,
 ``--streaming-host`` does not configure a running sender; pass ``--host`` when starting
-``camera_streamer.py`` manually. The sender retries across unplug, SDK errors, and network
-blips. Operate the installed unit with:
+``python -m isaaccapture_examples.camera_viz.camera_streamer`` manually. The sender retries
+across unplug, SDK errors, and network blips. Operate the installed unit with:
 
 .. code-block:: bash
 
@@ -819,6 +823,8 @@ Troubleshooting
 
 - **Python cannot find dependencies** — use the sample's ``.venv/bin/python``, or select an
   environment with :ref:`setup --venv <camera-streaming-external-venv>`.
+  ``No module named 'isaaccapture_examples'`` means the sample is not installed in that
+  environment; rerun ``./camera_viz.sh setup`` (with the same ``--venv``, if you used one).
 - **No video on Orin.** When the CloudXR runtime runs on Jetson Orin, set
   **Video Codec** to **H.264** in the CloudXR web client. See
   :ref:`connect-xr-headset`.
@@ -869,22 +875,22 @@ Televiz as the compositor at the end of the chain:
    :class: code-100col
 
    camera_viz/
-   ├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
-   ├── configs/             — one YAML per source kind
-   ├── test_data/           — sample replay clip (Git LFS)
+   ├── camera_viz.sh          — CLI: setup / loopback / run / deploy / service-*
+   ├── configs/               — one YAML per source kind
+   ├── test_data/             — sample replay clip (Git LFS)
    ├── python/isaaccapture_examples/camera_viz/
-   │   ├── camera_viz.py    — receiver / viewer (drives a Televiz VizSession)
+   │   ├── camera_viz.py      — receiver / viewer (drives a Televiz VizSession)
    │   ├── camera_streamer.py — robot-side RTP sender (per-camera supervisor)
-   │   ├── config.py        — YAML parsing and validation
-   │   ├── display.py       — VizSession + one layer per surface
-   │   ├── cloudxr_env.py   — display.cloudxr → runtime env file
-   │   ├── dashboard.py     — terminal status panel
-   │   ├── controls/        — XR controller bindings, shapes, stereo geometry, HUD
-   │   ├── pipeline/        — source ABC + threaded runner
-   │   ├── placements/      — XR lock-mode strategies (world / head / lazy / gimbal)
-   │   ├── sources/         — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
-   │   ├── transports/      — RTP sender + receiver (native + GStreamer)
-   │   └── codec/           — native NVENC / NVDEC pybind module
+   │   ├── config.py          — YAML parsing and validation
+   │   ├── display.py         — VizSession + one layer per surface
+   │   ├── cloudxr_env.py     — display.cloudxr → runtime env file
+   │   ├── dashboard.py       — terminal status panel
+   │   ├── controls/          — XR controller bindings, shapes, stereo geometry, HUD
+   │   ├── pipeline/          — source ABC + threaded runner
+   │   ├── placements/        — XR lock-mode strategies (world / head / lazy / gimbal)
+   │   ├── sources/           — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
+   │   ├── transports/        — RTP sender + receiver (native + GStreamer)
+   │   └── codec/             — native NVENC / NVDEC pybind module
    └── scripts/
        ├── _install_deps.sh             — installer (setup + deploy)
        └── camera-streamer.service.in   — systemd unit template

@@ -13,7 +13,7 @@ Four modules behind one door, in the same spirit as :mod:`placements`:
 ``hud``
     The head-locked panel that shows what a press just did.
 
-Import from the package, not the modules: ``from controls import
+Import from the package, not the modules: ``from .controls import
 ControllerControls``.
 """
 

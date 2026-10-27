@@ -117,9 +117,10 @@ the logging packages.
   **The one exception is a program that imports no `isaaccapture` at all**, and
   is meant to keep it that way: there are no handlers of ours for it to
   duplicate, and reaching for `logging_config` would add the dependency the
-  program exists without. `examples/camera_viz/camera_streamer.py` is the
-  case — a sender-only camera box runs it with no CUDA/Vulkan/OpenXR runtime
-  installed, so `import isaaccapture` would fail outright. Keep the logger
+  program exists without. The camera_viz streamer,
+  `examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_streamer.py`,
+  is the case — a sender-only camera box runs it with no CUDA/Vulkan/OpenXR
+  runtime installed, so `import isaaccapture` would fail outright. Keep the logger
   names under `isaaccapture.` anyway; the naming rule above is a convention,
   not a runtime coupling.
 - **Configure through the public API instead:** `logging_config.set_console_level()`,

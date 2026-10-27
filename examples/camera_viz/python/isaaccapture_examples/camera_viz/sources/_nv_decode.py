@@ -40,7 +40,7 @@ class NvH264Decoder:
         except ImportError as e:
             raise RuntimeError(
                 "NvH264Decoder requires the native codec. Run "
-                "`examples/camera_viz/codec/build.sh`."
+                "`examples/camera_viz/python/isaaccapture_examples/camera_viz/codec/build.sh`."
             ) from e
 
         cfg = codec.DecoderConfig()

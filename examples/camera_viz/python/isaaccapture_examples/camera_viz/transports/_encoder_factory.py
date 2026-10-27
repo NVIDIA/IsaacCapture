@@ -4,8 +4,8 @@
 
 Two H.264 encoders share the same ``encode(rgba) -> List[bytes]`` API:
 
-  * :class:`NvH264Encoder` — desktop, native NVENC at
-    ``examples/camera_viz/codec/``. Zero-copy from CuPy into NVENC.
+  * :class:`NvH264Encoder` — desktop, native NVENC in this package's
+    ``codec/``. Zero-copy from CuPy into NVENC.
   * :class:`GstNvH264Encoder` — Jetson / portable, GStreamer's
     ``nvv4l2h264enc`` (or ``nvh264enc`` / ``x264enc`` fallbacks).
     ~1-3 ms D2H download at 720p.

@@ -49,7 +49,7 @@ class NvH264Encoder:
         except ImportError as e:
             raise RuntimeError(
                 "NvH264Encoder requires the native codec. Run "
-                "`examples/camera_viz/codec/build.sh`."
+                "`examples/camera_viz/python/isaaccapture_examples/camera_viz/codec/build.sh`."
             ) from e
 
         # Follow the input's GPU when the caller didn't pin one.
