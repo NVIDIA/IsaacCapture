@@ -1025,6 +1025,68 @@ def test_discover_devtools_socket_prefers_weblayer_over_generic(
     assert _discover_devtools_socket() == "weblayer_devtools_remote_777"
 
 
+_TWO_WEBLAYER_SOCKETS = (
+    "0: 00000003 00000000 00010000 0001 01 12345 @weblayer_devtools_remote_111\n"
+    "1: 00000003 00000000 00010000 0001 01 12346 @weblayer_devtools_remote_222\n"
+)
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._cdp_list_tabs")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_picks_the_one_holding_the_teleop_tab(
+    mock_run_adb: MagicMock,
+    mock_forward: MagicMock,
+    mock_list_tabs: MagicMock,
+) -> None:
+    """With several WebLayer sockets, the one with a teleop tab wins over socket order.
+
+    A PICO 4 Ultra runs more than one WebLayer process; taking the first
+    silently drives the wrong browser.
+    """
+    mock_run_adb.return_value = _TWO_WEBLAYER_SOCKETS
+    mock_list_tabs.side_effect = [
+        [{"url": "about:blank"}],
+        [{"url": "https://h.test/?oobEnable=1&serverIP=10.0.0.1"}],
+    ]
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_222"
+    assert [c.args[0] for c in mock_forward.call_args_list] == [
+        "weblayer_devtools_remote_111",
+        "weblayer_devtools_remote_222",
+    ]
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._cdp_list_tabs")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_tie_without_teleop_tab_keeps_first(
+    mock_run_adb: MagicMock,
+    mock_forward: MagicMock,
+    mock_list_tabs: MagicMock,
+) -> None:
+    """No teleop tab anywhere is the normal pre-``am start`` state, not a failure."""
+    mock_run_adb.return_value = _TWO_WEBLAYER_SOCKETS
+    mock_list_tabs.return_value = [{"url": "about:blank"}]
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_111"
+
+
+@patch("cloudxr_py_test_ns.oob_teleop_adb._cdp_list_tabs")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._adb_forward_cdp")
+@patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
+def test_discover_devtools_socket_tie_skips_a_socket_that_will_not_forward(
+    mock_run_adb: MagicMock,
+    mock_forward: MagicMock,
+    mock_list_tabs: MagicMock,
+) -> None:
+    """A dead socket is skipped rather than aborting the search."""
+    mock_run_adb.return_value = _TWO_WEBLAYER_SOCKETS
+    mock_forward.side_effect = [OobAdbError("gone"), None]
+    mock_list_tabs.return_value = [
+        {"url": "https://h.test/?oobEnable=1&serverIP=10.0.0.1"}
+    ]
+    assert _discover_devtools_socket() == "weblayer_devtools_remote_222"
+
+
 @patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb")
 def test_discover_devtools_socket_falls_back_to_first_candidate(
     mock_run_adb: MagicMock,
@@ -1711,3 +1773,78 @@ async def test_monitor_without_callback_still_logs_and_keeps_watching() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+# ---------------------------------------------------------------------------
+# CDP: _find_and_click_teleop_tab re-scans the DevTools sockets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_teleop_tab_follows_the_page_to_another_socket() -> None:
+    """Cold start on a PICO: the forward was set up before the page existed.
+
+    _close_stale_teleop_tabs has just closed every ``oobEnable=`` tab, so
+    _discover_devtools_socket could only guess between the browser's WebLayer
+    processes, and here it guessed the one that only holds the new-tab page.
+    The wait loop must re-run discovery and move the forward to where the
+    teleop page actually opened instead of polling the wrong socket until
+    the deadline.
+    """
+    tabs_by_socket = {
+        "weblayer_devtools_remote_111": [
+            {
+                "id": "ntp",
+                "url": "https://browser.example/new",
+                "webSocketDebuggerUrl": "ws://ntp",
+            }
+        ],
+        "weblayer_devtools_remote_222": [
+            {
+                "id": "teleop",
+                "url": "https://10.0.0.2:48322/client/?oobEnable=1",
+                "webSocketDebuggerUrl": "ws://teleop",
+            }
+        ],
+    }
+    forwarded = {"socket": "weblayer_devtools_remote_111"}
+
+    def forward(socket_name: str, _port: int) -> None:
+        forwarded["socket"] = socket_name
+
+    def list_tabs(_port: int) -> list[dict]:
+        return tabs_by_socket[forwarded["socket"]]
+
+    real_sleep = asyncio.sleep
+
+    async def no_wait(_seconds: float) -> None:
+        await real_sleep(0)
+
+    async def immediate(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    with (
+        patch.object(adb_module.asyncio, "to_thread", side_effect=immediate),
+        patch.object(adb_module.asyncio, "sleep", side_effect=no_wait),
+        patch.object(
+            adb_module,
+            "_discover_devtools_socket",
+            return_value="weblayer_devtools_remote_222",
+        ),
+        patch.object(adb_module, "_adb_forward_cdp", side_effect=forward),
+        patch.object(adb_module, "_cdp_list_tabs", side_effect=list_tabs),
+        patch.object(adb_module, "_cdp_session_click_connect") as click,
+        patch.object(adb_module, "run_adb_headset_bookmark") as relaunch,
+    ):
+        ws_url = await adb_module._find_and_click_teleop_tab(
+            resolved_port=48322,
+            deadline=time.monotonic() + 5.0,
+            timeout=60.0,
+        )
+
+    assert ws_url == "ws://teleop"
+    assert forwarded["socket"] == "weblayer_devtools_remote_222"
+    click.assert_awaited_once()
+    assert click.await_args.args == ("ws://teleop",)
+    # Found by moving the forward, not by the mid-timeout am start re-fire.
+    relaunch.assert_not_called()

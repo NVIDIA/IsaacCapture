@@ -1225,6 +1225,8 @@ _DEVTOOLS_SOCKET_RE = re.compile(r"@([A-Za-z0-9._+-]*_devtools_remote(?:_\d+)?)"
 def _discover_devtools_socket() -> str | None:
     """Return the bare name of the browser's DevTools abstract socket, or None.
 
+    When several tie on prefix, the one holding a teleop tab wins.
+
     Chromium-based Android browsers expose a Unix abstract socket matching
     ``@<prefix>_devtools_remote[_<pid>]`` in ``/proc/net/unix``.  Known
     prefixes in the wild:
@@ -1258,11 +1260,33 @@ def _discover_devtools_socket() -> str | None:
     # Prefer teleop-relevant prefixes in this order, otherwise fall back to
     # the first discovered socket.
     priority = ("weblayer", "com.oculus.browser", "chrome", "webview")
-    for prefix in priority:
-        for cand in candidates:
-            if cand.startswith(prefix):
-                return cand
-    return candidates[0]
+
+    def rank(name: str) -> int:
+        return next(
+            (i for i, pre in enumerate(priority) if name.startswith(pre)),
+            len(priority),
+        )
+
+    ranked = sorted(candidates, key=rank)
+    tied = [c for c in ranked if rank(c) == rank(ranked[0])]
+    if len(tied) == 1:
+        return tied[0]
+    # PICO exposes one weblayer_devtools_remote_<pid> per browser process, and
+    # the teleop tab can be on any of them: ask each.
+    for cand in tied:
+        try:
+            _adb_forward_cdp(cand, _CDP_LOCAL_PORT)
+        except (OobAdbError, subprocess.CalledProcessError, OSError) as exc:
+            log.debug("CDP: cannot forward to @%s: %s", cand, exc)
+            continue
+        if any(
+            "oobEnable=" in (t.get("url") or "")
+            for t in _cdp_list_tabs(_CDP_LOCAL_PORT)
+        ):
+            log.info("CDP: teleop tab found on @%s", cand)
+            return cand
+    # None has one yet, which is normal before the page is opened.
+    return tied[0]
 
 
 def _adb_forward_cdp(socket_name: str, local_port: int) -> None:
@@ -1980,13 +2004,31 @@ async def _find_and_click_teleop_tab(
 
     ws_url: str | None = None
     am_start_retried = False
+    # Socket the re-scan below last forwarded _CDP_LOCAL_PORT to.
+    forwarded_socket: str | None = None
     # Re-fire am start once if we don't see the tab in the first half
     # of the deadline. Cold-launch can swallow the first VIEW intent
     # (browser was being woken up), and a second intent reliably
     # navigates an already-warm tab.
     retry_at = time.monotonic() + (timeout / 2)
+    rescan_tick = 0
     while ws_url is None and time.monotonic() < deadline:
         await asyncio.sleep(1.0)
+        # The forward was chosen before the page existed, when stale-tab
+        # cleanup had left no teleop tab to tell the sockets apart. Re-probe
+        # every third pass so it follows the page once it appears.
+        rescan_tick += 1
+        if rescan_tick % 3 == 0:
+            rescanned = await asyncio.to_thread(_discover_devtools_socket)
+            if rescanned and rescanned != forwarded_socket:
+                try:
+                    await asyncio.to_thread(
+                        _adb_forward_cdp, rescanned, _CDP_LOCAL_PORT
+                    )
+                except (OobAdbError, subprocess.CalledProcessError, OSError) as exc:
+                    log.debug("CDP: re-forward to @%s failed: %s", rescanned, exc)
+                else:
+                    forwarded_socket = rescanned
         for tab in await asyncio.to_thread(_cdp_list_tabs, _CDP_LOCAL_PORT):
             if "id" not in tab or not tab.get("webSocketDebuggerUrl"):
                 continue
