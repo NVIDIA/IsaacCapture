@@ -28,8 +28,9 @@ namespace core
 class PyOpenXRSession
 {
 public:
-    PyOpenXRSession(const std::string& app_name, const std::vector<std::string>& extensions)
-        : impl_(std::make_unique<OpenXRSession>(app_name, extensions))
+    //! Constructs without the GIL: waiting for a system can take as long as the headset does.
+    PyOpenXRSession(const std::string& app_name, const std::vector<std::string>& extensions, bool wait_for_system)
+        : impl_(create(app_name, extensions, wait_for_system))
     {
     }
 
@@ -71,6 +72,14 @@ public:
     }
 
 private:
+    static std::unique_ptr<OpenXRSession> create(const std::string& app_name,
+                                                 const std::vector<std::string>& extensions,
+                                                 bool wait_for_system)
+    {
+        py::gil_scoped_release release;
+        return std::make_unique<OpenXRSession>(app_name, extensions, wait_for_system);
+    }
+
     std::unique_ptr<OpenXRSession> impl_;
 };
 
@@ -132,8 +141,11 @@ PYBIND11_MODULE(_oxr, m)
 
     // OpenXRSession (Python-facing wrapper; see core::PyOpenXRSession for the lifetime contract)
     py::class_<core::PyOpenXRSession, std::unique_ptr<core::PyOpenXRSession>>(m, "OpenXRSession")
-        .def(py::init<const std::string&, const std::vector<std::string>&>(), py::arg("app_name"),
-             py::arg("extensions") = std::vector<std::string>())
+        .def(py::init<const std::string&, const std::vector<std::string>&, bool>(), py::arg("app_name"),
+             py::arg("extensions") = std::vector<std::string>(), py::arg("wait_for_system") = true,
+             "Create a headless session. With wait_for_system (the default) construction waits, without limit, "
+             "until the runtime reports a headset; with False it raises RuntimeError at once when none is "
+             "available, so the caller can retry. Releases the GIL while constructing.")
         .def("get_handles", &core::PyOpenXRSession::get_handles, "Get session handles for sharing")
         .def("get_provider_snapshot", &core::PyOpenXRSession::get_provider_snapshot,
              "Poll and return the cached owned-provider health snapshot")
