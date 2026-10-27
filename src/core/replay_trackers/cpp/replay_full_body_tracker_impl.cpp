@@ -18,15 +18,12 @@ namespace core
 // ReplayFullBodyTrackerImpl
 // ============================================================================
 
-ReplayFullBodyTrackerImpl::ReplayFullBodyTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                                                     std::string_view base_name,
-                                                     const RecordedSchemas& recorded)
+ReplayFullBodyTrackerImpl::ReplayFullBodyTrackerImpl(TrackerSampleSource source, std::string_view base_name)
     : mcap_viewers_(std::make_unique<FullBodyMcapViewers>(
-          std::move(reader),
+          std::move(source),
           base_name,
           std::vector<std::string>(
-              FullBodyRecordingTraits::replay_channels.begin(), FullBodyRecordingTraits::replay_channels.end()),
-          recorded)),
+              FullBodyRecordingTraits::replay_channels.begin(), FullBodyRecordingTraits::replay_channels.end()))),
       logger_(isaaccapture::Logger::get("isaaccapture.core.ReplayFullBodyTrackerImpl"))
 {
 }

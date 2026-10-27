@@ -18,15 +18,12 @@ namespace core
 // ReplayControllerTrackerImpl
 // ============================================================================
 
-ReplayControllerTrackerImpl::ReplayControllerTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                                                         std::string_view base_name,
-                                                         const RecordedSchemas& recorded)
+ReplayControllerTrackerImpl::ReplayControllerTrackerImpl(TrackerSampleSource source, std::string_view base_name)
     : mcap_viewers_(std::make_unique<ControllerMcapViewers>(
-          std::move(reader),
+          std::move(source),
           base_name,
           std::vector<std::string>(
-              ControllerRecordingTraits::replay_channels.begin(), ControllerRecordingTraits::replay_channels.end()),
-          recorded)),
+              ControllerRecordingTraits::replay_channels.begin(), ControllerRecordingTraits::replay_channels.end()))),
       logger_(isaaccapture::Logger::get("isaaccapture.core.ReplayControllerTrackerImpl"))
 {
 }

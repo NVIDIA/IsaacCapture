@@ -39,15 +39,12 @@ Serialized<MessageChannelMessagesTracked> finish_batch(
 
 } // namespace
 
-ReplayMessageChannelTrackerImpl::ReplayMessageChannelTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                                                                 std::string_view base_name,
-                                                                 const RecordedSchemas& recorded)
+ReplayMessageChannelTrackerImpl::ReplayMessageChannelTrackerImpl(TrackerSampleSource source, std::string_view base_name)
     : mcap_viewers_(std::make_unique<MessageChannelMcapViewers>(
-          std::move(reader),
+          std::move(source),
           base_name,
           std::vector<std::string>(
-              MessageChannelRecordingTraits::channels.begin(), MessageChannelRecordingTraits::channels.end()),
-          recorded)),
+              MessageChannelRecordingTraits::channels.begin(), MessageChannelRecordingTraits::channels.end()))),
       logger_(isaaccapture::Logger::get("isaaccapture.core.ReplayMessageChannelTrackerImpl"))
 {
 }

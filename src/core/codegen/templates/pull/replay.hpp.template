@@ -22,17 +22,10 @@ class @REPLAY_IMPL@ : public @IFACE@
 public:
 #if @HAS_METADATA@
     //! The metadata the recording holds for `base_name`, or an empty handle when it holds none.
-    static Serialized<@METADATA@> read_metadata(std::unique_ptr<mcap::McapReader> reader,
-                                                std::string_view base_name,
-                                                const RecordedSchemas& recorded);
-    @REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
-                  std::string_view base_name,
-                  const RecordedSchemas& recorded,
-                  Serialized<@METADATA@> metadata);
+    static Serialized<@METADATA@> read_metadata(TrackerSampleSource source, std::string_view base_name);
+    @REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name, Serialized<@METADATA@> metadata);
 #else
-    @REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
-                  std::string_view base_name,
-                  const RecordedSchemas& recorded);
+    @REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name);
 #endif
     void update(int64_t monotonic_time_ns) override;
     const Serialized<@FB_TABLE@>& get_data() const override;
