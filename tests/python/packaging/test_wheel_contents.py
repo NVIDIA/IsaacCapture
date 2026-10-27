@@ -78,6 +78,22 @@ def test_wheel_does_not_ship_cts() -> None:
     assert shipped == []
 
 
+def test_agent_index_and_skills_ship_beside_the_package() -> None:
+    """llms.txt links skills/ by relative path, so both ship unchanged and side by side."""
+    root = repo_root()
+    expected = {f"{DIST}/llms.txt": root / "llms.txt"}
+    expected |= {
+        f"{DIST}/{path.relative_to(root).as_posix()}": path
+        for path in (root / "skills").rglob("*")
+        if path.is_file()
+    }
+    with zipfile.ZipFile(_wheel()) as archive:
+        missing = sorted(set(expected) - set(archive.namelist()))
+        assert not missing, f"missing from the wheel: {missing}"
+        for name, source in expected.items():
+            assert archive.read(name) == source.read_bytes(), f"{name} differs"
+
+
 def test_the_shim_ships_beside_the_real_package() -> None:
     wheel = _wheel()
     with zipfile.ZipFile(wheel) as archive:
