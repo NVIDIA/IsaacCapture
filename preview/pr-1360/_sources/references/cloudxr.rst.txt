@@ -389,7 +389,8 @@ connection failure, once any automatic reconnect attempts have been exhausted.
 Other device profiles default to **Never refresh**. You can also choose
 **Refresh on clean session end** to reload only after a clean disconnect.
 Changing this setting switches the device profile to **Custom** and saves your
-choice; selecting a device profile again restores that profile's defaults.
+choice; selecting a named device profile again restores that profile's defaults.
+Selecting **Custom** preserves the current settings.
 
 The last error message, including its hexadecimal error code when supplied by
 CloudXR, remains visible after automatic or manual refreshes in the same browser
