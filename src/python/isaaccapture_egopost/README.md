@@ -263,6 +263,23 @@ See the [Docker guide](inference/docker/README.md) for a combined inference
 image or separate detector and reconstruction images.
 
 
+## 📚 Citation
+
+If you use EgoHand in your research, please cite:
+
+```bibtex
+@misc{EgoHand2026,
+  title={EgoHand: Monocular 3D Hand Reconstruction from Egocentric Video},
+  author={Chao-Yeh Chen and Tiffany Chen and Lin Duan and Tianyi Hu and
+    Yu-Hsiang Huang and Umar Iqbal and Jiefeng Li and Edy Lim and Yanchen Liu
+    and Yihan Pang and Hang Qiu and Jun Saito and Shao Su and Qingsi Wang and
+    Xiufeng Xie},
+  journal={arXiv:2610.30293},
+  year={2026}
+}
+```
+
+
 <a id="license"></a>
 
 ## 📄 License
