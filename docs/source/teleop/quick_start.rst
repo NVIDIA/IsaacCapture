@@ -199,6 +199,10 @@ might need to whitelist them manually.
 Please see the `CloudXR network setup`_ for more details for other network configurations (such as
 running the CloudXR runtime and wss proxy in containerized environment; or using Vision Pro client).
 
+For :ref:`remote sessions <remote-sessions>`, the Teleop Session Server also needs TCP 47600 (and
+47601 for WebSocket), open toward the robot machine only:
+``sudo ufw allow from <robot-ip> to any port 47600,47601 proto tcp``.
+
 .. _connect-xr-headset:
 
 5. Connect an XR headset

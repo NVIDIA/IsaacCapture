@@ -49,6 +49,10 @@ Identity and inventory
   owns ``openxr/controller/left`` and ``openxr/controller/right``.
 - Replay sessions expose neither a live OpenXR provider nor configured plugin
   providers.
+- Remote sessions expose ``openxr/runtime`` and ``openxr/headset`` as the
+  Teleop Session Server reports them, and the controller devices as live
+  sessions do. They expose no plugin providers: plugins run on the server
+  machine, started by hand or with a script, outside the session.
 
 Plugin device descriptors come from ``PluginInfo.devices`` in ``plugin.yaml``.
 Unknown paths in a status report never create devices. The identity rules form

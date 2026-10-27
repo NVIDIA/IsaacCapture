@@ -204,7 +204,8 @@ samples. Metadata has its own
 ``TRACKER_METADATA_MAX_SIZE`` limit, including FlatBuffer overhead.
 The data array length must match the metadata's taxel count.
 
-Applications can read ``TactileTracker`` directly for live or replay data.
+Applications can read ``TactileTracker`` directly for live or replay data; a
+remote session (:ref:`remote-sessions`) does not carry it yet.
 Retargeting graphs can instead use ``TactileSource(name, collection_id,
 num_segments, num_taxels)`` from
 ``isaaccapture.retargeting_engine.deviceio_source_nodes``. It emits
