@@ -1,0 +1,4 @@
+Internal review copy of NVIDIA camera sources.
+The upstream files covered by this identifier had no explicit license grant.
+This identifier records that unresolved status; it grants no redistribution rights.
+Preserve upstream notices and obtain the owner's licensing decision before release.

@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+version: 1
+receiver:
+  host: 127.0.0.1
+  port: 5000
+  gpu_id: 0
+  max_record_bytes: 268435456
+  stats_log_interval_s: 5
+  receive_fps_warning_threshold: 48.0
+  receive_fps_warning_interval_s: 10
+ipc:
+  socket_path: /tmp/isaac-camera-streamer.sock
+  owner_name: isaac_camera_streamer
+  queue_size: 64
+streams:
+- index: 0
+  name: head
+  type: stereo
+  width: 1920
+  height: 1080
+  output_format: nv12
+  ring_depth: 6
+  ipc:
+    left: head.left
+    right: head.right
