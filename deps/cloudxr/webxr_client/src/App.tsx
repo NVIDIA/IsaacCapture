@@ -68,13 +68,14 @@ import CloudXR3DUI from './CloudXRUI';
 import { readUrlParam } from './config/resolve';
 import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
+import { readSessionError, saveSessionError } from './sessionError';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
 import { TraceVisualization } from './TraceVisualization';
 import {
-  SystemNotice,
   formatSystemNotice,
   formatSystemNoticeBody,
   isSystemNoticeMessage,
+  SystemNotice,
 } from './types/serverMessages';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.
@@ -209,7 +210,11 @@ function AppContent() {
   // Session status management
   const [sessionStatus, setSessionStatus] = useState('Disconnected');
   // Error message management
-  const [errorMessage, setErrorMessage] = useState('');
+  const [errorMessage, setErrorMessageState] = useState(readSessionError);
+  const setErrorMessage = (message: string) => {
+    saveSessionError(message);
+    setErrorMessageState(message);
+  };
   // CloudXR session reference
   const [cloudXRSession, setCloudXRSession] = useState<CloudXR.Session | null>(null);
   // XR mode state for UI visibility
@@ -559,6 +564,7 @@ function AppContent() {
   const handleStatusChange = (connected: boolean, status: string) => {
     setIsConnected(connected);
     setSessionStatus(status);
+    if (connected && status === 'Connected') setErrorMessage('');
     const streaming = connected && status === 'Connected';
     const streamPhase = streamPhaseForStatus(connected, status);
     controlChannelRef.current?.sendStreamStatus(streaming, streamPhase, status);
@@ -604,10 +610,7 @@ function AppContent() {
 
     // Reload on session end per mode; read live off the stable 2D UI to avoid a stale closure.
     const autoRefreshMode = cloudXR2DUI?.getConfiguration().autoRefreshMode;
-    if (
-      (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) ||
-      (status === 'Error' && autoRefreshMode === 'any')
-    ) {
+    if (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) {
       window.location.reload();
     }
   };
@@ -1058,7 +1061,8 @@ function AppContent() {
 
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    () =>
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
     [config?.controlPanelPosition, controlPanelLayout]
   );
 
@@ -1213,8 +1217,11 @@ function AppContent() {
                 warmupEndTimeoutMs={config?.warmupEndTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
-                  if (cloudXR2DUI) {
-                    cloudXR2DUI.showError(error);
+                  // onStatusChange('Error') arrives first; persist the full error code before reloading.
+                  setErrorMessage(error);
+                  cloudXR2DUI?.showError(error);
+                  if (cloudXR2DUI?.getConfiguration().autoRefreshMode === 'any') {
+                    window.location.reload();
                   }
                 }}
                 onExitImmersiveXR={handleDisconnect}

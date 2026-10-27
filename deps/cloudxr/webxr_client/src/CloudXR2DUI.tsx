@@ -591,7 +591,7 @@ export class CloudXR2DUI {
       streamTestMode: 'off',
       streamTestDurationSeconds: 5,
       headless: false,
-      autoRefreshMode: 'clean',
+      autoRefreshMode: 'never',
       reconnectEnabled: true,
       reconnectMaxAttempts: 3,
       reconnectDelayMs: 3000,
@@ -916,7 +916,7 @@ export class CloudXR2DUI {
       this.applyHeadlessImmersiveDropdown();
       this.updateConfiguration();
     });
-    addListener(this.autoRefreshModeSelect, 'change', updateConfig);
+    addListener(this.autoRefreshModeSelect, 'change', onProfileLinkedChange);
 
     addListener(this.resetSettingsButton, 'click', () => {
       if (window.confirm('Reset all settings to their defaults? This reloads the page.')) {
@@ -1150,7 +1150,7 @@ export class CloudXR2DUI {
       headless: this.headlessInput.checked,
       autoRefreshMode: parseAutoRefreshMode(
         this.autoRefreshModeSelect.value,
-        this.getDefaultConfiguration().autoRefreshMode ?? 'clean'
+        this.getDefaultConfiguration().autoRefreshMode ?? 'never'
       ),
       reconnectEnabled: this.reconnectEnabledInput.checked,
       reconnectMaxAttempts: (() => {
@@ -1194,6 +1194,7 @@ export class CloudXR2DUI {
   private applyDeviceProfileToForm(profileId: DeviceProfileId): void {
     const profile = getDeviceProfile(profileId);
     const cloudxr = profile.cloudxr;
+    this.autoRefreshModeSelect.value = profile.autoRefreshMode ?? 'never';
     this.updateDeviceProfileWarning(profileId);
 
     if (!cloudxr || profileId === 'custom') {
@@ -1248,6 +1249,7 @@ export class CloudXR2DUI {
   /** Persist profile-driven form fields to localStorage so they are restored on load. */
   private persistProfileFieldsToLocalStorage(): void {
     try {
+      localStorage.setItem('autoRefreshMode', this.autoRefreshModeSelect.value);
       localStorage.setItem('perEyeWidth', this.perEyeWidthInput.value);
       localStorage.setItem('perEyeHeight', this.perEyeHeightInput.value);
       localStorage.setItem('reprojectionGridCols', this.reprojectionGridColsInput.value);
