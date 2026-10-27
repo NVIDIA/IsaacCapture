@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Copy to configs/ and replace mode using this SHW5G driver's --list-modes output.
-# Sensor modes are platform-specific; this template intentionally requires editing.
+# Replace mode using this SHW5G driver's --list-modes output.
+# Sensor modes are platform-specific; this profile intentionally requires editing.
 version: 1
 network:
   bind: 0.0.0.0

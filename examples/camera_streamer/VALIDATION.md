@@ -65,12 +65,12 @@ scale mode 0; 2400×1440/30 center-crops/scales mode 1. Enumeration alone does
 not establish live mono capture or end-to-end performance; no new capture was
 started for this profile addition.
 
-The vendor SHW5G page lists 2560×1984/30 and 2400×1440/60. Its templates require
+The vendor SHW5G page lists 2560×1984/30 and 2400×1440/60. Its profiles in `configs/shw5g/` require
 the operator to supply an Argus mode index, since no SHW5G is attached locally.
 These are the published modes, not a claim to enumerate every driver variant.
 See the linked vendor specifications in README.md.
 
 Profile validation passed 41 Python tests, all six mono receiver dry-runs, and
 the isolated Orin native config test covering all runnable profiles and rejecting
-SHW5G templates until their mode placeholders are replaced. C++ formatting and
+SHW5G profiles until their mode placeholders are replaced. C++ formatting and
 repository pre-commit checks passed. Live mono validation remains a separate step.

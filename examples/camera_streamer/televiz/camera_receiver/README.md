@@ -9,7 +9,7 @@ The receiver connects to the robot's AVS1/TCP sender, decodes HEVC with NVDEC,
 and publishes decoded GPU rings to a local CUDA IPC socket. It opens no window.
 
 Use the [host setup and receive commands](../../README.md). The default config
-is `../../configs/s56-stereo-2560x1984-30.yaml` relative to this directory.
+is `../../configs/s56/s56-stereo-2560x1984-30.yaml` relative to this directory.
 The default profile publishes `head.left` and `head.right` NV12 streams at
 `/tmp/isaac-camera-streamer.sock`. Match receiver dimensions to the sender profile.
 

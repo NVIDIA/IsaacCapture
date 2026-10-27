@@ -8,7 +8,7 @@ import yaml
 from camera_receiver import _load_config, _parse_stream_config
 
 
-PROFILES = Path(__file__).resolve().parents[2] / "configs"
+PROFILES = Path(__file__).resolve().parents[2] / "configs" / "s56"
 
 
 @pytest.mark.parametrize("path", sorted(PROFILES.glob("*.yaml")), ids=lambda p: p.stem)

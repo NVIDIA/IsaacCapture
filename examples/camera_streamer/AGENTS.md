@@ -32,4 +32,5 @@ SPDX-License-Identifier: Apache-2.0
 - Use one shared profile per device/resolution; define wire geometry and port once.
 - Keep tests under the example-level tests/ directory, split by language and hardware needs.
 - Public setup instructions target main; describe pre-merge branch overrides separately.
-- Do not infer Argus mode indices from vendor specifications or another model; keep unknown modes explicit in templates.
+- Do not infer Argus mode indices from vendor specifications or another model; keep unknown modes explicit in profiles.
+- Group camera profiles symmetrically by model under configs/; setup requirements do not determine folder placement.
