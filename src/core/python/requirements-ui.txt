@@ -1,2 +1,7 @@
 # Optional UI dependencies for parameter tuning
 imgui[glfw]>=2.0.0
+numpy>=2,<3
+viser==1.1.1
+yourdfpy==0.0.60
+trimesh==5.1.1
+rtree>=1.3,<2

@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+import unittest
+from unittest.mock import Mock, patch
+
+from tactile_metadata_editor.sdk import Receiver
+
+
+class ReceiverTests(unittest.TestCase):
+    def test_receiver_is_inactive_until_the_first_frame(self):
+        context = Mock()
+        context.Pipe.return_value = Mock(), Mock()
+        with (
+            patch(
+                "tactile_metadata_editor.sdk.multiprocessing.get_context",
+                return_value=context,
+            ),
+            patch("tactile_metadata_editor.sdk.threading.Thread"),
+        ):
+            receiver = Receiver({})
+
+        self.assertFalse(receiver.active)
+        self.assertEqual(receiver.status, "Connecting")
+
+        def receive(_):
+            if not receiver.latest:
+                return b'{"sides": {"left": null}}'
+            self.assertTrue(receiver.active)
+            self.assertEqual(receiver.status, "Connected")
+            raise EOFError
+
+        receiver.connection.recv_bytes.side_effect = receive
+        receiver.receive()
+        self.assertEqual(receiver.latest, {"left": None})
+        self.assertFalse(receiver.active)
+
+
+if __name__ == "__main__":
+    unittest.main()

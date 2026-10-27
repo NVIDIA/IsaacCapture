@@ -49,6 +49,11 @@ dev = [
 ]
 ui = [
     "imgui[glfw]>=2.0.0",
+    "numpy>=2,<3",
+    "viser==1.1.1",
+    "yourdfpy==0.0.60",
+    "trimesh==5.1.1",
+    "rtree>=1.3,<2",
 ]
 retargeters = [
     "dex-retargeting>=0.4.6,<0.6.0",
