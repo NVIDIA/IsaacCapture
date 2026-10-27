@@ -4,6 +4,8 @@
     @NAME@_pull
         .def(py::init<const std::string&, size_t>(), py::arg("collection_id"),
              py::arg("max_flatbuffer_size") = core::@CLASS@::DEFAULT_MAX_FLATBUFFER_SIZE)
+        .def_property_readonly("collection_id", &core::@CLASS@::collection_id)
+        .def_property_readonly("max_flatbuffer_size", &core::@CLASS@::max_flatbuffer_size)
         .def(
             "@PYTHON_ACCESSOR@",
             [](const core::@CLASS@& self, const core::ITrackerSession& session)
