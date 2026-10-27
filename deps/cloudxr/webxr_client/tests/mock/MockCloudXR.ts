@@ -378,6 +378,10 @@ export class MockCloudXR implements CloudXR.Session {
     throw new Error('MockCloudXR does not support sendServerMessage(); use a real session');
   }
 
+  getDeveloperSettings(): CloudXR.DeveloperSettings {
+    throw new Error('MockCloudXR does not support getDeveloperSettings(); use a real session');
+  }
+
   setMicEnabled(enabled: boolean): boolean {
     if (this.sessionState !== CloudXR.SessionState.Connected) {
       return false;
