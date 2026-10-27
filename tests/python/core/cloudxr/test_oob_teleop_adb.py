@@ -1775,6 +1775,33 @@ async def test_monitor_without_callback_still_logs_and_keeps_watching() -> None:
                 await task
 
 
+class TestRecording:
+    """Resolving TELEOP_OOB_RECORDING to a path on the headset."""
+
+    @patch("cloudxr_py_test_ns.oob_teleop_adb._adb_run")
+    def test_a_host_path_is_pushed_to_download(self, mock_adb, tmp_path):
+        rec = tmp_path / "take-7.json"
+        rec.write_text("{}", encoding="utf-8")
+        assert adb_module._resolve_recording(str(rec)) == "/sdcard/Download/take-7.json"
+        assert mock_adb.call_args.args[0][:2] == ["adb", "push"]
+
+    def test_a_missing_recording_is_named_in_the_error(self, tmp_path):
+        with pytest.raises(OobAdbError, match="recording not found"):
+            adb_module._resolve_recording(str(tmp_path / "nope.json"))
+
+    @patch(
+        "cloudxr_py_test_ns.oob_teleop_adb._run_adb",
+        return_value="/sdcard/Download/take-9.json\n",
+    )
+    def test_latest_picks_the_newest_on_the_headset(self, _mock):
+        assert adb_module._resolve_recording("latest") == "/sdcard/Download/take-9.json"
+
+    @patch("cloudxr_py_test_ns.oob_teleop_adb._run_adb", return_value="")
+    def test_latest_without_recordings_fails(self, _mock):
+        with pytest.raises(OobAdbError, match="no recording found"):
+            adb_module._resolve_recording("latest")
+
+
 # ---------------------------------------------------------------------------
 # CDP: _find_and_click_teleop_tab re-scans the DevTools sockets
 # ---------------------------------------------------------------------------

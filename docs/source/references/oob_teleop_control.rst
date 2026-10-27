@@ -574,6 +574,16 @@ Environment variables
      - Default video codec for headset bookmarks
    * - ``TELEOP_CLIENT_PANEL_HIDDEN_AT_START``
      - Hide control panel on load (``true`` / ``false``)
+   * - ``TELEOP_CLIENT_IMMERSIVE_MODE``
+     - WebXR session mode: ``vr`` or ``ar``. PICO 4 Ultra needs ``vr``.
+   * - ``TELEOP_CLIENT_REFERENCE_SPACE``
+     - XR reference space: ``auto``, ``local-floor``, ``local``, ``viewer`` or
+       ``unbounded``. Pin it to compare replays across runs.
+   * - ``TELEOP_CLIENT_REPLAY_PACING``
+     - Replay pacing: ``frame`` (one recorded frame per XR frame, independent
+       of server speed) or ``time``.
+   * - ``TELEOP_CLIENT_SHOW_RECORDING_CONTROLS``
+     - Enable the recording and replay controls (``true`` / ``false``).
    * - ``TELEOP_CLIENT_ROUTE``
      - HashRouter fragment appended to the bookmark URL. Default empty
        (no fragment — the web client picks its own landing route). Set
@@ -608,6 +618,14 @@ Environment variables
        Before each new browser launch, ADB must confirm
        ``mWakefulness=Awake``; wear or unlock the headset (or cover its
        proximity sensor) when the service reports that it is asleep.
+   * - ``TELEOP_OOB_RECORDING``
+     - Recording to select in the client before CONNECT: a host path, pushed to
+       the headset, or ``latest``, the newest ``*.json`` in its Download folder.
+       Starting the replay is left to the operator. Unset by default.
+   * - ``TELEOP_HEADSET_BROWSER_PACKAGE``
+     - Headset browser package. Unset, the vendor's browser is used. On PICO,
+       set ``com.pico.browser``: in hand-tracking mode the OS holds VR from
+       non-system browsers behind a "requires controllers" dialog.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host. If this is

@@ -38,12 +38,14 @@ from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from .oob_teleop_env import (
     default_web_client_origin,
     parse_env_port,
     build_headset_bookmark_url,
     client_ui_fields_from_env,
     oob_progress,
+    oob_replay_recording_from_env,
     redact_control_token,
     resolve_control_token,
     resolve_lan_host_for_oob,
@@ -1546,12 +1548,72 @@ async def _cdp_send_reset_panel_key(ws_url: str) -> None:
     log.info("CDP: sent reset-panel key (%s)", _RESET_PANEL_KEY)
 
 
+_HEADSET_RECORDING_DIR = "/sdcard/Download"
+LATEST_RECORDING = "latest"
+
+
+def _newest_recording_on_headset() -> str:
+    """Path of the most recent ``*.json`` in the headset's Download folder."""
+    out = _run_adb(
+        "newest recording",
+        [
+            "adb",
+            "shell",
+            f"ls -t {_HEADSET_RECORDING_DIR}/*.json 2>/dev/null | head -n 1",
+        ],
+        timeout=10.0,
+    )
+    path = (out or "").strip()
+    if not path or not path.startswith(_HEADSET_RECORDING_DIR):
+        raise OobAdbError(
+            f"no recording found in {_HEADSET_RECORDING_DIR} on the headset; "
+            "record one first, or pass a host path instead of 'latest'"
+        )
+    log.info("newest recording on headset: %s", path)
+    return path
+
+
+def _resolve_recording(spec: str) -> str:
+    """Turn the configured recording into a path on the headset."""
+    if spec == LATEST_RECORDING:
+        return _newest_recording_on_headset()
+    return _push_recording_to_headset(spec)
+
+
+def _push_recording_to_headset(host_path: str) -> str:
+    """Copy a recording onto the headset and return its on-device path.
+
+    DOM.setFileInputFiles names a path in the *browser's* filesystem, so the
+    file has to exist on the headset first.
+    """
+    src = Path(host_path)
+    if not src.is_file():
+        raise OobAdbError(f"recording not found: {src}")
+    device_path = f"{_HEADSET_RECORDING_DIR}/{src.name}"
+    try:
+        _adb_run(
+            ["adb", "push", str(src), device_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or "(no adb output)"
+        raise OobAdbError(
+            f"adb push {src} -> {device_path} failed (rc={exc.returncode}): {detail}"
+        ) from exc
+    log.info("pushed recording to headset: %s", device_path)
+    return device_path
+
+
 async def _cdp_session_click_connect(
     ws_url: str,
     *,
     refresh_static_assets: bool = False,
     allow_navigation: bool = True,
     clear_stale_error: bool = False,
+    recording_device_path: str | None = None,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> None:
@@ -1769,6 +1831,32 @@ async def _cdp_session_click_connect(
             if isawaitable(result):
                 await result
 
+        # The file input is in the page from first render; fill it before
+        # the session goes immersive.
+        if recording_device_path:
+            await send(ws, "DOM.enable")
+            doc = await send(ws, "DOM.getDocument", {"depth": -1})
+            node = await send(
+                ws,
+                "DOM.querySelector",
+                {
+                    "nodeId": doc["root"]["nodeId"],
+                    "selector": "input[type=file]",
+                },
+            )
+            node_id = node.get("nodeId")
+            if not node_id:
+                raise OobAdbError(
+                    "CDP: the teleop page has no recording file input; "
+                    "the web client is older than the recorder UI"
+                )
+            await send(
+                ws,
+                "DOM.setFileInputFiles",
+                {"nodeId": node_id, "files": [recording_device_path]},
+            )
+            log.info("CDP: loaded recording %s", recording_device_path)
+
         # Extra grace period: the CONNECT button can become enabled before the
         # React <XR> store is fully mounted, which causes "XR is not available"
         # errors if clicked immediately.
@@ -1958,6 +2046,7 @@ async def _find_and_click_teleop_tab(
     usb_local: bool = False,
     host_client: bool = False,
     refresh_static_assets: bool = False,
+    recording_device_path: str | None = None,
     on_dispatched: Callable[[], Awaitable[None] | None] | None = None,
     on_client_loaded: Callable[[], Awaitable[None] | None] | None = None,
 ) -> str:
@@ -2122,6 +2211,7 @@ async def _find_and_click_teleop_tab(
     await _cdp_session_click_connect(
         ws_url,
         refresh_static_assets=refresh_static_assets,
+        recording_device_path=recording_device_path,
         on_dispatched=on_dispatched,
         on_client_loaded=on_client_loaded,
     )
@@ -2260,7 +2350,13 @@ async def run_oob_connect(
         ) from exc
 
     try:
-        # --- Steps 3+4: find the teleop tab and click CONNECT ------------------
+        # --- Steps 3+4: find the teleop tab, load any recording, click CONNECT -
+        recording = oob_replay_recording_from_env()
+        recording_device_path = (
+            await asyncio.to_thread(_resolve_recording, recording)
+            if recording
+            else None
+        )
         ws_url = await _find_and_click_teleop_tab(
             resolved_port=resolved_port,
             deadline=deadline,
@@ -2268,6 +2364,7 @@ async def run_oob_connect(
             usb_local=usb_local,
             host_client=host_client,
             refresh_static_assets=usb_local or host_client,
+            recording_device_path=recording_device_path,
             on_dispatched=on_dispatched,
             on_client_loaded=on_client_loaded,
         )

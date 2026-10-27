@@ -439,7 +439,8 @@ def client_ui_fields_from_env() -> dict:
 
     Keys match query params the WebXR client reads on page load
     (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
-    ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``immersiveMode``, ``referenceSpace``, ``replayPacing``,
+    ``showRecordingControls``, ``reconnectMaxAttempts``, ``reconnectDelayMs``,
     ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
     Deliberately excludes ``reconnectEnabled`` - OOB never sets it; the client's
     own reconnect loop is opt-in via a URL param the user supplies directly.
@@ -454,6 +455,20 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    # Passed through like codec; the client validates the value.
+    for env_name, key in (
+        ("TELEOP_CLIENT_IMMERSIVE_MODE", "immersiveMode"),
+        ("TELEOP_CLIENT_REFERENCE_SPACE", "referenceSpace"),
+        ("TELEOP_CLIENT_REPLAY_PACING", "replayPacing"),
+    ):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            out[key] = val
+    rc = os.environ.get("TELEOP_CLIENT_SHOW_RECORDING_CONTROLS", "").strip().lower()
+    if rc in ("1", "true", "yes", "on"):
+        out["showRecordingControls"] = True
+    elif rc in ("0", "false", "no", "off"):
+        out["showRecordingControls"] = False
     # reconnectMaxAttempts/reconnectDelayMs are already set above by
     # client_reconnect_config_from_env(), which validates them and raises on bad input - do not
     # re-parse them here with this loop's silent-skip-on-ValueError semantics.
@@ -470,6 +485,11 @@ def client_ui_fields_from_env() -> dict:
         except ValueError:
             continue
     return out
+
+
+def oob_replay_recording_from_env() -> str:
+    """``TELEOP_OOB_RECORDING``: host path or ``latest``, or ``""`` when unset."""
+    return os.environ.get("TELEOP_OOB_RECORDING", "").strip()
 
 
 def teleop_client_route_from_env() -> str:
@@ -505,7 +525,8 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``reconnectEnabled``,
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``immersiveMode``,
+    ``referenceSpace``, ``replayPacing``, ``showRecordingControls``, ``reconnectEnabled``,
     ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
     ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
     the client honours either way, so the headset still lands with the right
@@ -535,6 +556,13 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    for key in ("immersiveMode", "referenceSpace", "replayPacing"):
+        v = cfg.get(key)
+        if v is not None and str(v).strip() != "":
+            params[key] = str(v).strip()
+    v = cfg.get("showRecordingControls")
+    if isinstance(v, bool):
+        params["showRecordingControls"] = "true" if v else "false"
     v = cfg.get("reconnectEnabled")
     if isinstance(v, bool):
         params["reconnectEnabled"] = "true" if v else "false"
