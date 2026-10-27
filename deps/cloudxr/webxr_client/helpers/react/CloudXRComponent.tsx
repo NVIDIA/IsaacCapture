@@ -74,9 +74,9 @@ const WARMUP_COMPLETE_LOG_PATTERN =
 // override via the streamAttachTimeoutMs prop, not by lowering this default.
 const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
 
-// Debug log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
-// frames. Not currently emitted by CloudXR.js: until a release that emits it is consumed, and the
-// session logLevel includes Debug, none of the idle-frame handling below runs.
+// Info log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
+// frames. Emitted by CloudXR.js 6.4.1-isaaccapture and later; with an older SDK none of the
+// idle-frame handling below runs.
 const IDLE_FRAME_LOG_MESSAGE = 'Received idle frame';
 // Idle frames are sent about every 250 ms; this long with none means real frames have started
 // (or the stream stalled), so the warm-up watchdogs resume.
@@ -115,7 +115,7 @@ export interface WarmupStatus {
 
 /**
  * Server keep-alive ("idle") frame status for the current connection attempt, derived from the
- * SDK's 'Received idle frame' debug log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
+ * SDK's 'Received idle frame' log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
  * is alive but no OpenXR app is submitting frames. Reset at the start of each connection attempt.
  */
 export interface IdleStatus {
