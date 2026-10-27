@@ -14,3 +14,6 @@ formatters concurrently with hooks, which detect any file changes during a run.
 
 Session errors restored after reload must retain banner priority over asynchronous
 startup notices and status cleanup until a stream connects successfully.
+
+Selecting Custom preserves current profile-driven settings; named profiles apply
+their defaults.

@@ -12,9 +12,9 @@ import { act, useEffect } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 
 import { CloudXR2DUI } from './CloudXR2DUI';
-import { readSessionError, saveSessionError } from './sessionError';
 import { useSessionError } from './useSessionError';
 
+const storageKey = 'cxr.isaac.lastSessionError';
 const error = 'CloudXR session stopped: Connection failed (Error code: 0xC0F2220F)';
 
 describe('restored session error banner', () => {
@@ -32,7 +32,7 @@ describe('restored session error banner', () => {
     ui = new CloudXR2DUI();
     ui.initialize();
     root = createRoot(document.createElement('div'));
-    saveSessionError(error);
+    sessionStorage.setItem(storageKey, error);
   });
 
   afterEach(() => {
@@ -81,7 +81,7 @@ describe('restored session error banner', () => {
 
       // App clears through this setter only when the stream reports Connected.
       act(() => updateError(''));
-      expect(readSessionError()).toBe('');
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
       expect(box().classList.contains('show')).toBe(false);
       ui.showStatus('A later notice', 'info');
       expect(text().textContent).toBe('A later notice');
@@ -97,6 +97,40 @@ describe('restored session error banner', () => {
     const latest = 'CloudXR session stopped: Timeout (Error code: 0xC0F22210)';
     act(() => updateError(latest));
     expect(text().textContent).toBe(latest);
-    expect(readSessionError()).toBe(latest);
+    expect(sessionStorage.getItem(storageKey)).toBe(latest);
   });
+
+  test('restores a saved failure after the hook remounts', () => {
+    function Startup() {
+      updateError = useSessionError(ui);
+      return null;
+    }
+    act(() => root.render(<Startup />));
+    const latest = 'CloudXR session stopped: Timeout (Error code: 0xC0F22210)';
+    act(() => updateError(latest));
+    act(() => root.unmount());
+    root = createRoot(document.createElement('div'));
+    act(() => root.render(<Startup />));
+    expect(text().textContent).toBe(latest);
+    expect(box().className).toBe('error-message-box show error');
+  });
+
+  test.each(['getItem', 'setItem', 'removeItem'] as const)(
+    'continues reporting and clearing errors when storage %s fails',
+    method => {
+      jest.spyOn(Storage.prototype, method).mockImplementation(() => {
+        throw new Error('Storage disabled');
+      });
+      function Startup() {
+        updateError = useSessionError(ui);
+        return null;
+      }
+      act(() => root.render(<Startup />));
+      act(() => updateError(error));
+      expect(text().textContent).toBe(error);
+      expect(box().classList.contains('show')).toBe(true);
+      act(() => updateError(''));
+      expect(box().classList.contains('show')).toBe(false);
+    }
+  );
 });

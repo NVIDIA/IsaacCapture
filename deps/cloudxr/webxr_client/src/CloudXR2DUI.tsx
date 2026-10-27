@@ -1197,12 +1197,13 @@ export class CloudXR2DUI {
   private applyDeviceProfileToForm(profileId: DeviceProfileId): void {
     const profile = getDeviceProfile(profileId);
     const cloudxr = profile.cloudxr;
-    this.autoRefreshModeSelect.value = profile.autoRefreshMode ?? 'never';
     this.updateDeviceProfileWarning(profileId);
 
     if (!cloudxr || profileId === 'custom') {
       return;
     }
+
+    this.autoRefreshModeSelect.value = profile.autoRefreshMode ?? 'never';
 
     if (cloudxr.perEyeWidth !== undefined) {
       this.perEyeWidthInput.value = String(cloudxr.perEyeWidth);
