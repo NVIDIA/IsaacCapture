@@ -138,9 +138,9 @@ named `.venv`.
 
 ### How to select and switch modes
 
-Profiles are grouped by camera model under `configs/s56/` and `configs/shw5g/`.
-Each device/resolution has one shared YAML. `PROFILE` includes the model folder
-(for example, `s56/s56-stereo-2560x1984-30`), so `configs/${PROFILE}.yaml`
+All profiles live directly in `configs/`, with model-prefixed filenames.
+Each device/resolution has one shared YAML. Set `PROFILE` to the filename without
+`.yaml` (for example, `s56-stereo-2560x1984-30`), so `configs/${PROFILE}.yaml`
 selects the file. Copy the same file to both computers and select the **same PROFILE on both computers**.
 `network.port` and `streams[].id/type/output` define the common wire format.
 `cameras`, `capture`, `runtime` and `alignment` control capture; `receiver`, `ipc`
@@ -165,14 +165,14 @@ The sender uses Argus device IDs and sensor modes for Sensing cameras, including
 SHW5G and S56. Device models are not hard-coded in the sender.
 
 The supplied profiles describe the local S56 adapter (sensor indices 0/1).
-For SHW5G, copy a profile to `configs/shw5g/shw5g-stereo-RESOLUTION-FPS.yaml`, enumerate
+For SHW5G, copy a profile to `configs/shw5g-stereo-RESOLUTION-FPS.yaml`, enumerate
 `--list-modes`, and set its camera IDs, modes, dimensions and rate for that rig.
 Do not assume S56 mode indices apply to SHW5G.
 
 | Goal | PROFILE | Resolution / rate per eye |
 |---|---|---|
-| Highest resolution exposed by this S56 driver | `s56/s56-stereo-2560x1984-30` | 2560×1984, 30 fps |
-| Highest frame rate exposed by this S56 driver | `s56/s56-stereo-1080p60` | 1920×1080, 60 fps |
+| Highest resolution exposed by this S56 driver | `s56-stereo-2560x1984-30` | 2560×1984, 30 fps |
+| Highest frame rate exposed by this S56 driver | `s56-stereo-1080p60` | 1920×1080, 60 fps |
 
 ### Mono profiles
 
@@ -182,12 +182,12 @@ select device 0; select device 1 instead to use the other eye.
 
 | PROFILE | Output resolution / rate | Capture mode / geometry |
 |---|---|---|
-| `s56/s56-mono-2560x1984-30` | 2560×1984, 30 fps | Mode 1, native dimensions |
-| `s56/s56-mono-1080p30` | 1920×1080, 30 fps | Mode 0, native dimensions |
-| `s56/s56-mono-1080p60` | 1920×1080, 60 fps | Mode 0, native dimensions |
-| `s56/s56-mono-720p30` | 1280×720, 30 fps | Mode 0, scaled from 1920×1080 |
-| `s56/s56-mono-720p60` | 1280×720, 60 fps | Mode 0, scaled from 1920×1080 |
-| `s56/s56-mono-2400x1440-30` | 2400×1440, 30 fps | Mode 1, center-cropped/scaled from 2560×1984 |
+| `s56-mono-2560x1984-30` | 2560×1984, 30 fps | Mode 1, native dimensions |
+| `s56-mono-1080p30` | 1920×1080, 30 fps | Mode 0, native dimensions |
+| `s56-mono-1080p60` | 1920×1080, 60 fps | Mode 0, native dimensions |
+| `s56-mono-720p30` | 1280×720, 30 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-720p60` | 1280×720, 60 fps | Mode 0, scaled from 1920×1080 |
+| `s56-mono-2400x1440-30` | 2400×1440, 30 fps | Mode 1, center-cropped/scaled from 2560×1984 |
 
 Set `PROFILE` to the same mono profile in the Robot Send and Host Receive commands
 below. The viewer automatically displays the single `head` stream. No runtime
@@ -201,15 +201,15 @@ The [S56 specifications](https://wiki.sensing-world.com/docs/6_1_Camera/Binocula
 list 2560×1984 at 30 fps per eye. Argus modes depend on the installed driver;
 vendor specifications do not define their numeric indices.
 
-`configs/shw5g/` contains one shared YAML for each published SHW5G mode:
+`configs/` contains one shared YAML for each published SHW5G mode:
 
 - `shw5g-mono-2560x1984-30.yaml`
 - `shw5g-mono-2400x1440-60.yaml`
 
-Edit the desired profile in `configs/shw5g/`: set `cameras[].device` for your rig,
+Edit the desired profile in `configs/`: set `cameras[].device` for your rig,
 and replace `mode: SET_FROM_LIST_MODES` with the matching Argus mode index.
-Then copy the edited YAML to both computers and use its model-relative path as `PROFILE`
-(for example, `shw5g/shw5g-mono-2560x1984-30`).
+Then copy the edited YAML to both computers and use its filename without `.yaml` as `PROFILE`
+(for example, `shw5g-mono-2560x1984-30`).
 The placeholder intentionally prevents starting a sender with a guessed mode.
 
 The supplied S56 driver's 60 fps mode is 1920×1080, not 2400×1440. Its
@@ -259,8 +259,8 @@ Exit the preview before sending. No host process is needed for this check.
 
 ```bash
 cd ~/isaac-camera-streamer/camera_streamer
-PROFILE=s56/s56-stereo-2560x1984-30
-# Alternative: PROFILE=s56/s56-stereo-1080p60
+PROFILE=s56-stereo-2560x1984-30
+# Alternative: PROFILE=s56-stereo-1080p60
 televiz/argus_sender/build/argus_sender \
   --config "configs/${PROFILE}.yaml" --check-config
 televiz/argus_sender/build/argus_sender \
@@ -276,8 +276,8 @@ After the shared host installation, run in the first host terminal:
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
-PROFILE=s56/s56-stereo-2560x1984-30
-# Alternative: PROFILE=s56/s56-stereo-1080p60
+PROFILE=s56-stereo-2560x1984-30
+# Alternative: PROFILE=s56-stereo-1080p60
 .venv/bin/python televiz/camera_receiver/camera_receiver.py \
   --config "configs/${PROFILE}.yaml" \
   --host "${ROBOT_IP:?Set ROBOT_IP first}"

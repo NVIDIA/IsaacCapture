@@ -8,10 +8,12 @@ import yaml
 from camera_receiver import _load_config, _parse_stream_config
 
 
-PROFILES = Path(__file__).resolve().parents[2] / "configs" / "s56"
+PROFILES = Path(__file__).resolve().parents[2] / "configs"
 
 
-@pytest.mark.parametrize("path", sorted(PROFILES.glob("*.yaml")), ids=lambda p: p.stem)
+@pytest.mark.parametrize(
+    "path", sorted(PROFILES.glob("s56-*.yaml")), ids=lambda p: p.stem
+)
 def test_shared_profiles(path):
     source = yaml.safe_load(path.read_text())
     receiver = _load_config(path)

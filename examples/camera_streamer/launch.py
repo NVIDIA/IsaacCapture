@@ -57,7 +57,7 @@ def main():
             ["cmake", "--build", str(build), "--parallel", str(args.jobs)],
         ]
     elif args.action == "sender":
-        config = args.config or ROOT / "configs/s56/s56-stereo-2560x1984-30.yaml"
+        config = args.config or ROOT / "configs/s56-stereo-2560x1984-30.yaml"
         command = [str(build / "argus_sender")]
         if "--list-modes" not in extra and "--help" not in extra:
             command += ["--config", str(config.expanduser().absolute())]
@@ -67,7 +67,7 @@ def main():
             parser.error(
                 "receiver requires --host ROBOT_IP (do not use an example address)"
             )
-        config = args.config or ROOT / "configs/s56/s56-stereo-2560x1984-30.yaml"
+        config = args.config or ROOT / "configs/s56-stereo-2560x1984-30.yaml"
         commands = [
             [
                 sys.executable,

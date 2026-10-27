@@ -1351,10 +1351,7 @@ def _load_config(path: Path) -> dict:
 
 def main(argv: Optional[list[str]] = None) -> int:
     default_config = (
-        Path(__file__).resolve().parents[2]
-        / "configs"
-        / "s56"
-        / "s56-stereo-2560x1984-30.yaml"
+        Path(__file__).resolve().parents[2] / "configs" / "s56-stereo-2560x1984-30.yaml"
     )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(default_config))

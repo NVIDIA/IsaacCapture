@@ -107,7 +107,7 @@ int main()
     {
         argus_sender::AppConfig shared;
         TEST_CHECK(test, argus_sender::loadConfigFile(
-                             std::string(CAMERA_STREAMER_CONFIG_DIR) + "/s56/" + profile, &shared, &error));
+                             std::string(CAMERA_STREAMER_CONFIG_DIR) + "/" + profile, &shared, &error));
         TEST_CHECK_EQ(test, shared.network.port, 5000U);
         TEST_CHECK_EQ(test, shared.streams.size(), static_cast<size_t>(1));
         TEST_CHECK_EQ(test, shared.streams[0].id, std::string("head"));
@@ -117,7 +117,7 @@ int main()
     {
         argus_sender::AppConfig unresolved;
         TEST_CHECK(test, !argus_sender::loadConfigFile(
-                             std::string(CAMERA_STREAMER_CONFIG_DIR) + "/shw5g/" + profile, &unresolved, &error));
+                             std::string(CAMERA_STREAMER_CONFIG_DIR) + "/" + profile, &unresolved, &error));
     }
 
     argus_sender::AppConfig invalid;

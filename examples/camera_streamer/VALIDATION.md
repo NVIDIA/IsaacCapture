@@ -65,7 +65,7 @@ scale mode 0; 2400×1440/30 center-crops/scales mode 1. Enumeration alone does
 not establish live mono capture or end-to-end performance; no new capture was
 started for this profile addition.
 
-The vendor SHW5G page lists 2560×1984/30 and 2400×1440/60. Its profiles in `configs/shw5g/` require
+The vendor SHW5G page lists 2560×1984/30 and 2400×1440/60. Its profiles in `configs/` require
 the operator to supply an Argus mode index, since no SHW5G is attached locally.
 These are the published modes, not a claim to enumerate every driver variant.
 See the linked vendor specifications in README.md.
