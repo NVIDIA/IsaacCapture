@@ -213,7 +213,7 @@ class Editor:
                 self.joint_enabled = g.add_checkbox("Enable JointState", False)
                 self.joint_id = g.add_text("JointState collection_id", "")
                 self.button(
-                    "Save this hand's source configuration", self.configure_source
+                    "Apply this hand's source configuration", self.configure_source
                 )
                 self.source_joint = g.add_text("Source joint name", "")
                 self.target_joint = g.add_dropdown("URDF target joint", ("",))
@@ -247,7 +247,7 @@ class Editor:
                     )
                     for s in ("left", "right")
                 }
-                self.button("Save all drafts", self.save)
+                self.button("Save all metadata", self.save)
                 self.all_sides = g.add_checkbox("Check / export all hands", True)
                 self.destination = g.add_text("New output directory", "package")
                 self.binary = g.add_checkbox("Include SDK binary", False)
@@ -262,9 +262,7 @@ class Editor:
                         lambda: setattr(
                             self.schema,
                             "value",
-                            json.dumps(
-                                storage.metadata(self.d, self.state.model), indent=2
-                            ),
+                            json.dumps(storage.metadata(self.d), indent=2),
                         ),
                     )
                     self.button("Replace draft from repair field", self.repair)
@@ -460,19 +458,11 @@ class Editor:
         d = storage.load(path, side)
         if self.model and side not in self.state.documents:
             raise ValueError("Create a new document to change the fixed model hands")
-        cfg = d.editor.get("model", {})
-        model = (
-            geo.Model(cfg["urdf"], cfg.get("packages", {}))
-            if not self.model and cfg.get("urdf")
-            else None
-        )
 
         def replace():
             if not self.started:
                 self.state.documents = {}
             self.state.documents[side] = d
-            if model:
-                self.state.model = copy.deepcopy(cfg)
 
         if self.receiver:
             self.connect()
@@ -480,18 +470,13 @@ class Editor:
         self.state.edit(replace)
         self.started = True
         self.side.options, self.side.value = tuple(self.state.documents), side
-        if model:
-            self.install_model(model)
         self.state.paths[side] = self.paths[side].value = str(Path(path).resolve())
-        if d.editor.get("side") == side and cfg == self.state.model:
-            self.state.saved[side] = self.state.fingerprint(side)
-        else:
-            self.state.saved.pop(side, None)
+        self.state.saved[side] = self.state.fingerprint(side)
         self.switch()
 
     def save(self):
         storage.save(self.state, {s: self.paths[s].value for s in self.state.documents})
-        self.log("Saved all drafts")
+        self.log("Saved all metadata")
 
     def switch(self):
         self.selected, self.points, self.candidates = [], {}, []
@@ -855,7 +840,7 @@ class Editor:
             raise ValueError("Enabled sources require collection_id values")
         self.change(self.d.editor.update, source=source)
         if self.receiver:
-            self.log("Source configuration saved; reconnect to apply it")
+            self.log("Source configuration updated; reconnect to apply it")
 
     def mapping(self, remove=False):
         mappings = dict(self.d.editor.get("mapping", {}))
@@ -911,7 +896,7 @@ class Editor:
         if value is None:
             raise ValueError("No received metadata")
         received = storage.parse(value, self.side.value)
-        path = storage.backup(self.d, self.state.model)
+        path = storage.backup(self.d)
         self.log("Draft backup: " + path)
         self.change(
             self.d.record, received, [k for k, w in self.groups.items() if w.value]
@@ -919,7 +904,11 @@ class Editor:
 
     def repair(self):
         d = storage.parse(json.loads(self.schema.value), self.side.value)
-        self.log("Draft backup: " + storage.backup(self.d, self.state.model))
+        order = d.editor["output_indices"]
+        d.editor = copy.deepcopy(self.d.editor)
+        d.editor["output_indices"] = order
+        d.sync()
+        self.log("Draft backup: " + storage.backup(self.d))
         self.change(self.state.documents.__setitem__, self.side.value, d)
 
     def local_check(self):
@@ -940,7 +929,6 @@ class Editor:
             self.job = self.pool.submit(
                 storage.export,
                 documents,
-                copy.deepcopy(self.state.model),
                 self.job_revision,
                 self.destination.value,
                 self.binary.value,
@@ -961,6 +949,7 @@ class Editor:
         ]
         if self.model:
             fk = self.model.fk(self.state.model.get("q0", {}))
+            self.model.attachments.clear()
             for doc in self.state.documents.values():
                 try:
                     if "root" in doc.editor:

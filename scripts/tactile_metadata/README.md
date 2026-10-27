@@ -94,43 +94,43 @@ hand selection after handling unsaved drafts.
 
 ## Save, reopen, check and export
 
-**Export → Save all drafts** writes one editable JSON per hand, including an
-optional `editor` extension with relative URDF/package paths, calibration,
-mappings, stable entity IDs and output indices. Incomplete drafts can be saved
-and are explicitly labeled. If any save fails, no side is marked saved.
+**Export → Save all metadata** writes schema metadata values only, using the same
+JSON as backups and export. Model, calibration and source settings stay in memory;
+reopening restores values and array order only. Incomplete values remain saveable,
+with validation errors shown in the interface. If any save fails, no side is
+marked saved. Only metadata-value changes mark the document unsaved.
 **Info issue → Locate** selects the relevant hand/entity in the shared draft
 inspector. Advanced schema repair can replace incomplete arrays, with a temporary
 backup before replacement.
 
 ```bash
-python -m tactile_metadata_editor.cli gui --metadata left.metadata.json
-python -m tactile_metadata_editor.cli check left.metadata.json --report check.json
+python -m tactile_metadata_editor.cli gui --metadata left.metadata.json --sides left
+python -m tactile_metadata_editor.cli check left.metadata.json
 python -m tactile_metadata_editor.cli check left.metadata.json --sdk
-python -m tactile_metadata_editor.cli export left.metadata.json --format sdk --out package
-python -m tactile_metadata_editor.cli export left.metadata.json right.metadata.json --out pair
+python -m tactile_metadata_editor.cli export left.metadata.json --sides left --format sdk --out package
+python -m tactile_metadata_editor.cli export left.metadata.json right.metadata.json --sides both --out pair
 ```
 
-For JSON without `editor.side`, choose **Assign JSON to** and **Open JSON**, or
-provide `--sides left/right/both` on the CLI. Pure checking needs no side. Each
-side must be unique; conflicting shared URDF configurations are rejected.
+Choose **Assign JSON to** and **Open JSON**, or provide `--sides left/right/both`
+on the CLI. Pure checking needs no side; export requires one file per specified
+hand, left then right for `both`.
 
 The protocol JSON follows [tactile_metadata.fbs](../../src/core/schema/fbs/tactile_metadata.fbs):
 `geometry_mapping_type: "LBS"`, nested `geometry_mapping` arrays, and
 `segment_source_type: "HandSkeletonRef"` with nested `segment_source.joint_ids`.
 Pose quaternions are XYZW; influence structs contain `values` arrays. There is no
-additional metadata format. Numerical export omits `editor` and orders the taxel
-arrays by the chosen output indices. Each package contains numerical JSON,
-editable JSON, a draft-taxel-ID/export-index CSV and a revision-tagged report.
-SDK packages also contain binaries constructed and size-checked with the official
-bindings. All sides must succeed before the new or empty destination is published.
-GUI exports capture a snapshot; later edits do not change that snapshot.
+additional metadata format. Taxel array row order expresses output order.
+Exports contain only metadata JSON and optional SDK binaries; check results and
+revisions appear in the interface or CLI output. All sides must succeed before
+the new or empty destination is published. GUI exports capture a snapshot;
+later edits do not change that snapshot.
 
 ## Live reception and the SDK-free demo
 
 Launch with `gui --demo` to use a synthetic independent layout and hand/force
 stream. In **Live**, configure each side's tactile collection (default `tactile`),
-HandTracker output and optional JointState collection, then connect. Save source
-configuration and reconnect to apply source changes. JointState mappings specify
+HandTracker output and optional JointState collection, then connect. Apply source
+configuration in the current session and reconnect. JointState mappings specify
 a source name, URDF target, scale and offset; the panel reports raw values,
 converted values, limits and validity. Demo JointState names come from mappings
 present when connecting.
@@ -153,8 +153,7 @@ only the drawing. **Record metadata groups** first backs up the draft to the
 system temporary directory, logs its path, then replaces the selected groups
 verbatim. Partial replacements may introduce count/reference errors, which remain
 editable. Metadata/force alignment is the producer's and user's responsibility:
-forces always use protocol row order. Source switching establishes no alignment,
-and the export correspondence CSV does not map or permute force data.
+forces always use protocol row order. Source switching establishes no alignment.
 
 ## Implementation and verification
 

@@ -64,17 +64,13 @@ class Document:
         self.side, self.joints = side, []
         self.arrays = {field: [] for field in FIELDS}
         self.types = ("LBS", "HandSkeletonRef")
-        self.editor = {"taxel_ids": [], "segment_ids": [], "output_indices": []}
+        self.editor = {"segment_ids": [], "output_indices": []}
 
     def sync(self):
-        for key, field in (("taxel_ids", FIELDS[1]), ("segment_ids", FIELDS[0])):
-            count, ids = len(self.arrays[field]), self.editor.setdefault(key, [])
-            ids.extend(uuid.uuid4().hex for _ in range(count - len(ids)))
-            del ids[count:]
-        count, order = (
-            len(self.arrays[FIELDS[1]]),
-            self.editor.setdefault("output_indices", []),
-        )
+        count, ids = len(self.arrays[FIELDS[0]]), self.editor["segment_ids"]
+        ids.extend(uuid.uuid4().hex for _ in range(count - len(ids)))
+        del ids[count:]
+        count, order = len(self.arrays[FIELDS[1]]), self.editor["output_indices"]
         order.extend(range(len(order), count))
         del order[count:]
 
@@ -153,7 +149,6 @@ class Document:
         for i in sorted(set(selected), reverse=True):
             for values in (
                 *[self.arrays[f] for f in FIELDS[1:]],
-                self.editor["taxel_ids"],
                 self.editor["output_indices"],
             ):
                 if i < len(values):
@@ -246,7 +241,9 @@ class State:
         self.revision, self.saved, self.paths = 0, {}, {}
 
     def fingerprint(self, side):
-        return json.dumps((vars(self.documents[side]), self.model), sort_keys=True)
+        from .storage import metadata
+
+        return json.dumps(metadata(self.documents[side]), sort_keys=True)
 
     def edit(self, action, *args, **kwargs):
         before = copy.deepcopy((self.documents, self.model))

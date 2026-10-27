@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import csv
 import json
 import os
 import tempfile
@@ -15,13 +14,12 @@ from .document import Document, FIELDS
 def parse(value, side=None):
     if not isinstance(value, dict) or any(
         not isinstance(value.get(k, {}), dict)
-        for k in ("editor", "geometry_mapping", "segment_source")
+        for k in ("geometry_mapping", "segment_source")
     ):
         raise ValueError(
             "Expected a TactileMetadata object with object-valued sections"
         )
-    editor = value.get("editor", {})
-    d = Document(side or editor.get("side"))
+    d = Document(side)
     if d.side not in (None, "left", "right"):
         raise ValueError("Assign metadata to left or right explicitly")
     d.types = (value.get("geometry_mapping_type"), value.get("segment_source_type"))
@@ -51,30 +49,24 @@ def parse(value, side=None):
             else None
             for v in rows
         ]
-    d.editor.update(copy.deepcopy(editor))
     d.sync()
     return d
 
 
-def metadata(d, model=None, numerical=False):
-    if numerical and any(i["severity"] == "error" for i in d.check()):
-        raise ValueError("Local errors prevent export")
+def metadata(d):
     value = dict(
         geometry_mapping_type=d.types[0],
         geometry_mapping={},
         segment_source_type=d.types[1],
         segment_source={"joint_ids": copy.deepcopy(d.joints)},
     )
-    order = (
-        sorted(
-            range(len(d.editor["output_indices"])),
-            key=lambda i: d.editor["output_indices"][i],
-        )
-        if numerical
-        else None
+    order = sorted(
+        range(len(d.editor["output_indices"])),
+        key=lambda i: d.editor["output_indices"][i],
     )
+    aligned = all(len(d.arrays[f]) == len(order) for f in FIELDS[1:])
     for field, rows in d.arrays.items():
-        if numerical and field in FIELDS[1:]:
+        if aligned and field in FIELDS[1:]:
             rows = [rows[i] for i in order]
         value["geometry_mapping"][field] = [
             {
@@ -87,33 +79,12 @@ def metadata(d, model=None, numerical=False):
             else None
             for r in rows
         ]
-    if not numerical:
-        value["editor"] = copy.deepcopy(d.editor)
-        value["editor"].update(
-            side=d.side,
-            model=copy.deepcopy(
-                model if model is not None else d.editor.get("model", {})
-            ),
-        )
-        value["editor"]["draft_status"] = (
-            "Editing draft; not yet valid metadata"
-            if any(i["severity"] == "error" for i in d.check())
-            else "Locally checked metadata"
-        )
     return value
 
 
 def load(path, side=None):
-    path = Path(path).resolve()
-    with path.open() as stream:
-        d = parse(json.load(stream), side)
-    cfg = d.editor.get("model", {})
-    if cfg.get("urdf"):
-        cfg["urdf"] = str((path.parent / cfg["urdf"]).resolve())
-    cfg["packages"] = {
-        k: str((path.parent / v).resolve()) for k, v in cfg.get("packages", {}).items()
-    }
-    return d
+    with Path(path).open() as stream:
+        return parse(json.load(stream), side)
 
 
 def write(path, value):
@@ -132,28 +103,21 @@ def save(state, paths):
     if len({Path(p).resolve() for p in paths.values()}) != len(paths):
         raise ValueError("Each hand requires a different save path")
     for side, path in paths.items():
-        value = metadata(state.documents[side], state.model)
-        cfg, parent = value["editor"]["model"], Path(path).resolve().parent
-        if cfg.get("urdf"):
-            cfg["urdf"] = os.path.relpath(cfg["urdf"], parent)
-        cfg["packages"] = {
-            k: os.path.relpath(v, parent) for k, v in cfg.get("packages", {}).items()
-        }
-        write(path, value)
+        write(path, metadata(state.documents[side]))
     for side, path in paths.items():
         state.paths[side], state.saved[side] = str(path), state.fingerprint(side)
 
 
-def backup(d, model):
+def backup(d):
     with tempfile.NamedTemporaryFile(
         prefix="tactile-backup-", suffix=".json", delete=False
     ) as stream:
         path = stream.name
-    write(path, metadata(d, model))
+    write(path, metadata(d))
     return path
 
 
-def export(documents, model, revision, destination, sdk=False):
+def export(documents, revision, destination, sdk=False):
     destination = Path(destination).resolve()
     if destination.exists() and (
         not destination.is_dir() or any(destination.iterdir())
@@ -164,27 +128,15 @@ def export(documents, model, revision, destination, sdk=False):
     ) as temporary:
         root, report = Path(temporary), {"revision": revision, "sides": {}}
         for side, d in documents.items():
-            write(root / f"{side}.metadata.json", metadata(d, numerical=True))
-            editable = metadata(d, model)
-            cfg = editable["editor"]["model"]
-            if cfg.get("urdf"):
-                cfg["urdf"] = os.path.relpath(cfg["urdf"], destination)
-            cfg["packages"] = {
-                k: os.path.relpath(v, destination)
-                for k, v in cfg.get("packages", {}).items()
-            }
-            write(root / f"{side}.editor.json", editable)
             result = dict(local=d.check(), sdk="not checked")
+            if any(v["severity"] == "error" for v in result["local"]):
+                raise ValueError("Local errors prevent export")
+            write(root / f"{side}.metadata.json", metadata(d))
             if sdk:
                 from .sdk import check
 
                 result["sdk"] = check(d, root / f"{side}.metadata.bin")
-            with (root / f"{side}.taxels.csv").open("w", newline="") as stream:
-                writer = csv.writer(stream)
-                writer.writerow(("draft_taxel", "exported_index"))
-                writer.writerows(zip(d.editor["taxel_ids"], d.editor["output_indices"]))
             report["sides"][side] = result
-        write(root / "report.json", report)
         if destination.exists():
             destination.rmdir()
         os.replace(root, destination)

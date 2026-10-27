@@ -25,7 +25,6 @@ def main():
     check = commands.add_parser("check")
     check.add_argument("metadata")
     check.add_argument("--sdk", action="store_true")
-    check.add_argument("--report")
     export = commands.add_parser("export")
     export.add_argument("metadata", nargs="+")
     export.add_argument("--sides", choices=("left", "right", "both"))
@@ -44,8 +43,6 @@ def main():
                     result["sdk"] = check(d)
                 except (ValueError, RuntimeError) as exc:
                     result["sdk"], failed = dict(error=str(exc)), True
-            if args.report:
-                storage.write(args.report, result)
             print(json.dumps(result, indent=2))
             return int(failed)
         sides = (
@@ -79,19 +76,14 @@ def main():
             if not d.side:
                 if args.command == "gui":
                     continue
-                raise ValueError("Assign JSON sides with editor.side or --sides")
+                raise ValueError("Assign JSON sides with --sides")
             if d.side in documents:
                 raise ValueError("Duplicate metadata side")
-            cfg = d.editor.get("model", {})
-            if model.get("urdf") and cfg.get("urdf") and model != cfg:
-                raise ValueError("Conflicting URDF configurations")
-            if cfg.get("urdf"):
-                model = cfg
             documents[d.side], paths[d.side] = d, str(Path(path).resolve())
         if args.command == "export":
             print(
                 json.dumps(
-                    storage.export(documents, model, 0, args.out, args.format == "sdk"),
+                    storage.export(documents, 0, args.out, args.format == "sdk"),
                     indent=2,
                 )
             )
@@ -104,12 +96,7 @@ def main():
                 model["urdf"] = str(Path(args.urdf).resolve())
             state = State(documents, model)
             state.paths = paths
-            state.saved = {
-                s: state.fingerprint(s)
-                for s in paths
-                if documents[s].editor.get("side") == s
-                and documents[s].editor.get("model", {}) == state.model
-            }
+            state.saved = {s: state.fingerprint(s) for s in paths}
             Editor(state, args).run()
         return 0
     except (ValueError, OSError, RuntimeError, ImportError, TypeError) as exc:

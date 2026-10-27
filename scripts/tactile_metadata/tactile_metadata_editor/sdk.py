@@ -19,9 +19,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def check(document, output=None):
+    if any(v["severity"] == "error" for v in document.check()):
+        raise ValueError("Local errors prevent export")
     with tempfile.TemporaryDirectory(prefix="tactile-sdk-") as folder:
         root = Path(folder)
-        write(root / "input.json", metadata(document, numerical=True))
+        write(root / "input.json", metadata(document))
         try:
             result = subprocess.run(
                 [sys.executable, "-m", __package__ + ".sdk", "check", folder],
@@ -167,7 +169,6 @@ def live(connection, configs):
                             d.arrays = owned(m.geometry_mapping, FIELDS)
                             d.sync()
                             raw = metadata(d)
-                            raw.pop("editor")
                         sides[side] = dict(
                             metadata=raw,
                             forces=data.taxel_forces.copy().tolist()
