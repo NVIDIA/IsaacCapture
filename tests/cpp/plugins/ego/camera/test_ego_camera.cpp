@@ -757,7 +757,7 @@ TEST_CASE("EGO checked MCAP writes reject non-I/O writer errors", "[ego][mcap]")
     mcap::McapWriter writer;
     REQUIRE(writer.open(path.string(), mcap::McapWriterOptions("ego")).ok());
     core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord> channels(
-        writer, "orbbec_ego_metadata", { "ColorLeft" });
+        writer, "orbbec_ego_metadata_colorleft", { "FrameMetadata" });
     writer.close();
     const auto record =
         core::pack_record<core::OrbbecEgoFrameMetadataRecord>(nullptr, core::DeviceDataTimestamp(1, 2, 3));
@@ -928,8 +928,8 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
             CHECK(event->queue_peak() == 7);
             CHECK(record->data()->observed_at_ns() == record->timestamp()->sample_time_local_common_clock());
         }
-        if (view.channel->topic == "orbbec_ego_metadata/ColorLeft" ||
-            view.channel->topic == "orbbec_ego_metadata/ColorRight")
+        if (view.channel->topic == "orbbec_ego_metadata_colorleft/FrameMetadata" ||
+            view.channel->topic == "orbbec_ego_metadata_colorright/FrameMetadata")
         {
             flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(view.message.data), view.message.dataSize);
             REQUIRE(verifier.VerifyBuffer<core::OrbbecEgoFrameMetadataRecord>());
@@ -942,12 +942,12 @@ TEST_CASE("EGO embedded MCAP preserves structured and media records through the 
             CHECK(record->timestamp()->available_time_local_common_clock() == static_cast<int64_t>(view.message.logTime));
         }
     }
-    CHECK(counts == std::map<std::string, size_t>{ { "orbbec_ego_metadata/ColorLeft", 2 },
-                                                   { "orbbec_ego_metadata/ColorRight", 2 },
+    CHECK(counts == std::map<std::string, size_t>{ { "orbbec_ego_metadata_colorleft/FrameMetadata", 2 },
+                                                   { "orbbec_ego_metadata_colorright/FrameMetadata", 2 },
                                                    { "orbbec_ego_media/ColorLeft", 2 },
                                                    { "orbbec_ego_media/ColorRight", 2 },
-                                                   { "orbbec_ego_imu/Accel", 1 },
-                                                   { "orbbec_ego_imu/Gyro", 1 },
+                                                   { "orbbec_ego_imu_accel/Imu", 1 },
+                                                   { "orbbec_ego_imu_gyro/Imu", 1 },
                                                    { "orbbec_ego_audio/Audio", 1 },
                                                    { "orbbec_ego_media/Audio", 1 },
                                                    { "orbbec_ego_calibration/Calibration", 1 },

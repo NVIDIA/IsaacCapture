@@ -93,6 +93,24 @@ channel = "oak"
 header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
 
+# The orbbec_ego_* sizes must equal EGO_MAX_FLATBUFFER_SIZE in schema/ego_limits.hpp.
+[[tracker]]
+name = "orbbec_ego_frame_metadata"
+table = "OrbbecEgoFrameMetadata"
+schema = "orbbec_ego_camera"
+tensor_identifier = "frame_metadata"
+max_flatbuffer_size = 32768
+mcap_channels = ["FrameMetadata", "FrameMetadata_tracked"]
+replay_channels = ["FrameMetadata"]
+
+[[tracker]]
+name = "orbbec_ego_imu"
+table = "OrbbecEgoImuBatch"
+tensor_identifier = "imu_batch"
+max_flatbuffer_size = 32768
+mcap_channels = ["Imu", "Imu_tracked"]
+replay_channels = ["Imu"]
+
 [[tracker]]
 name = "orbbec_ego_audio"
 table = "OrbbecEgoAudioChunk"

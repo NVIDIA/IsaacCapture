@@ -6,8 +6,6 @@ cmake_minimum_required(VERSION 3.20)
 # Public tracker classes (HeadTracker, HandTracker, etc.)
 add_library(deviceio_trackers STATIC
     hand_tracker.cpp
-    ego_frame_metadata_tracker.cpp
-    ego_imu_tracker.cpp
     head_tracker.cpp
     controller_tracker.cpp
     message_channel_tracker.cpp
@@ -17,8 +15,6 @@ add_library(deviceio_trackers STATIC
     keyboard_tracker.cpp
     ${GENERATED_TRACKER_FACADE_SOURCES}
     inc/deviceio_trackers/head_tracker.hpp
-    inc/deviceio_trackers/ego_frame_metadata_tracker.hpp
-    inc/deviceio_trackers/ego_imu_tracker.hpp
     inc/deviceio_trackers/hand_tracker.hpp
     inc/deviceio_trackers/controller_tracker.hpp
     inc/deviceio_trackers/message_channel_tracker.hpp

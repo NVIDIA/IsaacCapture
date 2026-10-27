@@ -21,7 +21,6 @@ from isaaccapture.deviceio_trackers import (
     OrbbecEgoImuTracker,
 )
 from isaaccapture.schema import (
-    OrbbecEgoCameraStream,
     OrbbecEgoSdkReport,
     OrbbecEgoCaptureSummary,
     OrbbecEgoRecoveryEvent,
@@ -101,17 +100,26 @@ def replay(
     path: Path, max_updates: int, *, record_device_diagnostics: bool | None = None
 ) -> dict[str, int]:
     diagnostics = _diagnostic_policy(path, record_device_diagnostics)
-    frame_tracker = OrbbecEgoFrameMetadataTracker(
-        "ego_metadata",
-        [OrbbecEgoCameraStream.ColorLeft, OrbbecEgoCameraStream.ColorRight],
-    )
-    imu_tracker = OrbbecEgoImuTracker("ego_imu")
+    # One tracker per stream; each records under orbbec_ego_<kind>_<stream>.
+    frame_trackers = {
+        name: OrbbecEgoFrameMetadataTracker(f"ego/{name}")
+        for name in ("ColorLeft", "ColorRight")
+    }
+    imu_trackers = {
+        name: OrbbecEgoImuTracker(f"ego/{name}") for name in ("Accel", "Gyro")
+    }
     audio_tracker = OrbbecEgoAudioTracker("ego_audio/Audio")
     calibration_tracker = OrbbecEgoCalibrationTracker("ego_calibration/Calibration")
     state_tracker = OrbbecEgoDeviceStateTracker("ego_device/DeviceState")
     trackers = [
-        (frame_tracker, "orbbec_ego_metadata"),
-        (imu_tracker, "orbbec_ego_imu"),
+        *(
+            (tracker, f"orbbec_ego_metadata_{name.lower()}")
+            for name, tracker in frame_trackers.items()
+        ),
+        *(
+            (tracker, f"orbbec_ego_imu_{name.lower()}")
+            for name, tracker in imu_trackers.items()
+        ),
         (audio_tracker, "orbbec_ego_audio"),
         (calibration_tracker, "orbbec_ego_calibration"),
     ]
@@ -125,10 +133,10 @@ def replay(
         "DeviceState": 0,
     }
     topics = {
-        "orbbec_ego_metadata/ColorLeft",
-        "orbbec_ego_metadata/ColorRight",
-        "orbbec_ego_imu/Accel",
-        "orbbec_ego_imu/Gyro",
+        "orbbec_ego_metadata_colorleft/FrameMetadata",
+        "orbbec_ego_metadata_colorright/FrameMetadata",
+        "orbbec_ego_imu_accel/Imu",
+        "orbbec_ego_imu_gyro/Imu",
         "orbbec_ego_audio/Audio",
         "orbbec_ego_calibration/Calibration",
         "orbbec_ego_device/DeviceState",
@@ -147,8 +155,8 @@ def replay(
         for _ in range(updates):
             session.update()
 
-            for index, name in enumerate(("ColorLeft", "ColorRight")):
-                data = frame_tracker.get_stream_data(session, index)
+            for name, tracker in frame_trackers.items():
+                data = tracker.get_data(session)
                 if data is not None:
                     counts[name] += 1
                     print(
@@ -157,8 +165,8 @@ def replay(
                         f"format={data.pixel_format} bytes={data.encoded_bytes}"
                     )
 
-            for index, name in enumerate(("Accel", "Gyro")):
-                data = imu_tracker.get_stream_data(session, index)
+            for name, tracker in imu_trackers.items():
+                data = tracker.get_data(session)
                 if data is not None:
                     counts[name] += 1
                     print(

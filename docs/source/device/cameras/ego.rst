@@ -131,10 +131,10 @@ With ``--collection-prefix=ego``, the collections and Python read APIs are:
      - Read method
    * - ``ego/ColorLeft``, ``ego/ColorRight``
      - ``OrbbecEgoFrameMetadataTracker``
-     - ``get_stream_data``
+     - ``get_data``
    * - ``ego/Accel``, ``ego/Gyro``
      - ``OrbbecEgoImuTracker``
-     - ``get_stream_data``
+     - ``get_data``
    * - ``ego/Audio``
      - ``OrbbecEgoAudioTracker``
      - ``get_data``
@@ -147,8 +147,10 @@ With ``--collection-prefix=ego``, the collections and Python read APIs are:
 
 All reads return the schema payload directly or ``None`` when unavailable.
 Audio records are available only when audio capture is enabled.
-Camera and IMU readers select one configured stream by its index. Camera streams
-use ``OrbbecEgoCameraStream`` enums; IMU sensors default to Accel and Gyro. See the
+Create one tracker per collection, for example
+``OrbbecEgoImuTracker("ego/Accel")``. To record a tracker, name it
+``orbbec_ego_metadata_<stream>`` or ``orbbec_ego_imu_<stream>`` in lowercase, such as
+``orbbec_ego_metadata_colorleft``; the offline reader expects these names. See the
 :code-file:`plugin README <src/plugins/ego/README.md>` for the full tracker
 configuration example.
 

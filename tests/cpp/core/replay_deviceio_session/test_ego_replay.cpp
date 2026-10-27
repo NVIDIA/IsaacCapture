@@ -3,11 +3,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <deviceio_session/replay_session.hpp>
-#include <deviceio_trackers/ego_frame_metadata_tracker.hpp>
-#include <deviceio_trackers/ego_imu_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_audio_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_calibration_tracker.hpp>
 #include <deviceio_trackers/orbbec_ego_device_state_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_frame_metadata_tracker.hpp>
+#include <deviceio_trackers/orbbec_ego_imu_tracker.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/tracker_channels.hpp>
 #include <schema/orbbec_ego_audio_bfbs_generated.h>
@@ -20,7 +20,6 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -77,9 +76,17 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
         mcap::McapWriterOptions options("ego-test");
         options.compression = mcap::Compression::None;
         REQUIRE(writer.open(recording.path, options).ok());
-        core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord> camera(
-            writer, "orbbec_ego_metadata", { "ColorLeft", "ColorRight" });
-        core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord> imu(writer, "orbbec_ego_imu", { "Accel", "Gyro" });
+        const auto frame_channels = include_tracked ?
+                                        channels(core::OrbbecEgoFrameMetadataRecordingTraits::recording_channels) :
+                                        std::vector<std::string>{ "FrameMetadata" };
+        core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord> left(
+            writer, "orbbec_ego_metadata_colorleft", frame_channels);
+        core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord> right(
+            writer, "orbbec_ego_metadata_colorright", frame_channels);
+        const auto imu_channels = include_tracked ? channels(core::OrbbecEgoImuRecordingTraits::recording_channels) :
+                                                    std::vector<std::string>{ "Imu" };
+        core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord> accel(writer, "orbbec_ego_imu_accel", imu_channels);
+        core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord> gyro(writer, "orbbec_ego_imu_gyro", imu_channels);
         core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord> audio(
             writer, "orbbec_ego_audio",
             include_tracked ? channels(core::OrbbecEgoAudioRecordingTraits::recording_channels) :
@@ -102,18 +109,24 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             frame.sequence_number = sequence;
             frame.capture_epoch = 3;
             frame.stream = core::OrbbecEgoCameraStream_ColorLeft;
-            camera.write(
-                0, core::pack_record<core::OrbbecEgoFrameMetadataRecord>(inactive ? nullptr : &frame, timestamp));
+            const auto left_record =
+                core::pack_record<core::OrbbecEgoFrameMetadataRecord>(inactive ? nullptr : &frame, timestamp);
+            left.write(0, left_record);
             frame.stream = core::OrbbecEgoCameraStream_ColorRight;
-            camera.write(
-                1, core::pack_record<core::OrbbecEgoFrameMetadataRecord>(inactive ? nullptr : &frame, timestamp));
+            const auto right_record =
+                core::pack_record<core::OrbbecEgoFrameMetadataRecord>(inactive ? nullptr : &frame, timestamp);
+            right.write(0, right_record);
             core::OrbbecEgoImuBatchT batch;
             batch.sequence_number = sequence;
             batch.sensor = core::OrbbecEgoImuSensor_Accel;
             batch.samples.emplace_back(1, 2, 3, 24, 90, 80);
-            imu.write(0, core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp));
+            const auto accel_record =
+                core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp);
+            accel.write(0, accel_record);
             batch.sensor = core::OrbbecEgoImuSensor_Gyro;
-            imu.write(1, core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp));
+            const auto gyro_record =
+                core::pack_record<core::OrbbecEgoImuBatchRecord>(inactive ? nullptr : &batch, timestamp);
+            gyro.write(0, gyro_record);
             core::OrbbecEgoAudioChunkT chunk;
             chunk.sequence_number = sequence;
             chunk.wav_data_offset = 44;
@@ -138,6 +151,10 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             state.write(0, state_record);
             if (include_tracked)
             {
+                left.write(1, left_record);
+                right.write(1, right_record);
+                accel.write(1, accel_record);
+                gyro.write(1, gyro_record);
                 audio.write(1, audio_record);
                 calibration.write(1, calibration_record);
                 state.write(1, state_record);
@@ -149,24 +166,27 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
         writer.close();
     }
 
-    core::OrbbecEgoFrameMetadataTracker camera(
-        "ego_metadata", { core::OrbbecEgoCameraStream_ColorLeft, core::OrbbecEgoCameraStream_ColorRight });
-    core::OrbbecEgoImuTracker imu("ego_imu");
+    core::OrbbecEgoFrameMetadataTracker left("ego/ColorLeft");
+    core::OrbbecEgoFrameMetadataTracker right("ego/ColorRight");
+    core::OrbbecEgoImuTracker accel("ego/Accel");
+    core::OrbbecEgoImuTracker gyro("ego/Gyro");
     core::OrbbecEgoAudioTracker audio("ego_audio/Audio");
     core::OrbbecEgoCalibrationTracker calibration("ego_calibration/Calibration");
     core::OrbbecEgoDeviceStateTracker state("ego_device/DeviceState");
     auto session = core::ReplaySession::run({ recording.path,
                                               {
-                                                  { &camera, "orbbec_ego_metadata" },
-                                                  { &imu, "orbbec_ego_imu" },
+                                                  { &left, "orbbec_ego_metadata_colorleft" },
+                                                  { &right, "orbbec_ego_metadata_colorright" },
+                                                  { &accel, "orbbec_ego_imu_accel" },
+                                                  { &gyro, "orbbec_ego_imu_gyro" },
                                                   { &audio, "orbbec_ego_audio" },
                                                   { &calibration, "orbbec_ego_calibration" },
                                                   { &state, "orbbec_ego_device" },
                                               } });
-    CHECK_FALSE(camera.get_stream_data(*session, 0));
+    CHECK_FALSE(left.get_data(*session));
     CHECK_FALSE(audio.get_data(*session));
     session->update();
-    const auto snapshot = camera.get_stream_data(*session, 0);
+    const auto snapshot = left.get_data(*session);
     REQUIRE(snapshot);
     for (uint64_t sequence = 1; sequence <= 3; ++sequence)
     {
@@ -174,22 +194,22 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
             session->update();
         if (sequence == 2)
         {
-            CHECK_FALSE(camera.get_stream_data(*session, 0));
-            CHECK_FALSE(camera.get_stream_data(*session, 1));
-            CHECK_FALSE(imu.get_stream_data(*session, 0));
-            CHECK_FALSE(imu.get_stream_data(*session, 1));
+            CHECK_FALSE(left.get_data(*session));
+            CHECK_FALSE(right.get_data(*session));
+            CHECK_FALSE(accel.get_data(*session));
+            CHECK_FALSE(gyro.get_data(*session));
             CHECK_FALSE(audio.get_data(*session));
             CHECK_FALSE(calibration.get_data(*session));
             CHECK_FALSE(state.get_data(*session));
             continue;
         }
-        REQUIRE(camera.get_stream_data(*session, 1));
-        CHECK(camera.get_stream_data(*session, 0)->sequence_number() == sequence);
-        CHECK(camera.get_stream_data(*session, 1)->stream() == core::OrbbecEgoCameraStream_ColorRight);
-        REQUIRE(imu.get_stream_data(*session, 0));
-        REQUIRE(imu.get_stream_data(*session, 1));
-        CHECK(imu.get_stream_data(*session, 0)->sensor() == core::OrbbecEgoImuSensor_Accel);
-        CHECK(imu.get_stream_data(*session, 1)->sensor() == core::OrbbecEgoImuSensor_Gyro);
+        REQUIRE(right.get_data(*session));
+        CHECK(left.get_data(*session)->sequence_number() == sequence);
+        CHECK(right.get_data(*session)->stream() == core::OrbbecEgoCameraStream_ColorRight);
+        REQUIRE(accel.get_data(*session));
+        REQUIRE(gyro.get_data(*session));
+        CHECK(accel.get_data(*session)->sensor() == core::OrbbecEgoImuSensor_Accel);
+        CHECK(gyro.get_data(*session)->sensor() == core::OrbbecEgoImuSensor_Gyro);
         REQUIRE(audio.get_data(*session));
         CHECK(audio.get_data(*session)->sequence_number() == sequence);
         REQUIRE(calibration.get_data(*session));
@@ -198,15 +218,13 @@ TEST_CASE("EGO replay reads all seven raw streams and retains snapshots", "[unit
         CHECK(state.get_data(*session)->event_as_OrbbecEgoSdkReport()->sequence_number() == sequence);
     }
     session->update();
-    CHECK_FALSE(camera.get_stream_data(*session, 0));
-    CHECK_FALSE(camera.get_stream_data(*session, 1));
-    CHECK_FALSE(imu.get_stream_data(*session, 0));
-    CHECK_FALSE(imu.get_stream_data(*session, 1));
+    CHECK_FALSE(left.get_data(*session));
+    CHECK_FALSE(right.get_data(*session));
+    CHECK_FALSE(accel.get_data(*session));
+    CHECK_FALSE(gyro.get_data(*session));
     CHECK_FALSE(audio.get_data(*session));
     CHECK_FALSE(calibration.get_data(*session));
     CHECK_FALSE(state.get_data(*session));
-    CHECK_THROWS_AS(camera.get_stream_data(*session, 2), std::out_of_range);
-    CHECK_THROWS_AS(imu.get_stream_data(*session, 2), std::out_of_range);
     session.reset();
     CHECK(snapshot->sequence_number() == 1);
     CHECK(snapshot->capture_epoch() == 3);

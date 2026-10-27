@@ -691,10 +691,10 @@ class _Reader:
             timestamp = base + sequence * video_period
             log_time = base + frame_index * video_period
             yield from self._message(
-                "orbbec_ego_metadata/ColorLeft", _video(sequence, timestamp, capture_epoch, video_fps), log_time
+                "orbbec_ego_metadata_colorleft/FrameMetadata", _video(sequence, timestamp, capture_epoch, video_fps), log_time
             )
             yield from self._message(
-                "orbbec_ego_metadata/ColorRight", _video(sequence, timestamp, capture_epoch, video_fps), log_time
+                "orbbec_ego_metadata_colorright/FrameMetadata", _video(sequence, timestamp, capture_epoch, video_fps), log_time
             )
             if mode == "embedded":
                 yield from self._message(
@@ -723,9 +723,9 @@ class _Reader:
                 sample_index += len(timestamps)
                 accel_timestamps = [] if scenario == "empty_imu" and sequence == 0 else timestamps
                 yield from self._message(
-                    "orbbec_ego_imu/Accel", _imu(0, sequence, 1000, accel_timestamps), timestamps[-1]
+                    "orbbec_ego_imu_accel/Imu", _imu(0, sequence, 1000, accel_timestamps), timestamps[-1]
                 )
-                yield from self._message("orbbec_ego_imu/Gyro", _imu(1, sequence, 1000, timestamps), timestamps[-1])
+                yield from self._message("orbbec_ego_imu_gyro/Imu", _imu(1, sequence, 1000, timestamps), timestamps[-1])
 
         if scenario in (
             "valid",

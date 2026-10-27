@@ -296,14 +296,14 @@ def recording(tmp_path):
                             "sdk_metadata": [{"key": 19, "value": 123456789}],
                         }
                         add(
-                            f"orbbec_ego_metadata/{side}",
+                            f"orbbec_ego_metadata_{side.lower()}/FrameMetadata",
                             "OrbbecEgoFrameMetadataRecord",
                             metadata,
                             raw,
                         )
                         if duplicate_observation:
                             add(
-                                f"session_observed/orbbec_ego_metadata/{side}",
+                                f"session_observed/orbbec_ego_metadata_{side.lower()}/FrameMetadata",
                                 "OrbbecEgoFrameMetadataRecord",
                                 metadata,
                                 raw,
@@ -342,7 +342,7 @@ def recording(tmp_path):
                             }
                         )
                     add(
-                        f"orbbec_ego_imu/{sensor}",
+                        f"orbbec_ego_imu_{sensor.lower()}/Imu",
                         "OrbbecEgoImuBatchRecord",
                         {
                             "sensor": sensor,
@@ -1000,7 +1000,7 @@ def test_imu_vectors_are_immutable_views_without_per_sample_dicts(recording):
     path, _ = recording(imu_samples=2000)
     with path.open("rb") as source:
         for schema, channel, message in make_reader(source).iter_messages():
-            if channel.topic == "orbbec_ego_imu/Accel":
+            if channel.topic == "orbbec_ego_imu_accel/Imu":
                 record = RecordDecoder(schema.data, schema.name).decode(message.data)
                 samples = record["data"]["samples"]
                 assert isinstance(samples, np.ndarray)

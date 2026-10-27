@@ -14,10 +14,10 @@ from isaaccapture.schema import (
 )
 
 TOPICS = {
-    "orbbec_ego_metadata/ColorLeft",
-    "orbbec_ego_metadata/ColorRight",
-    "orbbec_ego_imu/Accel",
-    "orbbec_ego_imu/Gyro",
+    "orbbec_ego_metadata_colorleft/FrameMetadata",
+    "orbbec_ego_metadata_colorright/FrameMetadata",
+    "orbbec_ego_imu_accel/Imu",
+    "orbbec_ego_imu_gyro/Imu",
     "orbbec_ego_audio/Audio",
     "orbbec_ego_calibration/Calibration",
     "orbbec_ego_device/DeviceState",
@@ -87,9 +87,6 @@ class Tracker:
             ),
         )
 
-    def get_stream_data(self, session, _):
-        return self.get_data(session)
-
 
 def mock_trackers(monkeypatch):
     for name in (
@@ -155,7 +152,9 @@ def test_recorded_policy_controls_diagnostic_tracker_registration(
                 "diagnostic_version": "2",
             },
         )
-        channel = writer.register_channel("orbbec_ego_metadata/ColorLeft", "test", 0)
+        channel = writer.register_channel(
+            "orbbec_ego_metadata_colorleft/FrameMetadata", "test", 0
+        )
         writer.add_message(channel, 1, b"test", 1)
         writer.finish()
     mock_trackers(monkeypatch)

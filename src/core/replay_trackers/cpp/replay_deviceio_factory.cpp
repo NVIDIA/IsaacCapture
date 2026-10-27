@@ -5,7 +5,6 @@
 
 #include "generated_replay_includes.inc"
 #include "replay_controller_tracker_impl.hpp"
-#include "replay_ego_tracker_impl.hpp"
 #include "replay_full_body_tracker_impl.hpp"
 #include "replay_hand_tracker_impl.hpp"
 #include "replay_haptic_command_reader_tracker_impl.hpp"
@@ -15,8 +14,6 @@
 #include "replay_tensor_push_tracker_impl.hpp"
 
 #include <deviceio_trackers/controller_tracker.hpp>
-#include <deviceio_trackers/ego_frame_metadata_tracker.hpp>
-#include <deviceio_trackers/ego_imu_tracker.hpp>
 #include <deviceio_trackers/full_body_tracker.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
@@ -111,19 +108,6 @@ std::unique_ptr<ITrackerImpl> try_create_haptic_command_reader_impl(ReplayDevice
     return typed ? factory.create_haptic_command_reader_tracker_impl(typed) : nullptr;
 }
 
-std::unique_ptr<ITrackerImpl> try_create_ego_frame_metadata_tracker_impl(ReplayDeviceIOFactory& factory,
-                                                                         const ITracker& tracker)
-{
-    auto* typed = dynamic_cast<const OrbbecEgoFrameMetadataTracker*>(&tracker);
-    return typed ? factory.create_ego_frame_metadata_tracker_impl(typed) : nullptr;
-}
-
-std::unique_ptr<ITrackerImpl> try_create_ego_imu_tracker_impl(ReplayDeviceIOFactory& factory, const ITracker& tracker)
-{
-    auto* typed = dynamic_cast<const OrbbecEgoImuTracker*>(&tracker);
-    return typed ? factory.create_ego_imu_tracker_impl(typed) : nullptr;
-}
-
 std::unique_ptr<ITrackerImpl> try_create_keyboard_impl(ReplayDeviceIOFactory& factory, const ITracker& tracker)
 {
     auto* typed = dynamic_cast<const KeyboardTracker*>(&tracker);
@@ -136,8 +120,6 @@ using TryCreateFn = std::unique_ptr<ITrackerImpl> (*)(ReplayDeviceIOFactory&, co
 
 inline const TryCreateFn k_tracker_dispatch[] = {
     &try_create_head_impl,
-    &try_create_ego_frame_metadata_tracker_impl,
-    &try_create_ego_imu_tracker_impl,
     &try_create_hand_impl,
     &try_create_controller_impl,
     &try_create_full_body_impl,
@@ -222,19 +204,6 @@ std::unique_ptr<IHapticCommandReaderTrackerImpl> ReplayDeviceIOFactory::create_h
     const HapticCommandReaderTracker* /*tracker*/)
 {
     return std::make_unique<ReplayHapticCommandReaderTrackerImpl>();
-}
-
-std::unique_ptr<IEgoFrameMetadataTrackerImpl> ReplayDeviceIOFactory::create_ego_frame_metadata_tracker_impl(
-    const OrbbecEgoFrameMetadataTracker* tracker)
-{
-    return std::make_unique<ReplayEgoFrameMetadataTrackerImpl>(
-        open_reader(filename_), get_name(tracker), tracker->get_stream_names(), recorded_schemas_);
-}
-
-std::unique_ptr<IEgoImuTrackerImpl> ReplayDeviceIOFactory::create_ego_imu_tracker_impl(const OrbbecEgoImuTracker* tracker)
-{
-    return std::make_unique<ReplayEgoImuTrackerImpl>(
-        open_reader(filename_), get_name(tracker), tracker->stream_names(), recorded_schemas_);
 }
 
 std::unique_ptr<IKeyboardTrackerImpl> ReplayDeviceIOFactory::create_keyboard_tracker_impl(const KeyboardTracker* tracker)

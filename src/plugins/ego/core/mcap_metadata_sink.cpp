@@ -13,12 +13,14 @@
 #include <schema/orbbec_ego_device_state_bfbs_generated.h>
 #include <schema/orbbec_ego_imu_bfbs_generated.h>
 
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <map>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace plugins::ego
@@ -26,6 +28,17 @@ namespace plugins::ego
 
 namespace
 {
+
+// One recording name per stream, as hosts record the per-stream manifest trackers:
+// orbbec_ego_metadata_colorleft/FrameMetadata, orbbec_ego_imu_accel/Imu, ...
+std::string stream_recording_name(const std::string& prefix, std::string_view stream)
+{
+    std::string name = prefix + "_";
+    for (const char character : stream)
+        name.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(character))));
+    return name;
+}
+
 class McapMetadataSink final : public IMetadataSink
 {
 public:
@@ -53,15 +66,24 @@ public:
                 video_names.emplace_back(core::EnumNameOrbbecEgoCameraStream(stream.camera));
             if (include_structured)
             {
-                video_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>>(
-                    writer_, "orbbec_ego_metadata", video_names);
+                for (const auto& stream : streams)
+                    video_.emplace(
+                        stream.camera, std::make_unique<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>>(
+                                           writer_,
+                                           stream_recording_name("orbbec_ego_metadata",
+                                                                 core::EnumNameOrbbecEgoCameraStream(stream.camera)),
+                                           std::vector<std::string>{ "FrameMetadata" }));
             }
             for (size_t index = 0; index < streams.size(); ++index)
                 video_indices_.emplace(streams[index].camera, index);
             if (include_structured)
             {
-                imu_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>(
-                    writer_, "orbbec_ego_imu", std::vector<std::string>{ "Accel", "Gyro" });
+                for (const auto sensor : { core::OrbbecEgoImuSensor_Accel, core::OrbbecEgoImuSensor_Gyro })
+                    imu_.emplace(
+                        sensor,
+                        std::make_unique<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>(
+                            writer_, stream_recording_name("orbbec_ego_imu", core::EnumNameOrbbecEgoImuSensor(sensor)),
+                            std::vector<std::string>{ "Imu" }));
                 audio_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>>(
                     writer_, "orbbec_ego_audio", std::vector<std::string>{ "Audio" });
                 calibration_ = std::make_unique<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>>(
@@ -147,16 +169,15 @@ public:
 
     void on_frame_metadata(const CapturedFrame& frame) override
     {
-        if (video_)
-            write_record<core::OrbbecEgoFrameMetadataRecord>(*video_, video_indices_.at(frame.metadata.stream),
-                                                             frame.metadata, frame.sample_time_local_common_clock_ns,
+        if (const auto channels = video_.find(frame.metadata.stream); channels != video_.end())
+            write_record<core::OrbbecEgoFrameMetadataRecord>(*channels->second, 0, frame.metadata,
+                                                             frame.sample_time_local_common_clock_ns,
                                                              frame.sample_time_raw_device_clock_ns);
     }
     void on_imu_batch(const core::OrbbecEgoImuBatchT& batch, int64_t local_ns, int64_t device_ns) override
     {
-        if (imu_)
-            write_record<core::OrbbecEgoImuBatchRecord>(
-                *imu_, static_cast<size_t>(batch.sensor), batch, local_ns, device_ns);
+        if (const auto channels = imu_.find(batch.sensor); channels != imu_.end())
+            write_record<core::OrbbecEgoImuBatchRecord>(*channels->second, 0, batch, local_ns, device_ns);
     }
     void on_audio_chunk(const core::OrbbecEgoAudioChunkT& chunk, int64_t local_ns, int64_t device_ns) override
     {
@@ -283,8 +304,8 @@ private:
     mcap::McapWriter writer_;
     std::string final_filename_;
     std::string temporary_filename_;
-    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>> video_;
-    std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>> imu_;
+    std::map<core::OrbbecEgoCameraStream, std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoFrameMetadataRecord>>> video_;
+    std::map<core::OrbbecEgoImuSensor, std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoImuBatchRecord>>> imu_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoAudioChunkRecord>> audio_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoCalibrationRecord>> calibration_;
     std::unique_ptr<core::McapTrackerChannels<core::OrbbecEgoDeviceStateRecord>> device_state_;

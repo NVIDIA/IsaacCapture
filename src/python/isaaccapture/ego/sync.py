@@ -23,13 +23,16 @@ if TYPE_CHECKING:
 
 STREAMS = ("left_rgb", "right_rgb", "accel", "gyro", "audio")
 _TOPICS = {
-    "orbbec_ego_metadata/ColorLeft": ("left_rgb", "core.OrbbecEgoFrameMetadataRecord"),
-    "orbbec_ego_metadata/ColorRight": (
+    "orbbec_ego_metadata_colorleft/FrameMetadata": (
+        "left_rgb",
+        "core.OrbbecEgoFrameMetadataRecord",
+    ),
+    "orbbec_ego_metadata_colorright/FrameMetadata": (
         "right_rgb",
         "core.OrbbecEgoFrameMetadataRecord",
     ),
-    "orbbec_ego_imu/Accel": ("accel", "core.OrbbecEgoImuBatchRecord"),
-    "orbbec_ego_imu/Gyro": ("gyro", "core.OrbbecEgoImuBatchRecord"),
+    "orbbec_ego_imu_accel/Imu": ("accel", "core.OrbbecEgoImuBatchRecord"),
+    "orbbec_ego_imu_gyro/Imu": ("gyro", "core.OrbbecEgoImuBatchRecord"),
     "orbbec_ego_audio/Audio": ("audio", "core.OrbbecEgoAudioChunkRecord"),
     "orbbec_ego_media/ColorLeft": ("left_rgb", "core.OrbbecEgoEncodedVideoFrameRecord"),
     "orbbec_ego_media/ColorRight": (

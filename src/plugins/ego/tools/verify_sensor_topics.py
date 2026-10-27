@@ -268,9 +268,13 @@ counts = Counter()
 last_log_time = {}
 non_monotonic = []
 video_epochs = {}
+VIDEO_METADATA_STREAMS = {
+    "orbbec_ego_metadata_colorleft/FrameMetadata": "ColorLeft",
+    "orbbec_ego_metadata_colorright/FrameMetadata": "ColorRight",
+}
 imu = {
-    "orbbec_ego_imu/Accel": {"sensor": 0, "batches": 0, "samples": 0, "epochs": {}},
-    "orbbec_ego_imu/Gyro": {"sensor": 1, "batches": 0, "samples": 0, "epochs": {}},
+    "orbbec_ego_imu_accel/Imu": {"sensor": 0, "batches": 0, "samples": 0, "epochs": {}},
+    "orbbec_ego_imu_gyro/Imu": {"sensor": 1, "batches": 0, "samples": 0, "epochs": {}},
 }
 audio_topics = ["orbbec_ego_audio/Audio"]
 if mode == "embedded":
@@ -349,17 +353,17 @@ with open(path, "rb") as stream:
         if topic == "orbbec_ego_calibration/Calibration":
             calibrations.append(calibration_record(message.data))
 
-        if topic in ("orbbec_ego_metadata/ColorLeft", "orbbec_ego_metadata/ColorRight"):
+        if topic in VIDEO_METADATA_STREAMS:
             table, timestamp = record_data(message.data, topic)
             capture_epoch = scalar_field(message.data, table, 8, "<I")
             profiles = video_profiles.setdefault(capture_epoch, {})
-            profiles.setdefault(topic.split("/")[1], set()).add(
+            profiles.setdefault(VIDEO_METADATA_STREAMS[topic], set()).add(
                 (
                     scalar_field(message.data, table, 2, "<I"),
                     scalar_field(message.data, table, 3, "<I"),
                 )
             )
-        if topic == "orbbec_ego_metadata/ColorLeft":
+        if VIDEO_METADATA_STREAMS.get(topic) == "ColorLeft":
             epoch = video_epochs.setdefault(
                 capture_epoch, {"first": timestamp, "last": timestamp}
             )
@@ -516,17 +520,13 @@ with open(path, "rb") as stream:
 expect_imu = expect_imu or any(counts[topic] for topic in imu)
 expect_audio = expect_audio or any(counts[topic] for topic in audio)
 
-required = [
-    "orbbec_ego_metadata/ColorLeft",
-    "orbbec_ego_metadata/ColorRight",
-    "orbbec_ego_calibration/Calibration",
-]
+required = [*VIDEO_METADATA_STREAMS, "orbbec_ego_calibration/Calibration"]
 if policy == "on" and diagnostic_count == 0:
     raise SystemExit("Diagnostics enabled but no OrbbecEgoDeviceState records exist")
 if mode == "embedded":
     required += ["orbbec_ego_media/ColorLeft", "orbbec_ego_media/ColorRight"]
 if expect_imu:
-    required += ["orbbec_ego_imu/Accel", "orbbec_ego_imu/Gyro"]
+    required += ["orbbec_ego_imu_accel/Imu", "orbbec_ego_imu_gyro/Imu"]
 if expect_audio:
     required += ["orbbec_ego_audio/Audio"]
     if mode == "embedded":
@@ -605,7 +605,10 @@ if expect_imu:
                 f"  {topic}: epoch={capture_epoch} batches={epoch['batches']} samples={epoch['samples']} "
                 f"declared_hz={state['rate']} raw_device_hz={observed_rate:.3f}"
             )
-    if imu["orbbec_ego_imu/Accel"]["rate"] != imu["orbbec_ego_imu/Gyro"]["rate"]:
+    if (
+        imu["orbbec_ego_imu_accel/Imu"]["rate"]
+        != imu["orbbec_ego_imu_gyro/Imu"]["rate"]
+    ):
         raise SystemExit("Accel and Gyro declare different sample rates")
 
 if expect_audio:

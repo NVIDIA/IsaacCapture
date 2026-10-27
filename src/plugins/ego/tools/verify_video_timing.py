@@ -82,11 +82,20 @@ if manifest_path.exists():
             f"Invalid requested profile manifest {manifest_path}: {error}"
         ) from error
 
-prefixes = ["orbbec_ego_metadata"]
+
+def metadata_topic(stream):
+    return f"orbbec_ego_metadata_{stream.lower()}/FrameMetadata"
+
+
+def media_topic(stream):
+    return f"orbbec_ego_media/{stream}"
+
+
+topic_names = [metadata_topic]
 if mode == "embedded":
-    prefixes.append("orbbec_ego_media")
+    topic_names.append(media_topic)
 topics = {
-    f"{prefix}/{stream}": {
+    topic_name(stream): {
         "stream": stream,
         "count": 0,
         "first": None,
@@ -97,7 +106,7 @@ topics = {
         "epochs": {},
         "timeline": [],
     }
-    for prefix in prefixes
+    for topic_name in topic_names
     for stream in expected_counts
 }
 with open(path, "rb") as stream:
@@ -185,8 +194,8 @@ for topic, state in topics.items():
         )
 if mode == "embedded":
     for stream in expected_counts:
-        metadata = topics[f"orbbec_ego_metadata/{stream}"]
-        media = topics[f"orbbec_ego_media/{stream}"]
+        metadata = topics[metadata_topic(stream)]
+        media = topics[media_topic(stream)]
         comparable = ("count", "profile", "timeline")
         if any(metadata[field] != media[field] for field in comparable):
             raise SystemExit(f"Embedded and metadata timelines differ for {stream}")

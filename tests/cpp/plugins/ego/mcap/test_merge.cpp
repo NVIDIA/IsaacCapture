@@ -108,10 +108,10 @@ void write_fixture(const fs::path& file,
 
 void fixture_pair(const TempDirectory& temp, size_t payload_size = 4)
 {
-    write_fixture(temp.path / "session.mcap", "orbbec_ego_metadata/ColorLeft", "core.OrbbecEgoFrameMetadataRecord",
-                  { 30, 10 }, false, payload_size);
-    write_fixture(temp.path / "capture.mcap", "orbbec_ego_metadata/ColorLeft", "core.OrbbecEgoFrameMetadataRecord",
-                  { 20, 5 }, false, payload_size);
+    write_fixture(temp.path / "session.mcap", "orbbec_ego_metadata_colorleft/FrameMetadata",
+                  "core.OrbbecEgoFrameMetadataRecord", { 30, 10 }, false, payload_size);
+    write_fixture(temp.path / "capture.mcap", "orbbec_ego_metadata_colorleft/FrameMetadata",
+                  "core.OrbbecEgoFrameMetadataRecord", { 20, 5 }, false, payload_size);
 }
 } // namespace
 
@@ -147,9 +147,10 @@ TEST_CASE("ego_mcap_merge preserves opaque records and host observations", "[ego
         REQUIRE(view.schema->data.size() == std::string("opaque schema fixture").size());
     }
     REQUIRE(times == std::vector<uint64_t>{ 5, 10, 20, 30 });
-    REQUIRE(topics == std::vector<std::string>{
-                          "orbbec_ego_metadata/ColorLeft", "session_observed/orbbec_ego_metadata/ColorLeft",
-                          "orbbec_ego_metadata/ColorLeft", "session_observed/orbbec_ego_metadata/ColorLeft" });
+    REQUIRE(topics == std::vector<std::string>{ "orbbec_ego_metadata_colorleft/FrameMetadata",
+                                                "session_observed/orbbec_ego_metadata_colorleft/FrameMetadata",
+                                                "orbbec_ego_metadata_colorleft/FrameMetadata",
+                                                "session_observed/orbbec_ego_metadata_colorleft/FrameMetadata" });
     unsigned attachments = 0;
     unsigned metadata = 0;
     auto& data = *reader.dataSource();

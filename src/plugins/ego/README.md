@@ -260,16 +260,15 @@ from pathlib import Path
 import isaaccapture.deviceio_trackers as dt
 from isaaccapture.deviceio_session import McapRecordingConfig
 from isaaccapture.ego import configure_recording
-from isaaccapture.schema import OrbbecEgoCameraStream
 from isaaccapture.teleop_session_manager import PluginConfig, TeleopSession
 
 run = Path("recordings/teleop_ego").resolve()
 (run / "raw").mkdir(parents=True, exist_ok=True)
 ego_entries = [
-    (dt.OrbbecEgoFrameMetadataTracker(
-        "ego", [OrbbecEgoCameraStream.ColorLeft, OrbbecEgoCameraStream.ColorRight]
-    ), "orbbec_ego_metadata"),
-    (dt.OrbbecEgoImuTracker("ego"), "orbbec_ego_imu"),
+    *((dt.OrbbecEgoFrameMetadataTracker(f"ego/{stream}"), f"orbbec_ego_metadata_{stream.lower()}")
+      for stream in ("ColorLeft", "ColorRight")),
+    *((dt.OrbbecEgoImuTracker(f"ego/{sensor}"), f"orbbec_ego_imu_{sensor.lower()}")
+      for sensor in ("Accel", "Gyro")),
     (dt.OrbbecEgoCalibrationTracker("ego/Calibration"), "orbbec_ego_calibration"),
     (dt.OrbbecEgoDeviceStateTracker("ego/DeviceState"), "orbbec_ego_device"),
 ]
@@ -449,12 +448,13 @@ Audio adds `Audio.wav` only when requested with an output path. Embedded mode
 stores media in MCAP and omits video/WAV sidecars unless explicitly retained.
 
 Schema and tracker types use `OrbbecEgo*`; the logical plugin name is
-`orbbec_ego_camera`. This is a breaking rename of the former `Ego*` Python APIs,
-`core.Ego*` schema names, and `ego_*` MCAP topics.
+`orbbec_ego_camera`.
 
-Canonical structured topics are `orbbec_ego_metadata/ColorLeft`, `orbbec_ego_metadata/ColorRight`,
-`orbbec_ego_imu/Accel`, `orbbec_ego_imu/Gyro`, `orbbec_ego_calibration/Calibration`, and
-`orbbec_ego_device/DeviceState`; audio adds `orbbec_ego_audio/Audio`. IMU/audio topics depend
+Canonical structured topics are `orbbec_ego_metadata_colorleft/FrameMetadata`,
+`orbbec_ego_metadata_colorright/FrameMetadata`, `orbbec_ego_imu_accel/Imu`,
+`orbbec_ego_imu_gyro/Imu`, `orbbec_ego_calibration/Calibration`, and
+`orbbec_ego_device/DeviceState`; audio adds `orbbec_ego_audio/Audio`. Host recordings
+also carry a `_tracked` channel beside each one. IMU/audio topics depend
 on enabled and available sensors, and diagnostics can be omitted. Embedded
 media uses `orbbec_ego_media/ColorLeft`, `orbbec_ego_media/ColorRight`, and optional `orbbec_ego_media/Audio`.
 

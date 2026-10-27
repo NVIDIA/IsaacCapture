@@ -9,7 +9,6 @@ from pathlib import Path
 
 import isaaccapture.deviceio_trackers as deviceio_trackers
 from isaaccapture.deviceio_session import DeviceIOSession, McapRecordingConfig
-from isaaccapture.schema import OrbbecEgoCameraStream
 import isaaccapture.oxr as oxr
 import isaaccapture.plugin_manager as plugin_manager
 
@@ -29,18 +28,19 @@ def main() -> int:
     args = parser.parse_args()
 
     prefix = "ego"
-    frame = deviceio_trackers.OrbbecEgoFrameMetadataTracker(
-        prefix,
-        [
-            OrbbecEgoCameraStream.ColorLeft,
-            OrbbecEgoCameraStream.ColorRight,
-        ],
-    )
-    imu = deviceio_trackers.OrbbecEgoImuTracker(prefix)
+    # The plugin publishes each stream as "{prefix}/{StreamName}"; one tracker per stream.
+    frames = {
+        name: deviceio_trackers.OrbbecEgoFrameMetadataTracker(f"{prefix}/{name}")
+        for name in ("ColorLeft", "ColorRight")
+    }
+    imus = {
+        name: deviceio_trackers.OrbbecEgoImuTracker(f"{prefix}/{name}")
+        for name in ("Accel", "Gyro")
+    }
     audio = deviceio_trackers.OrbbecEgoAudioTracker(prefix + "/Audio")
     calibration = deviceio_trackers.OrbbecEgoCalibrationTracker(prefix + "/Calibration")
     state = deviceio_trackers.OrbbecEgoDeviceStateTracker(prefix + "/DeviceState")
-    trackers = [frame, imu, audio, calibration, state]
+    trackers = [*frames.values(), *imus.values(), audio, calibration, state]
 
     suffix = {"mjpg": "mjpg", "h264": "h264", "h265": "h265"}[args.format]
     plugin_args = [
@@ -74,8 +74,14 @@ def main() -> int:
         recording = McapRecordingConfig(
             str(args.mcap),
             [
-                (frame, "orbbec_ego_metadata"),
-                (imu, "orbbec_ego_imu"),
+                *(
+                    (tracker, f"orbbec_ego_metadata_{name.lower()}")
+                    for name, tracker in frames.items()
+                ),
+                *(
+                    (tracker, f"orbbec_ego_imu_{name.lower()}")
+                    for name, tracker in imus.items()
+                ),
                 (audio, "orbbec_ego_audio"),
                 (calibration, "orbbec_ego_calibration"),
                 (state, "orbbec_ego_device"),
@@ -88,11 +94,9 @@ def main() -> int:
 
                 def all_data_received() -> bool:
                     return (
-                        not any(
-                            frame.get_stream_data(session, i) is None for i in range(2)
-                        )
-                        and not any(
-                            imu.get_stream_data(session, i) is None for i in range(2)
+                        all(
+                            tracker.get_data(session) is not None
+                            for tracker in (*frames.values(), *imus.values())
                         )
                         and audio.get_data(session) is not None
                         and calibration.get_data(session) is not None
