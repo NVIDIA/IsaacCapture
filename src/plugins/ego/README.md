@@ -500,8 +500,9 @@ ffprobe -v error -select_streams v:0 \
 For the two-eye local MCAP layout above, the helper also checks MCAP topics,
 video counts/cadence, enabled sensors, and capture health:
 
+When the active Python has no MCAP reader, `verify` runs these checks through uv.
+
 ```bash
-python3 -m pip install --user mcap  # If the MCAP reader is not installed.
 ./src/plugins/ego/ego.sh verify "$RUN" --plugin "$EGO_PLUGIN" --expect-imu
 ```
 
@@ -648,7 +649,7 @@ overwrite outputs and return nonzero for unverified or incomplete results.
 | Camera busy or preview cannot open | Stop other processes using that EGO, including `camera_viz`. |
 | Recording waits after disconnect | Reconnect the same physical camera within `--reconnect-timeout`; UID may change after USB re-enumeration. |
 | Nonzero exit or `.partial` remains | Preserve capture and logs; check queue loss, output failures, reconnect timeout, and control restoration. |
-| MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install the Python MCAP reader. Missing wrapper manifests/logs reduce the checks performed. |
+| MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
 | TeleopSession cannot publish EGO data | Check the running OpenXR runtime, installed Python bindings, plugin search path, and collection prefix. |
 | Embedded session has no final file | Check clean context exit, matching spool/fragment paths, fresh output paths, and `ego_mcap_merge` beside the plugin. |

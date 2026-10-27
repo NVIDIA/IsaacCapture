@@ -153,6 +153,20 @@ require_command() {
     fi
 }
 
+# The verify tools read MCAP. Use python3 when it already has a reader (for example an
+# activated venv); otherwise uv runs them with mcap from its cache.
+python_has_mcap() {
+    python3 -c 'from mcap.reader import make_reader' >/dev/null 2>&1
+}
+
+run_mcap_tool() {
+    if python_has_mcap; then
+        python3 "$@"
+    else
+        uv run --quiet --no-project --with 'mcap>=1.2,<2' python3 "$@"
+    fi
+}
+
 require_cmake_version() {
     local version
     require_command cmake "Install CMake 3.24 or newer." || return 1
@@ -191,9 +205,8 @@ command_doctor() {
     require_command python3 "Install it with: sudo apt update && sudo apt install -y python3" || failed=1
     require_command ffmpeg "Install it with: sudo apt update && sudo apt install -y ffmpeg" || failed=1
     require_command ffprobe "Install it with: sudo apt update && sudo apt install -y ffmpeg" || failed=1
-    if command -v python3 >/dev/null 2>&1 \
-            && ! python3 -c 'from mcap.reader import make_reader' >/dev/null 2>&1; then
-        warn "Python MCAP reader is missing. Install it with: python3 -m pip install --user mcap"
+    if command -v python3 >/dev/null 2>&1 && ! python_has_mcap && ! command -v uv >/dev/null 2>&1; then
+        warn "verify needs the Python MCAP reader. Install uv, or install mcap into the active Python environment."
         failed=1
     fi
 
@@ -750,7 +763,7 @@ verify_mcap_video_timing() {
     local left_frames="$3"
     local right_frames="$4"
     local manifest="$5"
-    python3 "$SCRIPT_DIR/tools/verify_video_timing.py" "$mcap" "$mode" "$left_frames" "$right_frames" "$manifest"
+    run_mcap_tool "$SCRIPT_DIR/tools/verify_video_timing.py" "$mcap" "$mode" "$left_frames" "$right_frames" "$manifest"
 }
 
 print_fingerprint() {
@@ -797,12 +810,12 @@ command_verify_impl() {
     [[ -z "$partial_file" ]] || die "Incomplete capture: found $partial_file"
     require_command ffmpeg "Install it with: sudo apt update && sudo apt install -y ffmpeg" || exit 1
     require_command ffprobe "Install it with: sudo apt update && sudo apt install -y ffmpeg" || exit 1
-    require_command python3 "Install Python 3 and the standard MCAP reader: python3 -m pip install --user mcap" || exit 1
-    python3 -c 'from mcap.reader import make_reader' 2>/dev/null || die "Python MCAP reader is missing. Install it with: python3 -m pip install --user mcap"
+    require_command python3 "Install it with: sudo apt update && sudo apt install -y python3" || exit 1
+    python_has_mcap || command -v uv >/dev/null 2>&1 || die "verify needs the Python MCAP reader. Install uv, or install mcap into the active Python environment."
 
     local mode="$expected_mode"
     if [[ -z "$mode" ]]; then
-        mode="$(python3 "$SCRIPT_DIR/tools/detect_media_mode.py" "$mcap")"
+        mode="$(run_mcap_tool "$SCRIPT_DIR/tools/detect_media_mode.py" "$mcap")"
     fi
     [[ "$mode" == "sidecar" || "$mode" == "embedded" ]] || die "Unknown MCAP media mode '$mode'"
 
@@ -812,7 +825,7 @@ command_verify_impl() {
     if (( require_calibration )); then
         topic_check_args+=(--require-calibration "--calibration-json=$run_dir/calibration.json")
     fi
-    python3 "$SCRIPT_DIR/tools/verify_sensor_topics.py" "${topic_check_args[@]}"
+    run_mcap_tool "$SCRIPT_DIR/tools/verify_sensor_topics.py" "${topic_check_args[@]}"
 
     check_capture_health_log "$run_dir/logs/capture.log"
 
