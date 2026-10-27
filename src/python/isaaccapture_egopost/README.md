@@ -41,7 +41,8 @@ SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
   Get started with [pretrained models](https://huggingface.co/nvidia/EgoHand-v1),
   the [inference example](#example),
   [fine-tuning EgoHand with GEM-X](https://github.com/NVlabs/GEM-X), and the
-  [paper](https://arxiv.org/abs/2610.30293).
+  [paper](https://arxiv.org/abs/2610.30293). The EgoHand model and source code
+  are released under the commercial-friendly OpenMDW license.
 
 <a id="overview"></a>
 
