@@ -61,13 +61,14 @@ Choose **one** of the following approaches.
 
 **Recommended for a disk-constrained robot: clone on the host, copy the example.**
 The robot does not need a full Isaac Capture clone. Start with a host
-checkout containing `examples/camera_streamer`. Use the review branch below until this example is merged into `main`
-(Git and Git LFS required):
+checkout containing `examples/camera_streamer` (Git and Git LFS required).
+The commands use `main` for the merged example. Before merge, reviewers must
+substitute the pull request's head branch for `main`.
 
 ```bash
 # On the Distributed Cloud workstation; skip cloning if you have this checkout.
 export CAMERA_REPO_URL="https://github.com/NVIDIA/IsaacCapture.git"
-export CAMERA_BRANCH="jsepulveda/sensing-camera-streamer"
+export CAMERA_BRANCH="main"
 GIT_LFS_SKIP_SMUDGE=1 git clone --single-branch --branch "$CAMERA_BRANCH" \
   "$CAMERA_REPO_URL" "$HOME/IsaacCapture"
 cd ~/IsaacCapture
@@ -100,6 +101,21 @@ file transfer or `isaac-camera-streamer` directory is then needed. Use
 `~/IsaacCapture/examples/camera_streamer` instead of the deployment path in the
 Robot Site commands below. This approach uses more disk space for Git history
 and the rest of the checkout.
+
+### Test a clean robot deployment
+
+Stop the sender and any local preview, and save custom profiles or captures outside
+`~/isaac-camera-streamer` before deleting that directory. Repeating the source
+transfer and Robot Install steps then builds the sender from scratch. This resets
+the example's source, build products and any environments inside the directory;
+it does not uninstall JetPack, camera drivers, system packages or PWM setup.
+
+For a fuller check, use fresh terminals, enumerate cameras with `--list-modes`,
+validate the shared profile with `--check-config`, run the native tests, then
+start sender, receiver and viewer. Check both eyes, stop/restart the receiver to
+exercise reconnect, and switch profiles after stopping all three processes.
+A reboot followed by the documented vendor driver/PWM setup checks cold-start
+behavior. A clean OS installation is a separate test of system prerequisites.
 
 ### Install the shared host receiver and viewer
 

@@ -31,3 +31,4 @@ SPDX-License-Identifier: Apache-2.0
 - Describe camera support generically; separate upstream device testing from local validation.
 - Use one shared profile per device/resolution; define wire geometry and port once.
 - Keep tests under the example-level tests/ directory, split by language and hardware needs.
+- Public setup instructions target main; describe pre-merge branch overrides separately.
