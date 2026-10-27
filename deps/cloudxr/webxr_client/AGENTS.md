@@ -11,3 +11,6 @@ do not bypass peer checks with `--force` or `--legacy-peer-deps`.
 
 Complete client formatting before staging and running pre-commit; do not run
 formatters concurrently with hooks, which detect any file changes during a run.
+
+Session errors restored after reload must retain banner priority over asynchronous
+startup notices and status cleanup until a stream connects successfully.

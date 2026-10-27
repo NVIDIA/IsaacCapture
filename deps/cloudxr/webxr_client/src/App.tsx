@@ -68,7 +68,6 @@ import CloudXR3DUI from './CloudXRUI';
 import { readUrlParam } from './config/resolve';
 import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
-import { readSessionError, saveSessionError } from './sessionError';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
 import { TraceVisualization } from './TraceVisualization';
 import {
@@ -77,6 +76,7 @@ import {
   isSystemNoticeMessage,
   SystemNotice,
 } from './types/serverMessages';
+import { useSessionError } from './useSessionError';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.
 // Signals update their value without triggering React re-renders.
@@ -210,11 +210,7 @@ function AppContent() {
   // Session status management
   const [sessionStatus, setSessionStatus] = useState('Disconnected');
   // Error message management
-  const [errorMessage, setErrorMessageState] = useState(readSessionError);
-  const setErrorMessage = (message: string) => {
-    saveSessionError(message);
-    setErrorMessageState(message);
-  };
+  const setErrorMessage = useSessionError(cloudXR2DUI);
   // CloudXR session reference
   const [cloudXRSession, setCloudXRSession] = useState<CloudXR.Session | null>(null);
   // XR mode state for UI visibility
@@ -484,17 +480,6 @@ function AppContent() {
     button?.addEventListener('click', onLoadRecording);
     return () => button?.removeEventListener('click', onLoadRecording);
   }, [onLoadRecording]);
-
-  // Update HTML error message display when error state changes
-  useEffect(() => {
-    if (cloudXR2DUI) {
-      if (errorMessage) {
-        cloudXR2DUI.showError(errorMessage);
-      } else {
-        cloudXR2DUI.hideError();
-      }
-    }
-  }, [errorMessage, cloudXR2DUI]);
 
   // Listen for XR session state changes to update button and UI visibility
   useEffect(() => {
@@ -1219,7 +1204,6 @@ function AppContent() {
                 onError={error => {
                   // onStatusChange('Error') arrives first; persist the full error code before reloading.
                   setErrorMessage(error);
-                  cloudXR2DUI?.showError(error);
                   if (cloudXR2DUI?.getConfiguration().autoRefreshMode === 'any') {
                     window.location.reload();
                   }

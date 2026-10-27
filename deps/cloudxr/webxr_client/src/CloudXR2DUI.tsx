@@ -170,6 +170,7 @@ export class CloudXR2DUI {
   private errorMessageBox!: HTMLElement;
   /** Error message text element */
   private errorMessageText!: HTMLElement;
+  private sessionError = '';
   /** Certificate acceptance link container */
   private certAcceptanceLink!: HTMLElement;
   /** Certificate acceptance link anchor */
@@ -424,7 +425,9 @@ export class CloudXR2DUI {
       const raw = seeds.get(field.key);
       if (raw === undefined) continue;
       const el = document.getElementById(field.elementId) as
-        HTMLInputElement | HTMLSelectElement | null;
+        | HTMLInputElement
+        | HTMLSelectElement
+        | null;
       if (!el) continue;
       if (field.kind === 'checked') {
         (el as HTMLInputElement).checked = raw === 'true';
@@ -1355,11 +1358,22 @@ export class CloudXR2DUI {
    * @param type - Message type: 'success', 'error', or 'info'
    */
   public showStatus(message: string, type: 'success' | 'error' | 'info'): void {
-    if (this.errorMessageText && this.errorMessageBox) {
+    if (!this.sessionError && this.errorMessageText && this.errorMessageBox) {
       this.errorMessageText.textContent = message;
       this.errorMessageBox.className = `error-message-box show ${type}`;
     }
     console[type === 'error' ? 'error' : 'info'](message);
+  }
+
+  /** Keep the session failure above transient notices until streaming succeeds. */
+  public setSessionError(message: string): void {
+    this.sessionError = message;
+    if (message && this.errorMessageText && this.errorMessageBox) {
+      this.errorMessageText.textContent = message;
+      this.errorMessageBox.className = 'error-message-box show error';
+    } else if (!message) {
+      this.hideError();
+    }
   }
 
   /**
@@ -1374,7 +1388,7 @@ export class CloudXR2DUI {
    * Hides the error message
    */
   public hideError(): void {
-    if (this.errorMessageBox) {
+    if (!this.sessionError && this.errorMessageBox) {
       this.errorMessageBox.classList.remove('show');
     }
   }
@@ -1383,10 +1397,8 @@ export class CloudXR2DUI {
    * Hides the status box only if it still shows `message`.
    *
    * The box is a single shared slot: capability results, CloudXR errors, and
-   * host workstation notices all write to it, and each overwrites the last. A
-   * caller retracting its own message must not blank whatever replaced it --
-   * for example a CloudXR error raised moments earlier, which is reported
-   * imperatively and has no React state to re-render it afterwards.
+   * host workstation notices share it. Session errors stay pinned until cleared;
+   * otherwise, a caller retracting its own message must not blank its replacement.
    *
    * @param message - The exact text the caller previously displayed
    */
