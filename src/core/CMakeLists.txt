@@ -43,6 +43,9 @@ add_subdirectory(mcap)
 # retargeting engine's and the session manager's.
 add_subdirectory(cloudxr)
 
+# Remote session link (transports, messages, Link threads); MCAP- and OpenXR-free.
+add_subdirectory(remote_link)
+
 # Python wheel packaging (combines both modules)
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
