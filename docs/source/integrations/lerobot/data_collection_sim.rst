@@ -114,17 +114,8 @@ Collect Teleop Data
          source. If ``./install/plugins/so101_leader/so101_leader_plugin`` does not exist, this
          step has not been completed.
 
-      Install the build prerequisites first — a missing ``clang-format-14`` is the most common
-      cause of a failed build, because the format check is enforced by default on Linux:
-
-      .. code-block:: bash
-
-         sudo apt-get update
-         sudo apt-get install -y build-essential cmake libx11-dev clang-format-14 ccache patchelf pkg-config glslang-tools
-
-      Then clone, configure, build, and install (see
-      :doc:`/development/build_from_source/index` for the full prerequisite list and all
-      build options):
+      Install the :ref:`source-build prerequisites <one-time-setup>` first, including
+      ``clang-format-14`` for the Linux format check. Then clone, configure, build, and install:
 
       .. code-block:: bash
 
