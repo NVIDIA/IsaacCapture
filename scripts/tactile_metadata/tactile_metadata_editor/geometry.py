@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,8 @@ class Model:
     def __init__(self, path, packages):
         self.path, self.missing, self.surfaces = Path(path).resolve(), [], {}
         self.handles, self.attachments = {}, {}
+        # Instance-owned caches must not keep replaced models alive.
+        self._fk_cache = OrderedDict()
 
         # yourdfpy invokes this resolver using the keyword fname.
         def resource(fname):
@@ -89,8 +92,17 @@ class Model:
                 self.surfaces[f"{link}/{node}/{i}"] = (link, part)
 
     def fk(self, cfg):
-        self.urdf.update_cfg({j.name: cfg.get(j.name, 0) for j in self.joints})
-        return {link: self.urdf.get_transform(link).copy() for link in self.links}
+        configuration = tuple(cfg.get(j.name, 0) for j in self.joints)
+        result = self._fk_cache.pop(configuration, None)
+        if result is None:
+            self.urdf.update_cfg(
+                dict(zip((j.name for j in self.joints), configuration))
+            )
+            result = {link: self.urdf.get_transform(link).copy() for link in self.links}
+        self._fk_cache[configuration] = result
+        if len(self._fk_cache) > 4:
+            self._fk_cache.popitem(last=False)
+        return result
 
     def root(self, d, fk):
         reference = d.editor["root"]

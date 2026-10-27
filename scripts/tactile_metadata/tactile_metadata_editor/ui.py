@@ -22,6 +22,17 @@ from .document import Document, FIELDS, GROUPS, IDENTITY, JOINTS, State, joint_n
 LOG = logging.getLogger("isaaccapture.tactile_metadata.editor")
 
 
+def common_number(values):
+    if (
+        values
+        and all(v == values[0] for v in values)
+        and type(values[0]) in (int, float)
+        and abs(values[0]) <= 3.4028234663852886e38
+    ):
+        return float(values[0])
+    return None
+
+
 class Editor:
     def __init__(self, state, args):
         self.state, self.args, self.started = state, args, bool(state.documents)
@@ -32,6 +43,7 @@ class Editor:
         self.model, self.receiver, self.job = None, None, None
         self.selected, self.points, self.candidates = [], {}, []
         self.handles, self.q, self.logs, self.drive = {}, {}, [], {}
+        self.received, self.redraw = {}, True
         self.frame_forces, self.frame_colors, self.frame_counts, self.issues = (
             {},
             {},
@@ -304,7 +316,10 @@ class Editor:
                     "URDF unavailable; numerical draft editing remains available: "
                     + str(exc)
                 )
+        for widget in (self.both, self.source, self.force_max, self.radius):
+            self.watch(widget, lambda _: None)
         self.switch()
+        self.refresh()
 
     @property
     def d(self):
@@ -360,9 +375,13 @@ class Editor:
             action()
 
     def change(self, action, *args, **kwargs):
-        result = self.state.edit(action, *args, **kwargs)
-        self.refresh()
-        return result
+        return self.state.edit(action, *args, **kwargs)
+
+    def segment_options(self):
+        return (
+            "",
+            *map(str, range(max(len(self.d.joints), len(self.d.arrays[FIELDS[0]])))),
+        )
 
     def install_model(self, model):
         if self.model:
@@ -490,7 +509,7 @@ class Editor:
         )
         self.joint_id.value = source.get("joint_state", "")
         self.joint_enabled.value = bool(self.joint_id.value)
-        self.refresh()
+        self.segment.options = self.segment_options()
 
     def root(self, d=None, cfg=None):
         d = d or self.d
@@ -609,6 +628,8 @@ class Editor:
             self.d.editor["approximate"] = True
 
         self.change(add)
+        # Register new rows before selection; the event loop refreshes the inspector.
+        self.segment.options = self.segment_options()
         self.segment.value = str(len(self.d.arrays[FIELDS[0]]) - 1)
         self.select_segment()
 
@@ -931,6 +952,7 @@ class Editor:
         self.sdk_result = f"Running for revision {self.job_revision}"
 
     def refresh(self):
+        self.redraw = True
         d = self.d
         self.issues = [
             dict(v, side=s)
@@ -962,10 +984,7 @@ class Editor:
         self.selected = [i for i in self.selected if 0 <= i < len(d.arrays[FIELDS[1]])]
         self.side.visible = self.both.visible = len(self.state.documents) == 2
         self.header.content = f"{Path(self.state.model.get('urdf', 'No URDF')).name}; hands: {', '.join(self.state.documents)}; {self.mode.value}\n\n{self.state.paths.get(d.side, 'Unsaved draft')}{' *' if self.state.dirty() else ''}; revision {self.state.revision}"
-        self.segment.options = (
-            "",
-            *map(str, range(max(len(d.joints), len(d.arrays[FIELDS[0]])))),
-        )
+        self.segment.options = self.segment_options()
         links = d.editor.get("segment_links", {})
         self.segment_table.content = "\n\n".join(
             f"row {i}: {j}; link={links.get(sid, 'unassigned')}; attachment={'ready' if self.model and sid in self.model.attachments.get(d.side, {}) else 'missing'}"
@@ -987,13 +1006,9 @@ class Editor:
             cells = [
                 v[k] if isinstance(v, list) and k < len(v) else None for v in values
             ]
-            if (
-                cells
-                and all(v == cells[0] for v in cells)
-                and type(cells[0]) in (int, float)
-                and abs(cells[0]) <= 3.4028234663852886e38
-            ):
-                w.value = float(cells[0])
+            value = common_number(cells)
+            if value is not None:
+                w.value = value
         raw, sums = [], []
         for i in self.selected:
             parts = [
@@ -1045,14 +1060,10 @@ class Editor:
             slider.label = number.label = (
                 "Set weight (mixed / missing)" if mixed_weight else "Set weight"
             )
-            if (
-                weights
-                and all(v == weights[0] for v in weights)
-                and type(weights[0]) in (int, float)
-                and abs(weights[0]) <= 3.4028234663852886e38
-            ):
-                number.value = float(weights[0])
-                slider.value = float(np.clip(weights[0], 0, 1))
+            value = common_number(weights)
+            if value is not None:
+                number.value = value
+                slider.value = float(np.clip(value, 0, 1))
         self.info.options = tuple(
             f"{i}: {v['side']} {v['severity']} {v['field']}[{v['row']}]: {v['message']}"
             for i, v in enumerate(self.issues)
@@ -1223,12 +1234,20 @@ class Editor:
             self.rows.value = self.cols.value = 1
             self.grid()
 
-    def render_side(self, side, d, root, current, forces, live):
+    def received_document(self, side, value):
+        cached = self.received.get(side)
+        if cached is None or cached[0] != value:
+            d = storage.parse(value, side)
+            cached = (copy.deepcopy(value), d, d.check())
+            self.received[side] = cached
+        return cached[1:]
+
+    def render_side(self, side, d, root, current, forces, live, issues):
         positions, colors, frames, outlines, edges = [], [], [], [], []
         deformed = geo.deform(d, current) if current is not None else None
         errors = {
             v["row"]
-            for v in d.check()
+            for v in issues
             if v["severity"] == "error" and v["field"] in FIELDS[1:]
         }
         for i, t in geo.frames(d.arrays[FIELDS[1]], root):
@@ -1290,6 +1309,7 @@ class Editor:
     def draw(self):
         latest, mode = self.latest(), self.mode.value
         playing, status = mode in ("LIVE", "PAUSED"), []
+        updating = self.redraw or mode == "LIVE"
         cfg = self.q if mode == "PREVIEW" else self.state.model.get("q0", {})
         highlight, lines, line_colors = set(), [], []
         for side, draft in self.state.documents.items():
@@ -1334,12 +1354,13 @@ class Editor:
                     if valid and mode == "LIVE":
                         self.drive[target] = converted
             self.layers[side].visible = side == self.side.value or self.both.value
-            if mode != "PAUSED":
+            if updating and mode != "PAUSED":
                 try:
                     root, d, current, skeleton = self.root(draft, cfg), draft, None, []
+                    issues = [v for v in self.issues if v["side"] == side]
                     if mode == "LIVE":
                         if self.source.value == "Received":
-                            d = storage.parse(value["metadata"], side)
+                            d, issues = self.received_document(side, value["metadata"])
                         current, joints, _ = geo.hand_current(d, value["hand"])
                         root = joints[1]
                         skeleton = [t for t in joints if t is not None]
@@ -1352,6 +1373,7 @@ class Editor:
                         current,
                         value.get("forces") if fresh else None,
                         playing,
+                        issues,
                     )
                     self.axes("/view/" + side + "/live-skeleton", skeleton)
                     self.frame_forces[side] = value.get("forces")
@@ -1395,6 +1417,16 @@ class Editor:
                     for i in self.selected[:25]
                     if i < len(force_array)
                 )
+        connection = (
+            self.receiver.status
+            if self.receiver and self.receiver is not True
+            else "Demo"
+            if self.receiver
+            else "Disconnected"
+        )
+        self.live_info.content = connection + "\n\n" + "\n\n".join(status)
+        if not updating:
+            return
         root, d = self.root(), self.d
         points = self.draft_points() if mode != "EDIT" else []
         self.balls(
@@ -1427,7 +1459,7 @@ class Editor:
                                 (root @ geo.matrix(d.arrays[FIELDS[1]][i]))[:3, 3],
                             ]
                         )
-                        line_colors.append([(int(255 * min(w, 1)), 80, 30)] * 2)
+                        line_colors.append([(int(255 * w), 80, 30)] * 2)
                         if (
                             self.slot is not None
                             and j == d.arrays[FIELDS[2]][i][self.slot]
@@ -1477,14 +1509,6 @@ class Editor:
                 self.display_model,
                 highlight - {None},
             )
-        connection = (
-            self.receiver.status
-            if self.receiver and self.receiver is not True
-            else "Demo"
-            if self.receiver
-            else "Disconnected"
-        )
-        self.live_info.content = connection + "\n\n" + "\n\n".join(status)
         candidates = [
             (root @ np.r_[geo.matrix(p)[:3, 3] if p else fallback, 1])[:3]
             for p, fallback in self.candidates
@@ -1512,18 +1536,25 @@ class Editor:
             while not self.closing:
                 try:
                     while not self.events.empty():
-                        self.events.get()()
-                        self.refresh()
+                        try:
+                            self.events.get()()
+                        finally:
+                            self.refresh()
                     if self.job and self.job.done():
                         job, self.job = self.job, None
-                        self.sdk_revision = self.job_revision
                         try:
                             self.sdk_result = str(job.result())
                         except Exception as exc:
                             self.sdk_result = f"Failed: {exc}"
                         self.refresh()
-                    with self.server.atomic():
-                        self.draw()
+                    if (
+                        self.redraw
+                        or self.receiver
+                        or self.mode.value in ("LIVE", "PAUSED")
+                    ):
+                        with self.server.atomic():
+                            self.draw()
+                        self.redraw = False
                     last_error = None
                     time.sleep(1 / 30)
                 except KeyboardInterrupt:
