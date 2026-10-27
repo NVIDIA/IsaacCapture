@@ -4,6 +4,7 @@
 #pragma once
 
 #include "recorded_schemas.hpp"
+#include "sample_stream.hpp"
 
 #include <flatbuffers/flatbuffers.h>
 #include <log_bridge/logger.hpp>
@@ -197,6 +198,37 @@ Serialized<typename record_payload_t<RecordT>::TableType> publish_and_record(Mca
     return record.narrow(record->data());
 }
 
+template <typename RecordT>
+class McapTrackerViewers;
+
+/*!
+ * @brief Where McapTrackerViewers read records: a recording file, or a sample stream.
+ *
+ * A file source carries a reader of its own, so crossing a chunk boundary in one viewer cannot
+ * disturb another's buffered message data. A stream source is shared by every viewer of a
+ * session; it must outlive them.
+ */
+class TrackerSampleSource
+{
+public:
+    TrackerSampleSource(std::unique_ptr<mcap::McapReader> reader, const RecordedSchemas& recorded)
+        : reader_(std::move(reader)), recorded_(&recorded)
+    {
+    }
+
+    explicit TrackerSampleSource(TrackerSampleStreamReader& stream) : stream_(&stream)
+    {
+    }
+
+private:
+    template <typename RecordT>
+    friend class McapTrackerViewers;
+
+    std::unique_ptr<mcap::McapReader> reader_;
+    const RecordedSchemas* recorded_ = nullptr;
+    TrackerSampleStreamReader* stream_ = nullptr;
+};
+
 /**
  * @brief Type-safe MCAP channel reader returning owning handles over the recorded records.
  *
@@ -220,6 +252,11 @@ Serialized<typename record_payload_t<RecordT>::TableType> publish_and_record(Mca
  * which is what keeps a schema failure from surfacing part-way through a replay and leaves
  * read() with none of it to do. It needs the whole schema list up front (RecordedSchemas),
  * so a recording that cannot produce one is refused as well.
+ *
+ * Constructed on a sample stream instead, the viewers subscribe to their topics on it, and
+ * read() returns each channel's newest record as of the stream's last snapshot, and the same
+ * record again until a newer one arrives. A channel's schema is checked by the first read() after
+ * the stream declares it, whether or not a record has arrived.
  */
 template <typename RecordT>
 class McapTrackerViewers
@@ -240,13 +277,66 @@ public:
                        std::string_view base_name,
                        const std::vector<std::string>& sub_channels,
                        const RecordedSchemas& recorded)
-        : reader_(std::move(reader))
+        : McapTrackerViewers(TrackerSampleSource(std::move(reader), recorded), base_name, sub_channels)
+    {
+    }
+
+    McapTrackerViewers(TrackerSampleSource source, std::string_view base_name, const std::vector<std::string>& sub_channels)
+        : reader_(std::move(source.reader_)), stream_(source.stream_)
     {
         for (const auto& sub : sub_channels)
         {
             channels_.push_back({ mcap_topic(base_name, sub), {} });
         }
+        if (stream_ == nullptr)
+        {
+            open_file(*source.recorded_);
+            return;
+        }
+        for (const ChannelBuffer& channel : channels_)
+        {
+            stream_->subscribe(channel.topic);
+        }
+    }
 
+    /**
+     * @brief Read the next record as an encoded handle.
+     * @param channel_index Index into the sub_channels list passed at construction.
+     * @return A handle owning the recorded bytes, empty when no more messages remain.
+     *
+     * The two levels of absence are the handle and its payload, not a wrapper around
+     * either: an empty handle means the stream had nothing left, while a non-empty handle
+     * whose `payload()` is null means a record was read for a tracker that was inactive.
+     * A record that was read always yields a non-empty handle, so there is nothing for an
+     * optional to say that the handle does not.
+     *
+     * The recorded root is a Record whose `data` is byte-for-byte the payload table
+     * consumers read, so a caller narrows to it rather than unpacking: `record.narrow(...)`
+     * shares this buffer instead of allocating a second one.
+     */
+    Serialized<RecordT> read(size_t channel_index)
+    {
+        if (channel_index >= channels_.size())
+        {
+            throw std::out_of_range("McapTrackerViewers: read called with channel_index=" + std::to_string(channel_index) +
+                                    " but only " + std::to_string(channels_.size()) + " channels registered");
+        }
+        return stream_ != nullptr ? read_stream(channels_[channel_index]) : read_file(channel_index);
+    }
+
+private:
+    struct ChannelBuffer
+    {
+        std::string topic;
+        std::deque<Serialized<RecordT>> buffer;
+        //! Stream mode: the record last returned, and the stream sequence it came with.
+        Serialized<RecordT> stream_record;
+        uint64_t stream_sequence = 0;
+        bool stream_schema_checked = false;
+    };
+
+    void open_file(const RecordedSchemas& recorded)
+    {
         std::vector<mcap::SchemaId> graded;
         for (const RecordedSchemas::Channel& channel : recorded.channels())
         {
@@ -278,29 +368,48 @@ public:
         tracker_view_ = std::make_unique<TrackerView>(reader_->readMessages(on_problem, options));
     }
 
-    /**
-     * @brief Read the next record as an encoded handle.
-     * @param channel_index Index into the sub_channels list passed at construction.
-     * @return A handle owning the recorded bytes, empty when no more messages remain.
-     *
-     * The two levels of absence are the handle and its payload, not a wrapper around
-     * either: an empty handle means the stream had nothing left, while a non-empty handle
-     * whose `payload()` is null means a record was read for a tracker that was inactive.
-     * A record that was read always yields a non-empty handle, so there is nothing for an
-     * optional to say that the handle does not.
-     *
-     * The recorded root is a Record whose `data` is byte-for-byte the payload table
-     * consumers read, so a caller narrows to it rather than unpacking: `record.narrow(...)`
-     * shares this buffer instead of allocating a second one.
-     */
-    Serialized<RecordT> read(size_t channel_index)
+    Serialized<RecordT> read_stream(ChannelBuffer& channel)
     {
-        if (channel_index >= channels_.size())
+        if (!channel.stream_schema_checked)
         {
-            throw std::out_of_range("McapTrackerViewers: read called with channel_index=" + std::to_string(channel_index) +
-                                    " but only " + std::to_string(channels_.size()) + " channels registered");
+            if (const RecordedSchemas::Channel* declared = stream_->channel(channel.topic))
+            {
+                enforce_schema_compat(check_message_encoding(*declared), channel.topic);
+                enforce_schema_compat(compare_schema(*declared), channel.topic);
+                channel.stream_schema_checked = true;
+            }
         }
 
+        const TrackerSampleStreamReader::Record record = stream_->latest(channel.topic);
+        if (!record.bytes)
+        {
+            channel.stream_record.reset();
+            channel.stream_sequence = 0;
+            return Serialized<RecordT>();
+        }
+        if (record.sequence == channel.stream_sequence)
+        {
+            return channel.stream_record;
+        }
+        if (!channel.stream_schema_checked)
+        {
+            throw std::runtime_error("McapTrackerViewers: stream record on undeclared channel " + channel.topic);
+        }
+
+        flatbuffers::Verifier verifier(record.bytes->data(), record.bytes->size());
+        if (!verifier.VerifyBuffer<RecordT>())
+        {
+            throw std::runtime_error("McapTrackerViewers: corrupt FlatBuffer in stream channel " + channel.topic);
+        }
+
+        // Every viewer reading this record shares the one buffer the stream received it in.
+        channel.stream_record = Serialized<RecordT>(record.bytes, flatbuffers::GetRoot<RecordT>(record.bytes->data()));
+        channel.stream_sequence = record.sequence;
+        return channel.stream_record;
+    }
+
+    Serialized<RecordT> read_file(size_t channel_index)
+    {
         // Return a previously buffered record if one was stashed while
         // advancing the shared iterator on behalf of a different channel.
         if (!channels_[channel_index].buffer.empty())
@@ -330,13 +439,6 @@ public:
 
         return Serialized<RecordT>();
     }
-
-private:
-    struct ChannelBuffer
-    {
-        std::string topic;
-        std::deque<Serialized<RecordT>> buffer;
-    };
 
     struct TrackerView
     {
@@ -422,6 +524,7 @@ private:
     }
 
     std::unique_ptr<mcap::McapReader> reader_;
+    TrackerSampleStreamReader* stream_ = nullptr;
     std::vector<ChannelBuffer> channels_;
     std::unique_ptr<TrackerView> tracker_view_;
 };
