@@ -6,7 +6,7 @@ Spatial controllers
 
 Spatial controllers provide motion input for teleoperation. The SpaceMouse
 guide covers its six-axis input and buttons. XR controller tracking is covered
-in :doc:`/device/trackers`.
+in :doc:`/device/trackers/index`.
 
 .. toctree::
    :maxdepth: 1

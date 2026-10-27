@@ -40,15 +40,31 @@ to clone the repository for a couple quick samples to run.
    replaces the legacy package and keeps old imports working temporarily.
    See :doc:`/development/migration`.
 
-In a new terminal, activate your preferred virtual or conda environment, then install the latest
-stable release from PyPI:
+Install the package into a virtual environment. Without one, ``pip install`` fails on Ubuntu 24.04
+with ``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment
+found``. In a new terminal, from the repository root, create and activate one with
+`uv <https://docs.astral.sh/uv/>`__, which downloads the requested Python if the system lacks it
+(Python 3.11 to 3.13 are supported). If ``uv`` is missing, install it first as shown in
+:ref:`one-time-setup`.
 
 .. code-block:: bash
 
-   pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+   # --seed adds pip, so plain pip install also works in this venv.
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
+
+To use an existing venv, or a conda environment other than ``base`` (``uv`` treats ``base`` as a
+system Python), activate it and skip ``uv venv``. Activate the environment again in every new
+terminal you use for the steps below.
+
+Install the latest stable release from PyPI:
+
+.. code-block:: bash
+
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions — shown here with `uv <https://docs.astral.sh/uv/>`__:
+and an opt-in to pre-release versions:
 
 .. code-block:: bash
 
@@ -200,6 +216,14 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 
    For a real headset, open the same URL in your **Meta Quest or PICO browser**.
 
+   .. note::
+
+      The default client shows an in-XR control panel with connection information and controls
+      useful during development. To hide it, open **Advanced settings → In-XR comfort** before
+      connecting and set **Control panel when entering XR (saved per teleop application)** to
+      **Hide control panel**. Use the small **Show** control to reopen it in XR. See
+      :ref:`camera-streaming-web-client`.
+
    .. important::
 
       If using a physical headset, make sure it is updated to the latest firmware before connecting.
@@ -311,8 +335,12 @@ pipeline: reading XR controller input via CloudXR, retargeting it through the
 
    python examples/teleop/python/gripper_retargeting_example_simple.py
 
-Once running, squeeze the controller triggers on your XR headset to control
-the gripper. You should see periodic status output:
+Once running, squeeze the **right controller trigger** to control the gripper.
+``GripperRetargeter`` emits binary commands: ``+1.00`` means open and ``-1.00``
+means closed. With the default configuration, trigger values above ``0.5``
+close the gripper; values at or below ``0.5`` open it. The analog trigger value
+is thresholded by the retargeter, so intermediate output values are not expected.
+You should see periodic status output:
 
 .. code-block:: text
 
@@ -320,16 +348,34 @@ the gripper. You should see periodic status output:
    Gripper Retargeting - Squeeze triggers to control grippers
    ============================================================
 
-   [  0.5s] Right: 0.00
-   [  1.0s] Right: 0.73
+   Gripper command: +1.00 = open, -1.00 = closed (trigger > 0.5).
+   Running until Ctrl+C.
+   [  0.5s] Right: 1.00
+   [  1.0s] Right: -1.00
    [  1.5s] Right: 1.00
    ...
 
-The example runs for 20 seconds and then exits. To try other examples, see
-``examples/teleop/python/`` — for instance:
+The example runs until you press **Ctrl+C**. To stop automatically after a
+chosen duration, measured after session startup, pass ``--duration``:
+
+.. code-block:: bash
+
+   python examples/teleop/python/gripper_retargeting_example_simple.py --duration 20
+
+``--duration 0`` also runs until Ctrl+C. Both a timed run and Ctrl+C announce
+that the session is closing, then print ``Session closed.`` after cleanup.
+Stream or cleanup errors still propagate; a browser stream error is not the
+expected completion message. For troubleshooting, retain the Python traceback,
+CloudXR runtime logs, and browser error and stop-reason codes.
+
+For proportional controller input, read ``ControllerInputIndex.TRIGGER_VALUE``
+or use ``SO101GripperRetargeter`` for SO-101 jaw closedness in ``[0, 1]``
+(``0`` open, ``1`` closed); see :doc:`../references/retargeting/so101`.
+
+To try other examples, see ``examples/teleop/python/`` — for instance:
 
 - ``se3_retargeting_example.py`` — maps hand or controller poses to
-  end-effector poses (absolute or relative)
+  end-effector poses (absolute or relative), with the same ``--duration`` and Ctrl+C behavior
 - ``dex_bimanual_example.py`` — bimanual dexterous hand retargeting
 - ``gripper_retargeting_example.py`` — full gripper example with more
   configuration options

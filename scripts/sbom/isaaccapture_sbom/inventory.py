@@ -1,0 +1,784 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Attribute wheel members to build inputs; unexplained members block publication."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from . import elf, licensing
+from .discovery import (
+    Component,
+    EMPTY_SHA256,
+    LinkInput,
+    note_reach,
+    component_of,
+    owned_input,
+    resolve_static_archive,
+    resolve_system_library,
+    resolve_system_library_by_build_id,
+    sha256_file,
+    system_component,
+)
+from . import wheelfile
+from .wheelfile import Entry, WheelInfo
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .evidence import Discovery
+
+# File types whose contents may carry REUSE tags.
+_TAGGABLE = {
+    ".py",
+    ".pyi",
+    ".txt",
+    ".cfg",
+    ".toml",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".json",
+    ".md",
+}
+
+
+@dataclass
+class Attribution:
+    """One wheel member and the evidence that explains it."""
+
+    path: str
+    origin: str
+    detail: str
+    components: dict[str, set[str]] = field(default_factory=dict)
+    primary: str | None = None
+    spdx_tag: str | None = None
+    copyright_text: str | None = None
+    # Byte identity is independent of origin; do not infer it from the attribution route.
+    exact: bool = False
+    # Path within the component, when known.
+    source_path: str | None = None
+    # Component -> source path -> discovery.REACH method.
+    read: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def as_json(self) -> dict:
+        return {
+            "path": self.path,
+            "origin": self.origin,
+            "detail": self.detail,
+            "primary": self.primary,
+            "source_path": self.source_path,
+            "components": {
+                key: sorted(how) for key, how in sorted(self.components.items())
+            },
+            "spdx_tag": self.spdx_tag,
+        }
+
+
+@dataclass
+class Inventory:
+    attributions: dict[str, Attribution]
+    components_present: dict[str, Component]
+    component_roles: dict[str, set[str]]
+    external_runtime: dict[str, list[str]]
+    requires_dist: list[str]
+    unattributed: list[str] = field(default_factory=list)
+    # Link-line inputs nothing explains, as `<input> (linked by ...): <why>`.
+    untraced: list[str] = field(default_factory=list)
+    _indexed: tuple[dict, dict] | None = field(default=None, repr=False)
+
+    def files_of(self, key: str) -> list[str]:
+        return self._by_component()[0].get(key, [])
+
+    def files_sharing(self, key: str) -> list[str]:
+        """Files naming this component as one candidate among several."""
+        return self._by_component()[1].get(key, [])
+
+    def _by_component(self) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+        """Cache the component index to avoid rescanning members for each lookup."""
+        if self._indexed is None:
+            owned: dict[str, list[str]] = {}
+            shared: dict[str, list[str]] = {}
+            for path in sorted(self.attributions):
+                item = self.attributions[path]
+                if item.primary:
+                    owned.setdefault(item.primary, []).append(path)
+                    continue
+                for key, how in item.components.items():
+                    if "shared-content" in how:
+                        shared.setdefault(key, []).append(path)
+            self._indexed = (owned, shared)
+        return self._indexed
+
+
+class Resolver:
+    """Probes a candidate's bytes and path against every discovered index."""
+
+    def __init__(self, discovery: Discovery, system_resolver=None) -> None:
+        self._system_resolver = system_resolver or resolve_system_library
+        self.system_libraries: dict[str, dict] = {}
+        # External static inputs by path; unexplained entries fail the build gate.
+        self.static_inputs: dict[str, dict] = {}
+        self._input_keys: dict[str, str] = {}
+        self.repo_root = discovery.repo_root
+        self.build_dir = discovery.build_dir
+        self.graph = discovery.graph
+        # Copy before adding host libraries: Discovery is shared across wheels.
+        self.components = dict(discovery.components)
+        self.archives = discovery.archives
+        self.repo_files = discovery.repo_files
+        self.build_files = discovery.build_files
+        self.ownership = discovery.ownership
+        self.source_files = discovery.source_files
+        self.staged_component_dirs = discovery.staged_component_dirs
+        self._artifacts_by_hash: dict[str, list] = {}
+        self._artifacts_by_build_id: dict[str, list] = {}
+        self._build_id_of: dict[Path, str | None] = {}
+        for artifact in self.graph.artifacts.values():
+            if artifact.output.is_file():
+                # build_files already hashed everything under the build tree.
+                digest = self.build_files.digest_of(artifact.output) or sha256_file(
+                    artifact.output
+                )
+                self._artifacts_by_hash.setdefault(digest, []).append(artifact)
+                build_id = elf.read_build_id(artifact.output)
+                self._build_id_of[artifact.output] = build_id
+                if build_id:
+                    self._artifacts_by_build_id.setdefault(build_id, []).append(
+                        artifact
+                    )
+
+    def _from_artifact(self, artifact, path: str, detail: str) -> Attribution:
+        contributions = self.graph.contributions(artifact, self.ownership)
+        linked = self.graph.static_inputs(artifact)
+        for item in sorted(linked, key=lambda item: (item.key, item.named)):
+            if owned_input(item, self.ownership):
+                continue
+            key = self._static_input(item, linked[item])
+            if key:
+                contributions.setdefault(key, set()).add("prebuilt-library")
+        first_party = self.graph.first_party(artifact, self.repo_root, self.ownership)
+        primary = None
+        if not first_party:
+            # The component that supplied the compiled sources owns the binary;
+            # the rest are linked into it.
+            sources = [
+                key for key, how in contributions.items() if "compiled-source" in how
+            ]
+            primary = min(
+                sources, key=lambda key: (key != artifact.target, key), default=None
+            )
+        return Attribution(
+            path=path,
+            origin="built",
+            detail=f"{detail}; linked by target {artifact.target}",
+            components={key: set(how) for key, how in contributions.items()},
+            primary=primary,
+            read=self._displayed(self.graph.reached(artifact, self.ownership)),
+        )
+
+    def _displayed(
+        self, reached: dict[str, dict[Path, str]]
+    ) -> dict[str, dict[str, str]]:
+        """Render reached paths as <component-root>/<relative-path>.
+
+        Build-tree files retain their position and any byte-identical source paths.
+        An include directory enclosing the tree represents the component root.
+        """
+        shown: dict[str, dict[str, str]] = {}
+        for key, paths in reached.items():
+            component = self.components.get(key)
+            if component is None or component.root is None:
+                continue
+            name = component.root.name
+            source = component.root.resolve()
+            trees = [
+                source,
+                *(root for root in self.ownership.roots_of(key) if root != source),
+            ]
+            into = shown.setdefault(key, {})
+            for path, how in paths.items():
+                tree = next((root for root in trees if path.is_relative_to(root)), None)
+                if tree is None:
+                    if how == "include-dir" and any(
+                        root.is_relative_to(path) for root in trees
+                    ):
+                        note_reach(into, name, how)
+                    continue
+                for display in self._names_in(name, tree != source, tree, path):
+                    note_reach(into, display, how)
+        return shown
+
+    def _names_in(self, name: str, built: bool, tree: Path, path: Path) -> list[str]:
+        """`path` as named in the source tree `name`; see `_displayed`."""
+        positional = (Path(name) / path.relative_to(tree)).as_posix()
+        digest = self.build_files.digest_of(path) if built else None
+        # An empty file matches every other one, which says nothing.
+        if digest is None or digest == EMPTY_SHA256:
+            return [positional]
+        same = [
+            display
+            for display in self.source_files.all_by_hash.get(digest, [])
+            if display.startswith(name + "/")
+        ]
+        return [*same, positional]
+
+    def _static_input(self, item: LinkInput, targets: set[str]) -> str | None:
+        record = self.static_inputs.get(item.key)
+        if record is None:
+            record = self.static_inputs[item.key] = self._input_record(item)
+        record["named_as"] = sorted({*record["named_as"], item.named})
+        record["linked_by"] = sorted({*record["linked_by"], *targets})
+        return record["component"]
+
+    def _input_record(self, item: LinkInput) -> dict:
+        """Resolve an unowned static input against the repository and build host."""
+        record: dict = {
+            "kind": item.kind,
+            "named_as": [],
+            "linked_by": [],
+            "component": None,
+            "explained": True,
+        }
+
+        def refused(outcome: str) -> dict:
+            record["explained"] = False
+            record["outcome"] = outcome
+            return record
+
+        if item.path is None or item.kind == "unresolved":
+            return refused(item.reason)
+        path = item.path
+        if item.kind == "archive":
+            record["members"] = item.members
+            if item.members == 0:
+                record["outcome"] = "contributes no code: the archive has no members"
+                return record
+        if path.is_relative_to(self.build_dir.resolve()):
+            return refused(
+                "inside the build tree, but no target produced it and nothing "
+                "records which component installed it"
+            )
+        if self.repo_files.digest_of(path):
+            # The vendored scan registers third-party holders; remaining tracked inputs are ours.
+            record["outcome"] = "tracked in this repository, held by this project"
+            return record
+
+        origin = resolve_static_archive(path)
+        record.update(origin)
+        if not (origin["package"] or origin["toolkit_root"]):
+            return refused(
+                "no package on the build machine owns it and no known toolkit holds it"
+                if origin["resolved_path"]
+                else "not found on the build machine"
+            )
+        component = system_component(
+            path.name,
+            origin,
+            route=f"Statically linked from {path}.",
+            key=self._input_key(path),
+        )
+        self.components[component.key] = component
+        record["component"] = component.key
+        record["outcome"] = (
+            f"supplied by system package {origin['package']}"
+            if origin["package"]
+            else f"part of the toolkit at {origin['toolkit_root']}"
+        )
+        return record
+
+    def _input_key(self, path: Path) -> str:
+        """Mint a system key, distinguishing static files with the same basename."""
+        key = f"system:{path.name}"
+        if self._input_keys.get(key, str(path)) != str(path):
+            key += "@" + hashlib.sha256(str(path).encode()).hexdigest()[:8]
+        self._input_keys[key] = str(path)
+        return key
+
+    def resolve(
+        self,
+        wheel_path: str,
+        digest: str,
+        probe: Path | None,
+        soname: str | None = None,
+        build_id: str | None = None,
+    ) -> Attribution | None:
+        """Explain one member: by content, then by path, then by the machine."""
+        candidate_digest = digest
+        source = "wheel member"
+        patched = False
+        if probe is not None and probe.is_file():
+            candidate_digest = sha256_file(probe)
+            # Staged bytes reveal origin; repaired wheel bytes may differ and must be
+            # reported as derived rather than copied.
+            patched = candidate_digest != digest
+            relative = probe.relative_to(self.build_dir).as_posix()
+            # Show the staged path only when it differs from the wheel member's path.
+            source = (
+                "staged"
+                if relative.endswith(f"/{wheel_path}")
+                else f"staged at {relative}"
+            )
+
+        found = self._trace(
+            wheel_path, candidate_digest, digest, source, soname, build_id
+        )
+        if found is not None and patched:
+            found.origin = {
+                "copied": "derived",
+                "archive-copy": "archive-derived",
+            }.get(found.origin, found.origin)
+            found.exact = False
+            found.detail += (
+                "; the member differs from that staged file, so it was rewritten "
+                "after staging"
+            )
+        return found
+
+    def _trace(
+        self,
+        wheel_path: str,
+        candidate_digest: str,
+        digest: str,
+        source: str,
+        soname: str | None,
+        build_id: str | None,
+    ) -> Attribution | None:
+        # Empty content matches every empty file; only a path can establish its origin.
+        if candidate_digest == EMPTY_SHA256:
+            return self._resolve_by_path(wheel_path, source, build_id, candidate_digest)
+
+        artifacts = self._artifacts_by_hash.get(candidate_digest)
+        if artifacts:
+            return self._from_artifact(
+                artifacts[0], wheel_path, f"{source}; exact build output"
+            )
+
+        # Shared bytes (for example a standard license text) do not prove ownership.
+        # Use the path to disambiguate or retain every candidate.
+        shared = self._shared_content(candidate_digest)
+        if shared is not None:
+            by_path = self._resolve_by_path(
+                wheel_path, source, build_id, candidate_digest
+            )
+            if by_path is not None:
+                return by_path
+            return shared(wheel_path, source)
+
+        component_file = self.source_files.by_hash.get(candidate_digest)
+        if component_file:
+            key = component_of(component_file)
+            return Attribution(
+                path=wheel_path,
+                origin="copied",
+                exact=True,
+                detail=f"{source}; byte-identical to {component_file}",
+                components={key: {"copied-file"}},
+                primary=key,
+                source_path=component_file,
+                read={key: {component_file: "copied-file"}},
+            )
+
+        member = self.archives.by_hash.get(candidate_digest)
+        if member:
+            return Attribution(
+                path=wheel_path,
+                origin="archive-copy",
+                exact=True,
+                detail=f"{source}; byte-identical to {member.path} in {member.container}",
+                components={member.container: {"extracted-file"}},
+                primary=member.container,
+            )
+
+        repo_file = self.repo_files.by_hash.get(candidate_digest)
+        if repo_file:
+            return self._from_repo_file(wheel_path, repo_file, f"{source}; ", True)
+
+        build_file = self.build_files.by_hash.get(candidate_digest)
+        if build_file:
+            # Prefer the wheel's path when several build files contain identical bytes.
+            if Path(build_file).name != Path(wheel_path).name:
+                by_path = self.build_files.path_suffix_match(wheel_path)
+                if by_path:
+                    build_file = by_path
+            owner = self._staged_component_of(build_file)
+            # A build-tree match proves a copy, but does not identify the source it was made from.
+            detail = f"{source}; byte-identical to {build_file}"
+            if owner:
+                detail += (
+                    f", in a tree the build staged for {owner}; the input it was"
+                    " produced from is not recorded"
+                )
+            return Attribution(
+                path=wheel_path,
+                # Generated output owned by a component still carries that component's terms.
+                origin="derived" if owner else "generated",
+                detail=detail,
+                components={owner: {"derived-file"}} if owner else {},
+                primary=owner,
+            )
+
+        # Build IDs survive repair and provide stronger evidence than a matching name.
+        if build_id:
+            by_build_id = self._resolve_by_build_id(wheel_path, source, build_id)
+            if by_build_id is not None:
+                return by_build_id
+
+        by_path = self._resolve_by_path(wheel_path, source, build_id, candidate_digest)
+        if by_path is not None:
+            return by_path
+
+        if build_id:
+            from_host = self._from_build_host_by_build_id(wheel_path, build_id)
+            if from_host is not None:
+                return from_host
+
+        # Consult the host last, regardless of the directory auditwheel used.
+        if soname:
+            return self._from_build_host(wheel_path, soname)
+        return None
+
+    def _from_repo_file(
+        self, wheel_path: str, repo_file: str, lead: str, same: bool
+    ) -> Attribution:
+        """Attribute repository files while retaining any third-party ownership."""
+        owner = self.ownership.owner_of(self.repo_root / repo_file.removeprefix("./"))
+        return Attribution(
+            path=wheel_path,
+            origin="repo-source",
+            exact=same,
+            detail=f"{lead}{repo_file}",
+            components={owner: {"copied-file" if same else "derived-file"}}
+            if owner
+            else {},
+            primary=owner,
+        )
+
+    def _staged_component_of(self, build_file: str) -> str | None:
+        """The component whose tree this build staged under _deps/<name>/."""
+        for prefix, key in self.staged_component_dirs.items():
+            if build_file == prefix or build_file.startswith(prefix + "/"):
+                return key
+        return None
+
+    def _from_build_host(self, wheel_path: str, soname: str) -> Attribution | None:
+        """Require a resolved host library before claiming host origin."""
+        origin = self._system_resolver(soname)
+        if not origin.get("resolved_path"):
+            return None
+        self.system_libraries[soname] = origin
+        component = system_component(soname, origin)
+        self.components[component.key] = component
+
+        detail = "no index explains these bytes; supplied by the build machine"
+        if origin.get("package"):
+            detail += f" as {origin['package']}"
+        if origin.get("resolved_path"):
+            detail += f" ({origin['resolved_path']})"
+        return Attribution(
+            path=wheel_path,
+            origin="build-host-library",
+            detail=detail,
+            components={component.key: {"vendored-library"}},
+            primary=component.key,
+        )
+
+    def _shared_content(self, digest: str):
+        """Return an attribution builder for ambiguous content, otherwise None.
+
+        Retain every candidate's terms without claiming one as the source.
+        """
+        owners: dict[str, str] = {}
+        for display in self.source_files.all_by_hash.get(digest, []):
+            owners[component_of(display)] = display
+        for member in self.archives.all_by_hash.get(digest, []):
+            owners[member.container] = f"{member.path} in {member.container}"
+        # Include first-party matches so identical headers cannot imply third-party origin.
+        ours = self.repo_files.all_by_hash.get(digest, [])
+        if len(owners) + bool(ours) < 2:
+            return None
+
+        def build(wheel_path: str, source: str) -> Attribution:
+            where = ", ".join(sorted([*owners.values(), *ours]))
+            return Attribution(
+                path=wheel_path,
+                origin="shared-content",
+                detail=(
+                    f"{source}; these bytes are held by more than one component "
+                    f"({where}); the build does not record which supplied this file"
+                ),
+                components={key: {"shared-content"} for key in owners},
+            )
+
+        return build
+
+    def _resolve_by_build_id(
+        self, wheel_path: str, source: str, build_id: str
+    ) -> Attribution | None:
+        """The pristine bytes this member was patched from, named by build-id."""
+        # SDK archives can share build IDs under different terms; retain all candidates.
+        members = self.archives.all_by_build_id.get(build_id, [])
+        containers = {item.container for item in members}
+        member = members[0] if len(containers) == 1 else None
+        if member:
+            return Attribution(
+                path=wheel_path,
+                origin="archive-derived",
+                detail=(
+                    f"{source}; build-id {build_id} matches {member.path} in "
+                    f"{member.container} (origin sha256:{member.sha256})"
+                ),
+                components={member.container: {"extracted-file"}},
+                primary=member.container,
+            )
+
+        artifacts = self._artifacts_by_build_id.get(build_id)
+        if artifacts:
+            return self._from_artifact(
+                artifacts[0], wheel_path, f"{source}; build-id {build_id}, patched"
+            )
+        return None
+
+    def _from_build_host_by_build_id(
+        self, wheel_path: str, build_id: str
+    ) -> Attribution | None:
+        """The machine's own copy, found by build-id after a SONAME rewrite."""
+        origin = resolve_system_library_by_build_id(build_id)
+        if not origin.get("resolved_path"):
+            return None
+        soname = origin["soname"]
+        self.system_libraries[soname] = origin
+        component = system_component(soname, origin)
+        self.components[component.key] = component
+
+        detail = (
+            f"build-id {build_id} matches the build machine's {origin['resolved_path']}"
+        )
+        if origin.get("package"):
+            detail += f", supplied by {origin['package']}"
+        return Attribution(
+            path=wheel_path,
+            origin="build-host-library",
+            detail=detail,
+            components={component.key: {"vendored-library"}},
+            primary=component.key,
+        )
+
+    def _resolve_by_path(
+        self,
+        wheel_path: str,
+        source: str,
+        build_id: str | None = None,
+        digest: str | None = None,
+    ) -> Attribution | None:
+        """Use path evidence when content hashes cannot identify an origin.
+
+        Repaired binaries and stripped MJCF assets can differ from their sources.
+        Conflicting known build IDs override a name match; equal bytes remain copies.
+        """
+        name = Path(wheel_path).name
+
+        members = [
+            member
+            for member in self.archives.by_name.get(name, [])
+            if not _build_ids_disagree(build_id, member.build_id)
+        ]
+        containers = {member.container for member in members}
+        if len(containers) == 1:
+            member = members[0]
+            return Attribution(
+                path=wheel_path,
+                origin="archive-derived",
+                detail=(
+                    f"{source}; modified copy of {member.path} in {member.container} "
+                    f"(origin sha256:{member.sha256})"
+                ),
+                components={member.container: {"extracted-file"}},
+                primary=member.container,
+            )
+
+        artifacts = [
+            artifact
+            for artifact in self.graph.by_name(name)
+            if not _build_ids_disagree(build_id, self._build_id_of.get(artifact.output))
+        ]
+        if len(artifacts) == 1:
+            return self._from_artifact(
+                artifacts[0], wheel_path, f"{source}; modified build output"
+            )
+
+        # Prefer tracked repository paths over coincident dependency suffixes.
+        # Third-party ownership of tracked files is still preserved.
+        repo_file = self.repo_files.path_suffix_match(wheel_path)
+        if repo_file:
+            same = self.repo_files.digest_of_display(repo_file) == digest
+            lead = f"{source}; {'identical to' if same else 'derived from'} "
+            return self._from_repo_file(wheel_path, repo_file, lead, same)
+
+        component_file = self.source_files.path_suffix_match(wheel_path)
+        if component_file:
+            key = component_of(component_file)
+            origin_digest = self.source_files.digest_of_display(component_file)
+            # Path disambiguation does not imply modification; compare the bytes.
+            same = origin_digest == digest
+            return Attribution(
+                path=wheel_path,
+                origin="copied" if same else "derived",
+                exact=same,
+                detail=(
+                    f"{source}; "
+                    + ("identical to " if same else "derived from ")
+                    + component_file
+                    + (
+                        ""
+                        if same or not origin_digest
+                        else f" (origin sha256:{origin_digest})"
+                    )
+                ),
+                components={key: {"copied-file" if same else "derived-file"}},
+                primary=key,
+                source_path=component_file,
+                read={key: {component_file: "copied-file" if same else "derived-file"}},
+            )
+
+        build_file = self.build_files.path_suffix_match(wheel_path)
+        if build_file:
+            owner = self._staged_component_of(build_file)
+            return Attribution(
+                path=wheel_path,
+                origin="derived" if owner else "generated",
+                detail=f"{source}; {build_file}",
+                components={owner: {"derived-file"}} if owner else {},
+                primary=owner,
+            )
+
+        return None
+
+
+def build(
+    wheel: WheelInfo,
+    metadata_bytes: bytes,
+    resolver: Resolver,
+    staged_root: Path | None,
+) -> Inventory:
+    attributions: dict[str, Attribution] = {}
+    unattributed: list[str] = []
+    provided_sonames = {entry.soname for entry in wheel.entries if entry.soname}
+
+    for entry in wheel.entries:
+        attribution = _attribute(entry, wheel, resolver, staged_root)
+        if attribution is None:
+            unattributed.append(entry.name)
+            continue
+        attribution.spdx_tag, attribution.copyright_text = _head_facts(entry)
+        attributions[entry.name] = attribution
+
+    _resolve_shared_by_sibling(attributions)
+
+    roles: dict[str, set[str]] = {}
+    for attribution in attributions.values():
+        for key, how in attribution.components.items():
+            roles.setdefault(key, set()).update(how)
+
+    present = {
+        key: resolver.components[key]
+        for key in sorted(roles)
+        if key in resolver.components
+    }
+
+    external: dict[str, list[str]] = {}
+    for entry in wheel.entries:
+        for soname in entry.needed:
+            if soname not in provided_sonames:
+                external.setdefault(soname, []).append(entry.name)
+
+    metadata = wheelfile.parse_metadata(metadata_bytes)
+    return Inventory(
+        attributions=attributions,
+        components_present=present,
+        component_roles=roles,
+        external_runtime={
+            name: sorted(set(files)) for name, files in sorted(external.items())
+        },
+        requires_dist=sorted(metadata.get("requires_dist") or []),
+        unattributed=sorted(unattributed),
+        untraced=sorted(
+            f"{path} (linked by {', '.join(record['linked_by'])}): {record['outcome']}"
+            for path, record in resolver.static_inputs.items()
+            if not record["explained"]
+        ),
+    )
+
+
+def _build_ids_disagree(left: str | None, right: str | None) -> bool:
+    """True only when both are known and differ -- that is evidence, not absence."""
+    return bool(left and right and left != right)
+
+
+def _resolve_shared_by_sibling(attributions: dict[str, Attribution]) -> None:
+    """Resolve identical content using a staged sibling with one known owner.
+
+    For example, SDKs may share libraries but have different libcloudxr.so build
+    IDs. The uniquely attributed sibling identifies which SDK was staged.
+    """
+    settled: dict[str, set[str]] = {}
+    for name, item in attributions.items():
+        if item.primary:
+            settled.setdefault(name.rsplit("/", 1)[0], set()).add(item.primary)
+
+    for name, item in attributions.items():
+        if item.primary or item.origin != "shared-content":
+            continue
+        owners = settled.get(name.rsplit("/", 1)[0], set()) & set(item.components)
+        if len(owners) != 1:
+            continue
+        key = owners.pop()
+        item.origin = "copied"
+        item.exact = True
+        item.detail = (
+            f"{item.detail.split(';')[0]}; these bytes are held by more than one "
+            f"component, and the directory it is staged into is explained by {key}"
+        )
+        item.components = {key: {"copied-file"}}
+        item.primary = key
+
+
+# Only known backend/tool output is metadata. License files must still trace
+# to their sources or to the collector that added them.
+_DIST_INFO_WRITTEN = re.compile(
+    r"^(METADATA|WHEEL|RECORD|INSTALLER|REQUESTED|entry_points\.txt|top_level\.txt"
+    r"|direct_url\.json|zip-safe|namespace_packages\.txt)$|^sboms/"
+)
+
+
+def _attribute(
+    entry: Entry,
+    wheel: WheelInfo,
+    resolver: Resolver,
+    staged_root: Path | None,
+) -> Attribution | None:
+    if entry.name.startswith(f"{wheel.dist_info}/"):
+        relative = entry.name[len(wheel.dist_info) + 1 :]
+        # Do not exempt arbitrary .dist-info files from provenance checks.
+        if _DIST_INFO_WRITTEN.match(relative):
+            return Attribution(
+                path=entry.name,
+                origin="metadata",
+                exact=True,
+                detail="distribution metadata written by the build",
+            )
+
+    probe = staged_root / entry.name if staged_root is not None else None
+    return resolver.resolve(
+        entry.name, entry.sha256, probe, entry.soname, entry.build_id
+    )
+
+
+def _head_facts(entry: Entry) -> tuple[str | None, str | None]:
+    if Path(entry.name).suffix.lower() not in _TAGGABLE:
+        return None, None
+    head = entry.head.decode("utf-8", "replace")
+    return licensing.normalized_tag(head), licensing.read_copyright(head)

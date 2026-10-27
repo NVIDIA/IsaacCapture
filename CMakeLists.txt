@@ -3,6 +3,13 @@
 
 cmake_minimum_required(VERSION 3.24...3.25)
 
+# SBOM discovery needs the codemodel and toolchains replies (CMake >=3.27).
+# Feature-test the query: raising the policy version would enable CMP0148,
+# removing FindPythonInterp still used by pybind11's legacy path through vcpkg.
+if(COMMAND cmake_file_api)
+  cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 TOOLCHAINS 1)
+endif()
+
 # Workaround for older CMake policy compatibility in dependencies
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version")
 

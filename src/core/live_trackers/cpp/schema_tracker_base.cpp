@@ -75,13 +75,13 @@ bool SchemaTrackerBase::ensure_collection()
     {
         if (is_known_non_fatal_tensor_unavailable(result))
         {
-            m_target_collection_index.reset();
+            m_target_collection.reset();
             return false;
         }
         throw std::runtime_error("Failed to get latest generation, result=" + std::to_string(result));
     }
 
-    if (latest_generation == m_cached_generation && m_target_collection_index.has_value())
+    if (latest_generation == m_cached_generation && m_target_collection.has_value())
     {
         return true;
     }
@@ -93,7 +93,7 @@ bool SchemaTrackerBase::ensure_collection()
         {
             if (is_known_non_fatal_tensor_unavailable(result))
             {
-                m_target_collection_index.reset();
+                m_target_collection.reset();
                 return false;
             }
             throw std::runtime_error("Failed to update tensor list, result=" + std::to_string(result));
@@ -107,7 +107,7 @@ bool SchemaTrackerBase::ensure_collection()
     {
         if (is_known_non_fatal_tensor_unavailable(result))
         {
-            m_target_collection_index.reset();
+            m_target_collection.reset();
             return false;
         }
         throw std::runtime_error("Failed to get list properties, result=" + std::to_string(result));
@@ -121,7 +121,7 @@ bool SchemaTrackerBase::ensure_collection()
         {
             if (is_known_non_fatal_tensor_unavailable(result))
             {
-                m_target_collection_index.reset();
+                m_target_collection.reset();
                 return false;
             }
             throw std::runtime_error("Failed to get collection properties, result=" + std::to_string(result));
@@ -143,16 +143,18 @@ bool SchemaTrackerBase::ensure_collection()
         m_sample_batch_stride = coll_props.sampleBatchStride;
         m_sample_size = coll_props.data.totalSampleSize;
 
-        if (i != m_target_collection_index)
+        // A recreated collection can reuse its list index, but never its runtime ID.
+        if (!m_target_collection || i != m_target_collection->index ||
+            coll_props.tensorCollectionId != m_target_collection->id)
         {
             m_last_sample_index.reset();
             m_logger->info("Found target collection at index {}", i);
         }
-        m_target_collection_index = i;
+        m_target_collection = TargetCollection{ i, coll_props.tensorCollectionId };
         return true;
     }
 
-    m_target_collection_index.reset();
+    m_target_collection.reset();
     return false;
 }
 
@@ -169,9 +171,9 @@ bool SchemaTrackerBase::read_all_samples(std::vector<SampleResult>& samples)
         samples.push_back(std::move(result));
     }
 
-    // read_next_sample clears m_target_collection_index on API failure.
+    // read_next_sample clears m_target_collection on API failure.
     // If it's now empty we hit an error mid-drain, not a normal end-of-data.
-    if (!m_target_collection_index.has_value())
+    if (!m_target_collection.has_value())
     {
         return false;
     }
@@ -216,7 +218,7 @@ void SchemaTrackerBase::create_tensor_list()
 
 bool SchemaTrackerBase::read_next_sample(SampleResult& out)
 {
-    if (!m_target_collection_index.has_value())
+    if (!m_target_collection.has_value())
     {
         return false;
     }
@@ -224,7 +226,7 @@ bool SchemaTrackerBase::read_next_sample(SampleResult& out)
     // Prepare retrieval info
     XrTensorDataRetrievalInfoNV retrievalInfo{ XR_TYPE_TENSOR_DATA_RETRIEVAL_INFO_NV };
     retrievalInfo.next = nullptr;
-    retrievalInfo.tensorCollectionIndex = m_target_collection_index.value();
+    retrievalInfo.tensorCollectionIndex = m_target_collection->index;
     retrievalInfo.startSampleIndex = m_last_sample_index.has_value() ? m_last_sample_index.value() + 1 : 0;
 
     // Prepare output buffers (read one sample at a time for simplicity)
@@ -248,14 +250,14 @@ bool SchemaTrackerBase::read_next_sample(SampleResult& out)
             // Policy: temporary collection loss is treated as non-fatal.
             m_logger->warn(
                 "xrGetTensorDataNV: XR_ERROR_TENSOR_LOST_NV -- tensor/collection data lost; "
-                "clearing m_target_collection_index.");
+                "clearing target collection.");
         }
         else
         {
-            m_target_collection_index = std::nullopt;
+            m_target_collection.reset();
             throw std::runtime_error("[SchemaTracker] xrGetTensorDataNV failed, result=" + std::to_string(result));
         }
-        m_target_collection_index = std::nullopt;
+        m_target_collection.reset();
         return false;
     }
 

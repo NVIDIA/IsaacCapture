@@ -9,6 +9,7 @@
 # See: numpy.org/devdocs/dev/depending_on_numpy.html
 
 [build-system]
+# setuptools>=77 implements PEP 639 license metadata and file placement.
 requires = ["setuptools>=77", "wheel", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 
@@ -19,7 +20,8 @@ description = "Isaac Teleop - Teleoperation with Device I/O"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE.md"]
+# The root pyproject.toml's list, staged beside this file by python_package.
+license-files = @ISAACCAPTURE_LICENSE_FILES@
 authors = [
     {name = "NVIDIA"}
 ]

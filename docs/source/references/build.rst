@@ -57,18 +57,19 @@ The project uses a modern CMake target-based approach. Libraries export namespac
 Using the Python wheel
 ----------------------
 
-After building, install the wheels with ``uv`` or ``pip``:
+After building, activate a virtual environment with the build's Python version (step 4 of
+:doc:`/development/build_from_source/index` shows how), then install the wheels with ``uv`` or
+``pip``, pinning the local build's version ``X.Y+local`` (``X.Y`` from the repository's ``VERSION``
+file):
 
 .. code-block:: bash
 
-   # Install the wheel by path so a newer release on the index cannot win over the local build
-   # (cp312 = Python 3.12). -t/head -1 picks the newest build if older wheels remain in the dir.
-   WHEEL=$(ls -t ./install/wheels/isaaccapture-*-cp312-*.whl | head -1)
+   # The pin keeps a newer release on the index from winning over the local build.
    # --find-links exposes the sibling isaacteleop transition wheel built alongside isaaccapture.
-   uv pip install "${WHEEL}" --find-links=./install/wheels/ --reinstall-package isaaccapture
+   uv pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
    # or
-   pip install install/wheels/isaaccapture-*.whl
+   pip install "isaaccapture==X.Y+local" --find-links=./install/wheels/
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
@@ -81,7 +82,8 @@ In addition to the classic CMake flow above (which stages the package
 and produces a wheel under ``install/wheels/``), the repository ships a root
 :code-file:`pyproject.toml` that exposes ``isaaccapture`` through the
 `scikit-build-core <https://scikit-build-core.readthedocs.io/>`_ build backend,
-driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist):
+driving the *same* top-level ``CMakeLists.txt`` (so the two paths coexist). Run it inside an
+activated virtual environment as well:
 
 .. code-block:: bash
 

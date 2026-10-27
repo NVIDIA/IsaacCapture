@@ -12,6 +12,34 @@ if(NOT EXISTS "${ROBOTIC_GROUNDING_STAGED_DIR}/__init__.py")
 endif()
 message(STATUS "[grounding] bundling robotic_grounding/ from ${ROBOTIC_GROUNDING_STAGED_DIR}")
 
+# Share the root pyproject.toml's license-file list across both wheel builds.
+set(_root_pyproject "${CMAKE_SOURCE_DIR}/pyproject.toml")
+set(_license_files_script "${CMAKE_CURRENT_SOURCE_DIR}/license_files.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_root_pyproject}" "${_license_files_script}")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${_license_files_script}" "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE _license_files_out
+    ERROR_VARIABLE _license_files_err
+    RESULT_VARIABLE _license_files_rc
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT _license_files_rc EQUAL 0)
+    message(FATAL_ERROR "Cannot read license-files from ${_root_pyproject}: ${_license_files_err}")
+endif()
+string(REPLACE "\n" ";" _license_files_out "${_license_files_out}")
+list(POP_FRONT _license_files_out ISAACCAPTURE_LICENSE_FILES)
+list(REMOVE_DUPLICATES _license_files_out)
+
+set(_license_staging_commands)
+foreach(_license_file IN LISTS _license_files_out)
+    get_filename_component(_license_dir "${_license_file}" DIRECTORY)
+    list(APPEND _license_staging_commands
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/${_license_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/${_license_file}" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/${_license_file}"
+    )
+endforeach()
+
 # Generate pyproject.toml from template with ISAAC_TELEOP_PYPROJECT_VERSION
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml.in"
@@ -42,8 +70,10 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_BINARY_DIR}/pyproject.toml" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/MANIFEST.in" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/LICENSE.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSE.md"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/README.md"
+    # Remove stale license texts dropped from the list since the last build.
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/LICENSES"
+    ${_license_staging_commands}
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-ego.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-dev.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
@@ -72,6 +102,8 @@ endif()
 set(STUBGEN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/generate_stubs.py")
 set(STUBGEN_PYPROJECT "${CMAKE_CURRENT_SOURCE_DIR}/stubgen_pyproject.toml")
 set(STUBGEN_PACKAGE_DIR "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>")
+# Generate outside staging so the SBOM can trace each stub to a build-tree origin.
+set(STUBGEN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/stubs/$<CONFIG>")
 set(PY_TYPED_MARKER "${STUBGEN_PACKAGE_DIR}/isaaccapture/py.typed")
 
 set(STUBGEN_MODULES
@@ -103,7 +135,7 @@ foreach(_module IN LISTS STUBGEN_MODULES)
     list(APPEND STUBGEN_COMMANDS
         COMMAND ${CMAKE_COMMAND} -E env --unset=VIRTUAL_ENV
             uv run --project "${CMAKE_BINARY_DIR}/stubgen" --python ${ISAAC_TELEOP_PYTHON_VERSION}
-            python "${STUBGEN_SCRIPT}" ${_module} "${STUBGEN_PACKAGE_DIR}"
+            python "${STUBGEN_SCRIPT}" ${_module} "${STUBGEN_PACKAGE_DIR}" "${STUBGEN_OUTPUT_DIR}"
     )
 endforeach()
 
@@ -116,10 +148,14 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy "${STUBGEN_PYPROJECT}" "${CMAKE_BINARY_DIR}/stubgen/pyproject.toml"
 
     # Generate stubs for each pybind11 module using the stubgen pyproject.toml
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${STUBGEN_OUTPUT_DIR}/isaaccapture"
     ${STUBGEN_COMMANDS}
 
     # Create py.typed marker file (PEP 561) - also serves as build stamp
-    COMMAND ${CMAKE_COMMAND} -E touch "${PY_TYPED_MARKER}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${STUBGEN_OUTPUT_DIR}/isaaccapture/py.typed"
+
+    # Copy last so PY_TYPED_MARKER stamps a complete staging tree.
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${STUBGEN_OUTPUT_DIR}" "${STUBGEN_PACKAGE_DIR}"
     DEPENDS python_package "${STUBGEN_SCRIPT}" "${STUBGEN_PYPROJECT}"
             $<TARGET_FILE:deviceio_trackers_py>
             $<TARGET_FILE:deviceio_session_py>

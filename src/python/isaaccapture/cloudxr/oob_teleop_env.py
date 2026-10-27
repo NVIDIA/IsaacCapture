@@ -9,9 +9,11 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
@@ -22,6 +24,36 @@ from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
+
+_generated_control_token: str | None = None
+_generated_control_token_lock = threading.Lock()
+
+
+def control_token_is_generated() -> bool:
+    """``True`` when ``CONTROL_TOKEN`` is unset and the hub uses a random token."""
+    return not os.environ.get("CONTROL_TOKEN")
+
+
+def resolve_control_token() -> str:
+    """Return the hub control token: ``CONTROL_TOKEN``, else a per-process random one.
+
+    The hub never runs unauthenticated. Every reader (hub, headset URL, banner)
+    must call this so they agree; it does not modify ``os.environ``.
+    """
+    global _generated_control_token
+    # An empty CONTROL_TOKEN counts as unset: it must never mean "no auth".
+    configured = os.environ.get("CONTROL_TOKEN")
+    if configured:
+        return configured
+    # The proxy runs on a thread, so the lazy generation is lock-guarded to
+    # keep the hub, headset URL and banner on the same token.
+    with _generated_control_token_lock:
+        if _generated_control_token is None:
+            _generated_control_token = secrets.token_urlsafe(32)
+        return _generated_control_token
+
+
+progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.oob-progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
 
@@ -565,15 +597,14 @@ def resolve_lan_host_for_oob() -> str:
     return h
 
 
-def oob_progress(stage: str, msg: str) -> None:
-    """One-line progress update for ``--setup-oob`` / ``--usb-local`` steps.
+def oob_progress(stage: str, msg: str, *, level: int = logging.INFO) -> None:
+    """Log OOB progress on its own filterable logger at the requested level.
 
-    Logged at INFO as ``[<stage>] <msg>``; printed to stderr instead when
-    ``ISAACCAPTURE_LOGGING=off``, where no handler of ours would show it.
+    With logging off, retain operator messages on stderr but omit DEBUG detail.
     """
     if logging_enabled():
-        log.info("[%s] %s", stage, msg)
-    else:
+        progress_log.log(level, "[%s] %s", stage, msg)
+    elif level >= logging.INFO:
         print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
 
@@ -598,7 +629,7 @@ def print_oob_hub_startup_banner(
     port = wss_proxy_port()
     backend_port = usb_backend_port()
     turn_port = usb_turn_port()
-    token = os.environ.get("CONTROL_TOKEN") or None
+    token = resolve_control_token()
 
     if not lan_host:
         lan_host = resolve_lan_host_for_oob() if not usb_local else "127.0.0.1"
@@ -729,11 +760,10 @@ def print_oob_hub_startup_banner(
     )
     print(f"  State:  {primary_base}/api/oob/v1/state")
     print(f"  Config: {primary_base}/api/oob/v1/config?{cfg_q}")
-    if token:
-        print()
-        print(
-            "  CONTROL_TOKEN is set: add ?token=... or header X-Control-Token on OOB HTTP requests."
-        )
+    print()
+    print("  Add header X-Control-Token (or ?token=...) on OOB HTTP requests.")
+    if control_token_is_generated():
+        print(f"  CONTROL_TOKEN was not set; this session's token is: {token}")
     print(bar)
     print()
 
@@ -817,7 +847,9 @@ def ss_listeners_on_port(port: int) -> list[str]:
     return out
 
 
-def print_host_preflight_warnings(*, usb_local: bool) -> None:
+def print_host_preflight_warnings(
+    *, usb_local: bool, emit_console: bool = True
+) -> None:
     """Best-effort host preflight (port conflicts + ufw).
 
     In ``--usb-local`` mode this is fail-fast: a port conflict on any of
@@ -830,6 +862,8 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
     ufw findings are always warn-only (best-effort: ``status`` parsing
     can yield false positives on permissive rulesets), and ufw is only
     checked in WiFi mode (USB-local is loopback, not firewalled).
+    Shared service callers use ``emit_console=False`` to avoid duplicating
+    logger warnings in embedded operator terminals.
 
     The WSS proxy binds the wildcard address (``host=""`` in
     :mod:`websockets`, i.e. ``0.0.0.0``), but we probe via loopback
@@ -860,19 +894,21 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
                 "then retry."
             )
         log.warning("preflight: port(s) already in use: %s", busy)
-        print(
-            f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
-            f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
-            "PROXY_PORT.\033[0m\n"
-        )
+        if emit_console:
+            print(
+                f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
+                f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
+                "PROXY_PORT.\033[0m\n"
+            )
     # ufw is only meaningful in WiFi mode (USB-local is loopback, not firewalled).
     if not usb_local:
         unallowed = _ufw_unallowed_ports([wss_proxy_port()])
         if unallowed:
             cmd = "; ".join(f"sudo ufw allow {p}/tcp" for p in unallowed)
             log.warning("preflight: ufw blocks port(s) %s", unallowed)
-            print(
-                f"\n\033[33m[preflight] ufw is active and may block port(s) "
-                f"{unallowed} from reaching the headset. Allow with: {cmd}"
-                "\033[0m\n"
-            )
+            if emit_console:
+                print(
+                    f"\n\033[33m[preflight] ufw is active and may block port(s) "
+                    f"{unallowed} from reaching the headset. Allow with: {cmd}"
+                    "\033[0m\n"
+                )

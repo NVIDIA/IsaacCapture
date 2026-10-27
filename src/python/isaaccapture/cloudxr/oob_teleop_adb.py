@@ -45,6 +45,7 @@ from .oob_teleop_env import (
     client_ui_fields_from_env,
     oob_progress,
     redact_control_token,
+    resolve_control_token,
     resolve_lan_host_for_oob,
     web_client_base_override_from_env,
 )
@@ -373,7 +374,7 @@ def assert_headset_awake(*, timeout: float = 15.0, require_awake: bool = False) 
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    log.warning(
+    log.debug(
         "Headset appears asleep (wakefulness=%s). Put it on or cover the "
         "proximity sensor; waiting up to %.0fs for it to wake.",
         wake or "?",
@@ -604,7 +605,7 @@ def build_teleop_url(
             default_base = default_web_client_origin()
         web_base = ovr if ovr else default_base
 
-    token = os.environ.get("CONTROL_TOKEN") or None
+    token = resolve_control_token()
     return build_headset_bookmark_url(
         web_client_base=web_base,
         stream_config=stream_cfg,
@@ -2036,7 +2037,7 @@ async def _find_and_click_teleop_tab(
 
         if not am_start_retried and time.monotonic() >= retry_at:
             am_start_retried = True
-            log.warning(
+            log.debug(
                 "CDP: tab not found after %.1fs — re-firing am start (cold-launch race)",
                 timeout / 2,
             )
@@ -2044,6 +2045,7 @@ async def _find_and_click_teleop_tab(
                 "setup-oob",
                 "tab not found yet — re-firing am start (browser may have "
                 "swallowed the first intent on cold launch) ...",
+                level=logging.DEBUG,
             )
             try:
                 rc, diag = await asyncio.to_thread(
@@ -2069,6 +2071,7 @@ async def _find_and_click_teleop_tab(
         "setup-oob",
         "teleop tab found — accepting cert, waiting for CONNECT button, "
         "then auto-clicking it ...",
+        level=logging.DEBUG,
     )
 
     # cert interstitial + bring to front + readiness + click
@@ -2146,6 +2149,7 @@ async def run_oob_connect(
         oob_progress(
             "setup-oob",
             f"closed {closed} stale teleop tab(s) from a prior session",
+            level=logging.DEBUG,
         )
         # Brief pause so the browser actually releases WebXR / media
         # resources before the new page tries to acquire them.
@@ -2168,6 +2172,7 @@ async def run_oob_connect(
     oob_progress(
         "setup-oob",
         "headset browser launched — discovering DevTools socket ...",
+        level=logging.DEBUG,
     )
 
     # --- Step 2: wait for DevTools socket ------------------------------------

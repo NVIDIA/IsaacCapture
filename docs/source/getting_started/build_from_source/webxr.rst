@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../development/build_from_source/webxr.html
+
 Build WebXR Client
 ==================
 

@@ -10,6 +10,8 @@ on:
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@v6
       with:
@@ -21,3 +23,19 @@ jobs:
       env:
         # Skip copyright-year in CI; see https://pre-commit.com/#temporarily-disabling-hooks
         SKIP: check-copyright-year
+
+  # Keep small CI helper tests in this workflow, outside local pre-commit hooks.
+  docs-preview-tests:
+    name: Test docs preview selection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Test preview selection
+      run: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py -v

@@ -12,7 +12,8 @@ SPDX-License-Identifier: Apache-2.0
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-3.0.0-orange.svg)](https://isaac-sim.github.io/IsaacLab/develop)
 [![numpy](https://img.shields.io/badge/numpy-1.23%2B-lightgrey.svg)](https://numpy.org/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Default: Apache-2.0](https://img.shields.io/badge/Default-Apache--2.0-blue.svg)](LICENSE.md)
+[![EgoPost: OpenMDW-1.1](https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg)](LICENSES/LicenseRef-OpenMDW-1.1.txt)
 
 
 </div>
@@ -57,7 +58,7 @@ functionality preserved.
 
 - Capture egocentric data without a robot in the loop.
 - Reconstruct hand and camera poses from egocentric video with the
-  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/references/egocentric_hand_reconstruction.html).
+  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/ego_post_processing/egohand.html).
 
 ## Quick Start
 
@@ -69,6 +70,10 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
 
+### Check a Device Integration
+
+The CTS records one scripted take from a hand-tracking device and checks it against the data a retargeter needs; start with the [hand guide](src/python/isaaccapture/cts/hand/README.md).
+
 
 ### Install & Run Isaac Lab
 
@@ -79,5 +84,5 @@ To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.git
 ## Licensing
 
 The default license is [Apache-2.0](LICENSE.md).
-EgoPost is licensed under [OpenMDW-1.1](src/python/isaaccapture_egopost/LICENSE.md).
+EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
 Third-party materials may carry their own licenses.

@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../integrations/lerobot/devices.html
+
 Supported Teleop devices
 ========================
 

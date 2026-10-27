@@ -17,8 +17,9 @@ concurrency:
 
 env:
   # Shared apt build dependencies. Each job installs these plus its own extras
-  # (ccache, clang-format, the OAK camera autotools chain).
-  CORE_APT_DEPS: build-essential cmake glslang-tools libegl-dev libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev patchelf pkg-config wayland-protocols
+  # (ccache, clang-format, the OAK camera autotools chain). libmagic1: see
+  # scripts/sbom/pyproject.toml.
+  CORE_APT_DEPS: build-essential cmake glslang-tools libegl-dev libmagic1 libvulkan-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev patchelf pkg-config wayland-protocols
   # Pin vcpkg to an immutable commit for reproducible, supply-chain-stable CI
   # instead of tracking its moving default branch. Port versions are fixed by the
   # consuming manifest's builtin-baseline (e.g. DepthAI's vcpkg.json), so this
@@ -32,6 +33,8 @@ jobs:
     # Pin to 22.04 so the wheel is built with GCC 11's libstdc++. The resulting wheel
     # then runs on both Ubuntu 22.04 and 24.04 (24.04's libstdc++ is backward compatible).
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: ${{ github.event_name == 'pull_request' }}
@@ -283,6 +286,56 @@ jobs:
         mv install/wheels-repaired/*.whl install/wheels/
         rmdir install/wheels-repaired || true
 
+    # Run after auditwheel and before upload so evidence describes the repaired bytes.
+    - name: Package licenses and contents SBOM into wheels (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        args=()
+        for wheel in install/wheels/*.whl; do args+=(--wheel "${wheel}"); done
+        if (( ${#args[@]} == 0 )); then
+          echo "No wheels to describe"
+          exit 1
+        fi
+        uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+          isaaccapture-sbom build \
+          --build-dir "${BUILD_DIR}" "${args[@]}" --out-dir sbom
+
+    - name: Check wheel SBOMs (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        for wheel in install/wheels/*.whl; do
+          stem="$(basename "${wheel}" .whl)"
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            isaaccapture-sbom check --wheel "${wheel}" \
+            --manifest sbom/manifest.json \
+            --build-evidence "sbom/${stem}.build-evidence.json"
+        done
+        for document in sbom/*.spdx.json; do
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            --extra dev pyspdxtools -i "${document}"
+        done
+
+    - name: Install and import the finished wheel (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        wheels=(install/wheels/*.whl)
+        # --find-links resolves the sibling transition wheel from this build.
+        uv venv --python ${{ matrix.python_version }} .venv-wheel-check
+        uv pip install --python .venv-wheel-check \
+          --find-links install/wheels "${wheels[@]}"
+        .venv-wheel-check/bin/python -c "import isaaccapture; print('imported', isaaccapture.__version__)"
+        # Exercise standalone verification without build evidence or a manifest.
+        for wheel in "${wheels[@]}"; do
+          uv run --project scripts/sbom --python ${{ matrix.python_version }} \
+            isaaccapture-sbom check --wheel "${wheel}"
+        done
+
     - name: Create tarball to preserve permissions
       if: matrix.build_type == 'Release'
       run: tar -cvf isaacteleop-install.tar -C install .
@@ -302,6 +355,74 @@ jobs:
         path: install/wheels/*.whl
         if-no-files-found: error
         retention-days: 7
+
+    - name: Upload wheel SBOM sidecars
+      if: matrix.build_type == 'Release'
+      uses: actions/upload-artifact@v6
+      with:
+        name: isaaccapture-sbom-${{ matrix.arch }}-py${{ matrix.python_version }}
+        path: sbom/
+        if-no-files-found: error
+        retention-days: 7
+
+  # The SBOM collector's tests need only a configured tree, so they run beside
+  # the product build; wheel-gate waits on them.
+  test-sbom-collector:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        arch: ['x64', 'arm64']
+    env:
+      BUILD_DIR: build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0  # configure derives the version from history
+        persist-credentials: false
+
+    - name: Install uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Install Apt dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $CORE_APT_DEPS
+
+    # BUILD_TESTING=ON: a test target links a static library the project builds,
+    # which the codemodel test looks for.
+    - name: Configure CMake
+      run: |
+        cmake -B "${BUILD_DIR}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_PLUGINS=OFF \
+          -DBUILD_EXAMPLES=OFF \
+          -DBUILD_VIZ=OFF \
+          -DBUILD_PYTHON_BINDINGS=OFF \
+          -DENABLE_CLANG_FORMAT_CHECK=OFF \
+          -DBUILD_TESTING=ON
+
+    # Pythons: build-ubuntu's python_version matrix; keep the two lists in step.
+    # The named build makes missing inputs fail the tests rather than skip them.
+    - name: Test the SBOM collector
+      env:
+        ISAACCAPTURE_SBOM_BUILD_DIR: ${{ env.BUILD_DIR }}
+      run: |
+        set -uo pipefail
+        failed=()
+        for python in 3.11 3.12 3.13; do
+          uv run --project scripts/sbom --python "${python}" \
+            --extra dev pytest scripts/sbom/tests || failed+=("${python}")
+        done
+        if (( ${#failed[@]} )); then
+          echo "::error::SBOM collector tests failed under Python ${failed[*]}"
+          exit 1
+        fi
 
   pip-editable-install:
     # Validates the scikit-build-core (PEP 517/660) from-source install path added
@@ -438,6 +559,8 @@ jobs:
     # where these tests SKIP cleanly; this job actually exercises the Vulkan
     # / CUDA paths that build-ubuntu cannot.
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    permissions:
+      contents: read
     needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
@@ -567,6 +690,8 @@ jobs:
     # in ways that produce false positives. The GPU surface is covered
     # by test-viz-gpu on the self-hosted runner.
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     needs: build-ubuntu
 
     steps:
@@ -626,6 +751,8 @@ jobs:
 
   test-cloudxr:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    permissions:
+      contents: read
     needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
@@ -669,6 +796,8 @@ jobs:
 
   test-teleop-ros2:
     runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    permissions:
+      contents: read
     needs: [build-ubuntu, resolve-test-arches]
 
     strategy:
@@ -999,6 +1128,7 @@ jobs:
     permissions: {}
     needs:
       - build-ubuntu
+      - test-sbom-collector
       - test-viz-gpu
       - test-viz-sanitizers
       - test-cloudxr
@@ -1026,6 +1156,103 @@ jobs:
         fi
 
         echo "All wheel dependency jobs completed successfully"
+
+  publish-sbom-evidence:  # durable copies attached to the GitHub release
+    # Attach durable evidence to releases; Actions artifacts expire.
+    runs-on: ubuntu-22.04
+    needs:
+      - wheel-gate
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    env:
+      ARCHIVE: isaaccapture-sbom-${{ github.ref_name }}
+
+    # !cancelled() lets wheel-gate's result decide despite skipped upstream jobs.
+    if: >-
+      !cancelled()
+      && needs.wheel-gate.result == 'success'
+      && github.repository_id == '1092046207'
+      && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Install uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Download wheel artifacts
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaacteleop-wheels-*
+        merge-multiple: true
+        path: wheels
+
+    - name: Download wheel SBOM sidecars
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaaccapture-sbom-*
+        path: sbom-sidecars
+
+    # Fix manifest and archive timestamps for reproducible reruns.
+    - name: Pin the build clock to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
+    - name: Pack and verify the release evidence archive
+      run: |
+        set -euo pipefail
+
+        # Universal wheels repeat across matrix entries. Reject conflicting copies
+        # and publish only the evidence bound by the merged manifest.
+        uv run --project scripts/sbom --python 3.12 \
+          isaaccapture-sbom merge-manifests \
+          --output "${ARCHIVE}/isaaccapture-sbom-manifest.json" \
+          --evidence-out "${ARCHIVE}" \
+          sbom-sidecars/*/manifest.json
+
+        # ZIP preserves filenames that GitHub renames in loose assets (`!` to `.`).
+        # Fix times, modes, order, and extra fields for reproducibility;
+        # ZIP stores local time, so set TZ too.
+        touch -d "@${SOURCE_DATE_EPOCH}" "${ARCHIVE}"/*
+        chmod 644 "${ARCHIVE}"/*
+        printf '%s\n' "${ARCHIVE}"/* | LC_ALL=C sort \
+          | TZ=UTC zip -X -q "${ARCHIVE}.zip" -@
+
+        # Verify the unpacked release using the published consumer procedure.
+        unzip -q "${ARCHIVE}.zip" -d unpacked
+        uv run --project scripts/sbom --python 3.12 \
+          isaaccapture-sbom check-set \
+          --manifest "unpacked/${ARCHIVE}/isaaccapture-sbom-manifest.json" \
+          --wheel-dir wheels --evidence-dir "unpacked/${ARCHIVE}"
+
+        unzip -l "${ARCHIVE}.zip"
+
+    - name: Attach evidence to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+
+        # The tag can trigger this job before release-tag.yml creates its draft.
+        # Wait for that release to preserve its draft/approval step.
+        deadline=$(( SECONDS + 900 ))
+        until gh release view "${TAG}" >/dev/null 2>&1; do
+          if (( SECONDS >= deadline )); then
+            echo "::error::No release exists for ${TAG} after 15 minutes; evidence not attached."
+            exit 1
+          fi
+          echo "Waiting for the ${TAG} release to be created..."
+          sleep 20
+        done
+
+        gh release upload "${TAG}" "${ARCHIVE}.zip" --clobber
+
+        echo "Attached ${ARCHIVE}.zip to ${TAG}"
 
   publish-wheel:  # to internal Artifactory
     runs-on: [self-hosted, linux]
@@ -1062,7 +1289,7 @@ jobs:
 
     - name: Ensure clean wheels directory
       run: |
-        rm -rf wheels
+        rm -rf wheels sbom-sidecars
 
     - name: Download wheel artifacts
       uses: actions/download-artifact@v7
@@ -1070,6 +1297,76 @@ jobs:
         pattern: isaacteleop-wheels-*
         merge-multiple: true
         path: wheels
+
+    - name: Download wheel SBOM sidecars
+      uses: actions/download-artifact@v7
+      with:
+        pattern: isaaccapture-sbom-*
+        path: sbom-sidecars
+
+    - name: Verify wheel variant coverage and digests
+      run: |
+        set -euo pipefail
+
+        # Keep platform and ABI lists aligned with the build-ubuntu Release matrix.
+        platforms=(x86_64 aarch64)
+        abis=(cp311 cp312 cp313)
+        expected=$(( ${#platforms[@]} * ${#abis[@]} ))
+
+        shopt -s nullglob
+        manifests=(sbom-sidecars/*/manifest.json)
+        if (( ${#manifests[@]} != expected )); then
+          echo "Expected ${expected} SBOM manifests, found ${#manifests[@]}"
+          ls -la sbom-sidecars || true
+          exit 1
+        fi
+
+        declare -A named=()
+        for manifest in "${manifests[@]}"; do
+          while IFS=$'\t' read -r filename digest; do
+            wheel="wheels/${filename}"
+            if [[ ! -f "${wheel}" ]]; then
+              echo "Manifest names ${filename}, which is not among the downloaded wheels"
+              exit 1
+            fi
+            actual="$(sha256sum "${wheel}" | cut -d' ' -f1)"
+            if [[ "${actual}" != "${digest}" ]]; then
+              echo "${filename} was modified after its digest was bound"
+              echo "  manifest: ${digest}"
+              echo "  actual:   ${actual}"
+              exit 1
+            fi
+            named["${filename}"]=1
+          done < <(jq -r '.wheels[] | [.filename, .sha256] | @tsv' "${manifest}")
+        done
+
+        # Every downloaded wheel is uploaded below, so require evidence for all of them.
+        for wheel in wheels/*.whl; do
+          name="$(basename "${wheel}")"
+          if [[ -z "${named[${name}]:-}" ]]; then
+            echo "${name} is among the downloaded wheels, and no manifest names it"
+            exit 1
+          fi
+        done
+
+        for platform in "${platforms[@]}"; do
+          for abi in "${abis[@]}"; do
+            found=0
+            for filename in "${!named[@]}"; do
+              if [[ "${filename}" == *"-${abi}-${abi}-manylinux"*"_${platform}.whl" ]]; then
+                found=1
+                break
+              fi
+            done
+            if (( found == 0 )); then
+              echo "No wheel was published for ${abi} on ${platform}"
+              printf '  have: %s\n' "${!named[@]}"
+              exit 1
+            fi
+          done
+        done
+
+        echo "All ${expected} wheel variants present and matching their recorded digests"
 
     - name: Upload wheel(s) to Artifactory
       id: upload-artifactory

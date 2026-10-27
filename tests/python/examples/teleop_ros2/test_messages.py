@@ -304,6 +304,28 @@ def test_build_ee_output_from_controllers_in_the_head_frame() -> None:
     ]
 
 
+def test_build_ee_output_from_controllers_rejects_untracked_head() -> None:
+    head = _active_head()
+    head[HeadInputIndex.IS_TRACKED] = False
+
+    msg, transforms = build_ee_output_from_controllers(
+        _active_controller(),
+        _active_controller(),
+        Time(),
+        "world",
+        "left_wrist",
+        "right_wrist",
+        head=head,
+        head_frame="headset",
+        ee_poses_frame=EePoseFrame.HEAD,
+    )
+
+    assert msg.header.frame_id == "headset"
+    assert list(msg.is_valid) == [False, False]
+    assert all(_position(pose) == [0.0, 0.0, 0.0] for pose in msg.pose)
+    assert transforms == []
+
+
 def test_build_ee_output_from_hands_in_head_frame_keeps_untracked_sides_invalid() -> (
     None
 ):

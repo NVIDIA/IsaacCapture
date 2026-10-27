@@ -3,7 +3,7 @@
 #
 # Re-resolve /client/stable/ to the highest existing v* tag.
 # Fires on tag deletion (rollback) and manual dispatch. Tag creation is handled
-# by docs.yaml as part of the per-tag deploy.
+# by docs-build-and-deploy.yaml as part of the per-tag deploy.
 
 name: Promote stable web client
 

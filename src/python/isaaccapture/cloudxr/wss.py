@@ -22,8 +22,10 @@ from ..logging_config._core import DATE_FORMAT, LINE_FORMAT, logging_enabled
 from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
+    control_token_is_generated,
     default_initial_stream_config,
     redact_control_token,
+    resolve_control_token,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -294,11 +296,11 @@ def _oob_token(request, q: dict[str, str]) -> str | None:
 
 
 def _json_response(status: int, phrase: str, body: dict) -> Response:
-    """Build a JSON :class:`Response` with CORS headers."""
+    """Build a JSON :class:`Response` for the OOB hub API (no CORS headers)."""
     return Response(
         status,
         phrase,
-        Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+        Headers({"Content-Type": "application/json"}),
         json.dumps(body).encode(),
     )
 
@@ -334,7 +336,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 return Response(
                     200,
                     "OK",
-                    Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+                    Headers({"Content-Type": "application/json"}),
                     json.dumps(snapshot).encode(),
                 )
 
@@ -364,7 +366,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
             return Response(
                 404,
                 "Not Found",
-                Headers({"Content-Type": "text/plain", **CORS_HEADERS}),
+                Headers({"Content-Type": "text/plain"}),
                 b"Not found",
             )
 
@@ -436,7 +438,12 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
 
 
 def add_cors_headers(connection, request, response):
-    """``process_response`` hook: inject CORS headers into every WebSocket upgrade response."""
+    """``process_response`` hook: inject CORS headers into every response except hub API ones."""
+    # websockets runs this hook on process_request responses too. The hub API
+    # returns headset state, so it must not be readable cross-origin; the web
+    # client only needs CORS for the cert page and static files.
+    if _is_oob_hub_http_path(_normalize_request_path(request.path or "/")):
+        return
     response.headers.update(CORS_HEADERS)
 
 
@@ -666,7 +673,7 @@ async def run(
         if setup_oob:
             from .oob_teleop_hub import OOBControlHub  # noqa: PLC0415
 
-            control_token = os.environ.get("CONTROL_TOKEN") or None
+            control_token = resolve_control_token()
             initial = {
                 **default_initial_stream_config(resolved_port),
                 **client_ui_fields_from_env(),
@@ -674,7 +681,7 @@ async def run(
             hub = OOBControlHub(control_token=control_token, initial_config=initial)
             log.info(
                 "Teleop control hub enabled (token=%s) OOB_WS=%s initial_stream=%s",
-                "set" if control_token else "none",
+                "generated" if control_token_is_generated() else "set",
                 OOB_WS_PATH,
                 initial,
             )

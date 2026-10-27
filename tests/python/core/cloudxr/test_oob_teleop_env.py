@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from urllib.parse import parse_qs, urlparse
 
 import cloudxr_py_test_ns.oob_teleop_env as oob_teleop_env_under_test
@@ -612,15 +613,58 @@ def test_startup_banner_hides_control_and_turn_credentials(
     assert "turnCredential=<REDACTED>" in out
 
 
+def test_resolve_control_token_prefers_configured(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONTROL_TOKEN", "configured")
+    assert oob_teleop_env_under_test.resolve_control_token() == "configured"
+    assert oob_teleop_env_under_test.control_token_is_generated() is False
+
+
+def test_resolve_control_token_generates_stable_random_token(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    first = oob_teleop_env_under_test.resolve_control_token()
+    assert len(first) >= 32
+    assert oob_teleop_env_under_test.resolve_control_token() == first
+    assert oob_teleop_env_under_test.control_token_is_generated() is True
+    assert "CONTROL_TOKEN" not in os.environ
+
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    assert oob_teleop_env_under_test.resolve_control_token() != first
+
+
+def test_resolve_control_token_treats_empty_env_as_unset(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+    monkeypatch.setenv("CONTROL_TOKEN", "")
+    assert oob_teleop_env_under_test.resolve_control_token()
+    assert oob_teleop_env_under_test.control_token_is_generated() is True
+
+
+def test_startup_banner_shows_generated_token_once(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr(oob_teleop_env_under_test, "_generated_control_token", None)
+
+    print_oob_hub_startup_banner(lan_host="127.0.0.1", usb_local=True)
+    out = capsys.readouterr().out
+    assert oob_teleop_env_under_test.resolve_control_token() in out
+
+
 def test_oob_progress_logs_at_info(
     monkeypatch: pytest.MonkeyPatch, capsys, caplog
 ) -> None:
-    """With logging on, progress is an INFO record on the module logger, not a print."""
+    """With logging on, progress uses the dedicated status logger, not a print."""
     monkeypatch.delenv("ISAACCAPTURE_LOGGING", raising=False)
-    with caplog.at_level(logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env"):
+    with caplog.at_level(
+        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
+    ):
         oob_teleop_env_under_test.oob_progress("setup-oob", "teleop tab found")
     [record] = caplog.records
-    assert record.name == "isaaccapture.cloudxr.oob_teleop_env"
+    assert record.name == "isaaccapture.cloudxr.oob_teleop_env.oob-progress"
     assert record.levelno == logging.INFO
     assert record.getMessage() == "[setup-oob] teleop tab found"
     assert capsys.readouterr().err == ""
@@ -631,10 +675,33 @@ def test_oob_progress_prints_when_logging_is_off(
 ) -> None:
     """``ISAACCAPTURE_LOGGING=off`` keeps the cyan stderr line and logs nothing."""
     monkeypatch.setenv("ISAACCAPTURE_LOGGING", "off")
-    with caplog.at_level(logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env"):
+    with caplog.at_level(
+        logging.INFO, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
+    ):
         oob_teleop_env_under_test.oob_progress("setup-oob", "teleop tab found")
     assert capsys.readouterr().err == "\033[36m[setup-oob]\033[0m teleop tab found\n"
     assert not caplog.records
+
+
+def test_oob_progress_debug_is_quiet_when_logging_is_off(
+    monkeypatch: pytest.MonkeyPatch, capsys, caplog
+) -> None:
+    monkeypatch.delenv("ISAACCAPTURE_LOGGING", raising=False)
+    with caplog.at_level(
+        logging.DEBUG, logger="isaaccapture.cloudxr.oob_teleop_env.oob-progress"
+    ):
+        oob_teleop_env_under_test.oob_progress(
+            "setup-oob", "browser launched", level=logging.DEBUG
+        )
+    [record] = caplog.records
+    assert record.levelno == logging.DEBUG
+    assert record.getMessage() == "[setup-oob] browser launched"
+
+    monkeypatch.setenv("ISAACCAPTURE_LOGGING", "off")
+    oob_teleop_env_under_test.oob_progress(
+        "setup-oob", "browser launched", level=logging.DEBUG
+    )
+    assert capsys.readouterr().err == ""
 
 
 # Host preflight (H5) ------------------------------------------------------
@@ -716,6 +783,20 @@ def test_print_host_preflight_warnings_busy_port(capsys) -> None:
     out = capsys.readouterr().out
     assert "already in use" in out
     assert "PROXY_PORT" in out
+
+
+def test_host_preflight_warning_can_use_logger_only(capsys) -> None:
+    with (
+        patch("cloudxr_py_test_ns.oob_teleop_env._port_in_use", return_value=True),
+        patch(
+            "cloudxr_py_test_ns.oob_teleop_env._ufw_unallowed_ports",
+            return_value=None,
+        ),
+        patch("cloudxr_py_test_ns.oob_teleop_env.log.warning") as warning,
+    ):
+        print_host_preflight_warnings(usb_local=False, emit_console=False)
+    assert capsys.readouterr().out == ""
+    warning.assert_called_once()
 
 
 def test_print_host_preflight_warnings_ufw_blocks(capsys) -> None:

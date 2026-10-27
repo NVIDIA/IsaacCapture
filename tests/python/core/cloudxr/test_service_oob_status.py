@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import asyncio
@@ -15,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from isaaccapture.cloudxr.launcher import CloudXRLauncher
+from isaaccapture.cloudxr.oob_teleop_progress import OobProgressReporter
 from isaaccapture.cloudxr.service import CloudXRService
 
 
@@ -36,6 +38,50 @@ def _service_for_status(tmp_path):
     service._wss_thread = None
     service._connect_requested = None
     return service
+
+
+@pytest.mark.asyncio
+async def test_status_progress_reaches_embedded_owner_once(tmp_path):
+    service = _service_for_status(tmp_path)
+    service._usb_local = True
+    service._oob_progress_reporter = OobProgressReporter(clock=lambda: 0)
+    waiting = {
+        "health": "degraded",
+        "state": "WAITING_FOR_ADB",
+        "reason": "Waiting for selected headset",
+        "adbReady": False,
+    }
+    with patch("isaaccapture.cloudxr.service._service.oob_progress") as progress:
+        await service._publish_oob_status(waiting)
+        await service._publish_oob_status(waiting)
+    progress.assert_called_once_with(
+        "usb-local",
+        "No USB-attached HMD detected; connect a headset to continue.",
+        level=logging.INFO,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_authorization_reaches_embedded_owner_as_warning(tmp_path):
+    service = _service_for_status(tmp_path)
+    service._usb_local = True
+    service._oob_progress_reporter = OobProgressReporter(clock=lambda: 0)
+    unauthorized = {
+        "health": "degraded",
+        "state": "WAITING_FOR_ADB",
+        "reason": "Selected headset unauthorized; accept the USB debugging prompt",
+        "selectedSerial": "HMD-1",
+        "adbDiagnostic": "adb detail",
+        "adbReady": False,
+    }
+    with patch("isaaccapture.cloudxr.service._service.oob_progress") as progress:
+        await service._publish_oob_status(unauthorized)
+    progress.assert_called_once_with(
+        "usb-local",
+        "ADB authorization required: unlock the headset and accept "
+        "the USB debugging prompt.",
+        level=logging.WARNING,
+    )
 
 
 @pytest.mark.asyncio
@@ -225,8 +271,11 @@ async def test_fatal_callback_publishes_terminal_status_once_before_teardown(tmp
     )
     service.drain_oob_updates()
     error = RuntimeError("fatal lifecycle failure")
-    await service._on_oob_fatal(error)
-    await service._on_oob_fatal(RuntimeError("another failure"))
+    with patch("isaaccapture.cloudxr.service._service.logger.error") as log_error:
+        await service._on_oob_fatal(error)
+        await service._on_oob_fatal(RuntimeError("another failure"))
+    log_error.assert_called_once()
+    assert log_error.call_args.args[0] == "OOB stopped: %s"
     service._fatal_supervisor.join(timeout=2)
     service.stop.assert_called_once()
     status = service.oob_status()

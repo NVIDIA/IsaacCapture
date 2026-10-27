@@ -13,3 +13,4 @@ camera feeds to clients, see :doc:`/references/camera_streaming`.
 
    oak
    ego
+   /device/camera/sensing

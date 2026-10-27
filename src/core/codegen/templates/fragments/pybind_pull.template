@@ -1,4 +1,7 @@
-    py::class_<core::@CLASS@, core::ITracker, std::shared_ptr<core::@CLASS@>>(m, "@CLASS@")
+    py::class_<core::@CLASS@, core::ITracker, std::shared_ptr<core::@CLASS@>> @NAME@_pull(m, "@CLASS@");
+    @NAME@_pull.attr("DEFAULT_MAX_FLATBUFFER_SIZE") =
+        static_cast<std::size_t>(core::@CLASS@::DEFAULT_MAX_FLATBUFFER_SIZE);
+    @NAME@_pull
         .def(py::init<const std::string&, size_t>(), py::arg("collection_id"),
              py::arg("max_flatbuffer_size") = core::@CLASS@::DEFAULT_MAX_FLATBUFFER_SIZE)
         .def(
@@ -6,4 +9,13 @@
             [](const core::@CLASS@& self, const core::ITrackerSession& session)
             { return to_python(self.get_data(session)); },
             py::arg("session"),
-            "Get the current state (None when no data available)");
+            "Get the current state (None when no data available)")
+#if @HAS_METADATA@
+        .def(
+            "get_metadata",
+            [](const core::@CLASS@& self, const core::ITrackerSession& session)
+            { return to_python(self.get_metadata(session)); },
+            py::arg("session"),
+            "Get the first metadata received from the producer (None until it arrives, then fixed for the session)")
+#endif
+        ;

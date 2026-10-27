@@ -57,6 +57,10 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 - If CMake under `examples/` reads a file under `tests/`, guard it on the
   in-tree configure: standalone wheel builds use the example as `CMAKE_SOURCE_DIR`,
   not the repo root.
+- A stand-in child process must stay alive on its own (`python -m <builtin>`
+  exits at once), and a `/proc/<pid>/cmdline` check made right after `Popen()`
+  must poll, because the cmdline can still read empty
+  (`python/core/cloudxr/test_background.py` does both).
 
 ## Adding tests
 
@@ -75,3 +79,4 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
 - `examples/oxr/python/test_*.py` — standalone scripts for CloudXR GPU CI.
 - ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.
+- `scripts/sbom/tests/` — the SBOM collector's tests, run from its own uv project.

@@ -5,6 +5,9 @@ cmake_minimum_required(VERSION 3.20)
 
 include(FetchContent)
 
+# Vendored third-party sources, checked in rather than fetched.
+add_subdirectory(openxr_extensions)
+
 # ==============================================================================
 # CMake sanitizers
 # ==============================================================================
@@ -278,6 +281,37 @@ if(BUILD_VIZ AND BUILD_PYTHON_BINDINGS)
 
     include("${CMAKE_CURRENT_LIST_DIR}/Mujoco.cmake")
 endif()
+
+# ==============================================================================
+# SPDX license list data
+# ==============================================================================
+# Reference texts for license matching; this checkout builds and ships nothing.
+# Pin by commit because upstream tags can move.
+find_package(Git REQUIRED)
+
+set(SPDX_LICENSE_DATA_COMMIT "31ba1a50e5397e00a304dbadc76531740e89ee48")  # v3.29.0
+set(SPDX_LICENSE_DATA_SOURCE_DIR "${FETCHCONTENT_BASE_DIR}/license-list-data-src")
+
+message(STATUS "Fetching SPDX license list data from GitHub...")
+FetchContent_Declare(
+    license_list_data
+    SOURCE_DIR "${SPDX_LICENSE_DATA_SOURCE_DIR}"
+    DOWNLOAD_COMMAND
+        "${CMAKE_COMMAND}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        "-DSPDX_REPOSITORY=https://github.com/spdx/license-list-data.git"
+        "-DSPDX_COMMIT=${SPDX_LICENSE_DATA_COMMIT}"
+        "-DSPDX_SOURCE_DIR=${SPDX_LICENSE_DATA_SOURCE_DIR}"
+        "-DSPDX_SPARSE_DIR=json"
+        -P "${CMAKE_CURRENT_LIST_DIR}/fetch_license_list_data.cmake"
+)
+FetchContent_MakeAvailable(license_list_data)
+
+foreach(_spdx_index licenses.json exceptions.json)
+    if(NOT EXISTS "${SPDX_LICENSE_DATA_SOURCE_DIR}/json/${_spdx_index}")
+        message(FATAL_ERROR "SPDX license list data is missing json/${_spdx_index} after fetch")
+    endif()
+endforeach()
 
 # ==============================================================================
 # Chromium physical key table (vendored source, BSD-3-Clause; see chromium/README.md)

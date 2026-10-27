@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+assets/
+outputs/
+output*/
+tests/
+test_runs/
+
+sample/*.mp4
+sample/*.npz
+sample/provenance.json
