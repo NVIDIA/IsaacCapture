@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../development/contributing.html
+
 Contributing
 ============
 
