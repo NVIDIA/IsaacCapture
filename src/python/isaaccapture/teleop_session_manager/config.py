@@ -41,10 +41,15 @@ if TYPE_CHECKING:
 
 
 class SessionMode(Enum):
-    """Determines whether the teleop session runs live or replays from an MCAP file."""
+    """Where a teleop session reads its tracker data from.
+
+    ``LIVE`` reads a local OpenXR runtime, ``REPLAY`` an MCAP file, and ``REMOTE`` a Teleop
+    Session Server (``python -m isaaccapture.teleop_session_server``) on another machine.
+    """
 
     LIVE = "live"
     REPLAY = "replay"
+    REMOTE = "remote"
 
 
 class RetargetingExecutionMode(str, Enum):
@@ -275,6 +280,17 @@ class RetargetingExecutionConfig:
         self.pacing = _coerce_pacing_config(self.pacing)
 
 
+def _require_positive(name: str, value: Any) -> None:
+    """Raise ``ValueError`` unless ``value`` is a finite number above zero."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{name} must be a finite number above zero, got {value!r}")
+
+
 def _bundled_plugins_dir(package_roots: Sequence[str]) -> Path:
     """The first ``plugins/`` under the package roots, else the first root's."""
     # An editable install splits isaaccapture between the source tree (authored .py, this
@@ -362,9 +378,10 @@ class TeleopSessionConfig:
     Attributes:
         app_name: Name of the OpenXR application
         pipeline: Main retargeting pipeline.
-        mode: Whether to run a live OpenXR session or replay from an MCAP file.
-            Defaults to ``SessionMode.LIVE``. When ``REPLAY``, ``mcap_config`` is required
-            and OpenXR/plugin initialization is skipped.
+        mode: Where tracker data comes from. Defaults to ``SessionMode.LIVE``. When
+            ``REPLAY``, ``mcap_config`` is required and OpenXR initialization is skipped.
+            When ``REMOTE``, ``remote_endpoint`` is required; the Teleop Session Server
+            there owns OpenXR and starts ``plugins``.
         teleop_control_pipeline: Optional control pipeline whose outputs are
             decoded into ComputeContext.execution_events before running ``pipeline``.
             Expected outputs:
@@ -378,9 +395,12 @@ class TeleopSessionConfig:
             *after* ``pipeline``, then calls ``flush_to_device(session)`` so the
             device write happens in the same frame. Unlike ``pipeline``, sinks do
             not contribute to the value returned by ``step()`` -- they are
-            side-effecting terminals (e.g. a haptic ``HapticSink``).
+            side-effecting terminals (e.g. a haptic ``HapticSink``). In REMOTE mode
+            sinks run but are not flushed: their data is dropped until it is supported.
         trackers: Optional list of manual trackers (usually not needed - auto-discovered!)
-        plugins: List of plugin configurations
+        plugins: List of plugin configurations. In REMOTE mode the Teleop Session
+            Server starts them by name from its own plugin directories, so
+            ``search_paths`` are ignored.
         verbose: Whether to print detailed progress information during setup
         oxr_session_factory: Optional callback taking the complete required-extension
             list and returning external OpenXR handles. Called before DeviceIO starts.
@@ -394,7 +414,8 @@ class TeleopSessionConfig:
             where each argument is a ``uint64`` handle value.
         mcap_config: MCAP configuration — ``McapRecordingConfig`` for live
             recording, ``McapReplayConfig`` for replay.  **Required** when
-            ``mode`` is ``SessionMode.REPLAY``; optional in ``LIVE`` mode.
+            ``mode`` is ``SessionMode.REPLAY``; optional in ``LIVE`` mode;
+            not supported in ``REMOTE`` mode.
             TeleopSession always auto-populates tracker names from the
             pipeline's discovered DeviceIO sources (using each source's
             ``name`` as the MCAP channel name).  Any ``tracker_names``
@@ -412,6 +433,16 @@ class TeleopSessionConfig:
             the control thread; the render thread draws the latest.
         twin_render: Clip planes, layer name and teardown budget for that twin. Ignored
             when ``joint_publisher`` is None.
+        remote_endpoint: Teleop Session Server address for ``SessionMode.REMOTE``:
+            ``host:port``, ``tcp://host:port`` or ``ws://host:port[/path]`` (default
+            ports 47600 and 47601). Set only in REMOTE mode.
+        remote_tick_rate_hz: How often the server ticks, reading every tracker once
+            and sending the samples (it clamps to [1, 240]).
+        remote_max_tick_age_s: Samples whose tick age (time since the server read
+            them) exceeds this count as missing: trackers report no data.
+        remote_connect_timeout_s: How long entering the session waits for the server to
+            answer and report READY, retrying while it is not up yet; ``None`` waits
+            without limit.
 
     Example (auto-discovery):
         # Source creates its own tracker automatically!
@@ -480,35 +511,14 @@ class TeleopSessionConfig:
     # Called with all tracker extensions before DeviceIO starts. The caller owns
     # the returned session and must stop rendering before TeleopSession exits.
     oxr_session_factory: Optional[Callable[[List[str]], OpenXRSessionHandles]] = None
+    remote_endpoint: Optional[str] = None
+    remote_tick_rate_hz: float = 90.0
+    remote_max_tick_age_s: float = 0.25
+    remote_connect_timeout_s: Optional[float] = 60.0
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
-        if self.oxr_session_factory is not None and (
-            self.mode != SessionMode.LIVE
-            or self.oxr_handles is not None
-            or self.joint_publisher is not None
-        ):
-            raise ValueError(
-                "oxr_session_factory requires LIVE mode without oxr_handles or joint_publisher"
-            )
-        if self.mode == SessionMode.REPLAY and self.mcap_config is None:
-            raise ValueError("mcap_config is required when mode is SessionMode.REPLAY")
-
-        if self.joint_publisher is not None:
-            # The twin's compositor session IS the OpenXR session, so there is nothing
-            # for caller-supplied handles to mean here: one of the two would have to be
-            # ignored, and either choice is a silently different session.
-            if self.oxr_handles is not None:
-                raise ValueError(
-                    "joint_publisher and oxr_handles are mutually exclusive: the twin "
-                    "creates the OpenXR session that the trackers then share."
-                )
-            if self.mode == SessionMode.REPLAY:
-                raise ValueError(
-                    "joint_publisher requires a live session; REPLAY has no headset "
-                    "to render into."
-                )
-
+        self._validate_session_mode()
         self._validate_sinks()
 
         if self.teleop_control_pipeline is None:
@@ -566,6 +576,58 @@ class TeleopSessionConfig:
                 "teleop_control_pipeline output 'reset_event' must be a bool scalar "
                 f"(got {type(reset_event_type.types[0]).__name__})"
             )
+
+    def _validate_session_mode(self) -> None:
+        """Check the fields that depend on ``mode``.
+
+        ``TeleopSession`` runs this again on entry, since the config is mutable.
+        """
+        self.mode = SessionMode(self.mode)
+        if self.oxr_session_factory is not None and (
+            self.mode != SessionMode.LIVE
+            or self.oxr_handles is not None
+            or self.joint_publisher is not None
+        ):
+            raise ValueError(
+                "oxr_session_factory requires LIVE mode without oxr_handles or joint_publisher"
+            )
+        if self.mode == SessionMode.REPLAY and self.mcap_config is None:
+            raise ValueError("mcap_config is required when mode is SessionMode.REPLAY")
+
+        if self.joint_publisher is not None:
+            # The twin's compositor session IS the OpenXR session, so there is nothing
+            # for caller-supplied handles to mean here: one of the two would have to be
+            # ignored, and either choice is a silently different session.
+            if self.oxr_handles is not None:
+                raise ValueError(
+                    "joint_publisher and oxr_handles are mutually exclusive: the twin "
+                    "creates the OpenXR session that the trackers then share."
+                )
+            if self.mode != SessionMode.LIVE:
+                raise ValueError(
+                    f"joint_publisher requires a live session; {self.mode.name} has no "
+                    "headset to render into."
+                )
+
+        if self.mode == SessionMode.REMOTE:
+            if not isinstance(self.remote_endpoint, str) or not self.remote_endpoint:
+                raise ValueError(
+                    "remote_endpoint is required when mode is SessionMode.REMOTE"
+                )
+            # The Teleop Session Server owns the OpenXR session in REMOTE mode.
+            if self.oxr_handles is not None:
+                raise ValueError("oxr_handles cannot be used with SessionMode.REMOTE")
+            if self.mcap_config is not None:
+                raise ValueError(
+                    "mcap_config is not supported with SessionMode.REMOTE yet"
+                )
+        elif self.remote_endpoint is not None:
+            raise ValueError("remote_endpoint requires mode=SessionMode.REMOTE")
+
+        for name in ("remote_tick_rate_hz", "remote_max_tick_age_s"):
+            _require_positive(name, getattr(self, name))
+        if self.remote_connect_timeout_s is not None:
+            _require_positive("remote_connect_timeout_s", self.remote_connect_timeout_s)
 
     def _validate_sinks(self) -> None:
         """Ensure every ``sinks`` entry resolves to an ``IDeviceIOSink``.

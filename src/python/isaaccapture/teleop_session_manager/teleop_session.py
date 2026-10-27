@@ -39,6 +39,7 @@ from isaaccapture.retargeting_engine.interface.retargeter_subgraph import (
     RetargeterSubgraph,
 )
 
+from . import _remote
 from .async_retarget_runner import (
     AsyncRetargetRunner,
     AsyncRetargetRunnerStopped,
@@ -63,6 +64,15 @@ logger = logging.getLogger(__name__)
 
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
 _MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse", "gamepad"})
+
+
+def _did_not_answer(endpoint: str, error: BaseException) -> TimeoutError:
+    """The error for a connection the server never took up, e.g. a refused WebSocket upgrade."""
+    return TimeoutError(
+        _remote.not_ready_message(
+            endpoint, f"{_remote.SERVER_DID_NOT_ANSWER} ({error})", None
+        )
+    )
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
@@ -91,7 +101,9 @@ class RetargetingStepInfo:
     can use ``returned_age_frames`` to observe result age without implying any
     current-frame wait. Counts such as ``dropped_submissions`` and
     ``frame_deadline_miss`` are per-step so apps can accumulate them for
-    run-wide debug summaries.
+    run-wide debug summaries. In ``SessionMode.REMOTE``, ``remote_tick_age_s`` is
+    the tick age of the server samples the returned output was computed from, taken
+    when that step updated the session; ``None`` when no fresh samples had arrived.
     """
 
     returned_frame_id: int | None = None
@@ -103,6 +115,7 @@ class RetargetingStepInfo:
     ran_synchronously: bool = False
     frame_deadline_miss: bool = False
     worker_exception: BaseException | None = None
+    remote_tick_age_s: float | None = None
 
 
 class TeleopSession:
@@ -197,6 +210,10 @@ class TeleopSession:
         self.plugin_contexts: list[Any] = []
         self._resolved_plugins: list[tuple[Any, Any, PluginProviderSpec | None]] = []
         self._status_monitor = StatusMonitor()
+        # The RemoteSession while a SessionMode.REMOTE run is active, and the stand-in for the
+        # server's OpenXR session that the status monitor polls.
+        self._remote_session: Any | None = None
+        self._remote_openxr: _remote.RemoteOpenXRSession | None = None
 
         # The robot twin's render thread, when config.joint_publisher is set.
         self._twin_runner: Any | None = None
@@ -236,10 +253,11 @@ class TeleopSession:
         self._controller_status_trackers = self._find_controller_status_trackers()
         # Vendor selection is a live-only concern; reject it up front in replay.
         self._reject_vendor_selection_in_replay()
+        self._reject_unsupported_remote_inputs()
 
     @property
     def oxr_session(self) -> oxr.OpenXRSession | None:
-        """The internal OpenXR session, or ``None`` when using external handles or after the context manager exits (read-only)."""
+        """The internal OpenXR session, or ``None`` outside LIVE mode, when using external handles or after the context manager exits (read-only)."""
         return self._oxr_session
 
     @property
@@ -399,11 +417,11 @@ class TeleopSession:
         """Reject source-carried vendor selections when mode is REPLAY.
 
         Vendor selection is a live-session concern: the live path routes each
-        source's ``get_vendor()`` into a ``VendorConfig``, but replay reads the
-        recorded channel regardless of vendor. Without this guard a vendor set on
-        a source would be silently ignored in REPLAY. Fail fast instead, matching
-        the fail-fast convention on the live path (unknown vendor ids and
-        non-vendored trackers both raise).
+        source's ``get_vendor()`` into a ``VendorConfig`` (REMOTE forwards it to the
+        server), but replay reads the recorded channel regardless of vendor.
+        Without this guard a vendor set on a source would be silently ignored in
+        REPLAY. Fail fast instead, matching the fail-fast convention on the live
+        path (unknown vendor ids and non-vendored trackers both raise).
         """
         if self.config.mode != SessionMode.REPLAY:
             return
@@ -413,11 +431,20 @@ class TeleopSession:
         if vendored:
             names = ", ".join(sorted(source.name for source in vendored))
             raise ValueError(
-                f"Vendor selection is only valid in SessionMode.LIVE, but "
+                f"Vendor selection is only valid in SessionMode.LIVE and REMOTE, but "
                 f"source(s) {names} carry a vendor and mode is SessionMode.REPLAY. "
                 f"Replay reads the recorded channel regardless of vendor; remove "
                 f"the vendor selection or run in LIVE mode."
             )
+
+    def _reject_unsupported_remote_inputs(self) -> None:
+        """In REMOTE mode, reject keyboard and message-channel inputs and trackers with metadata.
+
+        Runs before any network I/O.
+        """
+        if self.config.mode != SessionMode.REMOTE:
+            return
+        _remote.reject_unsupported_inputs(self._sources, self.config.trackers)
 
     def get_external_input_specs(self) -> dict[str, RetargeterIOType]:
         """Get the input specifications for all external leaf nodes that need inputs.
@@ -567,7 +594,7 @@ class TeleopSession:
     def _execute_step_request(
         self,
         request: StepRequest,
-    ) -> tuple[RetargeterIO, ComputeContext]:
+    ) -> tuple[RetargeterIO, ComputeContext, float | None]:
         """Execute one normal synchronous step for ``request``.
 
         Pipelined mode deliberately moves this whole method to the worker
@@ -575,15 +602,19 @@ class TeleopSession:
         together preserves the old synchronous ordering and avoids passing raw
         DeviceIO source state across threads. Sync mode calls the same method
         directly so the behavioral core stays in one place.
+
+        Returns outputs, context and the remote tick age in seconds (``None``
+        outside REMOTE mode).
         """
         try:
             self.deviceio_session.update()
         except BaseException as error:
             self._status_monitor.mark_runtime_failed(error)
             raise
+        remote_tick_age_s = self._remote_tick_age_s()
         self._status_monitor.refresh(
             self.deviceio_session,
-            self._oxr_session,
+            self._oxr_session if self._remote_openxr is None else self._remote_openxr,
             openxr_controllers=self._controller_status_snapshots(),
         )
         pipeline_inputs = self._collect_tracker_data()
@@ -630,7 +661,11 @@ class TeleopSession:
             main_inputs = {
                 k: v for k, v in pipeline_inputs.items() if k in self._main_leaf_names
             }
-            return self.pipeline.execute_pipeline(main_inputs, context), context
+            return (
+                self.pipeline.execute_pipeline(main_inputs, context),
+                context,
+                remote_tick_age_s,
+            )
 
         # Sinks present: drive the main pipeline and every sink subgraph through
         # one shared ExecutionCache so nodes shared between them (e.g. a stateful
@@ -649,10 +684,19 @@ class TeleopSession:
         # contract is non-throwing, so a device hiccup cannot tear down the loop.
         for executable, _sink_node in self._sinks:
             executable.execute_pipeline_with_cache(cache)
-        for _executable, sink_node in self._sinks:
-            sink_node.flush_to_device(self.deviceio_session)
+        # A RemoteSession has no sink trackers; their data is dropped in REMOTE mode.
+        if self._remote_session is None:
+            for _executable, sink_node in self._sinks:
+                sink_node.flush_to_device(self.deviceio_session)
 
-        return main_outputs, context
+        return main_outputs, context, remote_tick_age_s
+
+    def _remote_tick_age_s(self) -> float | None:
+        """Tick age of the samples the last update() published; ``None`` outside REMOTE mode."""
+        session = self._remote_session
+        age_ns = None if session is None else session.tick_age_ns
+        # The clock-offset estimate can put a fresh tick time slightly in the future.
+        return None if age_ns is None else max(0.0, age_ns / 1e9)
 
     def _make_retarget_frame(
         self,
@@ -662,6 +706,7 @@ class TeleopSession:
         *,
         started_time_s: float,
         completed_time_s: float,
+        remote_tick_age_s: float | None = None,
     ) -> RetargetFrame:
         """Package one completed request as an owned cached frame.
 
@@ -679,6 +724,7 @@ class TeleopSession:
             started_time_s=started_time_s,
             completed_time_s=completed_time_s,
             compute_duration_s=completed_time_s - started_time_s,
+            remote_tick_age_s=remote_tick_age_s,
         )
 
     def _step_sync(
@@ -701,7 +747,7 @@ class TeleopSession:
             snapshot_external_inputs=False,
         )
         started = time.monotonic()
-        result, context = self._execute_step_request(request)
+        result, context, remote_tick_age_s = self._execute_step_request(request)
         completed = time.monotonic()
 
         self._last_context = context
@@ -713,6 +759,7 @@ class TeleopSession:
             returned_age_s=completed - request.submitted_time_s,
             compute_duration_s=completed - started,
             ran_synchronously=True,
+            remote_tick_age_s=remote_tick_age_s,
         )
 
         self.frame_count += 1
@@ -783,7 +830,7 @@ class TeleopSession:
             execution_events=execution_events,
         )
         started = time.monotonic()
-        outputs, context = self._execute_step_request(request)
+        outputs, context, remote_tick_age_s = self._execute_step_request(request)
         completed = time.monotonic()
         frame = self._make_retarget_frame(
             request,
@@ -791,6 +838,7 @@ class TeleopSession:
             context,
             started_time_s=started,
             completed_time_s=completed,
+            remote_tick_age_s=remote_tick_age_s,
         )
 
         runner = self._ensure_async_runner()
@@ -847,6 +895,7 @@ class TeleopSession:
             dropped_submissions=dropped_submissions,
             ran_synchronously=ran_synchronously,
             frame_deadline_miss=frame_deadline_miss,
+            remote_tick_age_s=frame.remote_tick_age_s,
         )
         self.frame_count += 1
         return returned_outputs
@@ -1072,11 +1121,24 @@ class TeleopSession:
         directly to ``DeviceIOSession.run()`` and no internal OpenXR session
         is created.  The caller is responsible for the external session lifetime.
 
+        When ``config.mode`` is ``SessionMode.REMOTE``, this connects to the Teleop
+        Session Server at ``config.remote_endpoint`` and returns once it reports READY
+        (its plugins started and the headset connected). A server that is not up yet, or
+        that closes the connection before sending any message (e.g. one that crashed or was
+        killed before it took the connection up), is retried, and one that accepted the
+        connection is waited for, all within ``remote_connect_timeout_s``. No OpenXR session
+        or plugin is created here.
+        Ctrl-C raises ``KeyboardInterrupt`` within about 0.1 s, or after the TCP
+        connect attempt in progress (at most 2 s, plus any host name lookup).
+
         Returns:
             self for context manager protocol
 
         Raises:
-            RuntimeError: If the session is already active.
+            RuntimeError: If the session is already active, or (REMOTE) with the
+                server's error text, or when the connection is lost.
+            TimeoutError: (REMOTE) The server did not answer, or was not ready within
+                ``remote_connect_timeout_s``; the message names the last stage.
         """
         # Detect nested context-manager use; this does not make the session thread-safe.
         if self._in_context:
@@ -1103,6 +1165,8 @@ class TeleopSession:
                 finally:
                     self._status_monitor.mark_startup_failed(error)
                     self._oxr_session = None
+                    self._remote_session = None
+                    self._remote_openxr = None
                     self._in_context = False
                 raise
 
@@ -1111,26 +1175,33 @@ class TeleopSession:
     def _enter_resources(self, stack: ExitStack) -> None:
         """Acquire and initialize resources for one context-manager run."""
         # config is mutable between construction and entry, so revalidate the
-        # replay-only vendor guard here: a mode flipped to REPLAY after __init__
+        # mode-dependent checks here: e.g. a mode flipped to REPLAY after __init__
         # must still fail fast rather than silently ignore a source's vendor.
+        self.config._validate_session_mode()
         self._reject_vendor_selection_in_replay()
+        self._reject_unsupported_remote_inputs()
 
         # Reset run-scoped plugin containers on each context entry.
         self.plugin_managers = []
         self.plugin_contexts = []
         self._twin_teardown_clean = None
         self._resolved_plugins = []
+        self._remote_session = None
+        self._remote_openxr = None
 
-        live_mode = self.config.mode == SessionMode.LIVE
+        mode = self.config.mode
+        live_mode = mode == SessionMode.LIVE
         external_openxr = (
             self.config.oxr_handles is not None
             or self.config.oxr_session_factory is not None
         )
+        reports_openxr = mode in (SessionMode.LIVE, SessionMode.REMOTE)
         self._status_monitor.rebuild(
             (),
-            include_openxr=live_mode,
+            # REMOTE reports the server's OpenXR session (see _bind_remote_plugins).
+            include_openxr=reports_openxr,
             external_openxr=live_mode and external_openxr,
-            include_openxr_controllers=live_mode
+            include_openxr_controllers=reports_openxr
             and bool(self._controller_status_trackers),
         )
         if live_mode:
@@ -1153,22 +1224,23 @@ class TeleopSession:
                 (source.get_tracker(), source.name) for source in self._sources
             ]
             mcap_tracker_names.extend(self.config.mcap_config.get_tracker_names())
-            if self.config.mode == SessionMode.REPLAY:
+            # REMOTE rejects mcap_config (see TeleopSessionConfig).
+            if mode == SessionMode.REPLAY:
                 mcap_config = deviceio.McapReplayConfig(
                     self.config.mcap_config.filename,
                     mcap_tracker_names,
                 )
-            else:
+            elif mode == SessionMode.LIVE:
                 mcap_config = deviceio.McapRecordingConfig(
                     self.config.mcap_config.filename,
                     mcap_tracker_names,
                 )
 
-        if self.config.mode == SessionMode.REPLAY:
+        if mode == SessionMode.REPLAY:
             self.deviceio_session = stack.enter_context(
                 deviceio.ReplaySession.run(mcap_config)
             )
-        else:
+        elif mode == SessionMode.LIVE:
             # Collect trackers from input sources, output sinks, and config,
             # deduplicating by object identity so a tracker shared between an
             # input source and an output sink (e.g. the ControllerTracker used
@@ -1225,12 +1297,18 @@ class TeleopSession:
                     trackers, handles, mcap_config, vendor_config
                 )
             )
+        elif mode == SessionMode.REMOTE:
+            self._enter_remote(stack)
 
         # Plugins retain their historical launch behavior in both live and replay
         # sessions. In live mode, Manus launches only after DeviceIO has created
-        # its status reader.
-        self._start_configured_plugins(stack)
+        # its status reader. In remote mode the Teleop Session Server starts them.
+        if mode in (SessionMode.LIVE, SessionMode.REPLAY):
+            self._start_configured_plugins(stack)
         self._status_monitor.mark_available()
+        if mode == SessionMode.REMOTE:
+            # The headset and plugins as the server last reported them; controllers wait for step().
+            self._status_monitor.refresh(self.deviceio_session, self._remote_openxr)
 
         if self._twin_runner is not None:
             # After DeviceIOSession, so the first rendered frame cannot precede a
@@ -1249,6 +1327,196 @@ class TeleopSession:
         self._last_execution_state = None
         self._async_runner = None
         self._active_retargeting_execution_mode = self.config.retargeting_execution.mode
+
+    def _enter_remote(self, stack: ExitStack) -> None:
+        """Open a RemoteSession to the Teleop Session Server and wait for READY."""
+        config = self.config
+        if self._sinks:
+            logger.warning(
+                "Sink data, e.g. haptics, is dropped in remote mode until it is "
+                "supported; %d sink(s) will not reach their devices",
+                len(self._sinks),
+            )
+        entries = _remote.collect_trackers(
+            self._sources,
+            (sink_node.get_tracker() for _executable, sink_node in self._sinks),
+            config.trackers,
+        )
+        # Descriptors first: an unsupported tracker fails before any native object exists.
+        descriptors = [
+            _remote.describe_tracker(tracker, str(index), vendor, owner)
+            for index, (tracker, vendor, owner) in enumerate(entries)
+        ]
+        session = stack.enter_context(
+            deviceio.RemoteSession.create(
+                [
+                    (tracker, str(index))
+                    for index, (tracker, _, _) in enumerate(entries)
+                ],
+                round(config.remote_max_tick_age_s * 1e9),
+            )
+        )
+        hello = _remote.build_hello(
+            app_name=config.app_name,
+            tick_rate_hz=config.remote_tick_rate_hz,
+            trackers=descriptors,
+            topics=session.subscribed_topics(),
+            plugins=_remote.plugin_requests(config.plugins),
+        )
+        status = _remote.RemoteStatus(session)
+        self._connect_remote(session, hello, status)
+        # Checks every channel the server has declared so far against this build's schemas.
+        session.update()
+        self.deviceio_session = session
+        self._remote_session = session
+        self._remote_openxr = _remote.RemoteOpenXRSession(status)
+        self._bind_remote_plugins(status)
+
+    def _connect_remote(
+        self, session: Any, hello: str, status: _remote.RemoteStatus
+    ) -> None:
+        """Connect, send HELLO and wait for READY, all within ``remote_connect_timeout_s``.
+
+        Errors other than the server not answering, the server's ERROR text included,
+        are raised as they are.
+        """
+        endpoint = self.config.remote_endpoint
+        deadline = _remote.Deadline(self.config.remote_connect_timeout_s)
+        logger.info("Connecting to the Teleop Session Server at %s", endpoint)
+        if not self._join_remote(session, endpoint, hello, deadline):
+            raise TimeoutError(
+                _remote.not_ready_message(
+                    endpoint, _remote.SERVER_DID_NOT_ANSWER, deadline.timeout_s
+                )
+            )
+        self._check_server_version(endpoint, session.hello_ack())
+
+        last_stage = None
+        while True:
+            if session.wait_ready(deadline.remaining_ms(cap_s=0.1)):
+                break
+            stage = _remote.describe_stage(status.latest())
+            if stage != last_stage:
+                logger.info("Teleop Session Server at %s: %s", endpoint, stage)
+                last_stage = stage
+            if deadline.expired():
+                raise TimeoutError(
+                    _remote.not_ready_message(endpoint, stage, deadline.timeout_s)
+                )
+        logger.info("Teleop Session Server at %s is ready", endpoint)
+
+    @staticmethod
+    def _join_remote(
+        session: Any, endpoint: str, hello: str, deadline: _remote.Deadline
+    ) -> bool:
+        """``session.start()`` and ``wait_hello_ack()``; False when unanswered at the deadline.
+
+        Starts again until the deadline while nothing accepts the connection or the server
+        closes it before sending any message (``RemotePeerClosedError``).
+        """
+        waiting = False
+        while True:
+            attempt_start = time.monotonic()
+            try:
+                session.start(
+                    endpoint, hello, deadline.remaining_ms(_remote.CONNECT_ATTEMPT_S)
+                )
+            except deviceio.RemotePeerClosedError as error:
+                last_error = error
+            except RuntimeError as error:
+                if str(error).startswith(_remote.UPGRADE_FAILURE_PREFIX):
+                    raise _did_not_answer(endpoint, error) from error
+                if not str(error).startswith(_remote.CONNECT_FAILURE_PREFIX):
+                    raise
+                last_error = error
+            else:
+                try:
+                    # Also waits for a server that accepted the connection but has not taken
+                    # it up yet.
+                    return session.wait_hello_ack(deadline.remaining_ms())
+                except deviceio.RemotePeerClosedError as error:
+                    # The session is unconnected again.
+                    last_error = error
+                except RuntimeError as error:
+                    if not str(error).startswith(_remote.UPGRADE_FAILURE_PREFIX):
+                        raise
+                    raise _did_not_answer(endpoint, error) from error
+            if not waiting:
+                logger.info(
+                    "Waiting for the Teleop Session Server at %s (%s)",
+                    endpoint,
+                    last_error,
+                )
+                waiting = True
+            pause_s = max(
+                0.0, _remote.CONNECT_RETRY_S - (time.monotonic() - attempt_start)
+            )
+            remaining_s = deadline.remaining_s()
+            if (
+                remaining_s is not None
+                and remaining_s - pause_s < _remote.CONNECT_ATTEMPT_MIN_S
+            ):
+                # No time for another attempt: report the last one at the deadline.
+                time.sleep(remaining_s)
+                raise TimeoutError(
+                    _remote.not_ready_message(
+                        endpoint,
+                        f"{_remote.SERVER_DID_NOT_ANSWER} ({last_error})",
+                        deadline.timeout_s,
+                    )
+                ) from last_error
+            time.sleep(pause_s)
+
+    @staticmethod
+    def _check_server_version(endpoint: str, hello_ack: str) -> None:
+        """Log the server's Isaac Capture version; warn when it is not this one."""
+        import isaaccapture
+
+        version = _remote.server_version(hello_ack)
+        logger.info(
+            "Teleop Session Server at %s runs Isaac Capture %s", endpoint, version
+        )
+        if version != isaaccapture.__version__:
+            logger.warning(
+                "Teleop Session Server at %s runs Isaac Capture %s, this robot app %s; "
+                "run the same version on both machines",
+                endpoint,
+                version,
+                isaaccapture.__version__,
+            )
+
+    def _bind_remote_plugins(self, status: _remote.RemoteStatus) -> None:
+        """Health-check and monitor the plugins the server reports through proxies."""
+        proxies = [
+            _remote.RemotePluginContext(status, plugin_name, plugin_root_id)
+            for plugin_name, plugin_root_id in status.plugin_keys()
+        ]
+        specs = tuple(
+            PluginProviderSpec(
+                plugin_root_id=proxy.plugin_root_id,
+                name=proxy.plugin_name,
+                devices=(),
+                tracker=_remote.NoDeviceReports(),
+            )
+            for proxy in proxies
+        )
+        try:
+            # Controller status comes from the controller samples, as in live mode.
+            self._status_monitor.rebuild(
+                specs,
+                include_openxr=True,
+                external_openxr=False,
+                include_openxr_controllers=bool(self._controller_status_trackers),
+            )
+        except ValueError as error:
+            # rebuild() validates before it changes anything.
+            logger.warning(
+                "Remote plugins are health-checked but not monitored: %s", error
+            )
+            specs = ()
+        for spec, proxy in zip(specs, proxies):
+            self._status_monitor.bind_plugin_context(spec.provider_id, proxy)
+        self.plugin_contexts = proxies
 
     def _start_twin(
         self, stack: ExitStack, required_extensions: list[str]
@@ -1436,6 +1704,8 @@ class TeleopSession:
             # rather than surfacing a torn-down session -- even if a managed context's
             # cleanup raised. (deviceio_session has no such property/contract.)
             self._oxr_session = None
+            self._remote_session = None
+            self._remote_openxr = None
             self._in_context = False
 
         if runner_error is not None:
