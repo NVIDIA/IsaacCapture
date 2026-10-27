@@ -79,7 +79,14 @@ log = logging.getLogger("isaaccapture.cloudxr.wss")
 class _WSSServerLogger(logging.LoggerAdapter):
     """Keep empty connection probes out of operator error logs."""
 
+    def isEnabledFor(self, level):
+        """Disable wire DEBUG logs, which can include control tokens."""
+        if level <= logging.DEBUG:
+            return False
+        return super().isEnabledFor(level)
+
     def log(self, level, msg, *args, **kwargs):
+        """Downgrade only empty request-line disconnects from older servers."""
         exc_info = kwargs.get("exc_info")
         exc = sys.exc_info()[1] if exc_info is True else None
         if isinstance(exc_info, tuple):
@@ -100,6 +107,8 @@ class _WSSServerLogger(logging.LoggerAdapter):
             level = logging.DEBUG
             msg = "Client disconnected before sending an HTTP request"
             kwargs["exc_info"] = None
+            self.logger.log(level, msg, *args, **kwargs)
+            return
         super().log(level, msg, *args, **kwargs)
 
 
