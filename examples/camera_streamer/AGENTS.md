@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
   and must release the sensor before network capture starts.
 - Use HOST_IP/ROBOT_IP discovered for the installation, never developer addresses.
   Explain source transfer before referencing robot deployment directories.
-- Select sensor modes from --list-modes and match PWM to capture rate. Distinguish
-  validated profiles from candidates; configuration validation is not a live test.
+- Select sensor modes from --list-modes and match PWM to capture rate. Record
+  tested/candidate status in VALIDATION.md; keep operator mode tables focused on configuration.
 - Deploy directory renames with documentation/launchers and rebuild stale CMake
   caches. Do not transfer virtual environments, builds or caches between machines.
 - Receiver tests must establish the standalone import path. Check runtime imports

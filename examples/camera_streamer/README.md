@@ -153,27 +153,24 @@ previews before sending: they compete for camera ownership. All profiles use
 TCP port 5000 and host IPC socket `/tmp/isaac-camera-streamer.sock`, so run one
 pipeline at a time. TCP is unauthenticated; use a trusted LAN or VPN.
 
-Mode tables distinguish **tested here** from **candidate** profiles. A sensor's
-maximum rate is not a guarantee of the complete capture/encode/network/display
+A sensor's maximum rate is not a guarantee of the complete capture/encode/network/display
 rate. Link bandwidth, lighting, driver modes and hardware sync can limit it.
 
-## GMSL cameras: Sensing SHW5G and S56
+## GMSL cameras: Sensing
 
 Stereo GMSL2 → Argus → Jetson hardware HEVC → AVS1/TCP. Dimensions are per eye.
-The sender was originally developed and tested for Sensing SHW5G (upstream team
-report); this standalone extraction was tested locally with Sensing S56. We do
-not have a local SHW5G test result for this revision. Neither device model is
-hard-coded in the sender: Argus device IDs and mode indices come from the driver.
+The sender uses Argus device IDs and sensor modes for Sensing cameras, including
+SHW5G and S56. Device models are not hard-coded in the sender.
 
 The supplied profiles describe the local S56 adapter (sensor indices 0/1).
 For SHW5G, copy a profile to `configs/shw5g-stereo-RESOLUTION-FPS.yaml`, enumerate
 `--list-modes`, and set its camera IDs, modes, dimensions and rate for that rig.
 Do not assume S56 mode indices apply to SHW5G.
 
-| Goal | PROFILE | Resolution / rate per eye | Status |
-|---|---|---|---|
-| Highest resolution exposed by this S56 driver | `s56-stereo-2560x1984-30` | 2560×1984, 30 fps | Tested here; mode 1 |
-| Highest frame rate exposed by this S56 driver | `s56-stereo-1080p60` | 1920×1080, 60 fps | Candidate; mode 0 enumerated, full path not yet tested here |
+| Goal | PROFILE | Resolution / rate per eye |
+|---|---|---|
+| Highest resolution exposed by this S56 driver | `s56-stereo-2560x1984-30` | 2560×1984, 30 fps |
+| Highest frame rate exposed by this S56 driver | `s56-stereo-1080p60` | 1920×1080, 60 fps |
 
 Both use 30 Mbps per eye. At 60 fps, a hardware-triggered rig must also have its
 vendor PWM/sync configured for 60 Hz; changing YAML alone does not change PWM.
