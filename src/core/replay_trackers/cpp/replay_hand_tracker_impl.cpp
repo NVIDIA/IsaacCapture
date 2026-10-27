@@ -18,15 +18,12 @@ namespace core
 // ReplayHandTrackerImpl
 // ============================================================================
 
-ReplayHandTrackerImpl::ReplayHandTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                                             std::string_view base_name,
-                                             const RecordedSchemas& recorded)
+ReplayHandTrackerImpl::ReplayHandTrackerImpl(TrackerSampleSource source, std::string_view base_name)
     : mcap_viewers_(
-          std::make_unique<HandMcapViewers>(std::move(reader),
+          std::make_unique<HandMcapViewers>(std::move(source),
                                             base_name,
                                             std::vector<std::string>(HandRecordingTraits::replay_channels.begin(),
-                                                                     HandRecordingTraits::replay_channels.end()),
-                                            recorded)),
+                                                                     HandRecordingTraits::replay_channels.end()))),
       logger_(isaaccapture::Logger::get("isaaccapture.core.ReplayHandTrackerImpl"))
 {
 }

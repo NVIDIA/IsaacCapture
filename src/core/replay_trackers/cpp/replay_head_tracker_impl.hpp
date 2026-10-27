@@ -20,9 +20,7 @@ using HeadMcapViewers = McapTrackerViewers<HeadPoseRecord>;
 class ReplayHeadTrackerImpl : public IHeadTrackerImpl
 {
 public:
-    ReplayHeadTrackerImpl(std::unique_ptr<mcap::McapReader> reader,
-                          std::string_view base_name,
-                          const RecordedSchemas& recorded);
+    ReplayHeadTrackerImpl(TrackerSampleSource source, std::string_view base_name);
 
     ReplayHeadTrackerImpl(const ReplayHeadTrackerImpl&) = delete;
     ReplayHeadTrackerImpl& operator=(const ReplayHeadTrackerImpl&) = delete;

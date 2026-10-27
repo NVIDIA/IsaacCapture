@@ -87,9 +87,10 @@ void write_recording(const std::string& path, const core::Serialized<core::TestT
 std::unique_ptr<core::ReplayMetadataTestTrackerImpl> open_replay(const std::string& path)
 {
     const auto recorded = recorded_schemas(path);
-    auto metadata = core::ReplayMetadataTestTrackerImpl::read_metadata(open_reader(path), BASE_NAME, recorded);
+    auto metadata = core::ReplayMetadataTestTrackerImpl::read_metadata(
+        core::TrackerSampleSource(open_reader(path), recorded), BASE_NAME);
     return std::make_unique<core::ReplayMetadataTestTrackerImpl>(
-        open_reader(path), BASE_NAME, recorded, std::move(metadata));
+        core::TrackerSampleSource(open_reader(path), recorded), BASE_NAME, std::move(metadata));
 }
 
 #if defined(XR_USE_TIMESPEC)
@@ -321,14 +322,17 @@ TEST_CASE("Replay tactile metadata is semantically verified before force data is
     if (!reason.empty())
     {
         REQUIRE_THROWS_WITH(core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring(reason));
-        CHECK_THROWS_WITH(core::ReplayTactileTrackerImpl::read_metadata(open_reader(path), base_name, recorded),
+        CHECK_THROWS_WITH(core::ReplayTactileTrackerImpl::read_metadata(
+                              core::TrackerSampleSource(open_reader(path), recorded), base_name),
                           Catch::Matchers::StartsWith(std::string(base_name) + ": TactileMetadata." + reason));
         return;
     }
 
     REQUIRE_NOTHROW(core::verify_metadata(*metadata));
-    auto loaded = core::ReplayTactileTrackerImpl::read_metadata(open_reader(path), base_name, recorded);
-    core::ReplayTactileTrackerImpl replay(open_reader(path), base_name, recorded, std::move(loaded));
+    auto loaded =
+        core::ReplayTactileTrackerImpl::read_metadata(core::TrackerSampleSource(open_reader(path), recorded), base_name);
+    core::ReplayTactileTrackerImpl replay(
+        core::TrackerSampleSource(open_reader(path), recorded), base_name, std::move(loaded));
     REQUIRE(replay.get_metadata());
     replay.update(0);
     REQUIRE(replay.get_data());

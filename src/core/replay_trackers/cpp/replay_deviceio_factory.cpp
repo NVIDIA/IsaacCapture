@@ -22,6 +22,7 @@
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/tensor_push_tracker.hpp>
 #include <mcap/reader.hpp>
+#include <mcap/tracker_channels.hpp>
 
 #include <cassert>
 #include <memory>
@@ -130,11 +131,55 @@ inline const TryCreateFn k_tracker_dispatch[] = {
     &try_create_keyboard_impl,
 };
 
+//! A TrackerT's replay impl reads its metadata once, at construction, before a stream has delivered any sample.
+template <typename TrackerT>
+void refuse_metadata_tracker(const ITracker* tracker, const char* class_name)
+{
+    if (dynamic_cast<const TrackerT*>(tracker) != nullptr)
+    {
+        throw std::invalid_argument(std::string(class_name) +
+                                    " is not supported over a remote session: its metadata is read before any "
+                                    "sample arrives");
+    }
+}
+
+//! Throws for a tracker with metadata.
+void refuse_on_stream([[maybe_unused]] const ITracker* tracker)
+{
+#include "generated_replay_stream_refusals.inc"
+}
+
 } // namespace
 
 ReplayDeviceIOFactory::ReplayDeviceIOFactory(std::string filename,
                                              const std::vector<std::pair<const ITracker*, std::string>>& tracker_names)
     : filename_(std::move(filename)), recorded_schemas_(read_recorded_schemas(filename_))
+{
+    map_names(tracker_names);
+}
+
+ReplayDeviceIOFactory::ReplayDeviceIOFactory(TrackerSampleStreamReader& stream,
+                                             const std::vector<std::pair<const ITracker*, std::string>>& tracker_names)
+    : stream_(&stream)
+{
+    map_names(tracker_names);
+    // Before any impl subscribes to topics on the stream.
+    for (const auto& entry : tracker_names)
+    {
+        refuse_on_stream(entry.first);
+    }
+}
+
+TrackerSampleSource ReplayDeviceIOFactory::open_source() const
+{
+    if (stream_ != nullptr)
+    {
+        return TrackerSampleSource(*stream_);
+    }
+    return TrackerSampleSource(open_reader(filename_), recorded_schemas_);
+}
+
+void ReplayDeviceIOFactory::map_names(const std::vector<std::pair<const ITracker*, std::string>>& tracker_names)
 {
     for (const auto& [tracker, name] : tracker_names)
     {
@@ -169,22 +214,22 @@ std::string_view ReplayDeviceIOFactory::get_name(const ITracker* tracker) const
 
 std::unique_ptr<IHeadTrackerImpl> ReplayDeviceIOFactory::create_head_tracker_impl(const HeadTracker* tracker)
 {
-    return std::make_unique<ReplayHeadTrackerImpl>(open_reader(filename_), get_name(tracker), recorded_schemas_);
+    return std::make_unique<ReplayHeadTrackerImpl>(open_source(), get_name(tracker));
 }
 
 std::unique_ptr<IHandTrackerImpl> ReplayDeviceIOFactory::create_hand_tracker_impl(const HandTracker* tracker)
 {
-    return std::make_unique<ReplayHandTrackerImpl>(open_reader(filename_), get_name(tracker), recorded_schemas_);
+    return std::make_unique<ReplayHandTrackerImpl>(open_source(), get_name(tracker));
 }
 
 std::unique_ptr<IControllerTrackerImpl> ReplayDeviceIOFactory::create_controller_tracker_impl(const ControllerTracker* tracker)
 {
-    return std::make_unique<ReplayControllerTrackerImpl>(open_reader(filename_), get_name(tracker), recorded_schemas_);
+    return std::make_unique<ReplayControllerTrackerImpl>(open_source(), get_name(tracker));
 }
 
 std::unique_ptr<IFullBodyTrackerImpl> ReplayDeviceIOFactory::create_full_body_tracker_impl(const FullBodyTracker* tracker)
 {
-    return std::make_unique<ReplayFullBodyTrackerImpl>(open_reader(filename_), get_name(tracker), recorded_schemas_);
+    return std::make_unique<ReplayFullBodyTrackerImpl>(open_source(), get_name(tracker));
 }
 
 std::unique_ptr<ITensorPushTrackerImpl> ReplayDeviceIOFactory::create_tensor_push_tracker_impl(
@@ -196,8 +241,7 @@ std::unique_ptr<ITensorPushTrackerImpl> ReplayDeviceIOFactory::create_tensor_pus
 std::unique_ptr<IMessageChannelTrackerImpl> ReplayDeviceIOFactory::create_message_channel_tracker_impl(
     const MessageChannelTracker* tracker)
 {
-    return std::make_unique<ReplayMessageChannelTrackerImpl>(
-        open_reader(filename_), get_name(tracker), recorded_schemas_);
+    return std::make_unique<ReplayMessageChannelTrackerImpl>(open_source(), get_name(tracker));
 }
 
 std::unique_ptr<IHapticCommandReaderTrackerImpl> ReplayDeviceIOFactory::create_haptic_command_reader_tracker_impl(
@@ -208,8 +252,7 @@ std::unique_ptr<IHapticCommandReaderTrackerImpl> ReplayDeviceIOFactory::create_h
 
 std::unique_ptr<IKeyboardTrackerImpl> ReplayDeviceIOFactory::create_keyboard_tracker_impl(const KeyboardTracker* tracker)
 {
-    return std::make_unique<ReplayKeyboardTrackerImpl>(
-        open_reader(filename_), get_name(tracker), recorded_schemas_, tracker->input_state());
+    return std::make_unique<ReplayKeyboardTrackerImpl>(open_source(), get_name(tracker), tracker->input_state());
 }
 
 #include "generated_replay_factory_methods.inc"

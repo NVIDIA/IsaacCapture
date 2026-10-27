@@ -17,14 +17,12 @@
 namespace core
 {
 #if @HAS_METADATA@
-Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapReader> reader,
-                                                    std::string_view base_name,
-                                                    const RecordedSchemas& recorded)
+Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(TrackerSampleSource source, std::string_view base_name)
 {
     // Live records only the metadata it adopts, so the first message is the only one.
     McapTrackerViewers<@METADATA@> viewers(
-        std::move(reader), base_name,
-        std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()), recorded);
+        std::move(source), base_name,
+        std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()));
     auto metadata = viewers.read(0);
     // MCAP verifies structure; apply the same schema semantics as live ingestion.
     if (metadata)
@@ -33,20 +31,16 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(std::unique_ptr<mcap::McapRe
     }
     return metadata;
 }
-@REPLAY_IMPL@::@REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
+@REPLAY_IMPL@::@REPLAY_IMPL@(TrackerSampleSource source,
                              std::string_view base_name,
-                             const RecordedSchemas& recorded,
                              Serialized<@METADATA@> metadata)
 #else
-@REPLAY_IMPL@::@REPLAY_IMPL@(std::unique_ptr<mcap::McapReader> reader,
-                             std::string_view base_name,
-                             const RecordedSchemas& recorded)
+@REPLAY_IMPL@::@REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name)
 #endif
     : mcap_viewers_(std::make_unique<@MCAP_VIEWERS_TYPE@>(
-          std::move(reader),
+          std::move(source),
           base_name,
-          std::vector<std::string>(@TRAITS@::replay_channels.begin(), @TRAITS@::replay_channels.end()),
-          recorded)),
+          std::vector<std::string>(@TRAITS@::replay_channels.begin(), @TRAITS@::replay_channels.end()))),
       logger_(isaaccapture::Logger::get("isaaccapture.core.@REPLAY_IMPL@")),
       no_data_message_("no data (EOF or gap), base_name=" + std::string(base_name))
 #if @HAS_METADATA@
