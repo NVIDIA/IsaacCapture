@@ -22,7 +22,8 @@ provides it.
 ## Build
 
 The SDK is fetched from `https://github.com/pnmocap/MocapApi`; it is not checked
-into this repository.
+into this repository. Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+first.
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON

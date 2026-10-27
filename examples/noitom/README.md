@@ -20,8 +20,9 @@ set its `--host` and `--port` arguments to the Hybrid Data Server TCP endpoint.
 
 ## Build
 
-The Noitom SDK is not vendored in this repository. Build the optional plugin
-when you need Noitom support:
+The Noitom SDK is not vendored in this repository. Complete the
+[source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html), then build the
+optional plugin when you need Noitom support:
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON

@@ -442,9 +442,12 @@ EOF
 isaaccapture can be built from this checkout instead:
   $REPO_ROOT
 
-That is a full C++ / CUDA / Vulkan build and takes a while. Install the
-source-build prerequisites first:
+That is a full C++ / CUDA / Vulkan build and takes a while. First install
+the source-build prerequisites from the Prerequisites and One time setup
+sections of:
   $REPO_ROOT/docs/source/development/build_from_source/index.rst
+camera_viz needs Televiz (isaaccapture.viz), which is built only when the
+Vulkan headers (libvulkan-dev) and the CUDA toolkit are found.
 EOF
 
     if ! $BUILD_FROM_SOURCE; then

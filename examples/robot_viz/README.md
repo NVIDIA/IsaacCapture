@@ -40,7 +40,7 @@ Two calibrations, different in kind. `src/viz/robot_twin/cpp/frames.hpp` is a co
 
 ## Build
 
-Nothing here is compiled; what has to be built is `isaaccapture` itself.
+Nothing here is compiled; what has to be built is `isaaccapture` itself. Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html) first, including the Televiz ones that `BUILD_VIZ=ON` needs.
 
 ```bash
 cmake -B build -DBUILD_VIZ=ON

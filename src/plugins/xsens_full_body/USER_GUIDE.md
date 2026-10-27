@@ -50,7 +50,8 @@ You do **not** need an XR headset.
 
 ## 3. Get the plugin binary
 
-If you built Isaac Teleop from source, the binary is already there:
+If you built Isaac Teleop from source (see the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)),
+the binary is already there:
 
 ```bash
 cmake -B build
