@@ -750,6 +750,7 @@ def setup(app):
         app.add_node(
             node_class,
             html=(_visit_eco_block, _depart_eco_block),
+            markdown=(_passthrough, _passthrough),
             latex=(_passthrough, _passthrough),
             text=(_passthrough, _passthrough),
             man=(_passthrough, _passthrough),
