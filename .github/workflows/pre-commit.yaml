@@ -37,8 +37,8 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: "3.12"
-    - name: Test preview selection
-      run: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py -v
+    - name: Test CI helper scripts
+      run: python3 -m unittest discover -s tests/python/ci -p 'test_*.py' -v
 
   synthetic-xr-example-tests:
     name: Test Synthetic XR task contracts
