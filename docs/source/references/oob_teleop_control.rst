@@ -639,9 +639,9 @@ Environment variables
        proximity sensor) when the service reports that it is asleep.
    * - ``TELEOP_OOB_RECORDING``
      - Recording to select in the client before CONNECT: a host path, pushed to
-       the headset, or ``latest``, the newest in its Download folder. Only
-       files named like the client's Save, ``isaacteleop-input-recording*.json``,
-       are accepted.
+       the headset, or ``latest``, the newest
+       ``isaacteleop-input-recording*.json`` (the client's Save name) in its
+       Download folder.
        Starting the replay is left to the operator. Unset by default.
    * - ``TELEOP_HEADSET_BROWSER_PACKAGE``
      - Headset browser package. Unset, the vendor's browser is used. On PICO,

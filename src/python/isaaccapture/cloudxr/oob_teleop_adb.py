@@ -1551,12 +1551,8 @@ async def _cdp_send_reset_panel_key(ws_url: str) -> None:
 _HEADSET_RECORDING_DIR = "/sdcard/Download"
 LATEST_RECORDING = "latest"
 # The client's Save names files isaacteleop-input-recording.json; the browser
-# adds " (N)" to repeats.
+# adds " (N)" to repeats. ``latest`` only looks at these.
 _RECORDING_PREFIX = "isaacteleop-input-recording"
-
-
-def _is_recording_name(name: str) -> bool:
-    return name.startswith(_RECORDING_PREFIX) and name.endswith(".json")
 
 
 def _newest_recording_on_headset() -> str:
@@ -1597,11 +1593,6 @@ def _push_recording_to_headset(host_path: str) -> str:
     src = Path(host_path)
     if not src.is_file():
         raise OobAdbError(f"recording not found: {src}")
-    if not _is_recording_name(src.name):
-        raise OobAdbError(
-            f"{src.name} is not a client recording; expected "
-            f"{_RECORDING_PREFIX}*.json, as saved by the client"
-        )
     device_path = f"{_HEADSET_RECORDING_DIR}/{src.name}"
     try:
         _adb_run(
