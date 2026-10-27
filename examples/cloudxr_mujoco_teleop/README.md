@@ -53,7 +53,7 @@ python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_poses_mujoco_exa
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--assets-dir DIR` | `./vive_assets` | Where to find the device meshes / textures. |
+| `--assets-dir DIR` | `vive_assets/` beside the module | Where to find the device meshes / textures. |
 | `--pose {grip,aim}` | `grip` | Which controller pose drives the mesh — natural "hold" pose or the aim ray. |
 | `--debug` | off | Print `mocap_pos` for all three devices once per second. |
 

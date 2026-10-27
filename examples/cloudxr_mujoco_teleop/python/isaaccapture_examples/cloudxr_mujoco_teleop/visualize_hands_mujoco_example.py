@@ -19,8 +19,8 @@ follows the same rule as ``visualize_poses_mujoco_example.py``.
 
 Usage
 -----
-    python visualize_hands_mujoco_example.py
-    python visualize_hands_mujoco_example.py --no-head --debug
+    python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_hands_mujoco_example
+    python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_hands_mujoco_example --no-head --debug
 """
 
 import argparse
