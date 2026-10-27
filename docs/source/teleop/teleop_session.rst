@@ -1,4 +1,4 @@
-.. SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+.. SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 .. SPDX-License-Identifier: Apache-2.0
 
 Teleop Session
@@ -94,13 +94,17 @@ The main configuration object:
    class TeleopSessionConfig:
        app_name: str                            # OpenXR application name
        pipeline: Any                            # Connected retargeting pipeline
-       mode: SessionMode = SessionMode.LIVE     # LIVE or REPLAY
+       mode: SessionMode = SessionMode.LIVE     # LIVE, REPLAY or REMOTE
        trackers: List[Any] = []                 # Tracker instances (optional)
        plugins: List[PluginConfig] = []         # Plugin configurations (optional)
        verbose: bool = True                     # Print progress info
        oxr_handles: Optional[...] = None        # External OpenXR handles (optional)
        mcap_config: Optional[...] = None        # Required for REPLAY, optional for LIVE
        retargeting_execution: RetargetingExecutionConfig = ...
+       remote_endpoint: Optional[str] = None    # Teleop Session Server (REMOTE only)
+       remote_tick_rate_hz: float = 90.0        # Server ticks (tracker reads) per second
+       remote_max_tick_age_s: float = 0.25      # Older samples count as missing
+       remote_connect_timeout_s: Optional[float] = 60.0  # Wait for READY; None: no limit
 
 When ``mode`` is ``SessionMode.REPLAY``, ``TeleopSession`` skips OpenXR
 session creation and reads tracking data from the MCAP file specified in
@@ -128,6 +132,200 @@ argument is a ``uint64`` handle value.
        pipeline=pipeline,
        oxr_handles=handles,  # Skip internal OpenXR session creation
    )
+
+.. _remote-sessions:
+
+Remote sessions
+"""""""""""""""
+
+``SessionMode.REMOTE`` runs the robot app on a different machine from the
+headset and CloudXR. A Teleop Session Server on the CloudXR machine reads the
+trackers the robot app asks for and streams their data to it; ``step()``, the
+retargeting pipeline and the robot commands stay on the robot machine. Run the
+same Isaac Capture version on both machines: the robot app logs the server's
+version when it connects and warns when it differs from its own.
+
+Start the server on the CloudXR machine. It starts CloudXR if none is running
+and listens on TCP port 47600 by default:
+
+.. code-block:: bash
+
+   python -m isaaccapture.teleop_session_server
+
+Then point the robot app at it:
+
+.. code-block:: python
+
+   config = TeleopSessionConfig(
+       app_name="MyRobotApp",
+       pipeline=pipeline,
+       plugins=[...],                       # started by the server
+       mode=SessionMode.REMOTE,
+       remote_endpoint="cloud-host:47600",  # or tcp://host:port, ws://host:port[/path]
+   )
+   with TeleopSession(config) as session:
+       while True:
+           result = session.step()
+
+- **Requirements.** The robot machine needs no CloudXR and no OpenXR runtime,
+  so do not wrap a remote session in ``CloudXRLauncher.launch_context`` as the
+  live examples do. Both machines run Linux: remote sessions use POSIX sockets,
+  the server starts only on Linux, and on Windows entering the session raises
+  ``RuntimeError("Remote sessions require POSIX sockets; not supported on
+  Windows")``.
+- **Endpoint.** ``host:port`` and ``tcp://host:port`` connect to the server's
+  TCP port (``--listen``, 47600 by default); ``ws://host:port[/path]`` connects
+  to its WebSocket port (``--ws-listen``, usually 47601). With the wrong scheme
+  for the port, entering the session fails at once: ``ws://`` on the TCP port
+  with ``TimeoutError`` (``server did not answer (WebSocket upgrade to ...
+  refused: HTTP/1.1 400 Bad Request)``), ``tcp://`` on the WebSocket port with
+  ``RuntimeError("Remote session ended before HELLO_ACK: ...")``.
+- **Startup.** Entering the session connects, sends the trackers and plugin
+  requests, and returns once the server reports READY: plugins started and
+  headset connected. All of it happens within ``remote_connect_timeout_s``
+  (60 s; ``None`` waits without limit):
+
+  - It retries while nothing accepts the connection, for example because the
+    server is not up yet, and while the server closes or resets the connection
+    before sending any message, for example because the server crashed or was
+    killed before it started a session for this robot app. It logs ``Waiting
+    for the Teleop Session Server at <endpoint> (<reason>)`` once and tries
+    again about every 0.5 s. One TCP connect attempt takes at most 2 s; looking
+    up the host name before it is not bounded.
+  - Once connected, it waits for the server's answer. While the server is
+    still ending the previous robot app's session, that lasts until the
+    session's plugins have stopped, up to their ``shutdown_timeout_seconds``
+    (``plugin.yaml``) added up; set ``remote_connect_timeout_s`` above that
+    when a plugin needs long to stop.
+  - When the time is up, it raises ``TimeoutError`` naming the stage it was
+    stuck at: ``server did not answer`` (followed by the last error if the last
+    attempt did not connect or was closed), ``connecting_openxr``,
+    ``starting_plugins`` or ``waiting_for_headset``.
+  - With ``remote_connect_timeout_s=None`` the wait has no limit. If the server
+    machine disappears after accepting the connection but before answering,
+    nothing tells the robot app until TCP gives up on the connection, which
+    takes many minutes (over ``ws://`` it may never happen); Ctrl-C ends the
+    wait.
+  - It does not retry a host name that cannot be resolved (``RuntimeError``),
+    a WebSocket upgrade the server refuses or answers with something other than
+    HTTP (``TimeoutError``, ``server did not answer``), a server that sends part
+    of a message and then closes or resets the connection (``RuntimeError``),
+    or an error the server reports. The server's error is raised as
+    ``RuntimeError`` with its text, for example ``busy: another robot app is
+    connected to this Teleop Session Server``, ``The Teleop Session Server is
+    shutting down`` or a required plugin it cannot find. A server stopped with
+    Ctrl-C or ``SIGTERM``, for example for a restart, sends ``shutting down``
+    to every robot app connected to it; a server that is killed, even with
+    ``SIGKILL``, still sends it to a robot app it has started a session for. To
+    wait out a busy or a restarting server, the robot app catches these errors
+    and retries entering the session itself.
+  - When the link is lost while it waits for READY, it raises
+    ``RuntimeError("Remote session lost: ...")``, as ``step()`` does.
+  - Ctrl-C raises ``KeyboardInterrupt`` within about 0.1 s, or at the end of the
+    TCP connect attempt in progress (at most 2 s, plus any host name lookup), and
+    closes the connection.
+
+- **Ticks.** The server ticks ``remote_tick_rate_hz`` times per second (90 by
+  default; it clamps to 1-240): each tick reads every tracker once and sends
+  the samples to the robot app. ``step()`` never waits for the network: it
+  uses the newest samples and reports their tick age, the time since the
+  server read them, in ``session.last_step_info.remote_tick_age_s``. Samples
+  whose tick age exceeds ``remote_max_tick_age_s`` (0.25 s) count as missing,
+  so trackers report no data. A ``DefaultTeleopStateManager`` in
+  ``teleop_control_pipeline`` whose buttons come from those trackers then
+  switches to ``STOPPED`` (see :doc:`control_state_machine`). Without a
+  ``teleop_control_pipeline`` the execution state stays ``RUNNING`` and the
+  pipeline runs without tracker data, so the robot app decides what to do;
+  ``remote_tick_age_s`` is ``None`` for such a step.
+- **Lost link.** When nothing arrives for 3 s, ``step()`` raises
+  ``RuntimeError("Remote session lost: ...")``; the session does not reconnect.
+- **Plugins.** The server starts the enabled ``plugins`` by name from its own
+  plugin directories. ``PluginConfig.search_paths`` must still be given but is
+  ignored, and ``plugin_args``, paths included, are read on the server machine.
+  A plugin that stops running on the server makes ``step()`` raise
+  ``PluginCrashException``, as a local plugin crash does.
+- **Status.** ``get_status()`` shows the server's OpenXR session as the
+  ``openxr/runtime`` provider and the headset as ``openxr/headset``, as in live
+  mode; for example, the headset turns ``DISCONNECTED`` when the operator takes
+  it off. With a controller input source, ``openxr/controller/left`` and
+  ``openxr/controller/right`` follow the controller data, as in live mode.
+  Each plugin the server started appears as ``plugin/<plugin_root_id>``
+  with its process health only: its ``pid`` is a process id on the server
+  machine, and device status from plugins (for example Manus gloves) is not
+  forwarded yet.
+- **Not available:** keyboard and message-channel sources, ``TactileSource``,
+  MCAP recording (``mcap_config``), ``oxr_handles``, ``oxr_session_factory``,
+  ``joint_publisher`` and ``session.oxr_session``. ``sinks`` run every step but
+  are not flushed, so their data, for example haptics, is dropped; entering the
+  session logs a warning. Trackers are limited to head, hands, controllers,
+  full body and the plugin data trackers that read a ``collection_id`` and
+  have no metadata. Tracker metadata is not forwarded yet, so creating the
+  ``TeleopSession`` with a tracker that has metadata, such as
+  ``TactileTracker``, raises ``ValueError``.
+- **Security.** The link has no authentication and no encryption. Any peer that
+  reaches the server's port can make it start its installed plugins with any
+  arguments and receive tracker data. Run the server on a trusted network or a
+  VPN, and open TCP 47600 (and 47601 for WebSocket) only toward the robot
+  machine.
+
+Teleop Session Server
+"""""""""""""""""""""
+
+The server runs on the CloudXR machine (Linux only) and serves one robot app at
+a time:
+
+.. code-block:: bash
+
+   python -m isaaccapture.teleop_session_server \
+       --listen tcp://0.0.0.0:47600 --ws-listen ws://0.0.0.0:47601 \
+       --plugin-dir /opt/my_plugins
+
+- ``--listen``: TCP address for robot apps (default ``tcp://0.0.0.0:47600``).
+- ``--ws-listen``: also accept WebSocket connections, usually on port 47601
+  (off by default). Robot apps cannot connect with ``wss://`` yet. To encrypt
+  the link, run a tunnel between the two machines (VPN, SSH port forwarding or
+  stunnel) and point ``remote_endpoint`` at the robot machine's end of it.
+- ``--plugin-dir``: a directory of plugins that robot apps may start by name.
+  The server searches the plugins bundled with Isaac Capture, then
+  ``ISAAC_TELEOP_PLUGIN_PATH``, then each ``--plugin-dir``; if a plugin name is
+  found in more than one, the last directory wins. Repeatable.
+- The CloudXR options of the examples: ``--accept-eula``,
+  ``--cloudxr-install-dir``, ``--cloudxr-env-config``,
+  ``--cloudxr-device-profile``, ``--host-client`` / ``--no-host-client``, and
+  ``--no-launch-cloudxr-runtime`` to use an OpenXR runtime that is already
+  configured instead of attaching to or starting CloudXR.
+- ``--verbose``: debug logging.
+
+It prints ``Teleop Session Server listening on <address>`` for each address
+once it accepts connections. Each robot app gets a session process that opens
+the OpenXR session, reads the requested trackers and starts the requested
+plugins; it ends, stopping those plugins, when the robot app disconnects.
+
+- **One robot app at a time.** While a robot app is connected, the server
+  refuses any other with ``busy: another robot app is connected to this Teleop
+  Session Server``. A robot app that reconnects right after it left is served
+  once its previous session has ended, which takes as long as that session's
+  plugins need to stop. A robot app whose connection dropped without closing,
+  for example when its machine lost the network, counts as connected until the
+  server notices, which takes about 3 s; until then, a new connection gets the
+  ``busy`` error.
+- **Stopping.** Ctrl-C or ``SIGTERM`` stops the server and the session, which
+  stops its plugins as ``TeleopSession`` does, and exits with code 0. The signal
+  takes effect within about 0.2 s, or up to about 3 s while the server is
+  refusing a connection that sends nothing. The robot app's ``step()`` then
+  raises ``RuntimeError("The Teleop Session Server is shutting down")``, and so
+  does entering the session for any other robot app connected to the server;
+  neither is retried. From then on the server refuses connections, so a robot
+  app that connects later keeps trying, within its
+  ``remote_connect_timeout_s``, until a restarted server serves it. The server
+  kills the session's processes only after its plugins had their
+  ``shutdown_timeout_seconds`` (``plugin.yaml``, 2 s by default) to stop, one
+  after another; a second Ctrl-C or ``SIGTERM`` kills them at once. When the
+  server is killed instead, for example with ``SIGKILL``, robot apps waiting for
+  a session see their connection close and keep trying, but the session process
+  still stops its plugins and sends ``shutting down`` to its robot app. The
+  server exits with code 1 when the CloudXR runtime it started or attached to
+  stops.
 
 Tracker vendor selection
 """"""""""""""""""""""""
@@ -198,6 +396,10 @@ application frame. Consumers that want totals should accumulate it.
   accumulate this field for a run-wide total.
 - ``frame_deadline_miss``: returned output is more than one submitted frame old.
 - ``worker_exception``: worker failure surfaced on this step, when present.
+- ``remote_tick_age_s``: in ``SessionMode.REMOTE``, the tick age in seconds of
+  the server samples the returned output was computed from, taken when that
+  step updated the session; ``None`` when no fresh samples had arrived, and
+  outside remote mode.
 
 Because pipelined mode reuses completed frames, caller-provided external inputs
 and returned outputs must be snapshot-copyable. ``TensorGroup.create_snapshot()``
@@ -425,7 +627,7 @@ Properties
 - ``start_time: float`` -- Session start time
 - ``config: TeleopSessionConfig`` -- The configuration object
 - ``oxr_session: Optional[OpenXRSession]`` -- The internal OpenXR session, or
-  ``None`` when using external handles (read-only)
+  ``None`` when using external handles or outside ``LIVE`` mode (read-only)
 - ``last_context: Optional[ComputeContext]`` -- Context corresponding to the
   most recent returned output
 - ``last_step_info: RetargetingStepInfo`` -- Age and timing metadata for
