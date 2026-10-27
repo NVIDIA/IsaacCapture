@@ -34,6 +34,9 @@ subsequent builds are fast.
 Prerequisites
 ~~~~~~~~~~~~~
 
+Complete the :ref:`source-build prerequisites <one-time-setup>` first, then install
+the OAK-specific dependencies:
+
 .. code-block:: bash
 
    # Install build tools for vcpkg to build libusb (Linux)

@@ -442,9 +442,9 @@ EOF
 isaaccapture can be built from this checkout instead:
   $REPO_ROOT
 
-That is a full C++ / CUDA / Vulkan build and takes a while. It needs CMake,
-the CUDA toolkit, Vulkan headers, glslangValidator, and clang-format-14 (the
-format gate runs as part of the build).
+That is a full C++ / CUDA / Vulkan build and takes a while. Install the
+source-build prerequisites first:
+  $REPO_ROOT/docs/source/development/build_from_source/index.rst
 EOF
 
     if ! $BUILD_FROM_SOURCE; then
