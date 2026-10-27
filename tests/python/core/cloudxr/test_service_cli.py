@@ -51,6 +51,11 @@ class TestRunFlags:
         default = os.path.expanduser("~/.cloudxr")
         assert cli._run_flags(_run_args(cloudxr_install_dir=default)) == []
 
+    def test_defer_oob_connect_round_trips(self):
+        """A detached `run` must hold headset setup back just like a foreground one."""
+        args = _run_args(setup_oob=True, defer_oob_connect=True)
+        assert cli._run_flags(args) == ["--setup-oob", "--defer-oob-connect"]
+
     def test_accept_eula_is_never_baked_into_the_unit(self):
         """Acceptance is a marker file written at install time, not a unit flag."""
         assert "--accept-eula" not in cli._run_flags(_run_args(accept_eula=True))
@@ -112,6 +117,30 @@ def test_foreground_fatal_with_stalled_writer_returns_error(tmp_path, capsys):
     assert "OOB stopped:" not in output.out
     assert output.err == ""
     service.stop.assert_called_once()
+
+
+def test_defer_oob_connect_requires_setup_oob(capsys):
+    with pytest.raises(SystemExit):
+        cli._cmd_run(_run_args(defer_oob_connect=True))
+    assert "--defer-oob-connect requires --setup-oob" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("defer", [False, True])
+def test_defer_oob_connect_reaches_the_service(tmp_path, defer):
+    """The flag maps onto the service's existing defer_oob_connect gate, default off."""
+    argv = ["run", "--setup-oob", "--cloudxr-install-dir", str(tmp_path)]
+    if defer:
+        argv.append("--defer-oob-connect")
+    args = cli._build_parser().parse_args(argv)
+    with (
+        patch.object(cli, "_oob_preflight", return_value=None),
+        patch.object(
+            cli, "CloudXRService", side_effect=RuntimeError("stop here")
+        ) as service,
+    ):
+        with pytest.raises(SystemExit):
+            cli._cmd_run(args)
+    assert service.call_args.kwargs["defer_oob_connect"] is defer
 
 
 class TestStartEula:

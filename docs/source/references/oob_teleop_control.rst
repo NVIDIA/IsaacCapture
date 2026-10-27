@@ -38,6 +38,17 @@ This will:
 4. Accept the self-signed certificate and click CONNECT automatically
    via Chrome DevTools Protocol (CDP)
 
+When the OpenXR application starts after the service, add
+``--defer-oob-connect``: steps 2-4 wait for ``GET /api/oob/v1/connect``, so
+the headset connects once there is a stream instead of retrying until one
+appears.
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service run --accept-eula --setup-oob --defer-oob-connect
+   # once the application has its OpenXR session:
+   curl -k -H "X-Control-Token: $CONTROL_TOKEN" https://localhost:48322/api/oob/v1/connect
+
 Ordinary headset absence, an ``offline`` or ``unauthorized`` transport, and
 browser recovery failures leave the host running with a degraded OOB status.
 The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
@@ -497,6 +508,14 @@ Example response:
 Supported query keys: ``serverIP``, ``port``, ``panelHiddenAtStart``, ``codec``.
 Optional ``targetClientId`` restricts the push to a single headset (returns 404
 if not connected).
+
+``GET /api/oob/v1/connect``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Releases headset setup on a service started with ``--defer-oob-connect``.
+Returns ``{"connectRequested": true, "alreadyRequested": false}``; repeating
+it is harmless (``"alreadyRequested": true``). A service that was not started
+deferred answers 409.
 
 Authentication
 --------------

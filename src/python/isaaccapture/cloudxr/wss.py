@@ -239,6 +239,7 @@ def _is_oob_hub_http_path(path: str) -> bool:
     return path in (
         "/api/oob/v1/state",
         "/api/oob/v1/config",
+        "/api/oob/v1/connect",
     )
 
 
@@ -305,8 +306,14 @@ def _json_response(status: int, phrase: str, body: dict) -> Response:
     )
 
 
-def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
-    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page)."""
+def _make_http_handler(
+    backend_host, backend_port, hub=None, static_dir=None, connect_requested=None
+):
+    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page).
+
+    *connect_requested* is the gate a service started with ``defer_oob_connect``
+    holds headset setup behind; ``/api/oob/v1/connect`` opens it.
+    """
 
     async def handle_http_request(connection, request):
         """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, or cert HTML."""
@@ -361,6 +368,28 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                     404: "Not Found",
                 }.get(status, "Error")
                 return _json_response(status, phrase, body)
+
+            if path == "/api/oob/v1/connect":
+                if not hub.check_token(token):
+                    return _json_response(
+                        401, "Unauthorized", {"error": "Unauthorized"}
+                    )
+                # No gate: headset setup already began with the service.
+                if connect_requested is None:
+                    return _json_response(
+                        409,
+                        "Conflict",
+                        {"error": "headset setup is not deferred on this service"},
+                    )
+                already = connect_requested.is_set()
+                if not already:
+                    log.info("OOB headset setup released by /api/oob/v1/connect")
+                connect_requested.set()
+                return _json_response(
+                    200,
+                    "OK",
+                    {"connectRequested": True, "alreadyRequested": already},
+                )
 
         if hub is None and _is_oob_hub_http_path(path):
             return Response(
@@ -719,7 +748,11 @@ async def run(
             )
 
         http_handler = _make_http_handler(
-            backend_host, backend_port, hub=hub, static_dir=_host_client_static_dir
+            backend_host,
+            backend_port,
+            hub=hub,
+            static_dir=_host_client_static_dir,
+            connect_requested=connect_requested,
         )
 
         async with ws_serve(

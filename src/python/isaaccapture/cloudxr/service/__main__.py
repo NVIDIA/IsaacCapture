@@ -80,6 +80,17 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
             "TELEOP_WEB_CLIENT_STATIC_DIR or ~/.cloudxr/static-client."
         ),
     )
+    parser.add_argument(
+        "--defer-oob-connect",
+        action="store_true",
+        default=False,
+        help=(
+            "Hold headset setup (opening the teleop page, clicking CONNECT, "
+            "relaying its signalling) until GET /api/oob/v1/connect, for an "
+            "OpenXR application that starts after the service. Requires "
+            "--setup-oob."
+        ),
+    )
 
 
 def _run_flags(args: argparse.Namespace) -> list[str]:
@@ -94,7 +105,7 @@ def _run_flags(args: argparse.Namespace) -> list[str]:
         flags += ["--cloudxr-install-dir", args.cloudxr_install_dir]
     if args.cloudxr_env_config:
         flags += ["--cloudxr-env-config", args.cloudxr_env_config]
-    for name in ("setup_oob", "usb_local", "host_client"):
+    for name in ("setup_oob", "usb_local", "host_client", "defer_oob_connect"):
         if getattr(args, name):
             flags.append("--" + name.replace("_", "-"))
     return flags
@@ -255,6 +266,11 @@ def _print_service_summary(
             print_oob_hub_startup_banner(
                 lan_host=oob_lan_host, web_client_base=hosted_client_url
             )
+        if args.defer_oob_connect:
+            _out(
+                "\033[33mHeadset setup is deferred: request /api/oob/v1/connect "
+                "(with the control token) once the application is running.\033[0m"
+            )
     elif hosted_client_url is not None:
         print_hosted_client_line(hosted_client_url)
     else:
@@ -272,6 +288,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     """Run the service in the foreground until interrupted."""
     if args.usb_local and not args.setup_oob:
         _fail("--usb-local requires --setup-oob.")
+    if args.defer_oob_connect and not args.setup_oob:
+        _fail("--defer-oob-connect requires --setup-oob.")
     if args.usb_local and os.getenv("TELEOP_OOB_HUB_ONLY"):
         _fail(
             "TELEOP_OOB_HUB_ONLY is not compatible with --usb-local "
@@ -289,6 +307,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             usb_local=args.usb_local,
             host_client=args.host_client,
             recovery_config=getattr(args, "_oob_recovery_config", None),
+            defer_oob_connect=args.defer_oob_connect,
         )
     except RuntimeError as exc:
         _fail(str(exc))
