@@ -142,10 +142,13 @@ inline constexpr std::array<std::array<float, 3>, kRigFingerCount - 1> kFingerFa
 inline constexpr std::array<float, 3> kThumbRestRpy = { 0.79435f, -0.90676f, -0.35566f };
 //! Thumb revolute axes in the OpenXR wrist frame, mapped from the v5 base frame. ``ThumbBase`` and
 //! ``Thumb1`` lie in the palm plane (the lift); ``Thumb2``..``Thumb4`` are the palm normal (flexion
-//! in the palm plane).
+//! in the palm plane). The flex axis sign is data-derived: with +Y the model thumb tip moved away
+//! from the index on both recordings, while -Y moved it with the vendor ``<side>_thumb_tip`` frame
+//! (the harness's recorded excursion reaches cosine 0.98-0.99 after the sign flip). The calibrated
+//! bend stays positive; only the model's sense of flexion is flipped.
 inline constexpr std::array<float, 3> kThumbBaseAxis = { 0.54f, 0.00f, -0.84f };
 inline constexpr std::array<float, 3> kThumbLiftAxis = { 0.84f, 0.00f, 0.54f };
-inline constexpr std::array<float, 3> kThumbFlexAxis = { 0.00f, 1.00f, 0.00f };
+inline constexpr std::array<float, 3> kThumbFlexAxis = { 0.00f, -1.00f, 0.00f };
 
 //! The mechanism's frame suffixes per finger, in chain order. ``mechanism`` names are
 //! ``link_<Side>Skeleton<...>``. The four entries are the revolute joints whose angles drive the
@@ -191,11 +194,43 @@ struct HandAngles
     bool valid = false;
 };
 
+/*!
+ * @brief Previous angle of every mechanism joint per hand, so a continuously turning revolute joint
+ * is not wrapped to (-pi, pi].
+ *
+ * ``signed_angle_about`` returns the shortest signed angle, which is right for one message but jumps
+ * by 2*pi when the joint crosses the boundary. The left ThumbBase motivated this: the v5 left mount
+ * lacks the pi roll the right's has, so its physical rest is a half turn from the URDF rest and the
+ * open reading sits near +pi; flexion then crosses the boundary and the raw series jumps a full turn
+ * even though the mount turned smoothly. The derived rest constant below moves the open reference to
+ * zero, and this keeps any remaining crossing continuous: the last value per hand and joint is kept
+ * and +-2*pi is added until the new reading is within pi of it; the first sample initialises. Call
+ * @c reset when a glove drops out, so the first frame after a gap re-initialises rather than
+ * unwrapping against a stale pose.
+ */
+struct JointAngleUnwrapper
+{
+    //! Unwraps @p value for one mechanism joint against its previous value for @p hand.
+    float unwrap(Hand hand, std::size_t finger, std::size_t slot, float value);
+    //! Same for ThumbBase, which is a revolute joint outside the four-slot finger table.
+    float unwrap_thumb_base(Hand hand, float value);
+    //! Forgets both hands' previous readings.
+    void reset();
+
+private:
+    std::array<std::array<std::array<float, 4>, kRigFingerCount>, 2> m_joint{};
+    std::array<std::array<std::array<bool, 4>, kRigFingerCount>, 2> m_joint_initialized{};
+    std::array<float, 2> m_thumb_base{};
+    std::array<bool, 2> m_thumb_base_initialized{};
+};
+
 //! Reads the mechanism's articulation out of one link message. Valid only when the root and every
 //! finger's four link frames are present: a hand missing any finger is invalid, because that finger
 //! would otherwise sit at its open zero and be injected as an open finger. False when the mechanism
-//! is absent, i.e. that glove is not streaming.
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand);
+//! is absent, i.e. that glove is not streaming. @p unwrapper, when given, carries the previous
+//! angles across messages so a joint that crosses +-pi stays continuous; the plugin keeps one per
+//! hand.
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper = nullptr);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
 //! OpenXR wrist frame (the wrist is the identity pose). Every joint is filled and carries a unit

@@ -57,8 +57,9 @@ struct RigJointSpec
 //! MCP, F3 -> PIP, F4 -> DIP). For the thumb those are Thumb1 (lift) and Thumb2..Thumb4 (CMC, MCP,
 //! IP); its mount, ThumbBase, has its own spec in @c kThumbBase.
 //!
-//! Derivation (performed by ``io_exo_glove_ros2_kinematics_tables.py`` on a 7251-message recording
-//! of both hands opening and closing):
+//! Derivation (performed by ``io_exo_glove_ros2_kinematics_tables.py``; the thumb block from the
+//! 2500-message thumb-only recording, the finger rows retained from the earlier 7251-message
+//! all-gesture derivation):
 //!
 //!  - The v5 URDF is
 //!    ``.../io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/blender_human_skeleton_v5.urdf``.
@@ -68,16 +69,32 @@ struct RigJointSpec
 //!    ``R_rel = conj(q_parent) * q_child`` and ``theta = signed_angle(conj(q_rest) * R_rel, axis)``
 //!    is the joint's absolute angle relative to the URDF zero pose. ``read_hand_angles`` computes it
 //!    that way; no frame position, frame ordering or first-frame capture is involved.
+//!  - Every joint angle is unwrapped across messages: the formula above returns the shortest signed
+//!    angle in (-pi, pi], which jumps by 2*pi when the joint crosses the boundary. The left
+//!    ThumbBase does exactly that (its rest has no pi roll, unlike the right's), so before the
+//!    unwrapper it reports 359.8 deg of travel instead of the mount's real 26.6 deg and the thumb
+//!    model moves opposite the vendor tip. ``JointAngleUnwrapper`` adds +-2*pi until the reading is
+//!    within pi of the previous sample; the first sample initialises.
 //!  - Openness is measured along the finger: from each knuckle (the first bend joint) to the
 //!    published fingertip. The recording's longest steady open plateau gives the zero, and its
 //!    longest steady closed plateau gives the sign and the fist reference, at each plateau's medoid
-//!    frame so a drifting pose cannot bias either.
+//!    frame so a drifting pose cannot bias either. The thumb has no finger length to read, so its
+//!    plateaus come from the vendor ``<side>_thumb_tip`` frame's displacement along (index MCP -
+//!    thumb CMC), which grows monotonically as the thumb curls; the script asserts that monotonicity
+//!    after unwrapping and fails if a joint is flipped or turns back.
 //!  - ``sign`` is +1 when the joint angle grows from the verified open pose towards the fist, -1
 //!    when it shrinks. For the four fingers' slot 0 it is instead derived from the mechanism itself:
 //!    the v5 first joint rotates about its local +Z, the finger extends +Y, and R_z(+theta) sends it
 //!    towards -X; that is away from the index on the left but towards it on the right, so the sign is
 //!    -1 on the left and +1 on the right for every finger. The script measures this again on the
 //!    recording against the vendor's ``<side>_<finger>_tip`` frames.
+//!  - The left ThumbBase rest rotation is a rig constant, not a per-session calibration. The v5
+//!    table gives the right mount (3.1416, 0, 2.1472) but the left only (0, 0, 0.99442): the left is
+//!    a half turn from the physical rest, so with the physical rest its open reading sits near +pi
+//!    and wraps. The script solves for the roll that makes the open plateau read zero and bakes it:
+//!    ``(-0.26114, 0, 0.99442)``, the URDF rest plus the pi roll and the open plateau's median
+//!    -14.96 deg offset (mod 2*pi). With it the left mount's zero is 0.05 deg and its travel is
+//!    26.6 deg; the right keeps its URDF rest.
 //!  - The gain calibration is ``d / d_fist * human_max``, where ``d = sign * (raw - zero)`` and
 //!    ``d_fist = sign * (fist - zero)``. The linkage angle is not a joint angle: a real fist reads
 //!    about 55 deg at the MCP, 25-29 at the PIP and 45 at the DIP, roughly half the human range, so
@@ -92,11 +109,11 @@ constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
     // left
     {
         {
-            // thumb
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, -0.28837f, -1.0f, -0.48302f, 0.43633f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.66229f, +1.0f, 0.82885f, 0.61087f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.93764f, -1.0f, -2.22162f, 0.95993f },
-            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 1.15219f, +1.0f, 1.56381f, 1.30900f },
+            // thumb (thumb-only recording: Thumb1 lift 8.1 deg, CMC 50.5, MCP 71.1, IP 158.6 deg travel)
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, -0.67447f, -1.0f, -0.81633f, 0.43633f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.88166f, -1.0f, -0.00030f, 0.61087f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.35199f, +1.0f, -1.11137f, 0.95993f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 1.81010f, -1.0f, -0.95807f, 1.30900f },
         },
         {
             // index
@@ -130,11 +147,11 @@ constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
     // right
     {
         {
-            // thumb
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, 0.37937f, -1.0f, 0.06392f, 0.43633f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.38808f, +1.0f, 0.83865f, 0.61087f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.21146f, -1.0f, -1.99781f, 0.95993f },
-            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.06686f, +1.0f, 1.19996f, 1.30900f },
+            // thumb (thumb-only recording: Thumb1 lift 14.6 deg, CMC 58.9, MCP 74.9, IP 146.9 deg travel)
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, 0.44692f, +1.0f, 0.70200f, 0.43633f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.99325f, -1.0f, -0.03413f, 0.61087f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.21701f, +1.0f, -0.91002f, 0.95993f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 1.63599f, -1.0f, -0.92806f, 1.30900f },
         },
         {
             // index
@@ -169,9 +186,15 @@ constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
 
 //! ThumbBase is the thumb's mount, not a flexion joint: the table records its fist reference for the
 //! same shape as @c kRigJoints, but its own symmetric clamp in @c kMaxThumbBase is kept.
+//!
+//! The left rest is the URDF's (0, 0, 0.99442) plus the thumb recording's open-plateau median roll of
+//! -0.26114 rad (-14.96 deg). The URDF left mount has no pi roll (the right's is 3.1416, 0, 2.1472),
+//! so without it the left open reading sits near +pi, wraps, and the script reports 359.8 deg of
+//! travel. With it the open zero is 0.00083 rad (0.05 deg) and the mount travels 26.6 deg. This is a
+//! rig constant, not a per-session calibration; the right keeps its URDF rest.
 constexpr RigJointSpec kThumbBase[2] = {
-    { { 0.00000f, 0.00000f, 0.99442f }, { 1.0f, 0.0f, 0.0f }, -0.38661f, -1.0f, -0.44406f, 1.57080f }, // left
-    { { 3.14160f, 0.00000f, 2.14720f }, { 1.0f, 0.0f, 0.0f }, 0.08701f, +1.0f, 0.25927f, 1.57080f }, // right
+    { { -0.26114f, 0.00000f, 0.99442f }, { 1.0f, 0.0f, 0.0f }, 0.00083f, +1.0f, 0.46478f, 1.57080f }, // left
+    { { 3.14160f, 0.00000f, 2.14720f }, { 1.0f, 0.0f, 0.0f }, 0.19332f, -1.0f, -0.08974f, 1.57080f }, // right
 };
 
 //! Spread is clamped symmetrically: the metacarpal abduction/adduction range, about +/-25 deg. The
@@ -299,6 +322,10 @@ float signed_angle_about(const XrQuaternionf& q, const std::array<float, 3>& axi
     return 2.0f * std::atan2(dot(v, XrVector3f{ axis[0], axis[1], axis[2] }), w);
 }
 
+//! Half a turn, and the tolerance used to keep a new reading within half a turn of the previous one.
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kTwoPi = 6.28318530717958647692f;
+
 //! Absolute mechanism angles read from one message, before calibration: [finger][F1..F4] radians
 //! relative to the URDF zero pose. Internal, but used by the local harness to check the formula
 //! against known synthetic angles.
@@ -407,16 +434,66 @@ XrHandJointLocationEXT make_joint(const XrPosef& pose)
 
 } // namespace
 
+float JointAngleUnwrapper::unwrap(Hand hand, std::size_t finger, std::size_t slot, float value)
+{
+    const std::size_t side = hand_index(hand);
+    if (!m_joint_initialized[side][finger][slot])
+    {
+        m_joint_initialized[side][finger][slot] = true;
+        m_joint[side][finger][slot] = value;
+        return value;
+    }
+    const float previous = m_joint[side][finger][slot];
+    while (value - previous > kPi)
+    {
+        value -= kTwoPi;
+    }
+    while (value - previous < -kPi)
+    {
+        value += kTwoPi;
+    }
+    m_joint[side][finger][slot] = value;
+    return value;
+}
+
+float JointAngleUnwrapper::unwrap_thumb_base(Hand hand, float value)
+{
+    const std::size_t side = hand_index(hand);
+    if (!m_thumb_base_initialized[side])
+    {
+        m_thumb_base_initialized[side] = true;
+        m_thumb_base[side] = value;
+        return value;
+    }
+    const float previous = m_thumb_base[side];
+    while (value - previous > kPi)
+    {
+        value -= kTwoPi;
+    }
+    while (value - previous < -kPi)
+    {
+        value += kTwoPi;
+    }
+    m_thumb_base[side] = value;
+    return value;
+}
+
+void JointAngleUnwrapper::reset()
+{
+    m_joint_initialized = {};
+    m_thumb_base_initialized = {};
+}
+
 const char* mechanism_root_frame(Hand hand)
 {
     return hand == Hand::Left ? "link_LeftSkeletonBase" : "link_RightSkeletonBase";
 }
 
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper)
 {
     HandAngles angles;
 
-    const RawHandAngles raw = read_raw_hand_angles(msg, hand);
+    RawHandAngles raw = read_raw_hand_angles(msg, hand);
     if (!raw.valid)
     {
         return angles;
@@ -431,6 +508,25 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         if (!raw.complete[finger])
         {
             return angles;
+        }
+    }
+
+    // Make every joint continuous before it is calibrated: the quaternion formula returns the
+    // shortest signed angle, so a joint crossing +-pi would otherwise jump a full turn and the sign,
+    // gain and zero below would all be read off a wrapped series. The unwrapper is advanced only for
+    // a complete hand, so a frame missing a finger never moves the reference.
+    if (unwrapper != nullptr)
+    {
+        for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+        {
+            for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
+            {
+                raw.joint[finger][slot] = unwrapper->unwrap(hand, finger, slot, raw.joint[finger][slot]);
+            }
+        }
+        if (raw.thumb_base_valid)
+        {
+            raw.thumb_base = unwrapper->unwrap_thumb_base(hand, raw.thumb_base);
         }
     }
 

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "io_exo_glove_ros2_hand.hpp"
+#include "io_exo_glove_ros2_kinematics.hpp"
 
 #include <deviceio_session/deviceio_session.hpp>
 #include <log_bridge/logger.hpp>
@@ -185,6 +186,9 @@ private:
 
     std::mutex m_hand_mutex;
     std::array<HandFrame, kSideCount> m_hand_frames;
+    //! Previous joint angles per hand, so a mount crossing +-pi is unwrapped before calibration. It
+    //! is reset when the glove drops out, so the first frame after a gap initialises again.
+    std::array<JointAngleUnwrapper, kSideCount> m_unwrappers;
     bool m_slots_logged = false;
 
     std::array<SmoothedWrist, kSideCount> m_smoothed_wrists;

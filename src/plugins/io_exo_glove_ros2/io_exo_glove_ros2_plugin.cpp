@@ -357,7 +357,7 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         {
             const std::size_t side = side_index(hand);
             HandFrame& frame = m_hand_frames[side];
-            frame.skeleton = build_hand_skeleton(msg, hand);
+            frame.skeleton = build_hand_skeleton(msg, hand, &m_unwrappers[side]);
             frame.stamp = now;
             frame.valid = frame.skeleton.tracked();
         }
@@ -446,6 +446,12 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side,
     const bool fresh = frame.valid && (std::chrono::steady_clock::now() - frame.stamp) < kHandStaleThreshold;
     if (!fresh)
     {
+        // The glove is absent: forget its previous angles, so the first frame after it returns
+        // initialises the unwrapper instead of unwrapping against a stale pose.
+        {
+            std::lock_guard<std::mutex> lock(m_hand_mutex);
+            m_unwrappers[side].reset();
+        }
         injector.reset();
         return;
     }
