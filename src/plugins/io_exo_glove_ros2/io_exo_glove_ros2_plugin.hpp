@@ -90,6 +90,12 @@ public:
         //! keeps the hand on the aim pose. Only used when the wrist comes from a controller.
         std::string left_aim_to_wrist = "0,0,0,0,0,0,1";
         std::string right_aim_to_wrist = "0,0,0,0,0,0,1";
+        //! Per-joint open-hand zero correction, per hand, as 21 whitespace- or comma-separated degrees
+        //! in @c kJointZeroOffsetCount order. Each value is added to that joint's baked table zero, so
+        //! the measured open pose becomes the zero; the sign, fist reference and human range stay the
+        //! baked ones. Empty (the default) keeps the baked table. --calibrate-zero prints these lines.
+        std::string left_joint_zero_offsets;
+        std::string right_joint_zero_offsets;
         //! Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is
         //! noisy -- and a glove in front of the headset makes it noisier -- while the glove's own
         //! articulation is not, so the anchor is smoothed to keep the injected hand still. 0 disables
@@ -120,6 +126,20 @@ public:
      *        palm, so the wrist target is rolled 180 degrees about the fingers (--aim-flip).
      */
     void calibrate_aim(float behind_m, float height_m, bool aim_flip);
+
+    /*!
+     * @brief One-shot `--calibrate-zero` session: averages the glove's raw linkage angles while both
+     * hands are held open and straight and prints the per-joint zero offsets for the config file.
+     *
+     * Needs only the same ``/io_fusion/tf_exoskeleton`` stream the plugin already consumes (no
+     * controller and no wrist-source requirement). Waits up to 3 s for the mechanism frames, then
+     * samples for 1 s per attempt. A window in which any joint moves 2 deg or more is rejected and
+     * retried, because the mean would not be an open pose. The printed values are the measured
+     * angles minus the baked table, in degrees, ready for ``left_joint_zero_offsets`` /
+     * ``right_joint_zero_offsets``. Throws std::runtime_error if the glove does not stream or no
+     * still window can be collected; the caller's handler logs it and exits non-zero.
+     */
+    void calibrate_zero();
 
 private:
     //! Hands the plugin bridges, and their index into the per-hand state arrays.
@@ -213,6 +233,9 @@ private:
     //! Previous joint angles per hand, so a mount crossing +-pi is unwrapped before calibration. It
     //! is reset when the glove drops out, so the first frame after a gap initialises again.
     std::array<JointAngleUnwrapper, kSideCount> m_unwrappers;
+    //! Parsed config zero offsets per hand; unset means the baked table. Parsed once at construction,
+    //! so a wrong count fails before the first frame rather than mid-take.
+    std::array<JointZeroOffsets, kSideCount> m_joint_zero_offsets;
     //! Per-hand bend-direction decisions, taken from the middle finger's two frame-free spans. The
     //! glove's sign is not reliable across sessions, so it is verified from data instead of assumed.
     std::array<BendDirectionChecker, kSideCount> m_bend_direction;

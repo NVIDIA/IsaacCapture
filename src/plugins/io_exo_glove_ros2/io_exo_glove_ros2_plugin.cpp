@@ -54,6 +54,17 @@ constexpr auto kAimTrackingTimeout = std::chrono::seconds(3);
 constexpr auto kAimRetryPause = std::chrono::milliseconds(500);
 constexpr int kAimMaxAttempts = 3;
 
+//! `--calibrate-zero` sampling: the same 200 Hz / 1 s / 3 attempts shape as the aim mode, but reading
+//! the glove's link stream through ROS instead of the controller trackers.
+constexpr auto kZeroSamplePeriod = std::chrono::milliseconds(5);
+constexpr auto kZeroWindowLength = std::chrono::milliseconds(1000);
+constexpr auto kZeroTrackingTimeout = std::chrono::seconds(3);
+constexpr auto kZeroRetryPause = std::chrono::milliseconds(500);
+constexpr int kZeroMaxAttempts = 3;
+//! Fewer frames than this in the 1 s window cannot show a held hand (nor its drift), so the window is
+//! rejected and retried rather than averaged from a stale or nearly silent stream.
+constexpr std::size_t kZeroMinSamples = 10;
+
 //! ROS 2 header stamp -> nanoseconds, or 0 if unset (sec == 0 && nanosec == 0).
 int64_t stamp_to_ns(const builtin_interfaces::msg::Time& stamp)
 {
@@ -126,6 +137,11 @@ const char* hand_name(std::size_t side)
     return side == 0 ? "left" : "right";
 }
 
+Hand hand_of(std::size_t side)
+{
+    return side == 0 ? Hand::Left : Hand::Right;
+}
+
 } // namespace
 
 bool IoExoGloveRos2Plugin::Throttler::ready()
@@ -145,6 +161,16 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
       m_logger(isaaccapture::Logger::get("isaaccapture.plugins.io_exo_glove_ros2."
                                          "IoExoGloveRos2Plugin"))
 {
+    // Validate the configured zero offsets before the session exists: a wrong count is a config
+    // error, and failing here keeps it out of the first frame's callback.
+    m_joint_zero_offsets[0] = parse_joint_zero_offsets(m_opts.left_joint_zero_offsets, "left_joint_zero_offsets");
+    m_joint_zero_offsets[1] = parse_joint_zero_offsets(m_opts.right_joint_zero_offsets, "right_joint_zero_offsets");
+    if (m_joint_zero_offsets[0].set || m_joint_zero_offsets[1].set)
+    {
+        m_logger->info("joint zero offsets: left '{}', right '{}'", m_opts.left_joint_zero_offsets.c_str(),
+                       m_opts.right_joint_zero_offsets.c_str());
+    }
+
     // The wrist source's trackers and extensions have to be known before the session exists, since
     // the session is what the injection and the queries run on.
     plugin_utils::WristSourceConfig wrist_config;
@@ -347,6 +373,176 @@ void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m, bool ai
         "flat and still");
 }
 
+void IoExoGloveRos2Plugin::calibrate_zero()
+{
+    // The link stream is the only input this mode needs. Stop the injection timer for this one-shot
+    // run: it would otherwise push a skeleton on every spin, and nothing here reads its state.
+    if (m_hand_timer != nullptr)
+    {
+        m_hand_timer->cancel();
+    }
+
+    // A dedicated subscription keeps the window independent of the run-time callback: each sample is
+    // the last link message, whether or not hand frames are being updated for injection. The message
+    // is copied out under the lock and parsed outside it.
+    std::mutex capture_mutex;
+    tf2_msgs::msg::TFMessage latest;
+    std::uint64_t sequence = 0;
+    bool has_message = false;
+    const auto capture =
+        create_subscription<tf2_msgs::msg::TFMessage>(m_opts.links_topic, rclcpp::SensorDataQoS(),
+                                                      [&](const tf2_msgs::msg::TFMessage::SharedPtr msg)
+                                                      {
+                                                          std::lock_guard<std::mutex> lock(capture_mutex);
+                                                          latest = *msg;
+                                                          ++sequence;
+                                                          has_message = true;
+                                                      });
+
+    const auto spin = [this] { rclcpp::spin_some(shared_from_this()); };
+    const auto read_latest = [&](JointAngleUnwrapper& unwrapper, Hand hand,
+                                 std::array<float, kJointZeroOffsetCount>& angles) -> bool
+    {
+        tf2_msgs::msg::TFMessage msg;
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex);
+            if (!has_message)
+            {
+                return false;
+            }
+            msg = latest;
+        }
+        return read_linkage_angles(msg, hand, &unwrapper, angles);
+    };
+
+    // Wait for the mechanism frames. Both hands have to stream: the printed config has one line per
+    // hand, and a missing glove would silently produce a plausible zero for a hand that was never
+    // read. The timeout is the same 3 s the aim mode gives its controllers.
+    std::array<JointAngleUnwrapper, kSideCount> unwrappers;
+    std::array<bool, kSideCount> seen{ false, false };
+    std::array<float, kJointZeroOffsetCount> reading{};
+    const std::chrono::steady_clock::time_point tracking_deadline =
+        std::chrono::steady_clock::now() + kZeroTrackingTimeout;
+    while (std::chrono::steady_clock::now() < tracking_deadline && !(seen[0] && seen[1]))
+    {
+        spin();
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            seen[side] = seen[side] || read_latest(unwrappers[side], hand_of(side), reading);
+        }
+        if (!(seen[0] && seen[1]))
+        {
+            std::this_thread::sleep_for(kZeroSamplePeriod);
+        }
+    }
+    if (!(seen[0] && seen[1]))
+    {
+        std::string missing;
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            if (!seen[side])
+            {
+                missing += missing.empty() ? hand_name(side) : std::string(" and ") + hand_name(side);
+            }
+        }
+        throw std::runtime_error("--calibrate-zero: no mechanism frames from the " + missing + " hand on '" +
+                                 m_opts.links_topic + "'; is the glove streaming?");
+    }
+
+    for (int attempt = 1; attempt <= kZeroMaxAttempts; ++attempt)
+    {
+        m_logger->info("zero calibration: hold both hands open and straight for {} ms (attempt {}/{})",
+                       kZeroWindowLength.count(), attempt, kZeroMaxAttempts);
+
+        std::array<LinkageSamples, kSideCount> windows;
+        // Only frames that arrive during this window count: a message left over from before the
+        // attempt must not become the only sample.
+        std::uint64_t last_sequence = 0;
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex);
+            last_sequence = sequence;
+        }
+        const std::chrono::steady_clock::time_point window_end = std::chrono::steady_clock::now() + kZeroWindowLength;
+        while (std::chrono::steady_clock::now() < window_end)
+        {
+            spin();
+            std::uint64_t current_sequence = 0;
+            {
+                std::lock_guard<std::mutex> lock(capture_mutex);
+                current_sequence = sequence;
+            }
+            // One sample per link message: spin_some() can leave several loop iterations without a
+            // new frame, and replaying the same angles would bias the mean towards it.
+            if (current_sequence != last_sequence)
+            {
+                last_sequence = current_sequence;
+                for (std::size_t side = 0; side < kSideCount; ++side)
+                {
+                    std::array<float, kJointZeroOffsetCount> sample{};
+                    if (read_latest(unwrappers[side], hand_of(side), sample))
+                    {
+                        windows[side].push_back(sample);
+                    }
+                }
+            }
+            std::this_thread::sleep_for(kZeroSamplePeriod);
+        }
+
+        bool still = true;
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            if (windows[side].empty())
+            {
+                m_logger->warn(
+                    "zero calibration: no mechanism frames from the {} hand during the window", hand_name(side));
+                still = false;
+                continue;
+            }
+            if (windows[side].size() < kZeroMinSamples)
+            {
+                m_logger->warn("zero calibration: only {} frames from the {} hand during the window; retrying",
+                               windows[side].size(), hand_name(side));
+                still = false;
+                continue;
+            }
+            if (!linkage_window_still(windows[side], kJointZeroMaxDriftRad))
+            {
+                const float drift = linkage_window_drift_rad(windows[side]) * (180.0f / 3.14159265358979323846f);
+                m_logger->warn("zero calibration: the {} hand moved {:.1f} deg during the window; hold still",
+                               hand_name(side), drift);
+                still = false;
+            }
+        }
+        if (!still)
+        {
+            if (attempt == kZeroMaxAttempts)
+            {
+                break;
+            }
+            m_logger->warn("zero calibration: window rejected, retrying -- hold both hands open and still");
+            std::this_thread::sleep_for(kZeroRetryPause);
+            continue;
+        }
+
+        std::array<JointZeroOffsets, kSideCount> offsets;
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            const std::array<float, kJointZeroOffsetCount> open = average_linkage_angles(windows[side]);
+            offsets[side] = joint_zero_offsets_from_open_pose(hand_of(side), open);
+        }
+
+        // The printed lines are the config value exactly; --print-config reports the same spelling.
+        std::cout << "left_joint_zero_offsets:  \"" << format_joint_zero_offsets_deg(offsets[0]) << "\"\n"
+                  << "right_joint_zero_offsets: \"" << format_joint_zero_offsets_deg(offsets[1]) << "\"\n"
+                  << "Paste both lines into config/io_exo_glove_ros2.yaml, then restart the plugin." << std::endl;
+        return;
+    }
+
+    throw std::runtime_error(
+        "--calibrate-zero: could not collect a still 1 s window; rerun and hold both hands open and "
+        "straight");
+}
+
 void IoExoGloveRos2Plugin::push_joint_state(const sensor_msgs::msg::JointState& msg)
 {
     // ROS 2 specifies that a JointState's arrays are either empty or equally sized. A mismatched
@@ -500,7 +696,8 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         {
             const std::size_t side = side_index(hand);
             HandFrame& frame = m_hand_frames[side];
-            const HandAngles nominal_angles = read_hand_angles(msg, hand, &m_unwrappers[side]);
+            const HandAngles nominal_angles =
+                read_hand_angles(msg, hand, &m_unwrappers[side], false, &m_joint_zero_offsets[side]);
             // The model series is always the nominal (unflipped) anatomy, so a decision never feeds
             // back into the series it is computed from; only the injected skeleton follows the flip.
             const HandSkeleton nominal = build_anatomical_skeleton(nominal_angles, hand);
@@ -510,7 +707,8 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
             frame.skeleton = nominal;
             if (m_bend_direction[side].flipped())
             {
-                const HandAngles flipped_angles = read_hand_angles(msg, hand, &m_unwrappers[side], true);
+                const HandAngles flipped_angles =
+                    read_hand_angles(msg, hand, &m_unwrappers[side], true, &m_joint_zero_offsets[side]);
                 frame.skeleton = build_anatomical_skeleton(flipped_angles, hand);
             }
             frame.stamp = now;

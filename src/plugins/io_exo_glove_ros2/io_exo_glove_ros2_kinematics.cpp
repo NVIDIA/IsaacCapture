@@ -7,7 +7,11 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace plugins
 {
@@ -20,6 +24,15 @@ namespace
 //! Revolute joints read per finger, in chain order: the knuckle spread F1 and the bends F2..F4.
 //! The thumb's are Thumb1..Thumb4 (ThumbBase is its fixed mount).
 constexpr std::size_t kRigSlotCount = 4;
+
+//! Index of ThumbBase in the kJointZeroOffsetCount order: after the five fingers' four slots.
+constexpr std::size_t kThumbBaseZeroIndex = kJointZeroOffsetCount - 1;
+
+//! One joint's config offset, or zero when no offsets were configured.
+float zero_offset_at(const JointZeroOffsets* offsets, std::size_t index)
+{
+    return offsets != nullptr && offsets->set ? offsets->radians[index] : 0.0f;
+}
 
 //! Which hand a table row belongs to.
 constexpr std::size_t hand_index(Hand hand)
@@ -423,6 +436,26 @@ RawHandAngles read_raw_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand han
     return raw;
 }
 
+//! Advances @p unwrapper over one complete raw reading, so every joint is continuous across messages.
+void unwrap_raw_angles(Hand hand, RawHandAngles& raw, JointAngleUnwrapper* unwrapper)
+{
+    if (unwrapper == nullptr)
+    {
+        return;
+    }
+    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+    {
+        for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
+        {
+            raw.joint[finger][slot] = unwrapper->unwrap(hand, finger, slot, raw.joint[finger][slot]);
+        }
+    }
+    if (raw.thumb_base_valid)
+    {
+        raw.thumb_base = unwrapper->unwrap_thumb_base(hand, raw.thumb_base);
+    }
+}
+
 XrHandJointLocationEXT make_joint(const XrPosef& pose)
 {
     XrHandJointLocationEXT joint{};
@@ -489,7 +522,11 @@ const char* mechanism_root_frame(Hand hand)
     return hand == Hand::Left ? "link_LeftSkeletonBase" : "link_RightSkeletonBase";
 }
 
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper, bool flip_bends)
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg,
+                            Hand hand,
+                            JointAngleUnwrapper* unwrapper,
+                            bool flip_bends,
+                            const JointZeroOffsets* zero_offsets)
 {
     HandAngles angles;
 
@@ -515,20 +552,7 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
     // shortest signed angle, so a joint crossing +-pi would otherwise jump a full turn and the sign,
     // gain and zero below would all be read off a wrapped series. The unwrapper is advanced only for
     // a complete hand, so a frame missing a finger never moves the reference.
-    if (unwrapper != nullptr)
-    {
-        for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
-        {
-            for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
-            {
-                raw.joint[finger][slot] = unwrapper->unwrap(hand, finger, slot, raw.joint[finger][slot]);
-            }
-        }
-        if (raw.thumb_base_valid)
-        {
-            raw.thumb_base = unwrapper->unwrap_thumb_base(hand, raw.thumb_base);
-        }
-    }
+    unwrap_raw_angles(hand, raw, unwrapper);
 
     const std::size_t side = hand_index(hand);
 
@@ -539,9 +563,11 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
 
         // Knuckle spread: for a finger, the angle of the spread joint (F1) made positive towards the
         // index; for the thumb, Thumb1's lift made positive out of the palm. The sign is derived from
-        // the mechanism (left -1, right +1 for the fingers) and measured on the recording.
+        // the mechanism (left -1, right +1 for the fingers) and measured on the recording. A
+        // configured zero offset shifts the open reading of this joint too.
         const RigJointSpec& knuckle = kRigJoints[side][finger][0];
-        out.spread = std::clamp(knuckle.sign * (raw.joint[finger][0] - knuckle.zero), -kMaxSpread, kMaxSpread);
+        const float knuckle_zero = knuckle.zero + zero_offset_at(zero_offsets, finger * kRigSlotCount);
+        out.spread = std::clamp(knuckle.sign * (raw.joint[finger][0] - knuckle_zero), -kMaxSpread, kMaxSpread);
 
         // MCP/PIP/DIP (the thumb's CMC/MCP/IP): the linkage angle is not the joint angle. Calibrate
         // it to the open hand, sign it so flexion is positive, then map its open-to-fist travel onto
@@ -551,11 +577,15 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
         for (std::size_t slot = 1; slot < kRigSlotCount; ++slot)
         {
             const RigJointSpec& spec = kRigJoints[side][finger][slot];
+            // A configured offset re-zeroes the joint (the measured open pose becomes zero); the
+            // sign, fist reference and human range stay the baked ones. The fist travel shrinks by
+            // the same amount because it is measured from the (new) zero.
+            const float zero = spec.zero + zero_offset_at(zero_offsets, finger * kRigSlotCount + slot);
             // The runtime bend-direction correction multiplies the signed raw delta by -1 *before*
             // the gain mapping and the clamp: negating the calibrated bend afterwards would instead
             // spend the open-side dead band and lose the fist's travel.
-            const float d = (flip_bends ? -1.0f : 1.0f) * spec.sign * (raw.joint[finger][slot] - spec.zero);
-            const float d_fist = spec.sign * (spec.fist - spec.zero);
+            const float d = (flip_bends ? -1.0f : 1.0f) * spec.sign * (raw.joint[finger][slot] - zero);
+            const float d_fist = spec.sign * (spec.fist - zero);
             const float flexion = (std::fabs(d_fist) >= kMinFistTravel) ? d / d_fist * spec.human_max : d;
             out.bend[slot - 1] = std::clamp(flexion, -kDeadBand, spec.human_max);
         }
@@ -565,14 +595,186 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
             // The thumb's mount is a fourth revolute joint; without it the thumb's carry angle does
             // not reach the anatomy. It is a lift, so it is clamped to the anatomical range.
             const RigJointSpec& base = kThumbBase[side];
+            const float base_zero = base.zero + zero_offset_at(zero_offsets, kThumbBaseZeroIndex);
             out.base = raw.thumb_base_valid ?
-                           std::clamp(base.sign * (raw.thumb_base - base.zero), -kMaxThumbBase, kMaxThumbBase) :
+                           std::clamp(base.sign * (raw.thumb_base - base_zero), -kMaxThumbBase, kMaxThumbBase) :
                            0.0f;
         }
     }
 
     angles.valid = true;
     return angles;
+}
+
+bool read_linkage_angles(const tf2_msgs::msg::TFMessage& msg,
+                         Hand hand,
+                         JointAngleUnwrapper* unwrapper,
+                         std::array<float, kJointZeroOffsetCount>& out)
+{
+    RawHandAngles raw = read_raw_hand_angles(msg, hand);
+    if (!raw.valid)
+    {
+        return false;
+    }
+    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+    {
+        if (!raw.complete[finger])
+        {
+            return false;
+        }
+    }
+    // A complete thumb implies its ThumbBase mount frame; refuse rather than report a zero mount.
+    if (!raw.thumb_base_valid)
+    {
+        return false;
+    }
+
+    // The same unwrapper contract read_hand_angles uses: continuity first, then calibration.
+    unwrap_raw_angles(hand, raw, unwrapper);
+
+    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+    {
+        for (std::size_t slot = 0; slot < kRigSlotCount; ++slot)
+        {
+            out[finger * kRigSlotCount + slot] = raw.joint[finger][slot];
+        }
+    }
+    out[kThumbBaseZeroIndex] = raw.thumb_base;
+    return true;
+}
+
+float baked_joint_zero(Hand hand, std::size_t index)
+{
+    const std::size_t side = hand_index(hand);
+    if (index < kRigFingerCount * kRigSlotCount)
+    {
+        return kRigJoints[side][index / kRigSlotCount][index % kRigSlotCount].zero;
+    }
+    return index == kThumbBaseZeroIndex ? kThumbBase[side].zero : 0.0f;
+}
+
+float linkage_window_drift_rad(const LinkageSamples& samples)
+{
+    if (samples.empty())
+    {
+        return 0.0f;
+    }
+    float drift = 0.0f;
+    for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+    {
+        float lowest = samples.front()[joint];
+        float highest = lowest;
+        for (const auto& sample : samples)
+        {
+            lowest = std::min(lowest, sample[joint]);
+            highest = std::max(highest, sample[joint]);
+        }
+        drift = std::max(drift, highest - lowest);
+    }
+    return drift;
+}
+
+bool linkage_window_still(const LinkageSamples& samples, float max_drift_rad)
+{
+    return linkage_window_drift_rad(samples) < max_drift_rad;
+}
+
+std::array<float, kJointZeroOffsetCount> average_linkage_angles(const LinkageSamples& samples)
+{
+    std::array<float, kJointZeroOffsetCount> mean{};
+    if (samples.empty())
+    {
+        return mean;
+    }
+    std::array<double, kJointZeroOffsetCount> sum{};
+    for (const auto& sample : samples)
+    {
+        for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+        {
+            sum[joint] += sample[joint];
+        }
+    }
+    const double count = static_cast<double>(samples.size());
+    for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+    {
+        mean[joint] = static_cast<float>(sum[joint] / count);
+    }
+    return mean;
+}
+
+JointZeroOffsets joint_zero_offsets_from_open_pose(Hand hand, const std::array<float, kJointZeroOffsetCount>& open_radians)
+{
+    JointZeroOffsets offsets;
+    offsets.set = true;
+    for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+    {
+        offsets.radians[joint] = open_radians[joint] - baked_joint_zero(hand, joint);
+    }
+    return offsets;
+}
+
+JointZeroOffsets parse_joint_zero_offsets(const std::string& text, const std::string& what)
+{
+    JointZeroOffsets offsets;
+
+    std::string separated = text;
+    std::replace(separated.begin(), separated.end(), ',', ' ');
+
+    std::istringstream stream(separated);
+    std::vector<double> values;
+    double value = 0.0;
+    while (stream >> value)
+    {
+        values.push_back(value);
+    }
+    // A token the stream could not parse is neither an empty value nor a count error; name it as
+    // such instead of silently accepting the numbers before it.
+    if (!stream.eof())
+    {
+        throw std::runtime_error(what + " must be " + std::to_string(kJointZeroOffsetCount) +
+                                 " numbers of degrees separated by spaces or commas, not '" + text + "'");
+    }
+    if (values.empty())
+    {
+        return offsets; // Absent or empty: keep the baked table.
+    }
+    if (values.size() != kJointZeroOffsetCount)
+    {
+        throw std::runtime_error(what + " must have " + std::to_string(kJointZeroOffsetCount) +
+                                 " values (5 fingers x 4 joints plus ThumbBase), not " + std::to_string(values.size()));
+    }
+    for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+    {
+        if (!std::isfinite(values[joint]))
+        {
+            throw std::runtime_error(what + " has a non-finite value at position " + std::to_string(joint + 1));
+        }
+        offsets.radians[joint] = static_cast<float>(values[joint] * (3.14159265358979323846 / 180.0));
+    }
+    offsets.set = true;
+    return offsets;
+}
+
+std::string format_joint_zero_offsets_deg(const JointZeroOffsets& offsets)
+{
+    std::string text;
+    char field[32];
+    for (std::size_t joint = 0; joint < kJointZeroOffsetCount; ++joint)
+    {
+        float degrees = offsets.radians[joint] * (180.0f / 3.14159265358979323846f);
+        // -0.00 in a value meant to be pasted into a config file reads as an error.
+        if (std::fabs(degrees) < 0.005f)
+        {
+            degrees = 0.0f;
+        }
+        std::snprintf(field, sizeof(field), "%.2f", degrees);
+        if (!text.empty())
+        {
+            text += ' ';
+        }
+        text += field;
+    }
+    return text;
 }
 
 float middle_joint_span(const HandSkeleton& skeleton)

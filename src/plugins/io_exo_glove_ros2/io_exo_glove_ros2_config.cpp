@@ -36,6 +36,8 @@ constexpr std::string_view kKnownKeys[] = { "joints_topic",
                                             "wrist_source",
                                             "left_aim_to_wrist",
                                             "right_aim_to_wrist",
+                                            "left_joint_zero_offsets",
+                                            "right_joint_zero_offsets",
                                             "wrist_smoothing_ms" };
 
 std::string known_keys_as_text()
@@ -93,6 +95,40 @@ void assign(const YAML::Node& root, const char* key, std::string& target, const 
         throw std::runtime_error("config '" + path + "': '" + key + "' must not be empty");
     }
 
+    target = value;
+}
+
+//! Applies one per-hand `*_joint_zero_offsets` string. Unlike the other string keys an empty value is
+//! meaningful -- it keeps the baked table -- but a non-empty one is parsed here, so a wrong count
+//! fails at config load (and therefore in --print-config) instead of after the session exists.
+void assign_zero_offsets(const YAML::Node& root, const char* key, std::string& target, const std::string& path)
+{
+    const YAML::Node node = root[key];
+    if (!node)
+    {
+        return;
+    }
+    // `key:` with no scalar is the same as an empty string: keep the baked table.
+    if (node.IsNull())
+    {
+        target.clear();
+        return;
+    }
+
+    if (!node.IsScalar())
+    {
+        throw std::runtime_error("config '" + path + "': '" + key + "' must be a single scalar string");
+    }
+
+    const std::string value = node.as<std::string>();
+    try
+    {
+        (void)parse_joint_zero_offsets(value, key);
+    }
+    catch (const std::exception& e)
+    {
+        throw std::runtime_error("config '" + path + "': " + e.what());
+    }
     target = value;
 }
 
@@ -199,6 +235,8 @@ ConfigResolution load_options_from_config(const std::string& explicit_path, IoEx
     assign(root, "wrist_source", options.wrist_source, path);
     assign(root, "left_aim_to_wrist", options.left_aim_to_wrist, path);
     assign(root, "right_aim_to_wrist", options.right_aim_to_wrist, path);
+    assign_zero_offsets(root, "left_joint_zero_offsets", options.left_joint_zero_offsets, path);
+    assign_zero_offsets(root, "right_joint_zero_offsets", options.right_joint_zero_offsets, path);
     assign_number(root, "wrist_smoothing_ms", options.wrist_smoothing_ms, path);
 
     resolution.loaded_path = path;

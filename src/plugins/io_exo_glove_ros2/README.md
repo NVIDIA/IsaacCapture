@@ -70,7 +70,19 @@ tips_reference_frame: "base_link"
 wrist_source: "auto"
 left_aim_to_wrist: "0,0,0,0,0,0,1"
 right_aim_to_wrist: "0,0,0,0,0,0,1"
+left_joint_zero_offsets: ""
+right_joint_zero_offsets: ""
 ```
+
+`left_joint_zero_offsets` / `right_joint_zero_offsets` are optional per-joint open-hand zero
+corrections: 21 numbers of degrees (whitespace- or comma-separated) in the plugin's joint order --
+for each finger (thumb, index, middle, ring, little) its four linkage joints F1..F4 (the thumb's
+`Thumb1..Thumb4`), then `ThumbBase` last. Each value is added to that joint's baked `zero`, so the
+pose measured as open reads zero; the baked sign, fist reference and human range are unchanged, and
+the gain's fist travel is measured from the calibrated zero. An empty string (or an absent key)
+keeps the baked table. The count is validated when the file is
+loaded, so a short or long list fails with a clear message. The plugin's `--calibrate-zero` mode
+measures these values (see below).
 
 Every key is optional. Precedence, lowest to highest:
 
@@ -244,6 +256,16 @@ behind the aim origin along the fingers and 6 cm below it), and `--aim-flip` rol
 constant 180 degrees about the fingers for a controller whose aim frame has its up axis towards the
 palm (instead of the back of the hand).
 
+The glove's baked open-hand zeros are likewise a starting point, not a law: a session whose
+mechanism rests differently (a re-mounted glove, a different take) can read a flat hand as partly
+flexed. Run the plugin once with `--calibrate-zero` (only the glove's link stream is needed; no
+controller or wrist source), hold both hands **open and straight** for about a second, and it prints
+the two `left_joint_zero_offsets` / `right_joint_zero_offsets` values for that pose. Paste them into
+`config/io_exo_glove_ros2.yaml` and restart. It waits up to 3 s for the mechanism frames and rejects
+(and retries) a window in which any joint moves 2 degrees or more. The offsets are added to the baked
+zeros, so the measured pose becomes the open hand while the baked sign, fist reference and human
+range stay in charge.
+
 The glove's bend direction is also checked from data at run time, because the sign of its joint
 angles is not reliable across sessions. Each hand keeps a short rolling window of two frame-free
 spans -- the model middle finger's proximal-to-tip distance, and the mechanism's own
@@ -279,6 +301,11 @@ source /opt/ros/humble/setup.bash
 ./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin \
     --config=src/plugins/io_exo_glove_ros2/config/io_exo_glove_ros2.yaml \
     --joints-topic=/io_esk/joint_data
+
+# One-shot open-hand zero: hold both hands open and straight, paste the printed lines into the
+# config file, then restart. Needs only the glove's link stream (--calibrate-aim is the other mode;
+# the two are mutually exclusive).
+./build/src/plugins/io_exo_glove_ros2/io_exo_glove_ros2_plugin --calibrate-zero
 ```
 
 `--help` lists all flags. Everything from `--ros-args` onwards is forwarded to ROS 2 untouched

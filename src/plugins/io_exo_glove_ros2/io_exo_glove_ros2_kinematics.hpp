@@ -10,6 +10,8 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
+#include <vector>
 
 namespace plugins
 {
@@ -194,6 +196,24 @@ struct HandAngles
     bool valid = false;
 };
 
+//! Number of revolute mechanism joints calibrated per hand: four per finger (F1..F4) plus the
+//! thumb's mount (ThumbBase). The offsets are indexed in the plugin's table order -- thumb F1..F4,
+//! index F1..F4, middle F1..F4, ring F1..F4, little F1..F4, then ThumbBase last.
+inline constexpr std::size_t kJointZeroOffsetCount = kRigFingerCount * 4 + 1;
+
+//! Per-hand open-hand zero correction, radians. Each value is added to that joint's baked table
+//! ``zero``; @c set is false when no config key was given (or it was empty), which keeps the baked
+//! table exactly. The sign and gain are never replaced.
+struct JointZeroOffsets
+{
+    std::array<float, kJointZeroOffsetCount> radians{};
+    bool set = false;
+};
+
+//! One held-pose window: each sample is a full set of unwrapped linkage angles, in
+//! @c kJointZeroOffsetCount order.
+using LinkageSamples = std::vector<std::array<float, kJointZeroOffsetCount>>;
+
 /*!
  * @brief Previous angle of every mechanism joint per hand, so a continuously turning revolute joint
  * is not wrapped to (-pi, pi].
@@ -236,10 +256,56 @@ private:
 //! ``sign * (raw - zero)``) is multiplied by -1 before the gain mapping and the dead-band clamp, so
 //! the open hand stays open and its slight extension does not eat the flipped fist's travel. The
 //! spread and the thumb's mount are not bends and are left alone.
+//!
+//! @p zero_offsets, when set, is added to the baked ``zero`` of every joint before the spread, bend
+//! and mount mappings (see @c JointZeroOffsets). This re-zeroes the pose that reads as the open hand;
+//! the baked sign, fist reference and human maximum are unchanged, and the fist travel is measured
+//! from the calibrated zero.
 HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg,
                             Hand hand,
                             JointAngleUnwrapper* unwrapper = nullptr,
-                            bool flip_bends = false);
+                            bool flip_bends = false,
+                            const JointZeroOffsets* zero_offsets = nullptr);
+
+//! Reads one message's raw linkage angles, after unwrapping, into @p out in @c kJointZeroOffsetCount
+//! order. False when the hand is absent or incomplete, exactly like read_hand_angles(). @p unwrapper
+//! carries the continuity across messages; a calibration run keeps its own per hand, so sampling does
+//! not disturb the run-time reading.
+bool read_linkage_angles(const tf2_msgs::msg::TFMessage& msg,
+                         Hand hand,
+                         JointAngleUnwrapper* unwrapper,
+                         std::array<float, kJointZeroOffsetCount>& out);
+
+//! The baked open-hand zero of one joint, radians, indexed in @c kJointZeroOffsetCount order.
+float baked_joint_zero(Hand hand, std::size_t index);
+
+//! Maximum range of any one joint across @p samples, radians: max(angle) - min(angle) per joint,
+//! then the largest of those. Zero for an empty window.
+float linkage_window_drift_rad(const LinkageSamples& samples);
+
+//! True while every joint in @p samples stays strictly inside @p max_drift_rad of its own values.
+//! At or beyond the bound the window counts as moved and is rejected, like the aim calibration's.
+bool linkage_window_still(const LinkageSamples& samples, float max_drift_rad);
+
+//! A calibration window is rejected when any joint moves this far, radians (2 deg).
+inline constexpr float kJointZeroMaxDriftRad = 2.0f * 3.14159265358979323846f / 180.0f;
+
+//! Per-joint mean of @p samples. An empty window returns all zeros.
+std::array<float, kJointZeroOffsetCount> average_linkage_angles(const LinkageSamples& samples);
+
+//! Offsets that make @p open_radians the zero pose: ``open - baked zero`` per joint, in the baked
+//! table's units. The result is marked set, so it can be passed to read_hand_angles().
+JointZeroOffsets joint_zero_offsets_from_open_pose(Hand hand,
+                                                   const std::array<float, kJointZeroOffsetCount>& open_radians);
+
+//! Parses a config value of @c kJointZeroOffsetCount degrees, separated by whitespace or commas.
+//! Empty (or whitespace-only) text is the unset state and keeps the baked table. Throws
+//! std::runtime_error naming @p what when the count is wrong or a field is not a finite number.
+JointZeroOffsets parse_joint_zero_offsets(const std::string& text, const std::string& what);
+
+//! The config-file spelling of @p offsets: kJointZeroOffsetCount space-separated degrees, two
+//! decimals, ready to paste into config/io_exo_glove_ros2.yaml.
+std::string format_joint_zero_offsets_deg(const JointZeroOffsets& offsets);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
 //! OpenXR wrist frame (the wrist is the identity pose). Every joint is filled and carries a unit
