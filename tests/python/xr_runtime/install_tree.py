@@ -23,10 +23,9 @@ def plugins_dir() -> Path:
 
 def add_plugin_root_argument(parser: argparse.ArgumentParser) -> None:
     """Register ``--plugin-root``, defaulting to :func:`plugins_dir`."""
-    default = plugins_dir()
     parser.add_argument(
         "--plugin-root",
         type=Path,
-        default=default,
-        help=f"Plugin search directory, e.g. <install prefix>/plugins (default: {default})",
+        default=plugins_dir(),
+        help="Plugin search directory, e.g. <install prefix>/plugins (default: %(default)s)",
     )

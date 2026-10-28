@@ -174,11 +174,16 @@ controllers, etc.):
 
 The test script :code-file:`tests/python/xr_runtime/test_oak_camera.py` runs the
 same SchemaPusher flow with ``PluginManager`` and ``DeviceIOSession`` directly.
-After ``cmake --install build``, with the CloudXR environment loaded (see
-:ref:`load-cloudxr-environment-variables`), run it from the repository root:
+It loads the plugin from ``install/plugins``, so it needs a full build and install
+of the tree configured above, not only ``camera_plugin_oak``. With ``isaaccapture``
+installed in the active environment (step 4 of :doc:`/development/build_from_source/index`)
+and the CloudXR environment loaded (see :ref:`load-cloudxr-environment-variables`),
+run from the repository root:
 
 .. code-block:: bash
 
+   cmake --build build --parallel
+   cmake --install build
    python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 
 Configuration

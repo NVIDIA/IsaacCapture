@@ -13,7 +13,8 @@ Supports three metadata modes (--mode):
 
 Note: Plugin crashes will raise pm.PluginCrashException
       By default, video is saved to the plugin's working directory under ./recordings/
-      The MCAP file is saved under ./recordings/ with a timestamped filename.
+      The MCAP file is saved under ./recordings/ in the current directory, with a
+      timestamped filename.
 """
 
 import sys
@@ -253,7 +254,7 @@ def main():
         "--mode",
         choices=[MODE_NO_METADATA, MODE_SCHEMA_PUSHER, MODE_PLUGIN_MCAP],
         default=MODE_NO_METADATA,
-        help="Metadata mode (default: schema-pusher)",
+        help="Metadata mode (default: %(default)s)",
     )
     add_plugin_root_argument(parser)
     args = parser.parse_args()

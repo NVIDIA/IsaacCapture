@@ -66,8 +66,8 @@ Each module attaches to the running CloudXR runtime, or starts one in the
 background and leaves it running; stop it with
 `python -m isaaccapture.cloudxr.service stop`. The first start asks you to
 accept the CloudXR EULA, and `--accept-eula` accepts it without the prompt. To
-use a different OpenXR runtime, set `XR_RUNTIME_JSON` and pass
-`--no-launch-cloudxr-runtime`.
+use a different OpenXR runtime, pass `--no-launch-cloudxr-runtime` as in
+[Use a system OpenXR runtime](https://nvidia.github.io/IsaacCapture/main/references/cloudxr.html#use-a-system-openxr-runtime-no-cloudxr-attach).
 
 ### Available Python Examples
 
@@ -93,8 +93,8 @@ cmake --install build
 **oxr_simple_api_demo** - Demonstrates the simple API
 
 They do not start CloudXR. With the service running
-(`python -m isaaccapture.cloudxr.service start`), source its environment, which
-sets `XR_RUNTIME_JSON`:
+(`python -m isaaccapture.cloudxr.service start --accept-eula`), source its
+environment, which sets `XR_RUNTIME_JSON` and the `NV_CXR_*` variables:
 
 ```bash
 source ~/.cloudxr/run/cloudxr.env

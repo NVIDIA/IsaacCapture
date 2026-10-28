@@ -148,11 +148,19 @@ with TeleopSession(config) as session:
 ```
 
 The test script `tests/python/xr_runtime/test_oak_camera.py` runs the same
-SchemaPusher flow with PluginManager and DeviceIOSession directly. After
-`cmake --install build`, with the CloudXR environment sourced
-(`source ~/.cloudxr/run/cloudxr.env`), run it from the repository root:
+SchemaPusher flow with PluginManager and DeviceIOSession directly. It loads the
+plugin from `install/plugins`, so it needs a full build and install of the tree
+configured above, not only `camera_plugin_oak`. With `isaaccapture` installed in
+the active environment
+([Build from source, step 4](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package))
+and the CloudXR service running
+(`python -m isaaccapture.cloudxr.service start --accept-eula`), from the
+repository root:
 
 ```bash
+cmake --build build --parallel
+cmake --install build
+source ~/.cloudxr/run/cloudxr.env
 python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 ```
 
