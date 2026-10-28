@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 IO. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include "io_exo_glove_ros2_aim.hpp"
 #include "io_exo_glove_ros2_config.hpp"
 #include "io_exo_glove_ros2_pack.hpp"
 #include "io_exo_glove_ros2_plugin.hpp"
@@ -8,6 +9,7 @@
 #include <log_bridge/logger.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -44,6 +46,11 @@ struct CliOverrides
     std::optional<std::string> left_aim_to_wrist;
     std::optional<std::string> right_aim_to_wrist;
     std::optional<double> wrist_smoothing_ms;
+    //! One-shot calibration; CLI-only, not a config-file key. The offsets are per-run and shared by
+    //! both hands, because the controller mounting is the same left and right.
+    bool calibrate_aim = false;
+    std::optional<double> aim_behind_m;
+    std::optional<double> aim_height_m;
 };
 
 void print_usage(const char* prog)
@@ -68,6 +75,13 @@ void print_usage(const char* prog)
               << "  --right-aim-to-wrist=POSE      Override it for the right hand\n"
               << "                                 (POSE is x,y,z,qx,qy,qz,qw)\n"
               << "  --wrist-smoothing-ms=MS        Override the tracked wrist's low-pass time constant (0 = off)\n"
+              << "  --calibrate-aim                One-shot: hold both hands flat and still, print the controller\n"
+              << "                                 aim -> wrist values for both hands and exit\n"
+              << "                                 (requires --wrist-source=controller)\n"
+              << "  --aim-behind=M                 Calibration: wrist offset behind the aim origin along the\n"
+              << "                                 fingers, in metres (default 0.04)\n"
+              << "  --aim-height=M                 Calibration: wrist offset below the aim origin, in metres\n"
+              << "                                 (default 0.06)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
@@ -91,6 +105,29 @@ std::optional<std::string> flag_value(const std::string& arg, const char* key)
         return std::nullopt;
     }
     return arg.substr(prefix.size());
+}
+
+//! Parses a non-negative length in metres for the calibration flags; prints the usage on bad input,
+//! which the one-shot mode cannot recover from.
+bool parse_metres(const std::string& value, const char* flag, const char* prog, double& out)
+{
+    try
+    {
+        out = std::stod(value);
+    }
+    catch (const std::exception&)
+    {
+        std::cerr << "Error: --" << flag << "= must be a number." << std::endl;
+        print_usage(prog);
+        return false;
+    }
+    if (!std::isfinite(out) || out < 0.0)
+    {
+        std::cerr << "Error: --" << flag << "= must be a non-negative number of metres." << std::endl;
+        print_usage(prog);
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -142,6 +179,10 @@ try
         if (arg == "--print-config")
         {
             print_config = true;
+        }
+        else if (arg == "--calibrate-aim")
+        {
+            cli.calibrate_aim = true;
         }
         else if (const auto value = flag_value(arg, "config"))
         {
@@ -248,6 +289,32 @@ try
                 return 1;
             }
         }
+        else if (const auto value = flag_value(arg, "aim-behind"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "aim-behind");
+            }
+            double metres = 0.0;
+            if (!parse_metres(*value, "aim-behind", argv[0], metres))
+            {
+                return 1;
+            }
+            cli.aim_behind_m = metres;
+        }
+        else if (const auto value = flag_value(arg, "aim-height"))
+        {
+            if (value->empty())
+            {
+                return fail_empty_flag(argv[0], "aim-height");
+            }
+            double metres = 0.0;
+            if (!parse_metres(*value, "aim-height", argv[0], metres))
+            {
+                return 1;
+            }
+            cli.aim_height_m = metres;
+        }
         else
         {
             std::cerr << "Unknown option: " << arg << std::endl;
@@ -342,6 +409,26 @@ try
         logger()->info("Loaded config: {}", resolution.loaded_path);
     }
 
+    // This mode writes the aim-to-wrist constants for the controller source; any other source has no
+    // aim pose to calibrate, so fail before creating a session rather than after.
+    if (cli.calibrate_aim && options.wrist_source != "controller")
+    {
+        logger()->error("--calibrate-aim requires --wrist-source=controller, not '{}'", options.wrist_source);
+        return 1;
+    }
+
+    // The calibration measures the raw controller aim pose, so the wrist source must not have the
+    // configured offset folded in (WristPoseSource::query() applies it). Identity here is for this
+    // one-shot run only; the configured values are what the printed ones replace.
+    IoExoGloveRos2Plugin::Options run_options = options;
+    if (cli.calibrate_aim)
+    {
+        run_options.left_aim_to_wrist = "0,0,0,0,0,0,1";
+        run_options.right_aim_to_wrist = "0,0,0,0,0,0,1";
+        logger()->info("Aim calibration: wrist {:.3f} m behind and {:.3f} m below the controller aim origin",
+                       cli.aim_behind_m.value_or(kDefaultAimBehindM), cli.aim_height_m.value_or(kDefaultAimHeightM));
+    }
+
     // ROS gets only the arguments it owns: our own flags and the launcher-injected
     // --plugin-root-id have already been consumed.
     std::vector<char*> ros_argv;
@@ -357,7 +444,14 @@ try
                    options.joints_left_collection_id, options.joints_right_collection_id, options.links_topic,
                    options.tips_left_collection_id, options.tips_right_collection_id);
 
-    auto node = std::make_shared<IoExoGloveRos2Plugin>(options);
+    auto node = std::make_shared<IoExoGloveRos2Plugin>(run_options);
+    if (cli.calibrate_aim)
+    {
+        node->calibrate_aim(static_cast<float>(cli.aim_behind_m.value_or(kDefaultAimBehindM)),
+                            static_cast<float>(cli.aim_height_m.value_or(kDefaultAimHeightM)));
+        rclcpp::shutdown();
+        return 0;
+    }
     rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;

@@ -3,6 +3,7 @@
 
 #include "io_exo_glove_ros2_plugin.hpp"
 
+#include "io_exo_glove_ros2_aim.hpp"
 #include "io_exo_glove_ros2_kinematics.hpp"
 #include "io_exo_glove_ros2_pack.hpp"
 
@@ -13,13 +14,16 @@
 #include <schema/joint_state_generated.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace plugins
@@ -41,6 +45,14 @@ constexpr auto kHandStaleThreshold = std::chrono::milliseconds(200);
 
 //! Name prefixes the glove's 42-joint message uses to say which hand a joint belongs to.
 constexpr const char* kJointNamePrefixes[] = { "joint_Left", "joint_Right" };
+
+//! `--calibrate-aim` sampling: about 200 Hz for 1 s, matching the rate the controller is tracked and
+//! the glove streams at, and retried a few times while the operator settles the pose.
+constexpr auto kAimSamplePeriod = std::chrono::milliseconds(5);
+constexpr auto kAimWindowLength = std::chrono::milliseconds(1000);
+constexpr auto kAimTrackingTimeout = std::chrono::seconds(3);
+constexpr auto kAimRetryPause = std::chrono::milliseconds(500);
+constexpr int kAimMaxAttempts = 3;
 
 //! ROS 2 header stamp -> nanoseconds, or 0 if unset (sec == 0 && nanosec == 0).
 int64_t stamp_to_ns(const builtin_interfaces::msg::Time& stamp)
@@ -80,14 +92,19 @@ const char* wrist_source_name(plugin_utils::WristSourceMode mode)
 }
 
 //! Parses the "x,y,z,qx,qy,qz,qw" pose spelling; the quaternion is normalised, a zero one rejected.
+//! Commas and whitespace both separate the fields, because --calibrate-aim prints the value
+//! space-separated so the line it emits can be pasted into the config file unchanged.
 XrPosef parse_pose(const std::string& text, const char* what)
 {
+    std::string separated = text;
+    std::replace(separated.begin(), separated.end(), ',', ' ');
+
     XrPosef pose{};
     int parsed = 0;
     const int fields =
-        std::sscanf(text.c_str(), "%f,%f,%f,%f,%f,%f,%f%n", &pose.position.x, &pose.position.y, &pose.position.z,
+        std::sscanf(separated.c_str(), "%f %f %f %f %f %f %f%n", &pose.position.x, &pose.position.y, &pose.position.z,
                     &pose.orientation.x, &pose.orientation.y, &pose.orientation.z, &pose.orientation.w, &parsed);
-    if (fields != 7 || parsed != static_cast<int>(text.size()))
+    if (fields != 7 || parsed != static_cast<int>(separated.size()))
     {
         throw std::runtime_error(std::string(what) + " must be 'x,y,z,qx,qy,qz,qw', not '" + text + "'");
     }
@@ -202,6 +219,132 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
         m_opts.tips_left_collection_id.c_str(), m_opts.tips_right_collection_id.c_str(), kTipMaxFlatbufferSize,
         m_opts.tips_reference_frame.c_str(), wrist_source_name(wrist_config.mode), m_opts.wrist_smoothing_ms,
         m_opts.left_aim_to_wrist.c_str(), m_opts.right_aim_to_wrist.c_str());
+}
+
+void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m)
+{
+    // The measured transform replaces the configured one, so folding the configured offset into the
+    // query would calibrate against itself. main() builds this session with identity offsets; the
+    // controller source is still the one that supplies the raw aim pose.
+    if (parse_wrist_source(m_opts.wrist_source) != plugin_utils::WristSourceMode::Controller)
+    {
+        throw std::runtime_error("--calibrate-aim requires --wrist-source=controller, not '" + m_opts.wrist_source + "'");
+    }
+    if (m_wrist_source == nullptr || m_deviceio_session == nullptr || !m_time_converter.has_value())
+    {
+        throw std::runtime_error("--calibrate-aim: the controller wrist source is unavailable");
+    }
+
+    // Pump the trackers and read both raw aim poses: the same update-then-query order the tick uses.
+    const auto sample = [this](std::array<plugin_utils::WristSample, kSideCount>& samples)
+    {
+        m_deviceio_session->update();
+        const XrTime time = m_time_converter->os_monotonic_now();
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            samples[side] = m_wrist_source->query(side == 0, time);
+        }
+    };
+
+    // Both controllers have to be actively tracked before the window starts: averaging a cached pose
+    // would produce a plausible-looking offset from a controller that is not actually being held.
+    std::array<bool, kSideCount> seen{ false, false };
+    const std::chrono::steady_clock::time_point tracking_deadline =
+        std::chrono::steady_clock::now() + kAimTrackingTimeout;
+    while (std::chrono::steady_clock::now() < tracking_deadline && !(seen[0] && seen[1]))
+    {
+        std::array<plugin_utils::WristSample, kSideCount> samples{};
+        sample(samples);
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            seen[side] = seen[side] || (samples[side].valid && samples[side].tracked);
+        }
+        std::this_thread::sleep_for(kAimSamplePeriod);
+    }
+    if (!(seen[0] && seen[1]))
+    {
+        std::string missing;
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            if (!seen[side])
+            {
+                missing += missing.empty() ? hand_name(side) : std::string(" and ") + hand_name(side);
+            }
+        }
+        throw std::runtime_error("--calibrate-aim: no tracked controller aim pose from the " + missing +
+                                 " hand; make sure the controller is paired and tracked");
+    }
+
+    for (int attempt = 1; attempt <= kAimMaxAttempts; ++attempt)
+    {
+        m_logger->info(
+            "aim calibration: hold both hands flat, palm down, fingers forward for {} ms "
+            "(attempt {}/{})",
+            kAimWindowLength.count(), attempt, kAimMaxAttempts);
+
+        std::array<std::vector<XrPosef>, kSideCount> windows;
+        const std::chrono::steady_clock::time_point window_end = std::chrono::steady_clock::now() + kAimWindowLength;
+        while (std::chrono::steady_clock::now() < window_end)
+        {
+            std::array<plugin_utils::WristSample, kSideCount> samples{};
+            sample(samples);
+            for (std::size_t side = 0; side < kSideCount; ++side)
+            {
+                if (samples[side].valid && samples[side].tracked)
+                {
+                    windows[side].push_back(samples[side].pose);
+                }
+            }
+            std::this_thread::sleep_for(kAimSamplePeriod);
+        }
+
+        bool still = true;
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            if (windows[side].empty())
+            {
+                m_logger->warn("aim calibration: the {} controller was not tracked during the window", hand_name(side));
+                still = false;
+                continue;
+            }
+            if (!aim_window_still(windows[side], kAimMaxDriftM, kAimMaxDriftRad))
+            {
+                const AimDrift drift = aim_window_drift(windows[side]);
+                m_logger->warn(
+                    "aim calibration: the {} controller moved {:.1f} mm / {:.1f} deg during the window; "
+                    "hold still",
+                    hand_name(side), drift.position_m * 1000.0f, drift.angle_rad * (180.0f / 3.14159265358979323846f));
+                still = false;
+            }
+        }
+        if (!still)
+        {
+            if (attempt == kAimMaxAttempts)
+            {
+                break;
+            }
+            m_logger->warn("aim calibration: window rejected, retrying -- hold both hands flat and still");
+            std::this_thread::sleep_for(kAimRetryPause);
+            continue;
+        }
+
+        std::array<XrPosef, kSideCount> aim_to_wrist_offsets{};
+        for (std::size_t side = 0; side < kSideCount; ++side)
+        {
+            const XrPosef aim = average_aim_pose(windows[side]);
+            aim_to_wrist_offsets[side] = aim_to_wrist(aim, wrist_from_aim(aim, behind_m, height_m));
+        }
+
+        // The printed lines are the config value exactly; --print-config reports the same spelling.
+        std::cout << "left_aim_to_wrist:  \"" << format_aim_to_wrist(aim_to_wrist_offsets[0]) << "\"\n"
+                  << "right_aim_to_wrist: \"" << format_aim_to_wrist(aim_to_wrist_offsets[1]) << "\"\n"
+                  << "Paste both lines into config/io_exo_glove_ros2.yaml, then record normally." << std::endl;
+        return;
+    }
+
+    throw std::runtime_error(
+        "--calibrate-aim: could not collect a still 1 s window; rerun and hold both hands "
+        "flat and still");
 }
 
 void IoExoGloveRos2Plugin::push_joint_state(const sensor_msgs::msg::JointState& msg)

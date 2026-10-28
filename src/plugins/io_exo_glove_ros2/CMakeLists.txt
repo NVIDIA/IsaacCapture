@@ -17,6 +17,7 @@ find_package(tf2_msgs REQUIRED)
 
 add_executable(io_exo_glove_ros2_plugin
     main.cpp
+    io_exo_glove_ros2_aim.cpp
     io_exo_glove_ros2_config.cpp
     io_exo_glove_ros2_hand.cpp
     io_exo_glove_ros2_kinematics.cpp

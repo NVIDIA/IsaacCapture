@@ -103,6 +103,22 @@ public:
 
     explicit IoExoGloveRos2Plugin(const Options& options);
 
+    /*!
+     * @brief One-shot `--calibrate-aim` session: averages one held aim pose per hand and prints the
+     * fixed controller-aim -> wrist transforms for the controller wrist source.
+     *
+     * Runs instead of the normal tick loop (main calls it before spinning) and costs the operator one
+     * second of holding both hands flat, palm down, fingers forward. A window in which a controller
+     * moved more than 5 mm or 2 deg is rejected and retried. The wrist source must be the controller
+     * one, with identity offsets (main supplies those for this run), so the pose averaged here is the
+     * raw aim pose. Throws std::runtime_error when the mode or the controllers are not usable; the
+     * caller's handler logs it and exits non-zero.
+     *
+     * @param behind_m Wrist offset behind the aim origin along the fingers, in metres.
+     * @param height_m Wrist offset below the aim origin, in metres.
+     */
+    void calibrate_aim(float behind_m, float height_m);
+
 private:
     //! Hands the plugin bridges, and their index into the per-hand state arrays.
     static constexpr std::size_t kSideCount = 2;

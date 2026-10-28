@@ -235,6 +235,13 @@ identity by default); the plugin cannot know a controller's mounting, so it is c
 With no wrist source tracked the skeleton is still injected, at the origin and flagged untracked:
 honest degradation rather than a frozen pose at the last known place.
 
+The offset can be measured instead of guessed: switch to `--wrist-source=controller` (or set
+`wrist_source: "controller"`), run the plugin once with `--calibrate-aim`, hold both hands flat, palm
+down and fingers forward for about a second, and it prints the two `left_aim_to_wrist` /
+`right_aim_to_wrist` values for that pose. Paste them into `config/io_exo_glove_ros2.yaml` and record
+normally; `--aim-behind=` / `--aim-height=` move the wrist joint under the controller (defaults 4 cm
+behind the aim origin along the fingers and 6 cm below it).
+
 The injected skeleton is expressed in the OpenXR wrist frame: `WRIST` is the origin and the rest of
 the anatomy follows from the glove's articulation alone. Nothing is captured from the first frame, so
 a take does not depend on how the hand was held when the plugin started. Joint orientations are built
