@@ -1,0 +1,987 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>VIVE Ultimate Tracker &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'device/trackers/vive_ultimate_tracker';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Add a New Device" href="../add_device.html" />
+    <link rel="prev" title="Spatial Trackers and Device Data" href="index.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.7.x" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Spatial trackers</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">VIVE Ultimate Tracker</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/haptic_feedback.html">Haptic Feedback</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Spatial Trackers and Device Data</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">VIVE Ultimate Tracker</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="vive-ultimate-tracker">
+<h1>VIVE Ultimate Tracker<a class="headerlink" href="#vive-ultimate-tracker" title="Link to this heading">#</a></h1>
+<p>Use <a class="reference external" href="https://www.vive.com/us/accessory/vive-ultimate-tracker/" rel="noopener noreferrer" target="_blank">HTC VIVE Ultimate Trackers</a>
+with the Isaac Capture framework. The <code class="docutils literal notranslate"><span class="pre">vive_se3_tracker</span></code> plugin streams each tracker as its own
+generic SE3 (6-DoF) pose collection, which can be read live with <code class="docutils literal notranslate"><span class="pre">Se3Tracker</span></code>, recorded to MCAP
+and replayed. Currently only Linux is supported, on x86_64 and arm64. No headset is required.</p>
+<nav class="contents local" id="on-this-page">
+<p class="topic-title">On this page</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id1">Overview</a></p></li>
+<li><p><a class="reference internal" href="#components" id="id2">Components</a></p></li>
+<li><p><a class="reference internal" href="#prerequisites" id="id3">Prerequisites</a></p></li>
+<li><p><a class="reference internal" href="#quick-start" id="id4">Quick Start</a></p></li>
+<li><p><a class="reference internal" href="#part-1-set-up-the-trackers-with-vive-hub" id="id5">Part 1: Set up the trackers with VIVE Hub</a></p>
+<ul>
+<li><p><a class="reference internal" href="#step-1-download-vive-hub-for-linux" id="id6">Step 1: Download VIVE Hub for Linux</a></p></li>
+<li><p><a class="reference internal" href="#step-2-install-vive-hub" id="id7">Step 2: Install VIVE Hub</a></p></li>
+<li><p><a class="reference internal" href="#step-3-pair-the-trackers-and-build-the-tracking-map" id="id8">Step 3: Pair the trackers and build the tracking map</a></p></li>
+<li><p><a class="reference internal" href="#step-4-optional-check-the-trackers-with-the-vut-sdk-demo" id="id9">Step 4 (optional): Check the trackers with the VUT SDK demo</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#part-2-stream-the-trackers-into-isaac-capture" id="id10">Part 2: Stream the trackers into Isaac Capture</a></p>
+<ul>
+<li><p><a class="reference internal" href="#step-5-build-isaac-capture-with-the-plugin" id="id11">Step 5: Build Isaac Capture with the plugin</a></p></li>
+<li><p><a class="reference internal" href="#step-6-start-the-cloudxr-runtime" id="id12">Step 6: Start the CloudXR runtime</a></p></li>
+<li><p><a class="reference internal" href="#step-7-run-the-plugin" id="id13">Step 7: Run the plugin</a></p></li>
+<li><p><a class="reference internal" href="#step-8-verify-the-pose-stream" id="id14">Step 8: Verify the pose stream</a></p></li>
+<li><p><a class="reference internal" href="#step-9-optional-record-and-replay" id="id15">Step 9 (optional): Record and replay</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#using-the-tracker-data" id="id16">Using the Tracker Data</a></p>
+<ul>
+<li><p><a class="reference internal" href="#collection-naming" id="id17">Collection naming</a></p></li>
+<li><p><a class="reference internal" href="#collection-auto-discovery" id="id18">Collection auto-discovery</a></p></li>
+<li><p><a class="reference internal" href="#reference-frame" id="id19">Reference frame</a></p></li>
+<li><p><a class="reference internal" href="#timestamps-and-validity" id="id20">Timestamps and validity</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#configuration" id="id21">Configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id22">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id23">License</a></p></li>
+</ul>
+</nav>
+<section id="overview">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">#</a></h2>
+<p>Tracker data reaches Isaac Capture through two pieces of software:</p>
+<ol class="arabic simple">
+<li><p><strong>VIVE Hub for Linux</strong> (from HTC) pairs the trackers with the dongle, builds the tracking map,
+and runs the <code class="docutils literal notranslate"><span class="pre">tracker_server</span></code> daemon. The daemon publishes tracker poses over the VUT
+(VIVE Ultimate Tracker) SDK socket.</p></li>
+<li><p><strong>The</strong> <code class="docutils literal notranslate"><span class="pre">vive_se3_tracker</span></code> <strong>plugin</strong> (in Isaac Capture) reads those poses through the VUT
+SDK and pushes them into the Teleop session as one SE3 tensor collection per tracker.</p></li>
+</ol>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Ultimate Trackers -&gt; USB dongle -&gt; VIVE Hub tracker_server -&gt; /tmp/vut.sock (VUT SDK)
+    -&gt; vive_se3_tracker_plugin -&gt; "vive_tracker_&lt;serial&gt;" SE3 collections
+    -&gt; Se3Tracker readers / MCAP recording / replay
+</pre></div>
+</div>
+</section>
+<section id="components">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Components</a><a class="headerlink" href="#components" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>VIVE Hub for Linux</strong>: desktop app plus <code class="docutils literal notranslate"><span class="pre">tracker_server</span></code> daemon, used for pairing, map
+building and pose streaming. It also ships the VUT C++ SDK (<code class="docutils literal notranslate"><span class="pre">sdk/include/vut/</span></code> and
+<code class="docutils literal notranslate"><span class="pre">sdk/lib/libvut_sdk.a</span></code>), which the plugin needs at build time.</p></li>
+<li><p><strong>Plugin executable</strong> (<code class="docutils literal notranslate"><span class="pre">vive_se3_tracker_plugin</span></code>): reads tracker poses from VIVE Hub and
+pushes them into the Teleop system through CloudXR / OpenXR.</p></li>
+<li><p><strong>Examples</strong>: <code class="docutils literal notranslate"><span class="pre">record_se3_vive</span></code> records every tracker to an MCAP file, and
+<code class="docutils literal notranslate"><span class="pre">replay_se3_vive</span></code> plays a recording back in a 3D browser view.</p></li>
+</ul>
+</section>
+<section id="prerequisites">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Prerequisites</a><a class="headerlink" href="#prerequisites" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>Linux</strong>: x86_64 or arm64, on a desktop (graphical) session. Ubuntu 20.04 or newer is
+recommended.</p></li>
+<li><p><strong>VIVE Ultimate Trackers</strong> and the <strong>VIVE Ultimate Tracker dongle</strong>.</p></li>
+<li><p><strong>VIVE Hub for Linux 1.0.1 or newer.</strong> Version 1.0.0 does not include the VUT SDK; the plugin
+will neither build nor connect with it.</p></li>
+<li><p><strong>Isaac Capture built from source</strong>. See <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p></li>
+</ul>
+</section>
+<section id="quick-start">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Quick Start</a><a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
+<p>Part 1 brings the trackers up with VIVE Hub. Part 2 builds the plugin and streams the trackers
+into Isaac Capture.</p>
+</section>
+<section id="part-1-set-up-the-trackers-with-vive-hub">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Part 1: Set up the trackers with VIVE Hub</a><a class="headerlink" href="#part-1-set-up-the-trackers-with-vive-hub" title="Link to this heading">#</a></h2>
+<section id="step-1-download-vive-hub-for-linux">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Step 1: Download VIVE Hub for Linux</a><a class="headerlink" href="#step-1-download-vive-hub-for-linux" title="Link to this heading">#</a></h3>
+<p>Download the package for your architecture from the
+<a class="reference external" href="https://github.com/ViveRoboticsSoftware/vivehub-linux/releases/latest" rel="noopener noreferrer" target="_blank">latest VIVE Hub for Linux release</a>.
+Run <code class="docutils literal notranslate"><span class="pre">uname</span> <span class="pre">-m</span></code> if you are unsure which one you need:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">uname</span> <span class="pre">-m</span></code> output</p></th>
+<th class="head"><p>Package</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">x86_64</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">VIVEHub-Linux-&lt;version&gt;-x86_64.tar.gz</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">aarch64</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">VIVEHub-Linux-&lt;version&gt;-arm64.tar.gz</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>To verify the download, download the <code class="docutils literal notranslate"><span class="pre">.sha256</span></code> file next to the package and run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sha256sum<span class="w"> </span>-c<span class="w"> </span>VIVEHub-Linux-*.sha256
+</pre></div>
+</div>
+</section>
+<section id="step-2-install-vive-hub">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Step 2: Install VIVE Hub</a><a class="headerlink" href="#step-2-install-vive-hub" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">libglfw</span></code> and <code class="docutils literal notranslate"><span class="pre">libhidapi-hidraw</span></code> are bundled in the package. The C++ runtime and the
+GPU/display stack come from the system. On a minimal or headless image, install the graphics stack
+first:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>libgl1<span class="w"> </span>libx11-6<span class="w"> </span>libgl1-mesa-dri
+</pre></div>
+</div>
+<p>Extract the package and set up USB permissions for the dongle. This is a one-time step:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>tar<span class="w"> </span>xzf<span class="w"> </span>VIVEHub-Linux-*.tar.gz
+<span class="nb">cd</span><span class="w"> </span>VIVEHub-Linux
+sudo<span class="w"> </span>./install-udev.sh
+</pre></div>
+</div>
+<p>Then <strong>unplug and replug the tracker dongle</strong> so the new permissions take effect.</p>
+<p><strong>arm64 only:</strong> the tracking-map wizard is an x86_64 build that runs under box64. Install it once
+(this works offline):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>./install-box64.sh
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>udev rules only take effect on the host machine. If you build Isaac Capture in a container, run
+<code class="docutils literal notranslate"><span class="pre">install-udev.sh</span></code> on the host, not inside the container.</p>
+</div>
+</section>
+<section id="step-3-pair-the-trackers-and-build-the-tracking-map">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Step 3: Pair the trackers and build the tracking map</a><a class="headerlink" href="#step-3-pair-the-trackers-and-build-the-tracking-map" title="Link to this heading">#</a></h3>
+<p>Start VIVE Hub from the extracted folder:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./run-vivehub.sh
+</pre></div>
+</div>
+<p>Always launch VIVE Hub with <code class="docutils literal notranslate"><span class="pre">run-vivehub.sh</span></code>, which points the loader at the bundled libraries.
+The UI starts the <code class="docutils literal notranslate"><span class="pre">tracker_server</span></code> daemon itself, so do not start the daemon separately.</p>
+<p>In the VIVE Hub UI:</p>
+<ol class="arabic simple">
+<li><p>Pair each Ultimate Tracker with the dongle.</p></li>
+<li><p>Press <strong>Start setup</strong> to open the map-building wizard, and follow it to build the tracking map.</p></li>
+<li><p>Check that every tracker shows as tracking.</p></li>
+</ol>
+<p><strong>Leave VIVE Hub running.</strong> The plugin reads poses from its daemon.</p>
+</section>
+<section id="step-4-optional-check-the-trackers-with-the-vut-sdk-demo">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Step 4 (optional): Check the trackers with the VUT SDK demo</a><a class="headerlink" href="#step-4-optional-check-the-trackers-with-the-vut-sdk-demo" title="Link to this heading">#</a></h3>
+<p>To confirm that poses are coming out of VIVE Hub before you involve Isaac Capture, run the demo
+that ships with the SDK while at least one tracker is tracking. From the <code class="docutils literal notranslate"><span class="pre">VIVEHub-Linux</span></code> folder:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>sdk/examples
+make<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>./vut_demo
+</pre></div>
+</div>
+</section>
+</section>
+<section id="part-2-stream-the-trackers-into-isaac-capture">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Part 2: Stream the trackers into Isaac Capture</a><a class="headerlink" href="#part-2-stream-the-trackers-into-isaac-capture" title="Link to this heading">#</a></h2>
+<section id="step-5-build-isaac-capture-with-the-plugin">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Step 5: Build Isaac Capture with the plugin</a><a class="headerlink" href="#step-5-build-isaac-capture-with-the-plugin" title="Link to this heading">#</a></h3>
+<p>The plugin links against the VUT SDK in the VIVE Hub package. Point <code class="docutils literal notranslate"><span class="pre">VUT_SDK_DIR</span></code> at its
+<code class="docutils literal notranslate"><span class="pre">sdk</span></code> folder when you configure the build. From the Isaac Capture root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DVUT_SDK_DIR<span class="o">=</span>/path/to/VIVEHub-Linux/sdk
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel
+cmake<span class="w"> </span>--install<span class="w"> </span>build
+</pre></div>
+</div>
+<p>The executable is installed to <code class="docutils literal notranslate"><span class="pre">install/plugins/vive_se3_tracker/</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">VUT_SDK_DIR</span></code> is not set, or <code class="docutils literal notranslate"><span class="pre">lib/libvut_sdk.a</span></code> is not found under it, CMake prints
+<code class="docutils literal notranslate"><span class="pre">VIVEHub</span> <span class="pre">VUT</span> <span class="pre">SDK</span> <span class="pre">not</span> <span class="pre">found</span></code> and skips the plugin, and the rest of the project still builds.
+If <code class="docutils literal notranslate"><span class="pre">vive_se3_tracker_plugin</span></code> is missing after the build, check this message in the configure
+output.</p>
+</div>
+</section>
+<section id="step-6-start-the-cloudxr-runtime">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Step 6: Start the CloudXR runtime</a><a class="headerlink" href="#step-6-start-the-cloudxr-runtime" title="Link to this heading">#</a></h3>
+<p>Start the CloudXR runtime from the Python environment where <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> is installed. It runs
+as a background service until you stop it with
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">stop</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="../../references/cloudxr.html"><span class="doc">CloudXR Service</span></a> for details.</p>
+</section>
+<section id="step-7-run-the-plugin">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Step 7: Run the plugin</a><a class="headerlink" href="#step-7-run-the-plugin" title="Link to this heading">#</a></h3>
+<p>With VIVE Hub still running and the trackers tracking, source the CloudXR environment and start
+the plugin in a new terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>IsaacCapture/
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/plugins/vive_se3_tracker/vive_se3_tracker_plugin
+</pre></div>
+</div>
+<p>The plugin creates one collection per tracker the first time it receives a pose from that tracker,
+and prints the collection ids. Press <code class="docutils literal notranslate"><span class="pre">Ctrl+C</span></code> to stop it.</p>
+</section>
+<section id="step-8-verify-the-pose-stream">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Step 8: Verify the pose stream</a><a class="headerlink" href="#step-8-verify-the-pose-stream" title="Link to this heading">#</a></h3>
+<p>In another terminal, source the CloudXR environment and read one collection with the stock SE3
+printer. Use a collection id printed by the plugin in Step 7:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>IsaacCapture/
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/examples/schemaio/se3_printer<span class="w"> </span>vive_tracker_&lt;serial&gt;
+</pre></div>
+</div>
+</section>
+<section id="step-9-optional-record-and-replay">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Step 9 (optional): Record and replay</a><a class="headerlink" href="#step-9-optional-record-and-replay" title="Link to this heading">#</a></h3>
+<p>Install the examples package once, from the Isaac Capture root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+</pre></div>
+</div>
+<p>While the plugin is running, record every tracker. With no arguments, the script records 10
+seconds to <code class="docutils literal notranslate"><span class="pre">./recordings/&lt;timestamp&gt;.mcap</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.record_se3_vive
+</pre></div>
+</div>
+<p>To record for a different duration or to a specific file, use
+<code class="docutils literal notranslate"><span class="pre">record_se3_vive</span> <span class="pre">[duration_s]</span> <span class="pre">[output.mcap]</span> <span class="pre">[--collections</span> <span class="pre">a,b,c]</span></code>.</p>
+<p>Replay the newest recording. Replay needs no CloudXR runtime and no hardware. Open
+<code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code> to see each tracker as a 3D coordinate frame. Replay loops until you
+press <code class="docutils literal notranslate"><span class="pre">Ctrl+C</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_se3_vive<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1
+</pre></div>
+</div>
+<p>Without <code class="docutils literal notranslate"><span class="pre">--host</span></code>, the viewer binds to <code class="docutils literal notranslate"><span class="pre">0.0.0.0</span></code> and anyone who can reach the port on your
+network can see it. Other useful options are <code class="docutils literal notranslate"><span class="pre">--rate</span> <span class="pre">N</span></code>, <code class="docutils literal notranslate"><span class="pre">--no-viz</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span> <span class="pre">N</span></code> and
+<code class="docutils literal notranslate"><span class="pre">--collections</span> <span class="pre">a,b,c</span></code>. See
+<a class="reference internal" href="../../references/mcap_record_replay.html"><span class="doc">MCAP Recording &amp; Replay</span></a> for the underlying MCAP tooling.</p>
+</section>
+</section>
+<section id="using-the-tracker-data">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Using the Tracker Data</a><a class="headerlink" href="#using-the-tracker-data" title="Link to this heading">#</a></h2>
+<section id="collection-naming">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Collection naming</a><a class="headerlink" href="#collection-naming" title="Link to this heading">#</a></h3>
+<p>Each tracker becomes its own collection, named after the tracker’s physical serial number:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">vive_tracker_&lt;serial&gt;</span></code> (for example <code class="docutils literal notranslate"><span class="pre">vive_tracker_SN0001</span></code>) when the pose carries a serial.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">vive_tracker_&lt;device_id&gt;</span></code> as a fallback if the serial is empty. The plugin logs when this
+happens.</p></li>
+</ul>
+<p>The name is fixed by the first pose from a tracker. Because the serial is the stable identity of
+a tracker, an MCAP file recorded today still shows which physical tracker each channel came from.
+The plugin does not assign roles such as “left wrist”. Map serials to roles in your own
+application.</p>
+</section>
+<section id="collection-auto-discovery">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">Collection auto-discovery</a><a class="headerlink" href="#collection-auto-discovery" title="Link to this heading">#</a></h3>
+<p>While the plugin runs, it writes its live collection ids, one per line, to
+<code class="docutils literal notranslate"><span class="pre">$XDG_RUNTIME_DIR/vive_se3_collections.txt</span></code>. If <code class="docutils literal notranslate"><span class="pre">XDG_RUNTIME_DIR</span></code> is not set, it uses a
+private per-user folder instead: <code class="docutils literal notranslate"><span class="pre">/tmp/vive_se3_tracker-&lt;uid&gt;/vive_se3_collections.txt</span></code>. The file is updated as trackers appear and removed when the plugin
+exits. Readers such as <code class="docutils literal notranslate"><span class="pre">record_se3_vive</span></code> use it to find collections without being told the ids.</p>
+<p>To read the poses in your own code, create one <code class="docutils literal notranslate"><span class="pre">Se3Tracker</span></code> per collection id. See
+<a class="reference internal" href="index.html"><span class="doc">Spatial Trackers and Device Data</span></a>.</p>
+</section>
+<section id="reference-frame">
+<h3><a class="toc-backref" href="#id19" role="doc-backlink">Reference frame</a><a class="headerlink" href="#reference-frame" title="Link to this heading">#</a></h3>
+<p>Poses are forwarded exactly as VIVE Hub reports them: right-handed, X right, Y up, -Z forward
+(the same axis convention as OpenXR). The origin comes from the VIVE Hub tracking map. It is
+<strong>not</strong> the OpenXR session base space, so align the frames downstream if you combine the trackers
+with headset or controller data.</p>
+</section>
+<section id="timestamps-and-validity">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Timestamps and validity</a><a class="headerlink" href="#timestamps-and-validity" title="Link to this heading">#</a></h3>
+<p>VUT pose timestamps use the host <code class="docutils literal notranslate"><span class="pre">CLOCK_MONOTONIC</span></code> clock, the same local clock that Isaac Capture
+uses, so each sample keeps its original sample time. The plugin runs at about 90 Hz and, for each
+tracker:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Condition</p></th>
+<th class="head"><p>Action</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>New sample since the last push</p></td>
+<td><p>Push <code class="docutils literal notranslate"><span class="pre">is_valid=true</span></code> with the VUT sample time.</p></td>
+</tr>
+<tr class="row-odd"><td><p>No new sample, but still fresh</p></td>
+<td><p>Push nothing. Readers keep the last pose, and MCAP gets no duplicate timestamps.</p></td>
+</tr>
+<tr class="row-even"><td><p>Stale (older than <code class="docutils literal notranslate"><span class="pre">VIVE_SE3_STALE_MS</span></code>)</p></td>
+<td><p>Push <code class="docutils literal notranslate"><span class="pre">is_valid=false</span></code> with an identity pose on every tick.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="configuration">
+<h2><a class="toc-backref" href="#id21" role="doc-backlink">Configuration</a><a class="headerlink" href="#configuration" title="Link to this heading">#</a></h2>
+<p>The plugin is configured with environment variables:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">VIVE_VUT_SOCKET</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/tmp/vut.sock</span></code></p></td>
+<td><p>Path of the VIVE Hub VUT daemon socket.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">VIVE_SE3_STALE_MS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">250</span></code></p></td>
+<td><p>Time in ms (1 to 3600000) after which a tracker without new samples is pushed as invalid.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">VIVE_</span><wbr><span class="pre">SE3_</span><wbr><span class="pre">COLLECTIONS_</span><wbr><span class="pre">FILE</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">$XDG_RUNTIME_DIR/vive_se3_collections.txt</span></code></p></td>
+<td><p>Where live collection ids are advertised.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">VIVE_SE3_SYNTHETIC</span></code></p></td>
+<td><p>(unset)</p></td>
+<td><p>Set to <code class="docutils literal notranslate"><span class="pre">1</span></code> to generate fake trackers without VIVE Hub, for a no-hardware smoke test.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="troubleshooting">
+<h2><a class="toc-backref" href="#id22" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><strong>The plugin was not built.</strong> Check the CMake configure output for <code class="docutils literal notranslate"><span class="pre">VIVEHub</span> <span class="pre">VUT</span> <span class="pre">SDK</span> <span class="pre">not</span> <span class="pre">found</span></code>
+and make sure <code class="docutils literal notranslate"><span class="pre">-DVUT_SDK_DIR</span></code> points at the <code class="docutils literal notranslate"><span class="pre">sdk</span></code> folder of VIVE Hub 1.0.1 or newer.</p></li>
+<li><p><strong>The plugin runs but no collections appear.</strong> Make sure VIVE Hub is running, the trackers are
+tracking in its UI, and <code class="docutils literal notranslate"><span class="pre">vut_demo</span></code> (Step 4) prints poses. If VIVE Hub uses a different socket
+path, set <code class="docutils literal notranslate"><span class="pre">VIVE_VUT_SOCKET</span></code>.</p></li>
+<li><p><strong>VIVE Hub does not see the dongle.</strong> Run <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">./install-udev.sh</span></code> on the host, then unplug and
+replug the dongle.</p></li>
+<li><p><strong>Testing without hardware.</strong> Run the plugin with <code class="docutils literal notranslate"><span class="pre">VIVE_SE3_SYNTHETIC=1</span></code> to check the Isaac
+Capture side on its own.</p></li>
+<li><p><strong>Reporting a VIVE Hub problem.</strong> Open an issue on the
+<a class="reference external" href="https://github.com/ViveRoboticsSoftware/vivehub-linux/issues" rel="noopener noreferrer" target="_blank">vivehub-linux repository</a> and
+attach the newest <code class="docutils literal notranslate"><span class="pre">vivehub_*.log</span></code> and <code class="docutils literal notranslate"><span class="pre">tracker_server_*.log</span></code> files from
+<code class="docutils literal notranslate"><span class="pre">~/.local/share/HTC/VIVEUltimateTracker/logs/</span></code>. VIVE Hub keeps only the latest 10 logs for
+each component, so copy them before you launch it again several times.</p></li>
+</ul>
+</section>
+<section id="license">
+<h2><a class="toc-backref" href="#id23" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">vive_se3_tracker</span></code> plugin and examples are covered by their stated licenses (Apache-2.0).
+VIVE Hub for Linux and the VUT SDK are proprietary to HTC, are governed by the VIVE Product EULA,
+and are <strong>not</strong> redistributed by this project.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Spatial Trackers and Device Data</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../add_device.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Add a New Device</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview">Overview</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#components">Components</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#quick-start">Quick Start</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#part-1-set-up-the-trackers-with-vive-hub">Part 1: Set up the trackers with VIVE Hub</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-1-download-vive-hub-for-linux">Step 1: Download VIVE Hub for Linux</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-2-install-vive-hub">Step 2: Install VIVE Hub</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-3-pair-the-trackers-and-build-the-tracking-map">Step 3: Pair the trackers and build the tracking map</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-4-optional-check-the-trackers-with-the-vut-sdk-demo">Step 4 (optional): Check the trackers with the VUT SDK demo</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#part-2-stream-the-trackers-into-isaac-capture">Part 2: Stream the trackers into Isaac Capture</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-5-build-isaac-capture-with-the-plugin">Step 5: Build Isaac Capture with the plugin</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-6-start-the-cloudxr-runtime">Step 6: Start the CloudXR runtime</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-run-the-plugin">Step 7: Run the plugin</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-8-verify-the-pose-stream">Step 8: Verify the pose stream</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#step-9-optional-record-and-replay">Step 9 (optional): Record and replay</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#using-the-tracker-data">Using the Tracker Data</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collection-naming">Collection naming</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collection-auto-discovery">Collection auto-discovery</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reference-frame">Reference frame</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#timestamps-and-validity">Timestamps and validity</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration">Configuration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#license">License</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
