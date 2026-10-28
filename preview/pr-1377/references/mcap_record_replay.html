@@ -621,7 +621,8 @@ command, and the replay scripts look there when given no path.</p>
 <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The first install
 compiles the extension modules and takes a few minutes; later ones reuse the
 cached build, and the install is editable, so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need
-no rebuild.  From <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
+no rebuild.  After a C++ change, add <code class="docutils literal notranslate"><span class="pre">--reinstall-package</span> <span class="pre">isaaccapture</span></code> to the
+install to rebuild it.  From <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
 <span class="pre">--install</span></code>) it picks up the wheel you just built instead — see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
 <p>An active OpenXR runtime / headset must be connected, just like any other
@@ -645,9 +646,6 @@ left (green) and right (blue) hand skeletons update each frame.</p>
 <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
 <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
 <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
-<p><code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span></code> (instead of an activated venv) needs an explicit <code class="docutils literal notranslate"><span class="pre">--python</span> <span class="pre">3.11</span></code>
-— without it, <code class="docutils literal notranslate"><span class="pre">uv</span></code> may resolve against the system Python and fail to match
-the lockfile.</p>
 </section>
 </section>
 <section id="api-reference">
