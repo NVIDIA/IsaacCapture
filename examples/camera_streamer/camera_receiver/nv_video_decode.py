@@ -45,8 +45,8 @@ class NvVideoDecoder:
             import codec
         except ImportError as e:
             raise RuntimeError(
-                "NvVideoDecoder requires the native codec. Run "
-                "`python launch.py build-receiver` from examples/camera_streamer with the host venv."
+                "NvVideoDecoder requires the native codec. Follow "
+                "the host receiver build instructions in examples/camera_streamer/README.md."
             ) from e
 
         cfg = codec.DecoderConfig()
@@ -59,7 +59,7 @@ class NvVideoDecoder:
         except AttributeError as e:
             raise RuntimeError(
                 "The native codec module is stale (no Codec enum). Rebuild it "
-                "with `python launch.py build-receiver` from examples/camera_streamer with the host venv."
+                "using the host receiver build instructions in examples/camera_streamer/README.md."
             ) from e
         self._decoder = codec.NvVideoDecoder(cfg)
 

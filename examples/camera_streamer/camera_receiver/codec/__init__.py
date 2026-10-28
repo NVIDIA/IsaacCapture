@@ -12,8 +12,8 @@ try:
     )
 except ImportError as e:
     raise ImportError(
-        "camera_receiver native codec not built. Run "
-        "`python launch.py build-receiver` from examples/camera_streamer with the host venv."
+        "camera_receiver native codec not built. Follow "
+        "the host receiver build instructions in examples/camera_streamer/README.md."
     ) from e
 
 __all__ = [

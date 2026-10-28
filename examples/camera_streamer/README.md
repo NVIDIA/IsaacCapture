@@ -55,8 +55,8 @@ all local interfaces by default, so it does not need `HOST_IP` as an argument.
 
 ### Put the source on both computers
 
-`~/isaac-camera-streamer` is a deployment directory, not a repository or a
-folder created by `launch.py`. The copy commands below create it explicitly.
+`~/isaac-camera-streamer` is a deployment directory. The copy commands below
+create it explicitly; the robot does not need a separate repository there.
 Choose **one** of the following approaches.
 
 **Recommended for a disk-constrained robot: clone on the host, copy the example.**
@@ -298,7 +298,7 @@ cd ~/IsaacCapture/examples/camera_streamer
 
 Expect `head.left` and `head.right` for stereo, or `head` for mono. This command is not a
 CloudXR launcher; headset display needs a compatible AVS1 CUDA IPC source in
-camera_viz. See [viewer options](cuda_ipc_consumer/README.md).
+camera_viz.
 Close the window, press q/Esc with the window focused, or Ctrl+C in its terminal.
 
 #### Display size and stream selection
@@ -354,8 +354,13 @@ export LD_LIBRARY_PATH="$PWD/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrt
 First-use kernel compilation can pause this diagnostic. Omit `--sample-mean`
 when measuring steady frame delivery.
 
-`launch.py` is an optional Python wrapper for build-sender, build-receiver,
-sender, receiver and consumer. The direct commands above are the primary workflow.
+To record frame timing without opening a window, use the same consumer:
+
+```bash
+.venv/bin/python cuda_ipc_consumer/consumer.py \
+  --socket /tmp/isaac-camera-streamer.sock --no-display \
+  --frames 120 --latency-csv /tmp/camera_latency.csv
+```
 
 ## Validation
 
@@ -363,12 +368,35 @@ sender, receiver and consumer. The direct commands above are the primary workflo
 cd ~/IsaacCapture/examples/camera_streamer
 uv pip install --python .venv/bin/python -e ".[test]"
 .venv/bin/python -m pytest tests
+```
+
+On the robot, run the native sender tests where the sender was built. The default
+suite checks configuration, scheduling, alignment and AVS1/TCP behavior without
+opening a camera:
+
+```bash
+cd ~/isaac-camera-streamer/camera_streamer
 ctest --test-dir argus_sender/build --output-on-failure
 ```
 
-Run the native sender tests on the robot where that sender was built.
-See [VALIDATION.md](VALIDATION.md) for actual hardware results; candidate profiles
-are not promoted to tested modes by configuration checks alone.
+For an opt-in stereo hardware test, stop the sender and local preview first.
+Check the devices, sensor modes and PWM rate against the smoke-test YAML before
+running it; pass a different YAML path if your camera setup differs:
+
+```bash
+cd ~/isaac-camera-streamer/camera_streamer/argus_sender
+cmake -S . -B build \
+  -DARGUS_SENDER_HARDWARE_TESTS=ON \
+  -DARGUS_SENDER_HARDWARE_CONFIG="$PWD/configs/hardware_stereo_smoke.yaml"
+cmake --build build --parallel 2
+ctest --test-dir build -R '^avs1_hardware_smoke$' --output-on-failure -V
+```
+
+This receives 120 stereo bundles and checks sequence continuity, nonempty HEVC
+payloads, increasing sensor timestamps when available, initial HEVC parameter
+sets/keyframes, and clean sender exit. Override the loopback port with
+`-DARGUS_SENDER_TEST_PORT=PORT`. Configuration checks alone do not validate a
+camera mode on hardware.
 
 ## Source layout and provenance
 
@@ -380,9 +408,9 @@ are not promoted to tested modes by configuration checks alone.
 | `tests` | C++ unit tests, Python receiver/config tests and opt-in hardware tests |
 | `configs` | Shared device/resolution profiles for sender and receiver |
 
-`UPSTREAM_FILES.json` preserves the original repository, commit and hashes for
-retained imports. The receiver private header moved from `codec/inc/` to `codec/`.
-This review branch contains only the GMSL/Argus pipeline.
+The GMSL/Argus pipeline was adapted from NVIDIA camera sources at commit
+`1fdb06d91ddb02ad527563cbacfc894a76d09126`. Import provenance and earlier hardware
+validation records remain available in Git history.
 
 Explicit upstream license notices are preserved. Files without a license grant
 remain `LicenseRef-NVIDIA-Internal-Review` in REUSE metadata. The owners have approved
