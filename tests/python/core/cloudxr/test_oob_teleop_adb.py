@@ -1305,6 +1305,38 @@ class _CdpScript:
         raise AssertionError(f"unscripted CDP call: {method} {params}")
 
 
+class _CdpError(Exception):
+    """Returned by a script to answer with a CDP protocol error."""
+
+
+class _RecordingCdpScript(_CdpScript):
+    """Adds the recording file input and the client's #loadRecordingStatus."""
+
+    def __init__(self, statuses: list[dict | None], *, set_files_fails=False):
+        super().__init__()
+        self.statuses = statuses
+        self.set_files_fails = set_files_fails
+
+    def respond(self, method: str, params: dict):
+        expr = params.get("expression", "")
+        if method.startswith("DOM.") or "loadRecordingStatus" in expr:
+            self.calls.append((method, params))
+        if method == "DOM.enable" or "el.textContent = ''" in expr:
+            return {}
+        if method == "DOM.getDocument":
+            return {"root": {"nodeId": 1}}
+        if method == "DOM.querySelector":
+            return {"nodeId": 2}
+        if method == "DOM.setFileInputFiles":
+            return _CdpError("file not found") if self.set_files_fails else {}
+        if "loadRecordingStatus" in expr:
+            status = (
+                self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+            )
+            return {"result": {"value": status}}
+        return super().respond(method, params)
+
+
 @asynccontextmanager
 async def _fake_cdp_ws(script: _CdpScript):
     """Serves *script*'s responses on an OS-assigned port; yields the `ws://` URL to connect to."""
@@ -1313,7 +1345,11 @@ async def _fake_cdp_ws(script: _CdpScript):
         async for raw in websocket:
             msg = json.loads(raw)
             result = script.respond(msg["method"], msg.get("params", {}))
-            await websocket.send(json.dumps({"id": msg["id"], "result": result}))
+            if isinstance(result, _CdpError):
+                reply = {"id": msg["id"], "error": {"message": str(result)}}
+            else:
+                reply = {"id": msg["id"], "result": result}
+            await websocket.send(json.dumps(reply))
 
     async with ws_serve(handler, "localhost", 0) as server:
         port = server.sockets[0].getsockname()[1]
@@ -1356,6 +1392,47 @@ async def test_cdp_session_click_connect_no_interstitial_reaches_ready_and_click
         and p.get("expression") == "document.getElementById('startButton')?.click()"
     )
     assert click_index > dispatch_index
+
+
+async def test_cdp_recording_load_waits_for_the_client() -> None:
+    """A slow import is waited for, and CONNECT comes only after it succeeded."""
+    loaded = {"state": "success", "text": 'Loaded 3 frames from "r.json".'}
+    script = _RecordingCdpScript([None, None, loaded])
+    async with _fake_cdp_ws(script) as ws_url:
+        await _cdp_session_click_connect(
+            ws_url, recording_device_path="/sdcard/Download/r.json"
+        )
+    methods = [m for m, _ in script.calls]
+    assert methods.index("DOM.setFileInputFiles") < methods.index(
+        "Input.dispatchMouseEvent"
+    )
+
+
+@pytest.mark.parametrize(
+    ("statuses", "set_files_fails", "match"),
+    [
+        ([None], True, "setFileInputFiles failed"),
+        (
+            [{"state": "error", "text": 'Could not load "r.json": bad version'}],
+            False,
+            "rejected the recording: Could not load",
+        ),
+        ([None], False, "did not confirm the recording"),
+    ],
+)
+async def test_cdp_recording_load_failure_stops_before_connect(
+    statuses, set_files_fails, match
+) -> None:
+    script = _RecordingCdpScript(statuses, set_files_fails=set_files_fails)
+    async with _fake_cdp_ws(script) as ws_url:
+        with (
+            patch.object(adb_module, "_RECORDING_LOAD_TIMEOUT", 0.3),
+            pytest.raises(OobAdbError, match=match),
+        ):
+            await _cdp_session_click_connect(
+                ws_url, recording_device_path="/sdcard/Download/r.json"
+            )
+    assert "Input.dispatchMouseEvent" not in [m for m, _ in script.calls]
 
 
 async def test_cdp_connect_waits_for_awake_before_mouse_dispatch() -> None:

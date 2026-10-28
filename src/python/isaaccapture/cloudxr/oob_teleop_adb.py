@@ -1553,6 +1553,19 @@ LATEST_RECORDING = "latest"
 # The client's Save names files isaacteleop-input-recording.json; the browser
 # adds " (N)" to repeats. ``latest`` only looks at these.
 _RECORDING_PREFIX = "isaacteleop-input-recording"
+# How long the client gets to read and validate a recording set over CDP.
+_RECORDING_LOAD_TIMEOUT = 10.0
+# The client reports each import in #loadRecordingStatus, as class
+# success or error plus a message.
+_CLEAR_LOAD_STATUS_JS = """(() => {
+    const el = document.getElementById('loadRecordingStatus');
+    if (el) { el.textContent = ''; el.className = 'load-recording-status'; }
+})()"""
+_READ_LOAD_STATUS_JS = """(() => {
+    const el = document.getElementById('loadRecordingStatus');
+    const state = ['success', 'error'].find((c) => el?.classList.contains(c));
+    return state ? { state, text: el.textContent } : null;
+})()"""
 
 
 def _newest_recording_on_headset() -> str:
@@ -1634,7 +1647,7 @@ async def _cdp_session_click_connect(
 
     _seq = 0
 
-    async def send(ws, method, params=None):
+    async def send(ws, method, params=None, *, check=False):
         nonlocal _seq
         _seq += 1
         req_id = _seq
@@ -1644,6 +1657,8 @@ async def _cdp_session_click_connect(
         while True:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
             if msg.get("id") == req_id:
+                if check and "error" in msg:
+                    raise OobAdbError(f"CDP: {method} failed: {msg['error']}")
                 return msg.get("result", {})
 
     async with ws_connect(ws_url) as ws:
@@ -1854,12 +1869,36 @@ async def _cdp_session_click_connect(
                     "CDP: the teleop page has no recording file input; "
                     "the web client is older than the recorder UI"
                 )
+            await send(ws, "Runtime.evaluate", {"expression": _CLEAR_LOAD_STATUS_JS})
             await send(
                 ws,
                 "DOM.setFileInputFiles",
                 {"nodeId": node_id, "files": [recording_device_path]},
+                check=True,
             )
-            log.info("CDP: loaded recording %s", recording_device_path)
+            # Setting the input only starts the import; CONNECT without a
+            # replayable recording would make an unattended run worthless.
+            load_deadline = loop.time() + _RECORDING_LOAD_TIMEOUT
+            while True:
+                r = await send(
+                    ws,
+                    "Runtime.evaluate",
+                    {"expression": _READ_LOAD_STATUS_JS, "returnByValue": True},
+                )
+                status = (r.get("result") or {}).get("value") or {}
+                if status.get("state") == "success":
+                    break
+                if status.get("state") == "error":
+                    raise OobAdbError(
+                        f"CDP: the client rejected the recording: {status.get('text')}"
+                    )
+                if loop.time() > load_deadline:
+                    raise OobAdbError(
+                        "CDP: the client did not confirm the recording within "
+                        f"{_RECORDING_LOAD_TIMEOUT:.0f}s"
+                    )
+                await asyncio.sleep(1.0)
+            log.info("CDP: %s", status.get("text"))
 
         # Extra grace period: the CONNECT button can become enabled before the
         # React <XR> store is fully mounted, which causes "XR is not available"
