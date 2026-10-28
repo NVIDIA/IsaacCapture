@@ -389,6 +389,9 @@ def _print_summary_for(args: argparse.Namespace, run_dir: str, logs_dir: Path) -
 
 def _cmd_start(args: argparse.Namespace) -> int:
     """Start the service detached from this terminal."""
+    # Checked here too, so start says why instead of only that the child exited.
+    if args.defer_oob_connect and not args.setup_oob:
+        _fail("--defer-oob-connect requires --setup-oob.")
     from .. import background  # noqa: PLC0415
     from ..runtime import is_runtime_live  # noqa: PLC0415
 

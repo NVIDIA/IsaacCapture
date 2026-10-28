@@ -119,10 +119,16 @@ def test_foreground_fatal_with_stalled_writer_returns_error(tmp_path, capsys):
     service.stop.assert_called_once()
 
 
-def test_defer_oob_connect_requires_setup_oob(capsys):
-    with pytest.raises(SystemExit):
-        cli._cmd_run(_run_args(defer_oob_connect=True))
+@pytest.mark.parametrize("command", ["_cmd_run", "_cmd_start"])
+def test_defer_oob_connect_requires_setup_oob(capsys, command):
+    """``start`` refuses before it writes the EULA marker or spawns ``run``."""
+    with (
+        patch("isaaccapture.cloudxr.background.start_and_wait") as spawn,
+        pytest.raises(SystemExit),
+    ):
+        getattr(cli, command)(_run_args(defer_oob_connect=True))
     assert "--defer-oob-connect requires --setup-oob" in capsys.readouterr().err
+    spawn.assert_not_called()
 
 
 def test_defer_oob_connect_reaches_the_service(tmp_path):
