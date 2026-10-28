@@ -9,6 +9,7 @@
 #include <XR_NVX1_tensor_data.h>
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace core
@@ -31,6 +32,17 @@ bool is_known_non_fatal_tensor_unavailable(XrResult result)
 SchemaTrackerBase::SchemaTrackerBase(const OpenXRSessionHandles& handles, SchemaTrackerConfig config)
     : m_handles(handles), m_config(std::move(config)), m_time_converter(handles)
 {
+    if (m_config.max_flatbuffer_size == 0 || m_config.max_flatbuffer_size > std::numeric_limits<uint32_t>::max())
+    {
+        throw std::invalid_argument("SchemaTracker max_flatbuffer_size must fit in a non-zero uint32_t");
+    }
+    if (m_config.max_sample_batch_stride < m_config.max_flatbuffer_size ||
+        m_config.max_sample_batch_stride > std::numeric_limits<uint32_t>::max())
+    {
+        throw std::invalid_argument(
+            "SchemaTracker max_sample_batch_stride must fit in uint32_t and cover max_flatbuffer_size");
+    }
+
     // Validate handles
     assert(handles.instance != XR_NULL_HANDLE && "OpenXR instance handle cannot be null");
     assert(handles.session != XR_NULL_HANDLE && "OpenXR session handle cannot be null");
@@ -132,16 +144,17 @@ bool SchemaTrackerBase::ensure_collection()
             continue;
         }
 
-        // Runtime metadata controls both allocation and copy sizes. Store it only after
-        // validating the complete sample layout against the configured payload limit.
-        if (!detail::is_valid_schema_sample_layout(
-                coll_props.data.totalSampleSize, coll_props.sampleBatchStride, m_config.max_flatbuffer_size))
+        // The extension permits padding between samples, so bound payload and stride
+        // separately; both values come from the runtime and control memory operations.
+        if (!detail::is_valid_schema_sample_layout(coll_props.data.totalSampleSize, coll_props.sampleBatchStride,
+                                                   m_config.max_flatbuffer_size, m_config.max_sample_batch_stride))
         {
             throw std::runtime_error(
                 "SchemaTracker: collection '" + m_config.collection_id +
                 "' reports invalid sample layout: totalSampleSize=" + std::to_string(coll_props.data.totalSampleSize) +
                 ", sampleBatchStride=" + std::to_string(coll_props.sampleBatchStride) +
-                ", max_flatbuffer_size=" + std::to_string(m_config.max_flatbuffer_size));
+                ", max_flatbuffer_size=" + std::to_string(m_config.max_flatbuffer_size) +
+                ", max_sample_batch_stride=" + std::to_string(m_config.max_sample_batch_stride));
         }
 
         m_sample_batch_stride = coll_props.sampleBatchStride;
@@ -181,6 +194,37 @@ bool SchemaTrackerBase::read_all_samples(std::vector<SampleResult>& samples)
     }
 
     return true;
+}
+
+void SchemaTrackerBase::note_rejected_flatbuffer_samples(size_t count)
+{
+    if (count == 0)
+    {
+        return;
+    }
+
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    const uint64_t increment = static_cast<uint64_t>(count);
+    m_rejected_flatbuffer_samples =
+        increment > kMaximum - m_rejected_flatbuffer_samples ? kMaximum : m_rejected_flatbuffer_samples + increment;
+
+    if (m_next_rejection_warning == 0 || m_rejected_flatbuffer_samples < m_next_rejection_warning)
+    {
+        return;
+    }
+
+    m_logger->warn("Rejected {} malformed FlatBuffer sample(s) from collection '{}'; {} rejected in total", count,
+                   m_config.collection_id, m_rejected_flatbuffer_samples);
+
+    do
+    {
+        if (m_next_rejection_warning > kMaximum / 2)
+        {
+            m_next_rejection_warning = 0;
+            break;
+        }
+        m_next_rejection_warning *= 2;
+    } while (m_next_rejection_warning <= m_rejected_flatbuffer_samples);
 }
 
 const SchemaTrackerConfig& SchemaTrackerBase::config() const
