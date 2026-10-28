@@ -174,7 +174,11 @@ def live(connection, configs):
                             forces=data.taxel_forces.copy().tolist()
                             if data is not None
                             else None,
-                            hand=owned(h, ("positions", "orientations", "is_valid")),
+                            # Bulk hand views belong to the nested HandJoints object.
+                            hand=owned(
+                                h.joints if h is not None else None,
+                                ("positions", "orientations", "is_valid"),
+                            ),
                             joints={v.name: [v.position, v.valid] for v in j.joints}
                             if j is not None
                             else {},

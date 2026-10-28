@@ -47,12 +47,12 @@ system; see the [tactile device documentation](../../docs/source/device/tactile/
    mimic joints appear in the tree; mimic joints follow their source. Confirm
    **Set shared binding pose q0**. Existing bind poses and weights remain
    numerically unchanged when q0 or the wrist reference changes.
-4. Add `WRIST` with the wrist link; its bind pose is identity. Add, for example,
-   `INDEX_DISTAL` with `index_distal`. New non-wrist segments start at the URDF
-   link frame when calibrated. Pick a segment center or use the native gizmo and
-   inspector to adjust its frame. URDF frames are initial estimates: calibrate
-   their axes to the HandJoint convention before production use. Associating an
-   imported segment with a link preserves its numerical bind pose.
+4. New drafts contain all OpenXR hand joints in a neutral open pose, with `WRIST`
+   at the identity. Associate segments with URDF links, then pick a segment center
+   or use the native gizmo and inspector to adjust its frame. URDF frames are
+   initial estimates: calibrate their axes to the HandJoint convention before
+   production use. Associating an imported segment with a link preserves its
+   numerical bind pose.
 5. In **Layout**, select the intended connected surface component. Set rows and
    columns to `4`, and enter the new taxels' segment row list, for example `[1]`.
    Pick the first center `O`, first-row last center `C`, and first-column last

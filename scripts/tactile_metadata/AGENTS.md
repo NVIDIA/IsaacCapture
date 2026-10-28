@@ -30,3 +30,8 @@ SPDX-License-Identifier: Apache-2.0
 - Keep the GUI a thin adapter over shared document, geometry, storage and SDK operations. Prefer explicit native Viser widgets and one reusable property inspector; avoid widget-type inference, duplicate field editors in dialogs, and rebuilding scene nodes on every frame. Moving logic between files alone does not reduce implementation size.
 - Use fixed URDF opacity and color-based link highlighting; do not add per-link visibility or opacity controls or state.
 - Under a hard code budget, finish and count a complete executable slice before expanding the UI. Refactoring dispatch or moving functions is not evidence that the implementation fits; verify the formatted total and retain budget for integration fixes.
+- Treat metadata wrist coordinates, Viser scene coordinates and camera screen orientation as distinct; diagnose an upside-down display from the scene/camera mapping, not URDF alignment.
+- Separate OpenXR schema/reference-space contracts from provider basis conversion; verify the plugin conversion before claiming injected HandPose follows OpenXR joint axes.
+- Rebase both the raw live skeleton and metadata deformation by the same full inverse WRIST pose; never reattach the world-space wrist transform when the live view is wrist-relative.
+- Render viewport direction indicators in client-side screen space from the render camera; perspective scene nodes and server camera callbacks introduce distortion, delay and jumps.
+- When reporting a captured protocol frame, include every row in protocol order; a summary may follow but must not replace the requested raw frame.

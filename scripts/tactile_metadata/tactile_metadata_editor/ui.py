@@ -15,6 +15,7 @@ import numpy as np
 import trimesh
 import viser
 from trimesh import transformations as tf
+from viser import _messages
 
 from . import geometry as geo, sdk, storage
 from .document import Document, FIELDS, GROUPS, IDENTITY, JOINTS, State, joint_number
@@ -34,7 +35,7 @@ def common_number(values):
 
 
 class Editor:
-    INITIAL_CAMERA_POSE = ((0.3, -0.4, 0.3), (0, 0, 0))
+    INITIAL_CAMERA_POSE = ((0.3, 0.3, -0.4), (0, 0.08, 0))
 
     def __init__(self, state, args):
         self.state, self.args, self.started = state, args, bool(state.documents)
@@ -59,7 +60,14 @@ class Editor:
             False,
         )
         self.sdk_result, self.sdk_revision = "not checked", None
+        if viser.__version__ != "1.1.1":
+            raise RuntimeError("Viewport axes require viser 1.1.1")
+        viewport_axes = Path(__file__).with_name("viewport_axes.js").read_text()
         self.server = viser.ViserServer(host="0.0.0.0", port=args.port)
+        self.server.scene.set_up_direction("+y")
+        self.server._websock_server.queue_message(
+            _messages.RunJavascriptMessage(source=viewport_axes)
+        )
         (
             self.server.initial_camera.position,
             self.server.initial_camera.look_at,
@@ -219,13 +227,12 @@ class Editor:
             self.button(
                 "Apply this hand's source configuration", self.configure_source
             )
-            self.source_joint = g.add_text("Source joint name", "")
-            self.target_joint = g.add_dropdown("URDF target joint", ("",))
-            self.scale = g.add_number("Scale", 1.0)
-            self.offset = g.add_number("Offset", 0.0)
-            self.button("Add / update mapping", self.mapping)
-            self.button("Remove mapping", lambda: self.mapping(True))
-            self.mapping_info = g.add_markdown("")
+            self.mapping_json = g.add_text(
+                "Joint mappings JSON: source → [target, scale, offset]",
+                "{}",
+                multiline=True,
+            )
+            self.button("Apply joint mappings", self.mapping)
             self.button("Connect / disconnect", self.connect)
             self.button(
                 "Play / pause",
@@ -390,9 +397,7 @@ class Editor:
                 h.remove()
         self.model = model
         self.wrist.options = self.segment_link.options = tuple(model.links)
-        self.joint.options = self.target_joint.options = tuple(
-            j.name for j in model.joints
-        ) or ("",)
+        self.joint.options = tuple(j.name for j in model.joints) or ("",)
         self.q = copy.deepcopy(self.state.model.get("q0", {}))
         self.sides.disabled = True
         self.sides.value = "both" if len(self.state.documents) == 2 else self.side.value
@@ -422,7 +427,6 @@ class Editor:
             self.wrist,
             self.joint,
             self.segment_link,
-            self.target_joint,
             self.surface,
         ):
             w.options = ("",)
@@ -488,6 +492,9 @@ class Editor:
         )
         self.joint_id.value = source.get("joint_state", "")
         self.joint_enabled.value = bool(self.joint_id.value)
+        self.mapping_json.value = json.dumps(
+            self.d.editor.get("mapping", {}), indent=2
+        )
         self.segment.options = self.segment_options()
 
     def root(self, d=None, cfg=None):
@@ -502,7 +509,7 @@ class Editor:
                 )
             except (KeyError, ValueError, TypeError):
                 pass
-        return np.eye(4)
+        return geo.VISUALIZATION_FROM_HAND.copy()
 
     def surfaces(self):
         return [
@@ -836,24 +843,25 @@ class Editor:
         if self.receiver:
             self.log("Source configuration updated; reconnect to apply it")
 
-    def mapping(self, remove=False):
-        mappings = dict(self.d.editor.get("mapping", {}))
-        if remove:
-            mappings.pop(self.source_joint.value, None)
-        else:
-            if (
-                not self.source_joint.value
-                or not self.target_joint.value
-                or not all(
-                    math.isfinite(v) for v in (self.scale.value, self.offset.value)
-                )
-            ):
-                raise ValueError("Choose source/target joints and finite scale/offset")
-            mappings[self.source_joint.value] = [
-                self.target_joint.value,
-                self.scale.value,
-                self.offset.value,
-            ]
+    def mapping(self):
+        mappings = json.loads(self.mapping_json.value)
+        targets = {joint.name for joint in self.model.joints} if self.model else set()
+        if not isinstance(mappings, dict) or any(
+            not isinstance(source, str)
+            or not source
+            or not isinstance(values, list)
+            or len(values) != 3
+            or not isinstance(values[0], str)
+            or values[0] not in targets
+            or any(
+                type(value) not in (int, float) or not math.isfinite(value)
+                for value in values[1:]
+            )
+            for source, values in mappings.items()
+        ):
+            raise ValueError(
+                "Expected {source: [URDF target joint, finite scale, finite offset]}"
+            )
         self.change(self.d.editor.update, mapping=mappings)
 
     def connect(self):
@@ -1050,7 +1058,6 @@ class Editor:
             f"{i}: {v['side']} {v['severity']} {v['field']}[{v['row']}]: {v['message']}"
             for i, v in enumerate(self.issues)
         ) or ("No local errors",)
-        self.mapping_info.content = str(d.editor.get("mapping", {}))
         self.check_info.content = f"Local revision {self.state.revision}: {sum(v['severity'] == 'error' for v in self.issues)} errors. SDK/export revision {self.sdk_revision}: {self.sdk_result}{' (stale)' if self.sdk_revision is not None and self.sdk_revision != self.state.revision else ''}"
 
     def locate(self):
@@ -1341,11 +1348,33 @@ class Editor:
                     root, d, current, skeleton = self.root(draft, cfg), draft, None, []
                     issues = [v for v in self.issues if v["side"] == side]
                     if mode == "LIVE":
+                        current, joints, world_to_wrist = geo.hand_current(
+                            draft, value["hand"]
+                        )
+                        root = geo.VISUALIZATION_FROM_HAND.copy()
+                        skeleton = [
+                            root @ world_to_wrist @ t
+                            for t in joints
+                            if t is not None
+                        ]
                         if self.source.value == "Received":
-                            d, issues = self.received_document(side, value["metadata"])
-                        current, joints, _ = geo.hand_current(d, value["hand"])
-                        root = joints[1]
-                        skeleton = [t for t in joints if t is not None]
+                            try:
+                                received, received_issues = self.received_document(
+                                    side, value["metadata"]
+                                )
+                                received_current, _, _ = geo.hand_current(
+                                    received, value["hand"]
+                                )
+                            except (ValueError, TypeError, KeyError, IndexError) as exc:
+                                status.append(
+                                    f"{side}: received metadata unavailable; using draft: {exc}"
+                                )
+                            else:
+                                d, issues, current = (
+                                    received,
+                                    received_issues,
+                                    received_current,
+                                )
                     elif mode == "PREVIEW" and self.model and "root" in draft.editor:
                         current = self.model.current(draft, self.model.fk(cfg))
                     self.render_side(

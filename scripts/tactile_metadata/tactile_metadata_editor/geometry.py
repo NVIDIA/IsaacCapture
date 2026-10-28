@@ -12,6 +12,17 @@ from yourdfpy import URDF
 
 from .document import FIELDS, joint_number, row_error
 
+# URDF +X/+Y/+Z to visualization +Z/+X/+Y.
+VISUALIZATION_FROM_URDF = np.array(
+    [[0, 1, 0, 0], [0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 1]],
+    dtype=float,
+)
+# Hand +X/+Y/-Z to visualization -X/-Z/+Y.
+VISUALIZATION_FROM_HAND = np.array(
+    [[-1, 0, 0, 0], [0, 0, -1, 0], [0, -1, 0, 0], [0, 0, 0, 1]],
+    dtype=float,
+)
+
 
 def matrix(p):
     try:
@@ -98,7 +109,11 @@ class Model:
             self.urdf.update_cfg(
                 dict(zip((j.name for j in self.joints), configuration))
             )
-            result = {link: self.urdf.get_transform(link).copy() for link in self.links}
+            result = {
+                link: VISUALIZATION_FROM_URDF
+                @ self.urdf.get_transform(link).copy()
+                for link in self.links
+            }
         self._fk_cache[configuration] = result
         if len(self._fk_cache) > 4:
             self._fk_cache.popitem(last=False)
