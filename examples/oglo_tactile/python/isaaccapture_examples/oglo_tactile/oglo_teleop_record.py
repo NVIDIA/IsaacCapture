@@ -160,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
         help="path to oglo_tactile_plugin",
     )
     parser.add_argument(
-        "--mcap", default=None, help="output MCAP path (default: timestamped)"
+        "--mcap",
+        default=None,
+        help="output MCAP path (default: recordings/oglo_teleop_<timestamp>.mcap)",
     )
     parser.add_argument(
         "--duration",
@@ -241,9 +243,12 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
-    mcap_path = (
-        args.mcap or f"oglo_teleop_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mcap"
-    )
+    if args.mcap:
+        mcap_path = Path(args.mcap)
+    else:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mcap_path = Path.cwd() / "recordings" / f"oglo_teleop_{stamp}.mcap"
+    mcap_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- trackers: Quest hand/head + both gloves --------------------------------
     hand = deviceio.HandTracker()
@@ -300,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     norm_r = Normalizer(raw=args.raw)
 
     recording = deviceio.McapRecordingConfig(
-        mcap_path,
+        str(mcap_path),
         [
             (hand, "hands"),
             (head, "head"),

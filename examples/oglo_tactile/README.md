@@ -36,7 +36,7 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 2. **Build and install** (plugin + viz + python wheel + this example)
 
    ```bash
-   cd IsaacTeleop
+   cd <repo>                       # your IsaacCapture checkout
    cmake -B build -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON
    cmake --build build --parallel
    cmake --install build           # builds the isaaccapture python wheel/package
@@ -47,6 +47,13 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
    The BLE backend (BlueZ via libdbus, permissive) connects out of the box.
    CuPy for the in-headset overlay comes with `isaaccapture[cloudxr]`.
 
+   To check the heatmap renderer without gloves or a headset, render a synthetic
+   frame to `recordings/oglo_heatmap_demo.png`:
+
+   ```bash
+   python -m isaaccapture_examples.oglo_tactile.oglo_heatmap
+   ```
+
 3. **Gloves**: confirm both run schema-5 firmware, are charged, and
    advertise `OGLO LEFT` / `OGLO RIGHT` (check with `bluetoothctl scan on`).
 
@@ -56,7 +63,7 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 
 **Start the CloudXR runtime** — a background service, so this shell stays free
 ```bash
-cd ~/Documents/IsaacTeleop
+cd <repo>
 source scripts/setup_cloudxr_env.sh
 python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on first run only
 # Note the printed web-client URL, e.g.  https://<laptop-ip>:48322/
@@ -71,13 +78,13 @@ python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on fi
 
 **Gloves + recording + overlay**
 ```bash
-cd ~/Documents/IsaacTeleop
+cd <repo>
 source scripts/setup_cloudxr_env.sh
 source ~/.cloudxr/run/cloudxr.env          # path printed by step above
 python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record
 ```
 The script: connects both gloves over BLE, starts recording to
-`oglo_teleop_<timestamp>.mcap`, and shows the **two-hand tactile heatmap** in the
+`recordings/oglo_teleop_<timestamp>.mcap`, and shows the **two-hand tactile heatmap** in the
 headset. **Keep hands relaxed for ~1 s** at start so the baseline tares.
 
 Press a glove → the matching finger/taxel lights up (YlOrRd) on the Quest screen.
@@ -90,7 +97,7 @@ Press a glove → the matching finger/taxel lights up (YlOrRd) on the Quest scre
 ## C. Verify the recording
 
 ```bash
-mcap info oglo_teleop_*.mcap
+mcap info recordings/oglo_teleop_*.mcap
 # channels: hands/{left,right}_hand, head/head, oglo_{left,right}/oglo(+_tracked)
 ```
 All streams share `sample_time_local_common_clock`, so Quest pose and OGLO
@@ -98,12 +105,12 @@ tactile align in time.
 
 ---
 
-## Useful flags (`oglo_teleop_record.py`)
+## Useful flags (`isaaccapture_examples.oglo_tactile.oglo_teleop_record`)
 
 | Flag | Purpose |
 |------|---------|
 | `--plugin-bin PATH` | Path to `oglo_tactile_plugin` (auto-detected under `build/`). |
-| `--mcap PATH` | Output file (default timestamped). |
+| `--mcap PATH` | Output file (default `recordings/oglo_teleop_<timestamp>.mcap`). |
 | `--duration S` | Auto-stop after S seconds (0 = until Ctrl+C). |
 | `--raw` | Raw-ADC heatmap (no baseline subtraction). |
 | `--no-overlay` | Record only (skip headset heatmap). |

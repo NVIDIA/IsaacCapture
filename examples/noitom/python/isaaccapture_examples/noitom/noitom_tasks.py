@@ -15,7 +15,7 @@ import numpy as np
 from gymnasium.envs.registration import registry
 
 from isaaclab.utils.configclass import configclass
-from isaaclab_tasks.manager_based.locomanipulation.pick_place.locomanipulation_g1_env_cfg import (
+from isaaclab_tasks.contrib.locomanip_pick_place.locomanipulation_g1_env_cfg import (
     LocomanipulationG1EnvCfg,
 )
 from isaaccapture.schema import (

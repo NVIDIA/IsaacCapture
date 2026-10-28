@@ -20,10 +20,8 @@ dependencies = [
     "scipy",
 ]
 
-# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
-# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
-# the latter keeps only the last path component and would root the wheel at a
-# bare top-level `noitom/`.
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# noitom -- see the packaging rules in examples/README.md.
 [tool.hatch.build.targets.wheel]
 only-include = ["python/isaaccapture_examples/noitom"]
 sources = ["python"]
