@@ -6,11 +6,11 @@
 Device Conformance Testing
 ==========================
 
-You have integrated a device that publishes hand poses into Isaac Capture. The Conformance Test
-Suite (CTS) produces the evidence that the integration works: you record one scripted take, a
-checker reads only that recording and returns a verdict, and you send the take through the
-submission form for your pull request. This page explains the process, the hand suite and what a
-verdict means.
+You have integrated a device that publishes hand or full-body poses into Isaac Capture. The
+Conformance Test Suite (CTS) produces the evidence that the integration works: you record one
+scripted take, a checker reads only that recording and returns a verdict, and you send the take
+through the submission form for your pull request. This page explains the process, the two suites
+and what a verdict means.
 
 How it works
 ------------
@@ -22,8 +22,8 @@ How it works
       :link: /device/add_device
       :link-type: doc
 
-      Your device feeds Isaac Capture's hand tracker, through your plugin or the headset's own
-      tracking.
+      Your device feeds Isaac Capture's hand or body tracker, through your plugin or the
+      headset's own tracking.
       +++
       Add a New Device
 
@@ -39,19 +39,19 @@ How it works
 
       Practice the script until the performer knows every step.
       +++
-      :ref:`Hand suite <cts-hand-rehearse>`
+      :ref:`Hand <cts-hand-rehearse>` · :ref:`Full body <cts-full-body-rehearse>`
 
    .. grid-item-card:: 4 · Record
 
       Record one scripted take in the capture panel in your browser.
       +++
-      :ref:`Hand suite <cts-hand-record>`
+      :ref:`Hand <cts-hand-record>` · :ref:`Full body <cts-full-body-record>`
 
    .. grid-item-card:: 5 · Check
 
       The checker reads the take and returns one verdict.
       +++
-      :ref:`Hand suite <cts-hand-check>`
+      :ref:`Hand <cts-hand-check>` · :ref:`Full body <cts-full-body-check>`
 
    .. grid-item-card:: 6 · Submit
       :link: submit
@@ -63,8 +63,10 @@ How it works
 
 .. _cts-overview-suites:
 
-The hand suite
---------------
+Pick your suite
+---------------
+
+Run the suite for the data your device produces. A device that produces both runs both.
 
 .. grid:: 1 1 2 2
    :gutter: 3
@@ -79,6 +81,17 @@ The hand suite
       - **Pacing:** automatic; a spoken cue, a count-in, a beep, then a timed hold
       +++
       Hand Suite
+
+   .. grid-item-card:: Full body
+      :link: full_body
+      :link-type: doc
+
+      - **For:** headset body tracking, or a mocap suit through a vendor backend
+      - **Records:** ``core.FullBodyPoseRecord``, 24 joints
+      - **Script:** 10 poses and motions, standing
+      - **Pacing:** self-paced; you press when ready, then hold the pose or do the motion
+      +++
+      Full-Body Suite
 
 What the checker looks at
 -------------------------
@@ -95,20 +108,20 @@ What the checker looks at
      - Finite values, unit quaternions, monotonic timestamps, frame rate and gaps, joint speed
    * - Skeleton geometry
      - Is it a plausible human skeleton, in metres?
-     - Units, bone lengths that stay constant, human proportions, joints in their named slots,
-       handedness
+     - Units, bone lengths that stay constant, human proportions, joints in their named slots
+       and on their named sides, handedness
    * - Placement and frames
      - Are the joints where the body is, in the frame they claim?
      - Not parked at the origin, wrist not frozen, quaternion component order, positions and
-       orientations that agree
+       orientations that agree, +Y up
    * - Poses over the scripted steps
      - Did each step happen, in order, as labelled?
-     - Hands flat on a level table, fist closure, pinch finger identity, palms together,
-       fingertip contact through the rolls
+     - Hands flat on a level table, pinch finger identity, arm raised overhead, squat depth,
+       march rhythm
 
 The checker needs only the ``mcap`` and ``flatbuffers`` Python packages. It is deterministic, so
 we re-run it on your take and get the same verdict. Some checks are only measured and reported;
-the suite page says which.
+the suite pages say which.
 
 .. _cts-overview-verdicts:
 
@@ -172,7 +185,8 @@ What you need
 - Your device's plugin built and installed, if it has one.
 - ``aplay`` (``alsa-utils``) for the spoken cues. Without it, or without speakers, the capture
   panel's on-screen cues still guide every step.
-- A table and a chair for the script, and ideally a second person at the screen.
+- Room for the script (a table and chair for hand, standing space for full body), and ideally a
+  second person at the screen.
 - A Google account to sign in to the submission form.
 
 Start with :doc:`setup`.
@@ -184,4 +198,5 @@ Start with :doc:`setup`.
 
    setup
    hand
+   full_body
    submit
