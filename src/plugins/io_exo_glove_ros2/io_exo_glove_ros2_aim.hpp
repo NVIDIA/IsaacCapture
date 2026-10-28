@@ -36,7 +36,13 @@ inline constexpr float kAimMaxDriftRad = 2.0f * 3.14159265358979323846f / 180.0f
 
 //! Wrist pose one aim sample implies (see above). @p aim is the raw controller aim pose in session
 //! space, with no wrist offset applied.
-XrPosef wrist_from_aim(const XrPosef& aim, float behind_m, float height_m);
+//!
+//! @p flip_dorsal builds the wrist with the dorsal hint flipped, for a controller whose aim frame
+//! has its up axis towards the palm (--aim-flip). The wrist position is unchanged -- it is still
+//! height below the aim origin in session space -- and its orientation is rolled 180 degrees about
+//! the fingers, so the measured aim -> wrist constant is the un-flipped one rolled 180 degrees
+//! about the finger axis.
+XrPosef wrist_from_aim(const XrPosef& aim, float behind_m, float height_m, bool flip_dorsal = false);
 
 //! The fixed controller-aim -> wrist transform: inverse(aim) * wrist.
 XrPosef aim_to_wrist(const XrPosef& aim, const XrPosef& wrist);

@@ -230,13 +230,108 @@ private:
 //! is absent, i.e. that glove is not streaming. @p unwrapper, when given, carries the previous
 //! angles across messages so a joint that crosses +-pi stays continuous; the plugin keeps one per
 //! hand.
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper = nullptr);
+//!
+//! @p flip_bends, when true, injects every bend with the opposite sense -- the runtime correction for
+//! a glove whose bend direction disagrees with the model. The signed raw delta (the calibrated
+//! ``sign * (raw - zero)``) is multiplied by -1 before the gain mapping and the dead-band clamp, so
+//! the open hand stays open and its slight extension does not eat the flipped fist's travel. The
+//! spread and the thumb's mount are not bends and are left alone.
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg,
+                            Hand hand,
+                            JointAngleUnwrapper* unwrapper = nullptr,
+                            bool flip_bends = false);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
 //! OpenXR wrist frame (the wrist is the identity pose). Every joint is filled and carries a unit
 //! orientation, because OpenXR requires all 26 to be valid while a hand is active. The anatomy is
 //! built in the left hand's frame and mirrored in X for the right hand.
 HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand);
+
+//! Distance between the MIDDLE_PROXIMAL (12) and MIDDLE_TIP (15) joints of @p skeleton, in metres.
+//! The skeleton is wrist-relative, so this is a frame-free scalar for the injected middle finger.
+float middle_joint_span(const HandSkeleton& skeleton);
+
+//! Distance between the mechanism's ``link_<Side>SkeletonMiddle1`` and ``<side>_middle_tip``
+//! translations, in metres, both published in the same frame by the driver. False when either frame
+//! is absent or they are expressed in different frames, in which case no span can be measured.
+bool mechanism_middle_span(const tf2_msgs::msg::TFMessage& msg, Hand hand, float& span_m);
+
+//! Size of the rolling window the bend-direction check keeps per hand, samples at the hand tick.
+inline constexpr std::size_t kBendDirectionWindow = 64;
+//! Samples required before a correlation is computed.
+inline constexpr std::size_t kBendDirectionMinSamples = 40;
+//! Swing (max - min) one of the two series must exceed before it is correlated, in metres. A flat
+//! hand carries no direction information and must not flip anything.
+inline constexpr float kBendDirectionSwingM = 0.010f;
+//! A correlation below -kBendDirectionCorrelation flips the bends; above + it flips them back. In
+//! between is inconclusive and keeps the current decision.
+inline constexpr float kBendDirectionCorrelation = 0.5f;
+//! Minimum time between two decisions, in seconds, so a flipping hypothesis cannot chatter.
+inline constexpr double kBendDirectionPeriodS = 2.0;
+
+/*!
+ * @brief Decides, from data per hand, whether the glove's bend direction matches the injected model.
+ *
+ * The glove's sign is not reliable across sessions: the same finger code and driver session can
+ * publish the mechanism's quaternions with the opposite sense, which injects an inverted hand (a
+ * flat hand looks curled and a fist looks extended). This keeps a rolling window of two frame-free
+ * scalars sampled on every hand tick -- the nominal model's MIDDLE_PROXIMAL -> MIDDLE_TIP distance in
+ * the wrist frame, and the mechanism's own link_<Side>SkeletonMiddle1 -> <side>_middle_tip distance --
+ * and correlates them. Both shrink together when the directions agree and move apart when they do
+ * not, without comparing positions across frames.
+ *
+ * The model series is built with the nominal (unflipped) bends, so a decision never feeds back into
+ * its own input: negative correlation means "glove opposite to model" -> flip; positive correlation
+ * means "glove matches model" -> no flip, so a later positive correlation flips a hand back. Windows
+ * with fewer than kBendDirectionMinSamples samples, too little swing, or a correlation inside
+ * +-kBendDirectionCorrelation are inconclusive and leave the decision as it was (no flip at start).
+ */
+class BendDirectionChecker
+{
+public:
+    //! What a sample changed, for the caller to log.
+    enum class Change
+    {
+        None,
+        Flipped,
+        Unflipped,
+    };
+
+    //! Feeds one hand tick's pair of spans and, when the window is ready and the period has elapsed,
+    //! re-decides. @p now_s is a monotonic clock in seconds.
+    Change sample(float model_span_m, float glove_span_m, double now_s);
+
+    //! True while every bend of this hand is injected with the opposite sense.
+    bool flipped() const
+    {
+        return m_flipped;
+    }
+
+    //! Pearson correlation of the current window, or 0 until one has been computed.
+    float correlation() const
+    {
+        return m_correlation;
+    }
+
+    //! Samples currently in the window.
+    std::size_t samples() const
+    {
+        return m_count;
+    }
+
+    //! Drops the window and its timing, e.g. when the glove drops out, but keeps the decision.
+    void clear_window();
+
+private:
+    std::array<float, kBendDirectionWindow> m_model{};
+    std::array<float, kBendDirectionWindow> m_glove{};
+    std::size_t m_count = 0;
+    std::size_t m_next = 0;
+    bool m_flipped = false;
+    bool m_evaluated = false;
+    double m_last_evaluation_s = 0.0;
+    float m_correlation = 0.0f;
+};
 
 //! Root frame of the mechanism for @p hand, e.g. ``link_LeftSkeletonBase``.
 const char* mechanism_root_frame(Hand hand);

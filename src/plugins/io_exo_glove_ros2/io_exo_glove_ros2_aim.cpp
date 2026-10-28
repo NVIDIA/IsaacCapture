@@ -57,11 +57,13 @@ float cleaned_for_display(float value, float epsilon)
 
 } // namespace
 
-XrPosef wrist_from_aim(const XrPosef& aim, float behind_m, float height_m)
+XrPosef wrist_from_aim(const XrPosef& aim, float behind_m, float height_m, bool flip_dorsal)
 {
     // The hand is flat and palm down during calibration: world +Y (session space is Y-up) is the
-    // back of the hand, whatever the controller's own roll happens to be.
+    // back of the hand, whatever the controller's own roll happens to be. The height offset is in
+    // that same world up, so flipping the dorsal hint must not move the wrist.
     const XrVector3f up{ 0.0f, 1.0f, 0.0f };
+    const XrVector3f dorsal_hint = flip_dorsal ? XrVector3f{ 0.0f, -1.0f, 0.0f } : up;
     XrVector3f forward = rotated_direction(aim.orientation, XrVector3f{ 0.0f, 0.0f, -1.0f });
     const float forward_length = length_of(forward);
     forward = forward_length > 1e-6f ? scaled(forward, 1.0f / forward_length) : XrVector3f{ 0.0f, 0.0f, -1.0f };
@@ -70,8 +72,9 @@ XrPosef wrist_from_aim(const XrPosef& aim, float behind_m, float height_m)
     wrist.position = XrVector3f{ aim.position.x - forward.x * behind_m - up.x * height_m,
                                  aim.position.y - forward.y * behind_m - up.y * height_m,
                                  aim.position.z - forward.z * behind_m - up.z * height_m };
-    // -Z along the fingers and +Y dorsal: the convention the injected skeleton uses.
-    wrist.orientation = orientation_along(forward, up);
+    // -Z along the fingers and +Y dorsal: the convention the injected skeleton uses. A flipped hint
+    // flips +X and +Y about -Z, i.e. rolls the wrist 180 degrees about the finger axis.
+    wrist.orientation = orientation_along(forward, dorsal_hint);
     return wrist;
 }
 

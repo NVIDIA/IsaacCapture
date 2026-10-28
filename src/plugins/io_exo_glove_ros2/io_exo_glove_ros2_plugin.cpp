@@ -221,7 +221,7 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
         m_opts.left_aim_to_wrist.c_str(), m_opts.right_aim_to_wrist.c_str());
 }
 
-void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m)
+void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m, bool aim_flip)
 {
     // The measured transform replaces the configured one, so folding the configured offset into the
     // query would calibrate against itself. main() builds this session with identity offsets; the
@@ -332,7 +332,7 @@ void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m)
         for (std::size_t side = 0; side < kSideCount; ++side)
         {
             const XrPosef aim = average_aim_pose(windows[side]);
-            aim_to_wrist_offsets[side] = aim_to_wrist(aim, wrist_from_aim(aim, behind_m, height_m));
+            aim_to_wrist_offsets[side] = aim_to_wrist(aim, wrist_from_aim(aim, behind_m, height_m, aim_flip));
         }
 
         // The printed lines are the config value exactly; --print-config reports the same spelling.
@@ -500,7 +500,19 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         {
             const std::size_t side = side_index(hand);
             HandFrame& frame = m_hand_frames[side];
-            frame.skeleton = build_hand_skeleton(msg, hand, &m_unwrappers[side]);
+            const HandAngles nominal_angles = read_hand_angles(msg, hand, &m_unwrappers[side]);
+            // The model series is always the nominal (unflipped) anatomy, so a decision never feeds
+            // back into the series it is computed from; only the injected skeleton follows the flip.
+            const HandSkeleton nominal = build_anatomical_skeleton(nominal_angles, hand);
+            frame.model_middle_span = middle_joint_span(nominal);
+            frame.glove_middle_span = 0.0f;
+            frame.spans_valid = nominal_angles.valid && mechanism_middle_span(msg, hand, frame.glove_middle_span);
+            frame.skeleton = nominal;
+            if (m_bend_direction[side].flipped())
+            {
+                const HandAngles flipped_angles = read_hand_angles(msg, hand, &m_unwrappers[side], true);
+                frame.skeleton = build_anatomical_skeleton(flipped_angles, hand);
+            }
             frame.stamp = now;
             frame.valid = frame.skeleton.tracked();
         }
@@ -586,17 +598,47 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side,
         frame = m_hand_frames[side];
     }
 
-    const bool fresh = frame.valid && (std::chrono::steady_clock::now() - frame.stamp) < kHandStaleThreshold;
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const bool fresh = frame.valid && (now - frame.stamp) < kHandStaleThreshold;
     if (!fresh)
     {
         // The glove is absent: forget its previous angles, so the first frame after it returns
-        // initialises the unwrapper instead of unwrapping against a stale pose.
+        // initialises the unwrapper instead of unwrapping against a stale pose. The bend window is
+        // dropped too, but its decision is kept: only a new correlation may reverse that.
         {
             std::lock_guard<std::mutex> lock(m_hand_mutex);
             m_unwrappers[side].reset();
+            m_bend_direction[side].clear_window();
         }
         injector.reset();
         return;
+    }
+    // The update callback reads the decision (to build the skeleton) and this timer thread writes it,
+    // so the checker is guarded by the same mutex as the hand frames.
+    BendDirectionChecker::Change change = BendDirectionChecker::Change::None;
+    float correlation = 0.0f;
+    std::size_t samples = 0;
+    if (frame.spans_valid)
+    {
+        const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
+        std::lock_guard<std::mutex> lock(m_hand_mutex);
+        change = m_bend_direction[side].sample(frame.model_middle_span, frame.glove_middle_span, now_s);
+        correlation = m_bend_direction[side].correlation();
+        samples = m_bend_direction[side].samples();
+    }
+    if (change == BendDirectionChecker::Change::Flipped)
+    {
+        m_logger->warn(
+            "hand {}: the glove's bend direction is opposite to the injected model (Pearson {:.2f} over {} samples); "
+            "every bend for this hand is now flipped",
+            hand_name(side), correlation, samples);
+    }
+    else if (change == BendDirectionChecker::Change::Unflipped)
+    {
+        m_logger->warn(
+            "hand {}: the glove's bend direction now matches the injected model (Pearson {:.2f} over {} samples); "
+            "the bend flip is removed",
+            hand_name(side), correlation, samples);
     }
     if (injector == nullptr)
     {

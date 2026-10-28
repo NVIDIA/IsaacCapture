@@ -240,7 +240,17 @@ The offset can be measured instead of guessed: switch to `--wrist-source=control
 down and fingers forward for about a second, and it prints the two `left_aim_to_wrist` /
 `right_aim_to_wrist` values for that pose. Paste them into `config/io_exo_glove_ros2.yaml` and record
 normally; `--aim-behind=` / `--aim-height=` move the wrist joint under the controller (defaults 4 cm
-behind the aim origin along the fingers and 6 cm below it).
+behind the aim origin along the fingers and 6 cm below it), and `--aim-flip` rolls the measured
+constant 180 degrees about the fingers for a controller whose aim frame has its up axis towards the
+palm (instead of the back of the hand).
+
+The glove's bend direction is also checked from data at run time, because the sign of its joint
+angles is not reliable across sessions. Each hand keeps a short rolling window of two frame-free
+spans -- the model middle finger's proximal-to-tip distance, and the mechanism's own
+`link_<Side>SkeletonMiddle1` -> `<side>_middle_tip` distance -- and correlates them. If the glove
+runs opposite to the model (a flat hand curls the injected one), that hand's bend signs are flipped
+and a warning is logged; the check is repeated every couple of seconds, so it flips back if the
+directions realign. A flat or inconclusive window leaves the hand as it is.
 
 The injected skeleton is expressed in the OpenXR wrist frame: `WRIST` is the origin and the rest of
 the anatomy follows from the glove's articulation alone. Nothing is captured from the first frame, so

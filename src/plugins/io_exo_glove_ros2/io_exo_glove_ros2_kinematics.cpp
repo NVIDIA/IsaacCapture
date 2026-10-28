@@ -489,7 +489,7 @@ const char* mechanism_root_frame(Hand hand)
     return hand == Hand::Left ? "link_LeftSkeletonBase" : "link_RightSkeletonBase";
 }
 
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper)
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper, bool flip_bends)
 {
     HandAngles angles;
 
@@ -551,7 +551,10 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
         for (std::size_t slot = 1; slot < kRigSlotCount; ++slot)
         {
             const RigJointSpec& spec = kRigJoints[side][finger][slot];
-            const float d = spec.sign * (raw.joint[finger][slot] - spec.zero);
+            // The runtime bend-direction correction multiplies the signed raw delta by -1 *before*
+            // the gain mapping and the clamp: negating the calibrated bend afterwards would instead
+            // spend the open-side dead band and lose the fist's travel.
+            const float d = (flip_bends ? -1.0f : 1.0f) * spec.sign * (raw.joint[finger][slot] - spec.zero);
             const float d_fist = spec.sign * (spec.fist - spec.zero);
             const float flexion = (std::fabs(d_fist) >= kMinFistTravel) ? d / d_fist * spec.human_max : d;
             out.bend[slot - 1] = std::clamp(flexion, -kDeadBand, spec.human_max);
@@ -570,6 +573,134 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand, Join
 
     angles.valid = true;
     return angles;
+}
+
+float middle_joint_span(const HandSkeleton& skeleton)
+{
+    const XrVector3f& proximal = skeleton.joints[XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT].pose.position;
+    const XrVector3f& tip = skeleton.joints[XR_HAND_JOINT_MIDDLE_TIP_EXT].pose.position;
+    const XrVector3f delta{ tip.x - proximal.x, tip.y - proximal.y, tip.z - proximal.z };
+    return std::sqrt(dot(delta, delta));
+}
+
+bool mechanism_middle_span(const tf2_msgs::msg::TFMessage& msg, Hand hand, float& span_m)
+{
+    const std::string side = hand == Hand::Left ? "left" : "right";
+    const geometry_msgs::msg::TransformStamped* knuckle =
+        find_frame(msg, std::string("link_") + side_prefix(hand) + "SkeletonMiddle1");
+    const geometry_msgs::msg::TransformStamped* tip = find_frame(msg, side + "_middle_tip");
+    if (knuckle == nullptr || tip == nullptr)
+    {
+        return false;
+    }
+    // Both translations are that frame's pose in its parent frame; comparing them is only meaningful
+    // when the driver publishes the mechanism link and the fingertip in the same frame.
+    if (knuckle->header.frame_id != tip->header.frame_id)
+    {
+        return false;
+    }
+    const auto& a = knuckle->transform.translation;
+    const auto& b = tip->transform.translation;
+    const XrVector3f delta{ static_cast<float>(b.x - a.x), static_cast<float>(b.y - a.y), static_cast<float>(b.z - a.z) };
+    span_m = std::sqrt(dot(delta, delta));
+    return true;
+}
+
+BendDirectionChecker::Change BendDirectionChecker::sample(float model_span_m, float glove_span_m, double now_s)
+{
+    if (!std::isfinite(model_span_m) || !std::isfinite(glove_span_m))
+    {
+        return Change::None;
+    }
+    m_model[m_next] = model_span_m;
+    m_glove[m_next] = glove_span_m;
+    m_next = (m_next + 1) % kBendDirectionWindow;
+    if (m_count < kBendDirectionWindow)
+    {
+        ++m_count;
+    }
+    if (m_count < kBendDirectionMinSamples)
+    {
+        return Change::None;
+    }
+    if (m_evaluated && now_s - m_last_evaluation_s < kBendDirectionPeriodS)
+    {
+        return Change::None;
+    }
+    m_evaluated = true;
+    m_last_evaluation_s = now_s;
+
+    // A still hand carries no direction: both series are flat and a correlation would be noise.
+    float model_min = m_model[0];
+    float model_max = m_model[0];
+    float glove_min = m_glove[0];
+    float glove_max = m_glove[0];
+    for (std::size_t i = 1; i < m_count; ++i)
+    {
+        model_min = std::min(model_min, m_model[i]);
+        model_max = std::max(model_max, m_model[i]);
+        glove_min = std::min(glove_min, m_glove[i]);
+        glove_max = std::max(glove_max, m_glove[i]);
+    }
+    if (!(model_max - model_min > kBendDirectionSwingM) && !(glove_max - glove_min > kBendDirectionSwingM))
+    {
+        return Change::None;
+    }
+
+    // Pearson correlation of the two windowed scalars. Double accumulation keeps a 64-sample window
+    // well-conditioned even though the spans differ by only a few centimetres.
+    double sum_model = 0.0;
+    double sum_glove = 0.0;
+    double sum_model_sq = 0.0;
+    double sum_glove_sq = 0.0;
+    double sum_product = 0.0;
+    for (std::size_t i = 0; i < m_count; ++i)
+    {
+        const double model = m_model[i];
+        const double glove = m_glove[i];
+        sum_model += model;
+        sum_glove += glove;
+        sum_model_sq += model * model;
+        sum_glove_sq += glove * glove;
+        sum_product += model * glove;
+    }
+    const double count = static_cast<double>(m_count);
+    const double covariance = count * sum_product - sum_model * sum_glove;
+    const double model_variance = count * sum_model_sq - sum_model * sum_model;
+    const double glove_variance = count * sum_glove_sq - sum_glove * sum_glove;
+    if (!(model_variance > 0.0) || !(glove_variance > 0.0))
+    {
+        return Change::None;
+    }
+    const double correlation = covariance / std::sqrt(model_variance * glove_variance);
+    if (!std::isfinite(correlation))
+    {
+        return Change::None;
+    }
+    m_correlation = static_cast<float>(correlation);
+
+    if (correlation < -kBendDirectionCorrelation && !m_flipped)
+    {
+        m_flipped = true;
+        return Change::Flipped;
+    }
+    if (correlation > kBendDirectionCorrelation && m_flipped)
+    {
+        m_flipped = false;
+        return Change::Unflipped;
+    }
+    return Change::None;
+}
+
+void BendDirectionChecker::clear_window()
+{
+    m_count = 0;
+    m_next = 0;
+    m_evaluated = false;
+    m_last_evaluation_s = 0.0;
+    m_correlation = 0.0f;
+    // m_flipped is deliberately kept: a glove that drops out for a moment must not forget a decision
+    // that only a new correlation may reverse.
 }
 
 HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand)

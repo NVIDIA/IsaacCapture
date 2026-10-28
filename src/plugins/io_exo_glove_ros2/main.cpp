@@ -49,6 +49,7 @@ struct CliOverrides
     //! One-shot calibration; CLI-only, not a config-file key. The offsets are per-run and shared by
     //! both hands, because the controller mounting is the same left and right.
     bool calibrate_aim = false;
+    bool aim_flip = false;
     std::optional<double> aim_behind_m;
     std::optional<double> aim_height_m;
 };
@@ -78,6 +79,9 @@ void print_usage(const char* prog)
               << "  --calibrate-aim                One-shot: hold both hands flat and still, print the controller\n"
               << "                                 aim -> wrist values for both hands and exit\n"
               << "                                 (requires --wrist-source=controller)\n"
+              << "  --aim-flip                     Calibration: take the controller aim frame's up axis as\n"
+              << "                                 towards the palm, i.e. flip the dorsal hint and roll the\n"
+              << "                                 aim -> wrist constant 180 degrees about the fingers\n"
               << "  --aim-behind=M                 Calibration: wrist offset behind the aim origin along the\n"
               << "                                 fingers, in metres (default 0.04)\n"
               << "  --aim-height=M                 Calibration: wrist offset below the aim origin, in metres\n"
@@ -183,6 +187,10 @@ try
         else if (arg == "--calibrate-aim")
         {
             cli.calibrate_aim = true;
+        }
+        else if (arg == "--aim-flip")
+        {
+            cli.aim_flip = true;
         }
         else if (const auto value = flag_value(arg, "config"))
         {
@@ -416,6 +424,13 @@ try
         logger()->error("--calibrate-aim requires --wrist-source=controller, not '{}'", options.wrist_source);
         return 1;
     }
+    // The flip only affects the dorsal hint the one-shot calibration builds; outside that mode it
+    // would silently do nothing, so fail loudly instead.
+    if (cli.aim_flip && !cli.calibrate_aim)
+    {
+        logger()->error("--aim-flip is only meaningful with --calibrate-aim");
+        return 1;
+    }
 
     // The calibration measures the raw controller aim pose, so the wrist source must not have the
     // configured offset folded in (WristPoseSource::query() applies it). Identity here is for this
@@ -425,8 +440,9 @@ try
     {
         run_options.left_aim_to_wrist = "0,0,0,0,0,0,1";
         run_options.right_aim_to_wrist = "0,0,0,0,0,0,1";
-        logger()->info("Aim calibration: wrist {:.3f} m behind and {:.3f} m below the controller aim origin",
-                       cli.aim_behind_m.value_or(kDefaultAimBehindM), cli.aim_height_m.value_or(kDefaultAimHeightM));
+        logger()->info("Aim calibration: wrist {:.3f} m behind and {:.3f} m below the controller aim origin{}",
+                       cli.aim_behind_m.value_or(kDefaultAimBehindM), cli.aim_height_m.value_or(kDefaultAimHeightM),
+                       cli.aim_flip ? ", dorsal hint flipped" : "");
     }
 
     // ROS gets only the arguments it owns: our own flags and the launcher-injected
@@ -448,7 +464,7 @@ try
     if (cli.calibrate_aim)
     {
         node->calibrate_aim(static_cast<float>(cli.aim_behind_m.value_or(kDefaultAimBehindM)),
-                            static_cast<float>(cli.aim_height_m.value_or(kDefaultAimHeightM)));
+                            static_cast<float>(cli.aim_height_m.value_or(kDefaultAimHeightM)), cli.aim_flip);
         rclcpp::shutdown();
         return 0;
     }

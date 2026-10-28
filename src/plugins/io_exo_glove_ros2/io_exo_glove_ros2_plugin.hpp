@@ -116,18 +116,26 @@ public:
      *
      * @param behind_m Wrist offset behind the aim origin along the fingers, in metres.
      * @param height_m Wrist offset below the aim origin, in metres.
+     * @param aim_flip Flip the dorsal hint: the controller's aim frame has its up axis towards the
+     *        palm, so the wrist target is rolled 180 degrees about the fingers (--aim-flip).
      */
-    void calibrate_aim(float behind_m, float height_m);
+    void calibrate_aim(float behind_m, float height_m, bool aim_flip);
 
 private:
     //! Hands the plugin bridges, and their index into the per-hand state arrays.
     static constexpr std::size_t kSideCount = 2;
 
-    //! Latest skeleton read from the link stream, with the time it arrived.
+    //! Latest skeleton read from the link stream, with the time it arrived. The two spans are the
+    //! frame-free scalars the bend-direction check correlates: the nominal model's middle-finger span
+    //! and the mechanism's own, both measured in the same message. @c spans_valid is false when the
+    //! mechanism does not publish the two frames the glove span needs.
     struct HandFrame
     {
         HandSkeleton skeleton;
         std::chrono::steady_clock::time_point stamp{};
+        float model_middle_span = 0.0f;
+        float glove_middle_span = 0.0f;
+        bool spans_valid = false;
         bool valid = false;
     };
 
@@ -205,6 +213,9 @@ private:
     //! Previous joint angles per hand, so a mount crossing +-pi is unwrapped before calibration. It
     //! is reset when the glove drops out, so the first frame after a gap initialises again.
     std::array<JointAngleUnwrapper, kSideCount> m_unwrappers;
+    //! Per-hand bend-direction decisions, taken from the middle finger's two frame-free spans. The
+    //! glove's sign is not reliable across sessions, so it is verified from data instead of assumed.
+    std::array<BendDirectionChecker, kSideCount> m_bend_direction;
     bool m_slots_logged = false;
 
     std::array<SmoothedWrist, kSideCount> m_smoothed_wrists;
