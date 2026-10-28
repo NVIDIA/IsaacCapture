@@ -43,12 +43,19 @@ struct RigJointSpec
     //! joint turns the finger towards -X in the mechanism base frame, which is ulnar on the left
     //! (+X towards the index) and radial on the right.
     float sign;
+    //! Absolute linkage angle at the fist reference, radians, pre-sign and pre-zero: the medoid of
+    //! the recording's closed plateau. ``sign * (fist - zero)`` is the travel the gain divides by.
+    float fist;
+    //! Human anatomical maximum this joint should reach at the fist, radians. The calibrated travel
+    //! is mapped onto it, because the linkage moves roughly half as far as the finger. For slot 0
+    //! this is the symmetric spread clamp and the gain is not applied; see @c kMaxSpread.
+    float human_max;
 };
 
-//! Rest rotation, revolute axis, open-hand zero and sign for the four joints per finger that drive
-//! the anatomy: the knuckle (F1 -> spread) and the three bends (F2 -> MCP, F3 -> PIP, F4 -> DIP).
-//! For the thumb those are Thumb1 (lift) and Thumb2..Thumb4 (CMC, MCP, IP); its mount, ThumbBase,
-//! has its own spec in @c kThumbBase.
+//! Rest rotation, revolute axis, open-hand zero, sign, fist reference and human maximum for the four
+//! joints per finger that drive the anatomy: the knuckle (F1 -> spread) and the three bends (F2 ->
+//! MCP, F3 -> PIP, F4 -> DIP). For the thumb those are Thumb1 (lift) and Thumb2..Thumb4 (CMC, MCP,
+//! IP); its mount, ThumbBase, has its own spec in @c kThumbBase.
 //!
 //! Derivation (performed by ``io_exo_glove_ros2_kinematics_tables.py`` on a 7251-message recording
 //! of both hands opening and closing):
@@ -63,14 +70,22 @@ struct RigJointSpec
 //!    that way; no frame position, frame ordering or first-frame capture is involved.
 //!  - Openness is measured along the finger: from each knuckle (the first bend joint) to the
 //!    published fingertip. The recording's longest steady open plateau gives the zero, and its
-//!    longest steady closed plateau gives the sign, at each plateau's medoid frame so a drifting
-//!    pose cannot bias either.
+//!    longest steady closed plateau gives the sign and the fist reference, at each plateau's medoid
+//!    frame so a drifting pose cannot bias either.
 //!  - ``sign`` is +1 when the joint angle grows from the verified open pose towards the fist, -1
 //!    when it shrinks. For the four fingers' slot 0 it is instead derived from the mechanism itself:
 //!    the v5 first joint rotates about its local +Z, the finger extends +Y, and R_z(+theta) sends it
 //!    towards -X; that is away from the index on the left but towards it on the right, so the sign is
 //!    -1 on the left and +1 on the right for every finger. The script measures this again on the
 //!    recording against the vendor's ``<side>_<finger>_tip`` frames.
+//!  - The gain calibration is ``d / d_fist * human_max``, where ``d = sign * (raw - zero)`` and
+//!    ``d_fist = sign * (fist - zero)``. The linkage angle is not a joint angle: a real fist reads
+//!    about 55 deg at the MCP, 25-29 at the PIP and 45 at the DIP, roughly half the human range, so
+//!    copying it 1:1 never closes the injected hand. ``human_max`` is the anatomical reference --
+//!    finger MCP 85, PIP 95, DIP 70 deg; thumb CMC 35, MCP 55, IP 75 deg -- and the script checks
+//!    that the recorded fist maps onto it on both hands. The spread keeps its symmetric clamp
+//!    (@c kMaxSpread): the recording's spread excursion is not the full anatomical range, and the
+//!    thumb's mount keeps @c kMaxThumbBase.
 //!  - The derivation checks that the open zero places each model fingertip one finger-length ahead
 //!    of its MCP and that every mapped MCP/PIP/DIP reads positive at the fist on both hands.
 constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
@@ -78,99 +93,101 @@ constexpr RigJointSpec kRigJoints[2][kRigFingerCount][kRigSlotCount] = {
     {
         {
             // thumb
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, -0.28837f, -1.0f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.66229f, +1.0f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.93764f, -1.0f },
-            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 1.15219f, +1.0f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, -0.28837f, -1.0f, -0.48302f, 0.43633f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.66229f, +1.0f, 0.82885f, 0.61087f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.93764f, -1.0f, -2.22162f, 0.95993f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 1.15219f, +1.0f, 1.56381f, 1.30900f },
         },
         {
             // index
-            { { 0.00000f, 0.26180f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.27738f, -1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.04983f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.86301f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.13192f, +1.0f },
+            { { 0.00000f, 0.26180f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.27738f, -1.0f, -0.36191f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.04983f, +1.0f, 1.00309f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.86301f, -1.0f, -2.29023f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.13192f, +1.0f, 0.65156f, 1.22173f },
         },
         {
             // middle
-            { { 0.00000f, 0.00000f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.02953f, -1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.15469f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.61346f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.03451f, +1.0f },
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.02953f, -1.0f, -0.31307f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.15469f, +1.0f, 0.90542f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.61346f, -1.0f, -2.11625f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.03451f, +1.0f, 0.63469f, 1.22173f },
         },
         {
             // ring
-            { { 0.00000f, 0.00000f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.04644f, -1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.14160f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.66886f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.05541f, +1.0f },
+            { { 0.00000f, 0.00000f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.04644f, -1.0f, -0.31401f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.14160f, +1.0f, 0.95443f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.66886f, -1.0f, -2.18084f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.05541f, +1.0f, 0.64552f, 1.22173f },
         },
         {
             // little
-            { { 0.00000f, -0.17453f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.05504f, -1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.48432f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.35083f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.85100f, +1.0f },
+            { { 0.00000f, -0.17453f, 0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.05504f, -1.0f, -0.25993f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.48432f, +1.0f, 0.85920f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.35083f, -1.0f, -2.47473f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.85100f, +1.0f, 0.93649f, 1.22173f },
         },
     },
     // right
     {
         {
             // thumb
-            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, 0.37937f, -1.0f },
-            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.38808f, +1.0f },
-            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.21146f, -1.0f },
-            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.06686f, +1.0f },
+            { { 1.57080f, 1.57080f, 0.00000f }, { 0.0f, 0.0f, 1.0f }, 0.37937f, -1.0f, 0.06392f, 0.43633f },
+            { { -1.30900f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.38808f, +1.0f, 0.83865f, 0.61087f },
+            { { -0.81433f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.21146f, -1.0f, -1.99781f, 0.95993f },
+            { { 2.53070f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.06686f, +1.0f, 1.19996f, 1.30900f },
         },
         {
             // index
-            { { 0.00000f, -0.26180f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.19091f, +1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.03796f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.67321f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.04263f, +1.0f },
+            { { 0.00000f, -0.26180f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.19091f, +1.0f, 0.05781f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.03796f, +1.0f, 1.02662f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.67321f, -1.0f, -2.14679f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.04263f, +1.0f, 0.51657f, 1.22173f },
         },
         {
             // middle
-            { { 0.00000f, 0.00000f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.01183f, +1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.45659f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.25074f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.38185f, +1.0f },
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, 0.01183f, +1.0f, 0.14118f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.45659f, +1.0f, 0.88632f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.25074f, -1.0f, -1.98571f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.38185f, +1.0f, 0.51500f, 1.22173f },
         },
         {
             // ring
-            { { 0.00000f, 0.00000f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.05478f, +1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.03685f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.60046f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.05488f, +1.0f },
+            { { 0.00000f, 0.00000f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.05478f, +1.0f, 0.11295f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.03685f, +1.0f, 0.90422f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -1.60046f, -1.0f, -2.10111f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -0.05488f, +1.0f, 0.63009f, 1.22173f },
         },
         {
             // little
-            { { 0.00000f, 0.17453f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.23324f, +1.0f },
-            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.39179f, +1.0f },
-            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.18509f, -1.0f },
-            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.42326f, +1.0f },
+            { { 0.00000f, 0.17453f, -0.11990f }, { 0.0f, 0.0f, 1.0f }, -0.23324f, +1.0f, 0.06695f, 0.43633f },
+            { { -0.75647f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.39179f, +1.0f, 0.97634f, 1.48353f },
+            { { 0.46849f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, -2.18509f, -1.0f, -2.51505f, 1.65806f },
+            { { 1.22170f, 0.00000f, 0.00000f }, { 1.0f, 0.0f, 0.0f }, 0.42326f, +1.0f, 1.10365f, 1.22173f },
         },
     },
 };
 
+//! ThumbBase is the thumb's mount, not a flexion joint: the table records its fist reference for the
+//! same shape as @c kRigJoints, but its own symmetric clamp in @c kMaxThumbBase is kept.
 constexpr RigJointSpec kThumbBase[2] = {
-    { { 0.00000f, 0.00000f, 0.99442f }, { 1.0f, 0.0f, 0.0f }, -0.38661f, -1.0f }, // left
-    { { 3.14160f, 0.00000f, 2.14720f }, { 1.0f, 0.0f, 0.0f }, 0.08701f, +1.0f }, // right
+    { { 0.00000f, 0.00000f, 0.99442f }, { 1.0f, 0.0f, 0.0f }, -0.38661f, -1.0f, -0.44406f, 1.57080f }, // left
+    { { 3.14160f, 0.00000f, 2.14720f }, { 1.0f, 0.0f, 0.0f }, 0.08701f, +1.0f, 0.25927f, 1.57080f }, // right
 };
 
-//! Spread is clamped symmetrically: the metacarpal abduction/adduction range, about +/-25 deg.
+//! Spread is clamped symmetrically: the metacarpal abduction/adduction range, about +/-25 deg. The
+//! table's slot-0 human_max repeats this value, but the gain is not applied to the spread.
 constexpr float kMaxSpread = 0.436332f;
-
-//! Human bend limits, radians, per bend slot (MCP, PIP, DIP): 0..100 deg, 0..110 deg, 0..110 deg.
-//! Negative values are extension and are clamped to the open-hand zero.
-constexpr std::array<float, 3> kFingerBendLimit = { 1.745329f, 1.919862f, 1.919862f };
-
-//! Thumb limits, radians, per bend slot (CMC, MCP, IP): 0..60 deg, 0..60 deg, 0..80 deg. "As
-//! appropriate": the rig's thumb is a four-joint chain (spread plus three bends) mapped onto the
-//! anatomy's three thumb bends.
-constexpr std::array<float, 3> kThumbBendLimit = { 1.047198f, 1.047198f, 1.396263f };
 
 //! ThumbBase is the thumb's mount lift; its useful anatomical range is a quarter turn either way.
 constexpr float kMaxThumbBase = 1.570796f;
+
+//! Dead band at the open end, radians (5 deg): the open plateau drifts by 3-5 deg, so flexion may
+//! extend this far below the zero instead of being flattened onto it, and no further.
+constexpr float kDeadBand = 0.0872665f;
+
+//! Smallest calibrated travel to the fist the gain can divide by, radians. Below it the joint keeps
+//! the old 1:1 ``sign * (raw - zero)`` mapping rather than amplifying a near-zero denominator.
+constexpr float kMinFistTravel = 0.05f;
 
 //! Dorsal direction of the anatomy's rest frame, i.e. the back of the hand (OpenXR's +Y).
 constexpr XrVector3f kDorsal{ 0.0f, 1.0f, 0.0f };
@@ -357,8 +374,10 @@ RawHandAngles read_raw_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand han
             const geometry_msgs::msg::TransformStamped* frame = find_frame(msg, name);
             if (frame == nullptr)
             {
-                // A sparse stream leaves the rest of this finger at its zero, but the hand can still be
-                // injected from the fingers that are complete.
+                // An incomplete finger would keep its angles at zero, which the anatomy reads as an
+                // open finger. Mark it incomplete and let read_hand_angles invalidate the whole hand:
+                // a partial hand is not a valid pose, and half a fist must not be injected as an open
+                // hand.
                 complete = false;
                 break;
             }
@@ -403,15 +422,22 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         return angles;
     }
 
-    const std::size_t side = hand_index(hand);
-
+    // A hand missing any finger is invalid, not a valid hand with one open finger: the missing
+    // finger's angles would stay at zero, the anatomy would extend it, and the injector would keep a
+    // hand whose other fingers are a fist. build_anatomical_skeleton returns an untracked skeleton
+    // for an invalid hand, so push_hand drops the injector instead.
     for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
     {
         if (!raw.complete[finger])
         {
-            continue;
+            return angles;
         }
+    }
 
+    const std::size_t side = hand_index(hand);
+
+    for (std::size_t finger = 0; finger < kRigFingerCount; ++finger)
+    {
         FingerAngles& out = angles.fingers[finger];
         const bool is_thumb = finger == 0;
 
@@ -421,13 +447,18 @@ HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand)
         const RigJointSpec& knuckle = kRigJoints[side][finger][0];
         out.spread = std::clamp(knuckle.sign * (raw.joint[finger][0] - knuckle.zero), -kMaxSpread, kMaxSpread);
 
-        // MCP/PIP/DIP (the thumb's CMC/MCP/IP): calibrated to the open hand and signed so flexion is
-        // positive, then clamped to the human range.
-        const std::array<float, 3>& limit = (finger == 0) ? kThumbBendLimit : kFingerBendLimit;
+        // MCP/PIP/DIP (the thumb's CMC/MCP/IP): the linkage angle is not the joint angle. Calibrate
+        // it to the open hand, sign it so flexion is positive, then map its open-to-fist travel onto
+        // the anatomical maximum: d / d_fist * human_max. A joint whose fist travel is too small to
+        // divide by keeps the old 1:1 mapping. The dead band lets the open plateau's drift read a few
+        // degrees of extension, and no more.
         for (std::size_t slot = 1; slot < kRigSlotCount; ++slot)
         {
             const RigJointSpec& spec = kRigJoints[side][finger][slot];
-            out.bend[slot - 1] = std::clamp(spec.sign * (raw.joint[finger][slot] - spec.zero), 0.0f, limit[slot - 1]);
+            const float d = spec.sign * (raw.joint[finger][slot] - spec.zero);
+            const float d_fist = spec.sign * (spec.fist - spec.zero);
+            const float flexion = (std::fabs(d_fist) >= kMinFistTravel) ? d / d_fist * spec.human_max : d;
+            out.bend[slot - 1] = std::clamp(flexion, -kDeadBand, spec.human_max);
         }
 
         if (is_thumb)

@@ -17,13 +17,16 @@ three things:
 - the A-pose the model's hand joints are exported without: the metacarpals are fanned to a
   physical knuckle span and levelled, and the thumb gets its own frame, so the injected hand is
   not a flat fifth finger (see ``MCP_SPAN_M`` and ``THUMB_*`` below);
-- the per-joint open-hand zero and the direction of each articulation, read from the recording by
-  the same quaternion algebra the plugin uses, plus the *measured* knuckle-spread sign.
+- the per-joint open-hand zero, direction and gain, read from the recording by the same quaternion
+  algebra the plugin uses: the open plateau gives the zero, the closed plateau gives the sign and
+  the linkage travel that maps onto the joint's human range, and the knuckle-spread sign is measured
+  from the mechanism.
 
 Every check the plugin's harness repeats is derived here from the URDF and the recording, and the
 script exits non-zero when one fails.  ``--flip-spread`` / ``--flip-thumb`` invert the derived sign
-for the self-test only: the script must fail with either flag, which proves the data-driven checks
-actually constrain the sign instead of restating it.
+and ``--identity-gain`` disables the gain calibration for the self-test only: the script must fail
+with any of them, which proves the data-driven checks actually constrain the mapping instead of
+restating it.
 """
 
 from __future__ import annotations
@@ -74,6 +77,49 @@ THUMB_REST_LIFT = 0.55
 THUMB_BASE_AXIS = (0.54, 0.0, -0.84)
 THUMB_LIFT_AXIS = (0.84, 0.0, 0.54)
 THUMB_FLEX_AXIS = (0.0, 1.0, 0.0)
+
+#! Human anatomical maximum per mechanism slot (F1..F4), radians.  Slot 0 is the knuckle spread,
+#! which keeps the plugin's symmetric +/-25 deg clamp; slots 1..3 are MCP/PIP/DIP for the fingers and
+#! CMC/MCP/IP for the thumb.  References: finger MCP 85, PIP 95, DIP 70 deg; thumb CMC 35, MCP 55,
+#! IP 75 deg.  The recorded open-to-fist linkage travel is mapped onto these.
+HUMAN_MAX = {
+    "thumb": (
+        math.radians(25.0),
+        math.radians(35.0),
+        math.radians(55.0),
+        math.radians(75.0),
+    ),
+    "index": (
+        math.radians(25.0),
+        math.radians(85.0),
+        math.radians(95.0),
+        math.radians(70.0),
+    ),
+    "middle": (
+        math.radians(25.0),
+        math.radians(85.0),
+        math.radians(95.0),
+        math.radians(70.0),
+    ),
+    "ring": (
+        math.radians(25.0),
+        math.radians(85.0),
+        math.radians(95.0),
+        math.radians(70.0),
+    ),
+    "little": (
+        math.radians(25.0),
+        math.radians(85.0),
+        math.radians(95.0),
+        math.radians(70.0),
+    ),
+}
+#! ThumbBase is the thumb's revolute mount, not a flexion joint; the plugin keeps its +/-90 deg clamp.
+THUMB_BASE_MAX = math.radians(90.0)
+#! Dead band at the open end, radians: the plugin allows this much extension below the zero.
+DEAD_BAND = math.radians(5.0)
+#! Smallest calibrated fist travel the gain can divide by, radians; below this the plugin uses 1:1.
+MIN_FIST_TRAVEL = 0.05
 
 FINGERS = ("thumb", "index", "middle", "ring", "little")
 #! finger -> human URDF joint names (CMC, MCP, PIP, DIP); the thumb has CMC, MCP, IP.
@@ -653,6 +699,11 @@ def main():
         action="store_true",
         help="self-test: invert the thumb flexion sign",
     )
+    parser.add_argument(
+        "--identity-gain",
+        action="store_true",
+        help="self-test: disable the per-joint gain (the old 1:1 linkage-angle mapping)",
+    )
     args = parser.parse_args()
 
     human = args.urdf_dir / HUMAN_URDF
@@ -720,6 +771,7 @@ def main():
     )
 
     zero = {key: rows[open_frame][key] for key in keys}
+    fist = {key: rows[fist_frame][key] for key in keys}
     signs = {}
     spread_sign = mechanism_spread_sign(mech_urdf)
     for key in keys:
@@ -751,12 +803,14 @@ def main():
             for slot, _link in enumerate(links):
                 rpy, axis = mech[hand][finger][slot]
                 print(
-                    "            { { %.5ff, %.5ff, %.5ff }, { %.1ff, %.1ff, %.1ff }, %.5ff, %+.1ff },"
+                    "            { { %.5ff, %.5ff, %.5ff }, { %.1ff, %.1ff, %.1ff }, %.5ff, %+.1ff, %.5ff, %.5ff },"
                     % (
                         *rpy,
                         *axis,
                         zero[(hand, finger, slot)],
                         signs[(hand, finger, slot)],
+                        fist[(hand, finger, slot)],
+                        HUMAN_MAX[finger][slot],
                     )
                 )
             print("        },")
@@ -766,12 +820,14 @@ def main():
     for hand in ("Left", "Right"):
         rpy, axis = mech[hand]["base"]
         print(
-            "    { { %.5ff, %.5ff, %.5ff }, { %.1ff, %.1ff, %.1ff }, %.5ff, %+.1ff }, // %s"
+            "    { { %.5ff, %.5ff, %.5ff }, { %.1ff, %.1ff, %.1ff }, %.5ff, %+.1ff, %.5ff, %.5ff }, // %s"
             % (
                 *rpy,
                 *axis,
                 zero[(hand, "thumb", "base")],
                 signs[(hand, "thumb", "base")],
+                fist[(hand, "thumb", "base")],
+                THUMB_BASE_MAX,
                 hand.lower(),
             )
         )
@@ -876,6 +932,26 @@ def main():
             row[(hand, "thumb", "base")] - zero[(hand, "thumb", "base")]
         )
         return spread, bend, base
+
+    def calibrated_bend(hand, row, finger, slot, identity_gain=False):
+        """Calibrated flexion of one bend slot, radians: gain, dead band and human maximum."""
+        key = (hand, finger, slot)
+        d = signs[key] * (row[key] - zero[key])
+        if identity_gain:
+            return min(max(d, 0.0), HUMAN_MAX[finger][slot])
+        d_fist = signs[key] * (fist[key] - zero[key])
+        value = (
+            d if abs(d_fist) < MIN_FIST_TRAVEL else d / d_fist * HUMAN_MAX[finger][slot]
+        )
+        return min(max(value, -DEAD_BAND), HUMAN_MAX[finger][slot])
+
+    def calibrated_spread(hand, row, finger):
+        key = (hand, finger, 0)
+        return signs[key] * (row[key] - zero[key])
+
+    def calibrated_base(hand, row):
+        key = (hand, "thumb", "base")
+        return signs[key] * (row[key] - zero[key])
 
     def model_tip(anatomy, spread, bend, base, finger):
         joints = build_skeleton(anatomy, spread, bend, base)
@@ -1021,8 +1097,73 @@ def main():
             % ("PASS" if ok else "FAIL", hand, model, vendor, ratio)
         )
 
+    # ---- gain calibration: open and fist references --------------------------------------------
+    print("\ncheck 5: per-joint gain at the open and fist references (degrees)")
+    if args.identity_gain:
+        print("  (identity gain: the old 1:1 mapping, expected to fail the fist check)")
+    open_worst = 0.0
+    fist_worst = -1.0
+    fist_worst_where = ""
+    for hand in ("Left", "Right"):
+        for finger in FINGERS:
+            labels = (
+                ("CMC", "MCP", "IP") if finger == "thumb" else ("MCP", "PIP", "DIP")
+            )
+            for slot, label in zip((1, 2, 3), labels):
+                open_deg = math.degrees(
+                    calibrated_bend(
+                        hand, rows[open_frame], finger, slot, args.identity_gain
+                    )
+                )
+                fist_deg = math.degrees(
+                    calibrated_bend(
+                        hand, rows[fist_frame], finger, slot, args.identity_gain
+                    )
+                )
+                target = math.degrees(HUMAN_MAX[finger][slot])
+                open_worst = max(open_worst, abs(open_deg))
+                if abs(fist_deg - target) > fist_worst:
+                    fist_worst = abs(fist_deg - target)
+                    fist_worst_where = "%s %s %s" % (hand.lower(), finger, label)
+                print(
+                    "  %-5s %-6s %-3s open %+6.1f  fist %+6.1f  human_max %5.1f"
+                    % (hand.lower(), finger, label, open_deg, fist_deg, target)
+                )
+        # The spread and the thumb mount are not gained, but they still read zero at the open
+        # reference, and the check covers them so a broken zero cannot slip through.
+        for finger in FINGERS:
+            open_worst = max(
+                open_worst,
+                abs(math.degrees(calibrated_spread(hand, rows[open_frame], finger))),
+            )
+        open_worst = max(
+            open_worst, abs(math.degrees(calibrated_base(hand, rows[open_frame])))
+        )
+    open_ok = open_worst < 1.0
+    fist_ok = 0.0 <= fist_worst < 10.0
+    print(
+        "  [%s] open: every calibrated joint within %.1f deg of 0 (limit 1 deg)"
+        % ("PASS" if open_ok else "FAIL", open_worst)
+    )
+    print(
+        "  [%s] fist: every bend within %.1f deg of its human_max (worst %s, limit 10 deg)"
+        % (
+            "PASS" if fist_ok else "FAIL",
+            fist_worst,
+            fist_worst_where if fist_worst_where else "n/a",
+        )
+    )
+
     # ---- result --------------------------------------------------------------------------------
-    all_ok = span_ok and level_ok and thumb_ok and spread_ok and thumb_ok_check
+    all_ok = (
+        span_ok
+        and level_ok
+        and thumb_ok
+        and spread_ok
+        and thumb_ok_check
+        and open_ok
+        and fist_ok
+    )
     print(
         "\n%s"
         % ("ALL DERIVATION CHECKS PASSED" if all_ok else "DERIVATION CHECKS FAILED")

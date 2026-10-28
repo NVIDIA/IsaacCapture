@@ -201,14 +201,17 @@ the anatomy from the vendor's human-hand model, driven by that articulation:
 
 The joint angles are read from the published frame quaternions: every v5-URDF joint carries a fixed
 rest rotation (`rpy`) and a revolute axis, so the relative rotation of a child frame to its parent
-gives that joint's angle relative to the URDF zero pose. A constant open-hand zero per joint and a
-per-joint sign turn it into the anatomy's angles, so moving, rotating or reordering the mechanism's
-frames cannot move the injected hand. The four fingers' knuckle-spread sign is derived from the v5
-URDF, not assumed from the hand: the first joint turns the finger towards -X in the mechanism base,
-which is ulnar on the left and radial on the right, so it is -1 on the left and +1 on the right; the
-derivation script measures the same result against the recorded `<side>_<finger>_tip` frames. The
-constants and their derivation live in `io_exo_glove_ros2_kinematics.cpp`, and
-`io_exo_glove_ros2_kinematics_tables.py` re-derives the zero/sign table from a recorded
+gives that joint's angle relative to the URDF zero pose. A per-joint calibration -- the open-hand
+zero, the sign, and the recorded open-to-fist linkage travel mapped onto the joint's human range --
+turns that linkage angle into an anatomical one, so moving, rotating or reordering the mechanism's
+frames cannot move the injected hand and a fist actually closes it: the linkage moves roughly half
+as far as the finger, so copying its angle 1:1 stopped at about 55 deg at the MCP. The four fingers'
+knuckle-spread sign is derived from the v5 URDF, not assumed from the hand: the first joint turns
+the finger towards -X in the mechanism base, which is ulnar on the left and radial on the right, so
+it is -1 on the left and +1 on the right; the derivation script measures the same result against
+the recorded `<side>_<finger>_tip` frames. The constants and their derivation live in
+`io_exo_glove_ros2_kinematics.cpp`, and
+`io_exo_glove_ros2_kinematics_tables.py` re-derives the zero/sign/gain table from a recorded
 `/io_fusion/tf_exoskeleton` stream; the landmark table lives in the `.hpp`, and a rig with different
 links only needs those files changed. The plugin logs, once, how many joints each hand filled and the
 mechanism root it bound to.
@@ -219,7 +222,8 @@ also carries the A-pose: a metacarpal fan that puts the index-to-little knuckle 
 level finger plane, and the thumb's own rest frame so it leaves the palm. The table is driven by the
 glove's articulation on top of that rest pose; `io_exo_glove_ros2_kinematics_tables.py` prints the
 neutral-frame numbers (span, `table.level`, the thumb metacarpal's position along the knuckle line)
-and fails if the data-driven spread or thumb checks disagree with the recording.
+and fails if the data-driven spread, thumb or open/fist gain checks disagree with the recording.
+`--identity-gain` disables the gain for a self-test: it reproduces the old 1:1 reading and must fail.
 
 The exoskeleton reports the hand in its own frame, which is not anchored in the room, so the skeleton
 is placed at a **wrist pose read from the headset**. `wrist_source` picks it: `hand_tracking` (optical,

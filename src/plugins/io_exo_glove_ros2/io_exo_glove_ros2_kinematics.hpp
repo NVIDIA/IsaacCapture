@@ -25,7 +25,10 @@ namespace io_exo_glove_ros2
  * frames as hand joints therefore yields a hand with a palm of a few millimetres and fingers twice a
  * palm long. What carries over is the *articulation*: the bend at each linkage joint, and the spread
  * at the knuckle. This module reads those joint angles from the published frame quaternions and drives
- * a hand skeleton whose landmarks come from the vendor's human-hand model instead.
+ * a hand skeleton whose landmarks come from the vendor's human-hand model instead. A linkage bend is
+ * not a joint angle -- the mechanism moves roughly half as far as the finger -- so each one is
+ * calibrated against the recording's open and fist plateaus and mapped onto its human range; see the
+ * table and ``read_hand_angles`` in the .cpp.
  *
  * Everything below is a constant derived from the two URDFs that ship with the vendor SDK
  * (`io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/`), so nothing here
@@ -181,15 +184,17 @@ struct FingerAngles
     float base = 0.0f;
 };
 
-//! Angles of all five fingers plus whether the mechanism was present at all.
+//! Angles of all five fingers plus whether the whole hand was present.
 struct HandAngles
 {
     std::array<FingerAngles, 5> fingers{};
     bool valid = false;
 };
 
-//! Reads the mechanism's articulation out of one link message. False when the mechanism's root is
-//! absent, i.e. that glove is not streaming.
+//! Reads the mechanism's articulation out of one link message. Valid only when the root and every
+//! finger's four link frames are present: a hand missing any finger is invalid, because that finger
+//! would otherwise sit at its open zero and be injected as an open finger. False when the mechanism
+//! is absent, i.e. that glove is not streaming.
 HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
