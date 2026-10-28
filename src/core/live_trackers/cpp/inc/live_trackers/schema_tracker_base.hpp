@@ -118,6 +118,7 @@ public:
 private:
     void initialize_tensor_data_functions();
     void create_tensor_list();
+    void clear_collection() noexcept;
     bool ensure_collection();
     bool read_next_sample(SampleResult& out);
 
@@ -137,6 +138,7 @@ private:
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };
 
     std::optional<uint32_t> m_target_collection_index;
+    std::optional<XrTensorCollectionIDNV> m_target_collection_id;
     uint32_t m_sample_batch_stride{ 0 };
     uint32_t m_sample_size{ 0 };
 

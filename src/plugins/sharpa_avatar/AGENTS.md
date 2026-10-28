@@ -48,6 +48,23 @@ SPDX-License-Identifier: Apache-2.0
 - OpenXR setup is required for publication; initialization errors must abort
   construction instead of leaving an Avatar-only idle plugin.
 - Keep initialization non-blocking; `update()` owns retries for absent gloves.
+- In pinned SDK 1.7.3, `get_device()` returns an initialized handle; do not call
+  `init()` again. Use its lightweight ingress callback for liveness and keep SDK
+  work off the callback thread. Scope callback signals to one device generation;
+  callbacks must not retain a `GloveState` address across reset or destruction.
+- USB transport health combines physical enumeration with
+  `AvatarSDK::get_usb_connection_state()`: the production SDK can retain
+  `CONNECTED` while its serial listener is reconnecting, so neither signal is
+  sufficient alone. Before stopping a glove handle, best-effort clear manual
+  haptics. Isolate dynamic output setup failures to that side and retry without
+  terminating the plugin.
+- Treat a successful `list_device_info()` result as the handle-lifecycle
+  authority: retain handles while their row exists (including `online=false`),
+  and release them only when a successful snapshot drops the row. A failed
+  refresh makes inventory health unknown and must not reconcile cached rows.
+- Keep transport presence, physical-glove ingress/faults, and HUMAN/RAW/ROBOT
+  output freshness/errors as separate health layers. One advancing dataset must
+  not keep another dataset healthy.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
   production SDK's landmark order. Do not read joint names from
   `sdk_config.json` at runtime or fill unsupported OpenXR slots with neighbouring
