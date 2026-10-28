@@ -18,7 +18,7 @@ from isaaccapture.teleop_session_manager import (
 )
 
 
-def test_vendor_plugin_is_discovered_in_the_existing_directory(monkeypatch):
+def test_vendor_plugin_is_discovered_in_its_directory(monkeypatch):
     for parent in Path(__file__).resolve().parents:
         if (parent / "repo_paths.py").is_file():
             monkeypatch.syspath_prepend(str(parent))
@@ -30,8 +30,8 @@ def test_vendor_plugin_is_discovered_in_the_existing_directory(monkeypatch):
     assert "orbbec_ego_camera" in manager.get_plugin_names()
     assert "ego_camera" not in manager.get_plugin_names()
     info = manager.get_plugin_info("orbbec_ego_camera")
-    assert Path(info.working_dir).resolve() == plugins / "ego"
-    assert info.command == "./ego_camera_plugin"
+    assert Path(info.working_dir).resolve() == plugins / "orbbec_ego"
+    assert info.command == "./orbbec_ego_camera_plugin"
     assert [device.path for device in info.devices] == ["/camera/ego"]
 
 
@@ -39,7 +39,7 @@ def test_vendor_plugin_is_discovered_in_the_existing_directory(monkeypatch):
 def setup(tmp_path, monkeypatch):
     fragment = tmp_path / "capture.mcap"
     final = tmp_path / "final.mcap"
-    executable = tmp_path / "ego_mcap_merge"
+    executable = tmp_path / "orbbec_ego_mcap_merge"
     executable.write_text("merge fixture")
     executable.chmod(0o755)
     plugin = PluginConfig(

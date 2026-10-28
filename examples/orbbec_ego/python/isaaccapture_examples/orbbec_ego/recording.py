@@ -228,7 +228,9 @@ def embedded_recording(
             "The EGO plugin cannot use --mcap-filename with a live collection"
         )
     executable = (
-        Path(merger).resolve() if merger is not None else working_dir / "ego_mcap_merge"
+        Path(merger).resolve()
+        if merger is not None
+        else working_dir / "orbbec_ego_mcap_merge"
     )
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise FileNotFoundError(

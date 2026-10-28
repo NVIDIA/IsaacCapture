@@ -15,7 +15,7 @@ from ..pipeline import FrameSource
 
 from ._helpers import PairedFrameSource, set_notify_sink, set_verbose
 from .oakd import OakdSource
-from .ego import EgoSource
+from .orbbec_ego import OrbbecEgoSource
 from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
 from .v4l2 import V4l2Source
@@ -24,7 +24,7 @@ from .zed import ZedSource
 
 __all__ = [
     "OakdSource",
-    "EgoSource",
+    "OrbbecEgoSource",
     "PairedFrameSource",
     "RtpH264Source",
     "SyntheticSource",
@@ -125,11 +125,11 @@ def build_local_camera(
                 )
             return [PairedFrameSource(name=name, left=eyes[0], right=eyes[1])]
         return eyes
-    if kind == "ego":
+    if kind == "orbbec_ego":
         if not stereo:
             raise ValueError("EGO always produces a stereo frame")
         return [
-            EgoSource(
+            OrbbecEgoSource(
                 name=name,
                 device_uid=spec.get("device_uid", ""),
                 width=int(spec.get("width", 1600)),
@@ -177,5 +177,5 @@ def build_local_camera(
         return eyes
     raise ValueError(
         f"build_local_camera: unknown camera type {kind!r} "
-        "(known: synthetic, v4l2, oakd, ego, zed, video)"
+        "(known: synthetic, v4l2, oakd, orbbec_ego, zed, video)"
     )

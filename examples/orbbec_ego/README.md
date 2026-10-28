@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Orbbec EGO
 
 Python helpers for recordings made with the
-[Orbbec EGO camera plugin](../../src/plugins/ego/README.md).
+[Orbbec EGO camera plugin](../../src/plugins/orbbec_ego/README.md).
 
 - `recording`: `configure_recording` adds the EGO calibration tracker to a
   `TeleopSessionConfig`; `embedded_recording` produces one MCAP that holds the session's
@@ -30,5 +30,5 @@ python -m isaaccapture_examples.orbbec_ego.analyze_sync "$RUN" \
     --required-streams left_rgb right_rgb accel gyro --output "$RUN/sync_audit.json"
 ```
 
-The [EGO device page](../../docs/source/device/cameras/ego.rst) covers recording layouts,
+The [EGO device page](../../docs/source/device/cameras/orbbec_ego.rst) covers recording layouts,
 time models and stream selection.

@@ -112,10 +112,10 @@ needs. Flags trim or extend that:
    * - ``--with-zed``
      - Also build + install the ZED SDK's Python API (``pyzed``). Requires the ZED SDK on the
        machine (default ``/usr/local/zed``; override with ``--zed-sdk PATH``).
-   * - ``--with-ego``
+   * - ``--with-orbbec-ego``
      - Also build the Orbbec EGO capture binding against the EGO OrbbecSDK package; pass its
        root with ``--sdk-root PATH``. See
-       :code-file:`examples/camera_viz/python/isaaccapture_examples/camera_viz/ego_preview/README.md`.
+       :code-file:`examples/camera_viz/python/isaaccapture_examples/camera_viz/orbbec_ego_preview/README.md`.
    * - ``--sender-only``
      - Split mode only — robot-side install of just the sender's dependencies.
    * - ``--jetson``
@@ -350,9 +350,9 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        bandwidth and is broadcast to RGBA on the GPU; ``stereo_rgb`` keeps color.
    * - ``zed``
      - ZED 2 / Mini / X One; mono or ``stereo: true`` (per-eye SDK retrieve, zero-copy on the GPU).
-   * - ``ego``
+   * - ``orbbec_ego``
      - Orbbec EGO ColorLeft / ColorRight pair; ``stereo: true`` required. Install with
-       ``--with-ego`` and start from ``configs/ego.yaml``; see :doc:`/device/cameras/ego`.
+       ``--with-orbbec-ego`` and start from ``configs/orbbec_ego.yaml``; see :doc:`/device/cameras/orbbec_ego`.
    * - ``video``
      - Recorded camera data — video-file replay (anything OpenCV's FFmpeg backend reads). Loops
        by default; ``stereo: true`` splits side-by-side recordings into eyes (viewer only). See
@@ -746,7 +746,7 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
    cameras:
      - name: cam
        enabled: true
-       type: v4l2                # v4l2 | oakd | zed | video | synthetic
+       type: v4l2                # v4l2 | oakd | orbbec_ego | zed | video | synthetic
        width: 2560               # video: optional — defaults to the file's size
        height: 720               # (required when source: rtp)
        fps: 30

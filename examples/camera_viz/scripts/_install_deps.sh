@@ -13,7 +13,7 @@
 #   --sender-only  sender path only. No isaaccapture, no vulkan deps.
 #
 # Flags: --venv, --wheel, --python, --no-v4l2, --no-oakd, --with-rtp,
-#        --with-zed, --zed-sdk, --build-from-source.
+#        --with-zed, --zed-sdk, --with-orbbec-ego, --sdk-root, --build-from-source.
 
 set -euo pipefail
 
@@ -55,7 +55,7 @@ WITH_OAKD=true
 # --sender-only forces it on below (streaming is the sender's whole job).
 WITH_RTP=false
 WITH_ZED=false
-WITH_EGO=false
+WITH_ORBBEC_EGO=false
 ORBBEC_SDK_DIR="${ORBBEC_SDK_ROOT:-}"
 ZED_SDK_DIR=/usr/local/zed
 # Skip the index probes and build isaaccapture from this checkout. Also the
@@ -78,7 +78,7 @@ while (( $# )); do
         --no-oakd)      WITH_OAKD=false; shift;;
         --with-rtp)     WITH_RTP=true; shift;;
         --with-zed)     WITH_ZED=true; shift;;
-        --with-ego)     WITH_EGO=true; shift;;
+        --with-orbbec-ego)     WITH_ORBBEC_EGO=true; shift;;
         --sdk-root)
             (( $# >= 2 )) || die "--sdk-root requires a directory"
             ORBBEC_SDK_DIR=$2; shift 2;;
@@ -93,8 +93,8 @@ done
 if [[ "$MODE" == sender ]]; then
     WITH_RTP=true
 fi
-if $WITH_EGO; then
-    [[ -n "$ORBBEC_SDK_DIR" ]] || die "--with-ego requires --sdk-root or ORBBEC_SDK_ROOT"
+if $WITH_ORBBEC_EGO; then
+    [[ -n "$ORBBEC_SDK_DIR" ]] || die "--with-orbbec-ego requires --sdk-root or ORBBEC_SDK_ROOT"
     [[ -f "$ORBBEC_SDK_DIR/include/libobsensor/ObSensor.hpp" && -f "$ORBBEC_SDK_DIR/lib/libOrbbecSDK.so" ]] || die "invalid OrbbecSDK root: $ORBBEC_SDK_DIR"
 fi
 
@@ -487,7 +487,7 @@ $WITH_V4L2 && EXTRAS+=(v4l2)
 $WITH_OAKD && EXTRAS+=(oakd)
 $WITH_RTP  && EXTRAS+=(rtp)
 $WITH_ZED  && EXTRAS+=(zed)
-$WITH_EGO && EXTRAS+=(ego)
+$WITH_ORBBEC_EGO && EXTRAS+=(orbbec-ego)
 step "camera_viz setup — ${MODE} mode"
 note "venv    $VENV_DIR"
 note "python  $PYTHON_VERSION"
@@ -560,7 +560,7 @@ PKGS=("pyyaml>=6.0" "$target_cupy" "numpy>=1.23" "scipy>=1.15" "pillow>=10.0")
 $WITH_V4L2 && PKGS+=("opencv-python>=4.5")
 $WITH_OAKD && PKGS+=("depthai>=3.0")
 $WITH_RTP  && PKGS+=("pybind11>=2.11" "PyGObject>=3.42,<3.52")
-if $WITH_EGO && ! $WITH_RTP; then
+if $WITH_ORBBEC_EGO && ! $WITH_RTP; then
     PKGS+=("pybind11>=2.11")
 fi
 
@@ -621,7 +621,7 @@ fi
 
 # Native NVENC/NVDEC codec. Failures are non-fatal: the runtime falls
 # back to the GStreamer encoder when the native ``.so`` isn't importable.
-if $WITH_RTP || $WITH_EGO; then
+if $WITH_RTP || $WITH_ORBBEC_EGO; then
     CODEC_DIR="$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/codec"
     if [[ -d "$CODEC_DIR" ]]; then
         step "building native NVENC/NVDEC codec"
@@ -629,7 +629,7 @@ if $WITH_RTP || $WITH_EGO; then
         source "$VENV_DIR/bin/activate"
         if ! "$CODEC_DIR/build.sh"; then
             warn "codec build failed — falling back to the GStreamer encoder at runtime"
-            if $WITH_EGO; then
+            if $WITH_ORBBEC_EGO; then
                 warn "EGO H.264/H.265 requires the native decoder; use format: mjpg until it builds"
             fi
         fi
@@ -637,12 +637,12 @@ if $WITH_RTP || $WITH_EGO; then
     fi
 fi
 
-if $WITH_EGO; then
-    [[ -n "$ORBBEC_SDK_DIR" ]] || die "--with-ego requires --sdk-root or ORBBEC_SDK_ROOT"
+if $WITH_ORBBEC_EGO; then
+    [[ -n "$ORBBEC_SDK_DIR" ]] || die "--with-orbbec-ego requires --sdk-root or ORBBEC_SDK_ROOT"
     step "building EGO capture"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-    "$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/ego_preview/build.sh" --sdk-root "$ORBBEC_SDK_DIR"
+    "$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/orbbec_ego_preview/build.sh" --sdk-root "$ORBBEC_SDK_DIR"
     deactivate
 fi
 

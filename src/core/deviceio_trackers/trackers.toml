@@ -93,7 +93,7 @@ channel = "oak"
 header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
 
-# The orbbec_ego_* sizes must equal EGO_MAX_FLATBUFFER_SIZE in schema/ego_limits.hpp.
+# The orbbec_ego_* sizes must equal ORBBEC_EGO_MAX_FLATBUFFER_SIZE in schema/orbbec_ego_limits.hpp.
 [[tracker]]
 name = "orbbec_ego_frame_metadata"
 table = "OrbbecEgoFrameMetadata"
