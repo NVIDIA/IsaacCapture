@@ -8,3 +8,4 @@ add_executable(argus_sender_test_bundle_assembler
     ${ARGUS_SENDER_ROOT}/src/Runtime.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_bundle_assembler bundle_assembler)
+target_compile_definitions(argus_sender_test_bundle_assembler PRIVATE ARGUS_SENDER_TEST_SUBMISSION_HOOK)

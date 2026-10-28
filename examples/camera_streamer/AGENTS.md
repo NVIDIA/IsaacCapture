@@ -39,3 +39,5 @@ SPDX-License-Identifier: Apache-2.0
 - Preserve HEVC ordering through TCP enqueue and bound receiver work queues; backpressure must remain interruptible during shutdown.
 - Verify unresolved review findings against the current PR head and regression tests;
   an open thread can describe code already fixed in an earlier commit.
+- Concurrency regression tests must synchronize inside the operation under test;
+  a pre-call flag and a fixed sleep do not establish lock contention.

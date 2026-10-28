@@ -21,6 +21,10 @@
 namespace argus_sender
 {
 
+#ifdef ARGUS_SENDER_TEST_SUBMISSION_HOOK
+void observeSubmissionLock(std::mutex& mutex, uint64_t bundleSequence);
+#endif
+
 namespace
 {
 
@@ -329,6 +333,9 @@ private:
             return setError("empty AVS1 sample payload");
         const uint64_t payloadDoneSteadyNs = steadyNowNs();
         std::vector<ReadyBundle> ready;
+#ifdef ARGUS_SENDER_TEST_SUBMISSION_HOOK
+        observeSubmissionLock(m_sendMutex, bundleSequence);
+#endif
         std::lock_guard<std::mutex> sendLock(m_sendMutex);
         {
             std::lock_guard<std::mutex> lock(m_mutex);

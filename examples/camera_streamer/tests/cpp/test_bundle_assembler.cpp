@@ -21,6 +21,12 @@
 namespace
 {
 
+std::mutex submissionMutex;
+std::condition_variable submissionChanged;
+bool observeSecondSubmission = false;
+bool secondEntered = false;
+bool secondContended = false;
+
 class FakePacketSink : public argus_sender::PacketSink
 {
 public:
@@ -101,6 +107,24 @@ argus_sender::FrameTiming timing(uint64_t frame, uint64_t tsc)
 }
 
 } // namespace
+
+namespace argus_sender
+{
+
+void observeSubmissionLock(std::mutex& mutex, uint64_t bundleSequence)
+{
+    std::lock_guard<std::mutex> lock(submissionMutex);
+    if (!observeSecondSubmission || bundleSequence != 2)
+        return;
+    // Observe contention inside submitOwned, while the first enqueue is still blocked.
+    secondContended = !mutex.try_lock();
+    if (!secondContended)
+        mutex.unlock();
+    secondEntered = true;
+    submissionChanged.notify_all();
+}
+
+} // namespace argus_sender
 
 int main()
 {
@@ -210,7 +234,8 @@ int main()
     argus_sender::FrameBundleAssembler concurrent(&blockedSink, 88, templates());
     TEST_CHECK(test, concurrent.beginBundle(1, bundle3, 6000, 6100, argus_sender::SENDER_CLOCK_UNKNOWN, 0));
     TEST_CHECK(test, concurrent.beginBundle(2, bundle3, 6000, 6100, argus_sender::SENDER_CLOCK_UNKNOWN, 0));
-    std::atomic<bool> firstOk(false), secondOk(false), secondStarted(false);
+    std::atomic<bool> firstOk(false), secondOk(false);
+    observeSecondSubmission = true;
     std::thread first(
         [&]
         {
@@ -225,13 +250,14 @@ int main()
     std::thread second(
         [&]
         {
-            secondStarted = true;
             secondOk =
                 concurrent.submitRaw(1, 0, 2, std::vector<uint8_t>(12, 0x80), 6200, argus_sender::SENDER_CLOCK_REALTIME);
         });
-    while (!secondStarted)
-        std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::unique_lock<std::mutex> lock(submissionMutex);
+        TEST_CHECK(test, submissionChanged.wait_for(lock, std::chrono::seconds(2), [] { return secondEntered; }));
+        TEST_CHECK(test, secondContended);
+    }
     TEST_CHECK(test, !secondOk);
     {
         std::lock_guard<std::mutex> lock(blockedSink.mutex);
