@@ -236,9 +236,14 @@ related environment variables unchanged. Use this when another runtime is alread
 configured (for example Monado) or when a host singleton must not be duplicated
 (see ``examples/robot_viz/README.md`` and ``--no-launch-cloudxr-runtime`` there).
 
+``OpenXRSession`` refuses to start unless ``NV_CXR_RUNTIME_DIR`` and ``XR_RUNTIME_JSON``
+are both set; ``ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS`` skips that check for a runtime
+other than CloudXR:
+
 .. code-block:: bash
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
+   export ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS=1
    python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
