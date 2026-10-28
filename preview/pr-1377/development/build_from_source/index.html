@@ -815,6 +815,10 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaa
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
+<p id="build-from-source-editable-examples">An example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout replaces this
+wheel with an editable build of the checkout when you install it. Its first install compiles the
+extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
+<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">-e</span> <span class="pre">./examples/&lt;name&gt;</span> <span class="pre">--reinstall-package</span> <span class="pre">isaaccapture</span></code>.</p>
 <p>The wheel carries the <code class="docutils literal notranslate"><span class="pre">isaacteleop</span></code> compatibility alias, which will be removed
 in 1.9, so
 <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">isaacteleop</span></code> resolves without installing anything else. See
