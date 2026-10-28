@@ -19,13 +19,11 @@ dependencies = [
     "scipy>=1.10",
 ]
 
-# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
-# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
-# the latter keeps only the last path component and would root the wheel at a
-# bare top-level `cloudxr_mujoco_teleop/`.
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# cloudxr_mujoco_teleop -- see the packaging rules in examples/README.md.
 #
-# vive_assets/ lives inside the package because both scripts resolve it from
-# __file__, so the meshes must travel with the modules.
+# vive_assets/ lives inside the package because the modules resolve it from
+# __file__, so the meshes must travel with them.
 [tool.hatch.build.targets.wheel]
 only-include = ["python/isaaccapture_examples/cloudxr_mujoco_teleop"]
 sources = ["python"]

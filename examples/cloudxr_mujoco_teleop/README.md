@@ -86,9 +86,6 @@ HMD will be visible.
   headset position every frame, so zoom always converges on the head.
 - **Left-click drag** — orbit around the headset.
 - **Right-click drag** — pan (the next frame's auto-recentre snaps back).
-- `[` / `]` — cycle cameras: `free` → fixed cameras (the poses example
-  also ships `play_area` and a `follow_head` camera that rides behind/above
-  the HMD via `mode="trackcom"`).
 - Side panels are hidden by default; press `Tab` to toggle them back if you
   need MuJoCo's built-in inspector / rendering options.
 
