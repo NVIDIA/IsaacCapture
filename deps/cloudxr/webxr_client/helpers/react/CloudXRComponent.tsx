@@ -749,7 +749,7 @@ export default function CloudXRComponent({
             telemetry: {
               enabled: true,
               appInfo: {
-                version: '6.3.0',
+                version: '6.4.1-isaaccapture',
                 product: applicationName,
               },
             },
