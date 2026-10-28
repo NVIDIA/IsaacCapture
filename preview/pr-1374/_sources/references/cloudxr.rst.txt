@@ -373,6 +373,31 @@ To inspect the active settings after startup:
 Troubleshooting
 ---------------
 
+.. _cloudxr-web-client-refresh:
+
+PICO 4 Ultra keeps failing when retrying a connection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After a failed connection, the PICO browser can require a page refresh before
+another attempt works. Clicking **Connect** again without refreshing can keep
+failing.
+
+In the web client's **Troubleshooting** settings, **Auto Refresh on Session End**
+defaults to **Refresh on any session end (including errors)** for the **Pico 4
+Ultra** device profile. This reloads the page after a clean disconnect or a
+connection failure, once any automatic reconnect attempts have been exhausted.
+Other device profiles default to **Never refresh**. You can also choose
+**Refresh on clean session end** to reload only after a clean disconnect.
+Changing this setting switches the device profile to **Custom** and saves your
+choice; selecting a named device profile again restores that profile's defaults.
+Selecting **Custom** preserves the current settings.
+
+The last error message, including its hexadecimal error code when supplied by
+CloudXR, remains visible after automatic or manual refreshes in the same browser
+tab. It clears when a stream connects successfully. This requires browser session
+storage to be available. A restored error does not itself trigger another refresh;
+click **Connect** to retry from the refreshed page.
+
 .. _cloudxr-form-factor-unavailable:
 
 ``xrGetSystem`` fails with ``XR_ERROR_FORM_FACTOR_UNAVAILABLE`` (-35)
