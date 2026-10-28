@@ -43,13 +43,14 @@ std::string hex_id(uint16_t value)
 
 } // anonymous namespace
 
-plugin_utils::PluginDeviceStatusEntry make_glove_status(std::string path, const GloveHealthInput& input)
+plugin_utils::PluginDeviceStatusEntry make_physical_glove_status(std::string path, const PhysicalGloveHealthInput& input)
 {
     plugin_utils::PluginDeviceStatusEntry entry{ .path = std::move(path) };
-    if (!input.enabled)
+    if (!input.inventory_available)
     {
-        entry.state = core::PluginDeviceState_DISABLED;
-        entry.reason = core::PluginDeviceReason_DISABLED_BY_CONFIGURATION;
+        entry.state = core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = "Avatar SDK inventory is unavailable";
     }
     else if (!input.inventory_present)
     {
@@ -58,26 +59,17 @@ plugin_utils::PluginDeviceStatusEntry make_glove_status(std::string path, const 
         entry.error = input.ever_observed ? "glove no longer appears in the Avatar SDK inventory" :
                                             "waiting for the Avatar SDK to discover the glove";
     }
-    else if (!input.sdk_online)
+    else if (input.device_error)
     {
-        entry.state = input.ever_received_fresh_data ? core::PluginDeviceState_DEGRADED : core::PluginDeviceState_UNKNOWN;
-        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
-        entry.error = "Avatar SDK reports online=false; the pinned SDK derives online from recent joint data";
+        entry.state = core::PluginDeviceState_DEGRADED;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = *input.device_error;
     }
-    else if (!input.fresh_data)
+    else if (!input.ingress_fresh)
     {
+        entry.state = input.ever_received_ingress ? core::PluginDeviceState_DEGRADED : core::PluginDeviceState_UNKNOWN;
         entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
-        if (input.ever_received_fresh_data)
-        {
-            entry.state = core::PluginDeviceState_DEGRADED;
-            entry.error = "glove has no newer samples within the " + std::to_string(kAvatarDataTimeout.count()) +
-                          "-second freshness window";
-        }
-        else
-        {
-            entry.state = core::PluginDeviceState_UNKNOWN;
-            entry.error = "waiting for the first fresh glove sample";
-        }
+        entry.error = input.sdk_online ? "glove ingress is not advancing" : "Avatar SDK reports no recent glove ingress";
     }
     else
     {
@@ -87,24 +79,96 @@ plugin_utils::PluginDeviceStatusEntry make_glove_status(std::string path, const 
     return entry;
 }
 
-plugin_utils::PluginDeviceStatusEntry make_dongle_status(UsbDevicePresence presence)
+plugin_utils::PluginDeviceStatusEntry make_dataset_status(std::string path, const DatasetHealthInput& input)
 {
-    plugin_utils::PluginDeviceStatusEntry entry{ .path = "/transport/dongle" };
-    switch (presence)
+    plugin_utils::PluginDeviceStatusEntry entry{ .path = std::move(path) };
+    if (!input.enabled)
     {
-    case UsbDevicePresence::PRESENT:
+        entry.state = core::PluginDeviceState_DISABLED;
+        entry.reason = core::PluginDeviceReason_DISABLED_BY_CONFIGURATION;
+    }
+    else if (!input.inventory_available)
+    {
+        entry.state = core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = "Avatar SDK inventory is unavailable";
+    }
+    else if (!input.inventory_present)
+    {
+        entry.state = input.ever_observed ? core::PluginDeviceState_DISCONNECTED : core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
+        entry.error = input.ever_observed ? "glove no longer appears in the Avatar SDK inventory" :
+                                            "waiting for the Avatar SDK to discover the glove";
+    }
+    else if (!input.ingress_fresh)
+    {
+        entry.state = input.ever_received_ingress ? core::PluginDeviceState_DEGRADED : core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+        entry.error = "waiting for current glove ingress";
+    }
+    else if (input.fetch_error)
+    {
+        entry.state = core::PluginDeviceState_DEGRADED;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = *input.fetch_error;
+    }
+    else if (input.fetch_has_no_current_data || !input.data_fresh)
+    {
+        entry.state = input.ever_received_data ? core::PluginDeviceState_DEGRADED : core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+        entry.error = input.ever_received_data ? "dataset is not advancing" : "waiting for the first dataset sample";
+    }
+    else
+    {
         entry.state = core::PluginDeviceState_CONNECTED;
         entry.reason = core::PluginDeviceReason_NONE;
-        break;
-    case UsbDevicePresence::ABSENT:
-        entry.state = core::PluginDeviceState_DISCONNECTED;
-        entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
-        entry.error = "Avatar USB dongle 1915:520f is not enumerated";
-        break;
-    case UsbDevicePresence::UNKNOWN:
+    }
+    return entry;
+}
+
+plugin_utils::PluginDeviceStatusEntry make_dongle_status(UsbDevicePresence presence, ::avatar::UsbConnectionState state)
+{
+    plugin_utils::PluginDeviceStatusEntry entry{ .path = "/transport/dongle" };
+    if (presence == UsbDevicePresence::UNKNOWN)
+    {
         entry.state = core::PluginDeviceState_UNKNOWN;
         entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
         entry.error = "USB device enumeration is unavailable";
+        return entry;
+    }
+    if (presence == UsbDevicePresence::ABSENT)
+    {
+        entry.state = core::PluginDeviceState_DISCONNECTED;
+        entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
+        entry.error = "Avatar USB dongle 1915:520f is not enumerated";
+        return entry;
+    }
+
+    switch (state)
+    {
+    case ::avatar::UsbConnectionState::CONNECTED:
+        entry.state = core::PluginDeviceState_CONNECTED;
+        entry.reason = core::PluginDeviceReason_NONE;
+        break;
+    case ::avatar::UsbConnectionState::DISCONNECTED:
+        entry.state = core::PluginDeviceState_DISCONNECTED;
+        entry.reason = core::PluginDeviceReason_NO_HARDWARE_SIGNAL;
+        entry.error = "Avatar SDK USB transport is disconnected";
+        break;
+    case ::avatar::UsbConnectionState::CONNECTING:
+        entry.state = core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+        entry.error = "Avatar SDK USB transport is connecting";
+        break;
+    case ::avatar::UsbConnectionState::RECONNECTING:
+        entry.state = core::PluginDeviceState_DEGRADED;
+        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+        entry.error = "Avatar SDK USB transport is reconnecting";
+        break;
+    case ::avatar::UsbConnectionState::ERROR:
+        entry.state = core::PluginDeviceState_FAILED;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = "Avatar SDK USB transport failed";
         break;
     }
     return entry;
@@ -124,8 +188,14 @@ UsbDevicePresence detect_usb_device_presence(const std::filesystem::path& device
     const std::string expected_vendor = hex_id(vendor_id);
     const std::string expected_product = hex_id(product_id);
     bool incomplete_scan = false;
-    for (const auto& device : devices)
+    const std::filesystem::directory_iterator end;
+    for (; devices != end; devices.increment(error))
     {
+        if (error)
+        {
+            return UsbDevicePresence::UNKNOWN;
+        }
+        const auto& device = *devices;
         // USB interface rows such as 1-2:1.0 do not own VID/PID files.
         if (device.path().filename().string().find(':') != std::string::npos)
         {
@@ -142,6 +212,10 @@ UsbDevicePresence detect_usb_device_presence(const std::filesystem::path& device
         {
             return UsbDevicePresence::PRESENT;
         }
+    }
+    if (error)
+    {
+        return UsbDevicePresence::UNKNOWN;
     }
     return incomplete_scan ? UsbDevicePresence::UNKNOWN : UsbDevicePresence::ABSENT;
 }

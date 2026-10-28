@@ -157,8 +157,6 @@ HAND_BONES = (
         HandJointIndex.WRIST,
         HandJointIndex.LITTLE_METACARPAL,
         HandJointIndex.LITTLE_PROXIMAL,
-        HandJointIndex.LITTLE_INTERMEDIATE,
-        HandJointIndex.LITTLE_DISTAL,
         HandJointIndex.LITTLE_TIP,
     )
 )

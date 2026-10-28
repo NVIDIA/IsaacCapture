@@ -17,8 +17,10 @@
 #include <pusherio/schema_pusher.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -90,6 +92,18 @@ public:
     ::avatar::AvatarSDK& get();
 };
 
+class GloveIngressSignal
+{
+public:
+    void record() noexcept;
+    uint64_t generation() const noexcept;
+    std::optional<std::chrono::steady_clock::time_point> last_event() const noexcept;
+
+private:
+    std::atomic<uint64_t> m_generation{ 0 };
+    std::atomic<int64_t> m_last_event_ns{ -1 };
+};
+
 struct GloveState
 {
     ~GloveState() noexcept;
@@ -99,22 +113,37 @@ struct GloveState
     GloveState& operator=(const GloveState&) = delete;
 
     void reset() noexcept;
+    void clear_current_data() noexcept;
+
+    struct DatasetState
+    {
+        std::optional<::avatar::Stamp> last_stamp;
+        std::optional<std::chrono::steady_clock::time_point> last_fresh_data;
+        std::optional<::avatar::ErrorCode> fetch_error;
+        bool ever_received_data = false;
+    };
 
     ::avatar::DevicePtr device;
     std::vector<::avatar::Pose> landmarks;
     ::avatar::AvatarDataFrame raw_frame;
     ::avatar::AvatarDataFrame robot_frame;
-    // Empty until start() or a successful fetch; drives the data-timeout window.
-    std::optional<std::chrono::steady_clock::time_point> last_successful_fetch;
-    // The first stamp is a baseline; only a later stamp proves that stream is advancing.
-    std::array<std::optional<::avatar::Stamp>, kDataCategories.size()> last_sample_stamps;
-    bool streaming = false;
+    std::array<DatasetState, kDataCategories.size()> datasets;
+    std::shared_ptr<GloveIngressSignal> ingress;
+    uint64_t observed_ingress_generation = 0;
+    std::optional<std::chrono::steady_clock::time_point> last_ingress;
+    std::optional<std::string> haptic_error;
+    std::optional<std::string> output_setup_error;
+    std::optional<std::chrono::steady_clock::time_point> last_output_setup_attempt;
+    bool ever_received_ingress = false;
+    bool started = false;
+    bool ready = false;
 };
 
 class __attribute__((visibility("default"))) AvatarTracker
 {
 public:
     explicit AvatarTracker(AvatarPluginConfig config = {});
+    ~AvatarTracker() noexcept;
 
     void update();
 
@@ -122,11 +151,18 @@ private:
     static constexpr std::size_t kAvatarFingerCount = 5;
 
     void initialize_openxr();
+    void refresh_transport_state() noexcept;
+    void refresh_sdk_inventory();
+    void reconcile_glove_handles();
+    void reset_glove(::avatar::DeviceSide side) noexcept;
     void try_connect_missing_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
-    void refresh_sdk_health();
+    void refresh_glove_activity();
+    bool try_create_output_resources(::avatar::DeviceSide side);
+    void destroy_output_resources(::avatar::DeviceSide side) noexcept;
     void refresh_data();
     void publish_device_status();
+    void process_haptics();
     void inject_hand_data();
     void push_joint_frames();
     void push_joint_frame(const GloveState& glove,
@@ -134,7 +170,9 @@ private:
                           ::avatar::DeviceDataCategory category,
                           core::SchemaPusher& pusher);
     bool dataset_enabled(::avatar::DeviceDataCategory category) const;
-    void apply_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers);
+    bool apply_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers);
+    bool send_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers);
+    void stop_haptics(::avatar::DeviceSide side) noexcept;
     const GloveState& glove(::avatar::DeviceSide side) const;
     GloveState& glove(::avatar::DeviceSide side);
     void map_landmarks_to_openxr(const std::vector<::avatar::Pose>& landmarks,
@@ -158,19 +196,19 @@ private:
 
     std::array<core::Serialized<core::HapticCommand>, 2> m_last_haptic_commands;
     std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_last_haptic_sample_times;
+    std::array<std::optional<std::chrono::steady_clock::time_point>, 2> m_haptic_retry_after;
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;
-    std::array<bool, 2> m_inventory_present{};
+    std::array<std::optional<::avatar::DeviceInfo>, 2> m_inventory;
     std::array<bool, 2> m_ever_observed{};
-    std::array<bool, 2> m_sdk_online{};
-    std::array<std::array<bool, kDataCategories.size()>, 2> m_ever_received_fresh_data{};
-    std::array<std::array<std::optional<std::chrono::steady_clock::time_point>, kDataCategories.size()>, 2> m_last_fresh_data;
-    std::optional<std::chrono::steady_clock::time_point> m_last_sdk_health_refresh;
+    bool m_inventory_available = false;
+    std::optional<std::chrono::steady_clock::time_point> m_last_inventory_refresh;
     std::optional<std::chrono::steady_clock::time_point> m_last_dongle_check;
     UsbDevicePresence m_dongle_presence = UsbDevicePresence::UNKNOWN;
+    ::avatar::UsbConnectionState m_transport_state = ::avatar::UsbConnectionState::DISCONNECTED;
     bool m_glove_wait_logged = false;
-    bool m_status_refresh_error_logged = false;
+    bool m_inventory_error_logged = false;
     bool m_status_publish_error_logged = false;
 };
 
