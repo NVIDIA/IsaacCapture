@@ -172,9 +172,14 @@ controllers, etc.):
        while True:
            session.step()  # metadata is recorded each update
 
-See also :code-file:`tests/python/xr_runtime/test_oak_camera.py` (``--mode
-schema-pusher``) for a standalone PluginManager + DeviceIOSession example of
-the same SchemaPusher flow.
+The test script :code-file:`tests/python/xr_runtime/test_oak_camera.py` runs the
+same SchemaPusher flow with ``PluginManager`` and ``DeviceIOSession`` directly.
+After ``cmake --install build``, with the CloudXR environment loaded (see
+:ref:`load-cloudxr-environment-variables`), run it from the repository root:
+
+.. code-block:: bash
+
+   python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 
 Configuration
 -------------

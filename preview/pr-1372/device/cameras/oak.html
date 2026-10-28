@@ -631,9 +631,13 @@ also <a class="reference internal" href="../../references/mcap_record_replay.htm
         <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>  <span class="c1"># metadata is recorded each update</span>
 </pre></div>
 </div>
-<p>See also <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/xr_runtime/test_oak_camera.py" rel="noopener noreferrer" target="_blank">tests/python/xr_runtime/test_oak_camera.py</a> (<code class="docutils literal notranslate"><span class="pre">--mode</span>
-<span class="pre">schema-pusher</span></code>) for a standalone PluginManager + DeviceIOSession example of
-the same SchemaPusher flow.</p>
+<p>The test script <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/xr_runtime/test_oak_camera.py" rel="noopener noreferrer" target="_blank">tests/python/xr_runtime/test_oak_camera.py</a> runs the
+same SchemaPusher flow with <code class="docutils literal notranslate"><span class="pre">PluginManager</span></code> and <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code> directly.
+After <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code>, with the CloudXR environment loaded (see
+<a class="reference internal" href="../../references/cloudxr.html#load-cloudxr-environment-variables"><span class="std std-ref">Load CloudXR environment variables</span></a>), run it from the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>tests/python/xr_runtime/test_oak_camera.py<span class="w"> </span>--mode<span class="w"> </span>schema-pusher
+</pre></div>
+</div>
 </section>
 </section>
 </section>
