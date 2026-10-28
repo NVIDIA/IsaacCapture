@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 import math
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from .camera_mailbox import FrameOutputs
 
 
 class OvxrScenePublication(Protocol):
@@ -93,6 +94,7 @@ class OvxrSessionBinding:
     renderer: object
     stage: object
     ordinal_ledger: StageOrdinalLedger
+    frame_consumers: tuple[OvxrFrameConsumer, ...] = ()
     prepare_frame_scene: Callable[[], None] | None = None
 
     def __post_init__(self) -> None:
@@ -104,7 +106,11 @@ class OvxrSessionBinding:
 
 @dataclass
 class OvxrSessionConfig:
-    """Configure an application-owned renderer/Stage XR session."""
+    """Application-neutral OVXR and CloudXR configuration.
+
+    The supported OVXR package supplies bound-frame outputs. Optional PiP and
+    output consumers copy those outputs on the sole frame owner before retirement.
+    """
 
     camera_paths: tuple[str, ...]
     application_name: str = "isaacteleop-ovxr-session"
@@ -141,3 +147,43 @@ class OvxrSessionConfig:
             )
         if len(self.camera_paths) != 2 or any(not path for path in self.camera_paths):
             raise ValueError("OVXR stereo requires exactly two non-empty camera paths")
+
+
+class OvxrFrameConsumer(ABC):
+    """Optional presentation on the OVXR owner thread.
+
+    Outputs are borrowed until finish_frame, before submit/cancel. Composition
+    layers remain owned by the consumer through submit. on_openxr_ready may be
+    called repeatedly and must be idempotent. close must tolerate
+    partial startup and retain resources when retirement cannot be proved.
+    """
+
+    @property
+    def render_product_paths(self) -> tuple[str, ...]:
+        return ()
+
+    def on_session_started(self, binding, config, request_shutdown) -> None:
+        return None
+
+    def on_openxr_ready(self, openxr, vulkan) -> bool:
+        """Bind borrowed XR resources; return False while required handles are absent."""
+        return True
+
+    @abstractmethod
+    def on_outputs(self, frame: FrameOutputs) -> None:
+        """Consume this completed frame without retaining its output descriptors."""
+        raise NotImplementedError
+
+    def composition_layers(self) -> tuple[int, ...]:
+        """Borrow native layer pointers valid through the following submission."""
+        return ()
+
+    def on_frame_submitted(self) -> None:
+        return None
+
+    def finish_frame(self) -> None:
+        return None
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError

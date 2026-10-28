@@ -17,6 +17,7 @@ from .interfaces import (
     StageOrdinalLedger as StageOrdinalLedger,
     OvxrSessionBinding as OvxrSessionBinding,
     OvxrSessionConfig as OvxrSessionConfig,
+    OvxrFrameConsumer as OvxrFrameConsumer,
     OvxrScenePublication as OvxrScenePublication,
     OvxrResourceOwner as OvxrResourceOwner,
 )
@@ -340,7 +341,7 @@ class OvxrSession:
         self._request_worker_shutdown()
 
     def wait_for_shutdown(self, timeout_s: float) -> bool:
-        """Wait interruptibly on the same event used by signals and mirror close."""
+        """Wait interruptibly for a shutdown request."""
         return self._shutdown_requested.wait(timeout_s)
 
     @property

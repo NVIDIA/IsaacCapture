@@ -4,12 +4,21 @@
 """Focused ownership and lifecycle tests for external OVXR presentation."""
 
 from __future__ import annotations
+
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 from typing import ClassVar
+
 import pytest
+
+from isaaccapture.ovxr_session_manager import camera_panels
+from isaaccapture.ovxr_session_manager.camera_panels import (
+    CameraPanelConfig,
+    CameraPanelConsumer,
+)
 import isaaccapture.ovxr_session_manager.ovxr_session as ovxr_session
 from isaaccapture.ovxr_session_manager import frame_pump, runtime_owner
 
@@ -183,6 +192,7 @@ class _FakeHost:
         self.events = []
         self.publication_closed = False
         self.owner_lane_entries = []
+        self.frame_consumers = ()
 
     def offer_render_owner_transfer(self):
         self.offer_thread = threading.get_native_id()
@@ -193,7 +203,10 @@ class _FakeHost:
         self.events.append("attach")
         _FakeContext.ordinal_ledger = self.ordinal_ledger
         return ovxr_session.OvxrSessionBinding(
-            self.renderer, self.stage, self.ordinal_ledger
+            self.renderer,
+            self.stage,
+            self.ordinal_ledger,
+            frame_consumers=self.frame_consumers,
         )
 
     @contextmanager
@@ -239,6 +252,11 @@ class _FakeHost:
         self.events.append("abort")
 
 
+def _session_with_consumers(host, config, *, frame_consumers):
+    host.frame_consumers = frame_consumers
+    return ovxr_session.OvxrSession(host, config)
+
+
 @pytest.fixture(autouse=True)
 def _runtime_stubs(monkeypatch):
     _FakeContext.operations = []
@@ -255,6 +273,17 @@ def _runtime_stubs(monkeypatch):
     _FakeContext.last_desc = None
     _FakeContext.selected_products = None
     monkeypatch.setattr(frame_pump, "_import_ovxr", _fake_ovxr)
+    monkeypatch.setattr(
+        camera_panels,
+        "OpenXRCameraPanels",
+        lambda panels: SimpleNamespace(
+            supports_gpu=False,
+            attach=lambda _xr, _vk: None,
+            layer=lambda _index: None,
+            publish=lambda _index, _image, **kw: True,
+            close=lambda: None,
+        ),
+    )
     oxr = ModuleType("isaaccapture.oxr")
     oxr.OpenXRSessionHandles = lambda *values: values
     monkeypatch.setitem(__import__("sys").modules, "isaaccapture.oxr", oxr)
@@ -634,6 +663,60 @@ def test_bind_timeout_reconciles_a_sealed_ordinal_then_reserves_a_fresh_one():
     assert (first, True, True) in host.ordinal_ledger.external_resolutions
 
 
+def test_frame_scene_callback_seals_before_the_next_bind_ordinal():
+    class Host(_FakeHost):
+        def attach_on_render_thread(self, capability):
+            binding = super().attach_on_render_thread(capability)
+
+            def prepare():
+                ordinal = self.ordinal_ledger.reserve()
+                self.ordinal_ledger.publish(ordinal)
+                self.events.append(("frame-scene", ordinal))
+
+            return replace(binding, prepare_frame_scene=prepare)
+
+    host = Host()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner.start()
+    owner.request_render("physics")
+    _wait_for_operation("submit")
+    owner.close()
+    prepared = [
+        e[1] for e in host.events if isinstance(e, tuple) and e[0] == "frame-scene"
+    ]
+    assert prepared
+    assert _FakeContext.bind_ordinals == [ordinal + 1 for ordinal in prepared]
+
+
+def test_shutdown_wait_wakes_on_the_existing_lifecycle_event():
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config())
+    woke = threading.Event()
+    thread = threading.Thread(target=lambda: (owner.wait_for_shutdown(30), woke.set()))
+    thread.start()
+    try:
+        owner.request_shutdown()
+        assert woke.wait(1)
+        assert owner.wait_for_shutdown(30)
+    finally:
+        thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_unsupported_provider_rejects_before_host_transfer(monkeypatch):
+    runtime = _fake_ovxr()
+    runtime.Context = type(
+        "OldContext", (_FakeContext,), {"set_frame_render_products": None}
+    )
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: runtime)
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    with pytest.raises(
+        RuntimeError, match="required Context methods: set_frame_render_products"
+    ):
+        owner.start()
+    assert host.offer_thread is None
+
+
 def test_missing_core_phase_method_still_rejects_before_host_transfer(monkeypatch):
     runtime = _fake_ovxr()
     runtime.Context = type("BrokenContext", (_FakeContext,), {"cancel_frame": None})
@@ -816,6 +899,45 @@ def test_successful_shutdown_waits_for_caller_quiescence_before_retirement():
     assert _FakeContext.operations.count(("destroy", host.attach_thread)) == 1
 
 
+def test_close_times_out_without_blocking_on_startup_teardown_lock(monkeypatch):
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    entered = threading.Event()
+    resume = threading.Event()
+    destroy = _FakeContext.destroy
+    failure = RuntimeError("startup failed")
+
+    def blocked_destroy(context, *, stage_ordinal):
+        entered.set()
+        assert resume.wait(timeout=2.0)
+        destroy(context, stage_ordinal=stage_ordinal)
+
+    def fail_start():
+        raise failure
+
+    monkeypatch.setattr(_FakeContext, "destroy", blocked_destroy)
+    monkeypatch.setattr(owner._pump, "bootstrap", fail_start)
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            owner.start()
+        assert caught.value is failure
+        assert entered.wait(timeout=1.0)
+        closing, errors = _call_in_thread(owner.close)
+        closing.join(timeout=0.5)
+        assert not closing.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], TimeoutError)
+        assert owner._pump._context is not None
+        assert not owner.retirement_complete
+    finally:
+        resume.set()
+        owner._worker.join(timeout=1.0)
+    with pytest.raises(RuntimeError) as caught:
+        owner.close()
+    assert caught.value is failure
+
+
 @pytest.mark.parametrize("abort_error_type", [None, RuntimeError, KeyboardInterrupt])
 def test_worker_thread_start_failure_rolls_back_host_and_preserves_first_error(
     monkeypatch, abort_error_type, caplog
@@ -874,6 +996,82 @@ def test_binding_rejects_an_incomplete_borrowed_tuple():
         ovxr_session.OvxrSessionBinding(object(), object(), None)
 
 
+def test_camera_panel_registers_one_borrowed_product_without_a_second_frame_source():
+    host = _FakeHost()
+    path = "/Camera/Head"
+    config = _config()
+    panel = CameraPanelConfig(
+        path,
+        max_image_bytes=720 * 450 * 4,
+        panel_width_m=0.5,
+        position=(0.1, -0.2, -0.8),
+        space="head_locked",
+    )
+    host.frame_consumers = (CameraPanelConsumer((panel,)),)
+    owner = ovxr_session.OvxrSession(host, config)
+
+    owner.start()
+    desc = _FakeContext.last_desc
+    owner.close()
+
+    assert _FakeContext.selected_products == (path,)
+    assert not hasattr(desc, "enable_raster_layer")
+    assert not hasattr(desc, "auxiliary_render_product")
+    assert [name for name, _thread in _FakeContext.operations].count("submit") == 0
+
+
+def test_auxiliary_panel_space_remains_application_policy():
+    host = _FakeHost()
+    path = "/Camera/Head"
+    config = _config()
+    panel = CameraPanelConfig(
+        path,
+        max_image_bytes=720 * 450 * 4,
+        space="head_locked",
+    )
+    host.frame_consumers = (CameraPanelConsumer((panel,)),)
+    owner = ovxr_session.OvxrSession(host, config)
+
+    owner.start()
+    owner.close()
+
+    assert panel.space == "head_locked"
+    assert _FakeContext.selected_products == (path,)
+    assert not hasattr(_FakeContext.last_desc, "auxiliary_panel_space")
+
+
+@pytest.mark.parametrize("space", ["stage", "viewer_start", "world"])
+def test_camera_panel_rejects_unsupported_panel_space(space):
+    with pytest.raises(ValueError, match="space"):
+        CameraPanelConfig("/Camera/Head", max_image_bytes=720 * 450 * 4, space=space)
+
+
+def test_camera_panel_has_bounded_public_defaults():
+    config = CameraPanelConfig(
+        "/Camera/Head",
+    )
+
+    assert config.max_image_bytes == 64 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_image_bytes": 0}, "max_image_bytes"),
+        ({"panel_width_m": 0.0}, "panel_width_m"),
+        ({"orientation_xyzw": (0.0, 0.0, 0.0, 0.0)}, "orientation"),
+    ],
+)
+def test_camera_panel_rejects_invalid_policy(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        CameraPanelConfig("/Camera/Head", **kwargs)
+
+
+def test_camera_panel_requires_an_absolute_host_product():
+    with pytest.raises(ValueError, match="absolute"):
+        CameraPanelConfig("relative")
+
+
 def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypatch):
     host = _FakeHost()
     launcher_events = []
@@ -904,6 +1102,228 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     assert launcher_events == [
         ("create", owner.render_worker_native_thread_id),
         ("stop", owner.render_worker_native_thread_id),
+    ]
+
+
+def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
+    events = []
+    threads = []
+    outputs = SimpleNamespace(contents=SimpleNamespace(output_count=0, outputs=[]))
+    caller_thread = threading.get_native_id()
+    host = _FakeHost()
+
+    class Context(_FakeContext):
+        def begin_frame(self):
+            result, plan = super().begin_frame()
+            plan.step_result = 1
+            return result, plan
+
+    class Consumer(ovxr_session.OvxrFrameConsumer):
+        def __init__(self, name):
+            self.name = name
+
+        def record(self, event):
+            events.append((event, self.name))
+            threads.append(threading.get_native_id())
+
+        def on_session_started(self, _binding, _config, request_shutdown):
+            assert any(name == "create" for name, _ in _FakeContext.operations)
+            self.request_shutdown = request_shutdown
+            self.record("start")
+
+        def on_outputs(self, frame):
+            assert frame.latest_color("/missing") is None
+            self.record("outputs")
+
+        def finish_frame(self):
+            self.record("finish")
+
+        def on_frame_submitted(self):
+            assert any(name == "submit" for name, _ in _FakeContext.operations)
+            self.record("submitted")
+            self.request_shutdown()
+
+        def close(self):
+            assert not any(name == "destroy" for name, _ in _FakeContext.operations)
+            self.record("close")
+
+    api = _fake_ovxr()
+    api.Context = Context
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    monkeypatch.setattr(frame_pump, "native_renderer_handle", lambda _renderer: 7)
+    monkeypatch.setattr(frame_pump, "completed_outputs", lambda *_args: outputs)
+    owner = _session_with_consumers(
+        host, _config(), frame_consumers=(Consumer("first"), Consumer("second"))
+    )
+    with owner:
+        owner.start()
+        owner.request_render("step-1")
+        _wait_for_operation("submit")
+    assert events == [
+        ("start", "first"),
+        ("start", "second"),
+        ("outputs", "first"),
+        ("outputs", "second"),
+        ("finish", "first"),
+        ("finish", "second"),
+        ("submitted", "first"),
+        ("submitted", "second"),
+        ("close", "second"),
+        ("close", "first"),
+    ]
+    assert caller_thread != owner.render_worker_native_thread_id
+    assert set(threads) == {owner.render_worker_native_thread_id}
+    assert not any(name == "cancel" for name, _ in _FakeContext.operations)
+
+
+def test_consumer_start_failure_retires_borrowed_owners():
+    host = _FakeHost()
+    failure = RuntimeError("consumer start failed")
+
+    class Consumer(ovxr_session.OvxrFrameConsumer):
+        def on_session_started(self, *_args):
+            raise failure
+
+        def on_outputs(self, frame):
+            pass
+
+        def close(self):
+            host.events.append("consumer-close")
+
+    owner = _session_with_consumers(host, _config(), frame_consumers=(Consumer(),))
+    with pytest.raises(RuntimeError) as caught:
+        owner.start()
+    assert caught.value is failure
+    with pytest.raises(RuntimeError):
+        owner.close()
+    assert "consumer-close" in host.events
+    assert "destroy" in [name for name, _ in _FakeContext.operations]
+
+
+def test_quad_detach_failure_reaches_close_and_retains_borrowed_owners(monkeypatch):
+    host = _FakeHost()
+    panel = CameraPanelConsumer((CameraPanelConfig("/Render/Head"),))
+    owner = _session_with_consumers(host, _config(), frame_consumers=(panel,))
+    owner.start()
+    context = owner._pump._context
+    quad = panel._native
+    launcher = _ControlledLauncher()
+    owner._pump._runtime._launcher = launcher
+    failure = RuntimeError("native quad detach failed")
+
+    def fail_detach():
+        raise failure
+
+    quad.close = fail_detach
+    with pytest.raises(RuntimeError, match="native quad detach failed") as caught:
+        owner.close()
+
+    assert caught.value is failure
+    assert not owner._worker.is_alive()
+    assert owner._shutdown_requested.is_set()
+    assert owner._phase is ovxr_session._Phase.CLOSED
+    assert not owner.retirement_complete
+    with pytest.raises(RuntimeError) as repeated:
+        owner.close()
+    assert repeated.value is failure
+    assert owner._pump._context is context
+    assert panel._native is quad
+    assert owner._pump._runtime._launcher is launcher
+    assert launcher.events == []
+    assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+    assert not any(
+        event[0] in {"host-close", "environment-close"}
+        for event in host.events
+        if isinstance(event, tuple)
+    )
+
+
+def test_shutdown_timeout_preserves_runtime_until_frame_worker_retires(monkeypatch):
+    host = _FakeHost()
+    frame_wait_entered = threading.Event()
+    release_frame = threading.Event()
+    launcher = _ControlledLauncher()
+
+    class BlockingContext(_FakeContext):
+        def begin_frame(self):
+            frame_wait_entered.set()
+            assert release_frame.wait(timeout=2.0)
+            return super().begin_frame()
+
+    fake_ovxr = _fake_ovxr()
+    fake_ovxr.Context = BlockingContext
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: fake_ovxr)
+
+    def launcher_factory(*args, **kwargs):
+        return launcher
+
+    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
+    config = _config()
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = ovxr_session.OvxrSession(
+        host, config, runtime_launcher_factory=launcher_factory
+    )
+    owner.start()
+    assert owner.request_render("step-1") == 10
+    assert frame_wait_entered.wait(timeout=1.0)
+    context = owner._pump._context
+    failure = RuntimeError("request exit failed")
+    _FakeContext.request_exit_error = failure
+    try:
+        with pytest.raises(
+            TimeoutError, match="OVXR session worker did not stop"
+        ) as error:
+            owner.close()
+        assert error.value.__cause__ is failure
+        assert owner._pump._context is context
+        assert owner._worker.is_alive()
+        assert not owner.retirement_complete
+        assert launcher.events == []
+        assert "destroy" not in [name for name, _thread in _FakeContext.operations]
+    finally:
+        release_frame.set()
+        owner._worker.join(timeout=1.0)
+    assert not owner._worker.is_alive()
+    with pytest.raises(RuntimeError) as error:
+        owner.close()
+    assert error.value is failure
+    assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
+
+
+def test_cloudxr_stop_can_finish_without_runtime_interruption(monkeypatch, caplog):
+    host = _FakeHost()
+    launcher = _ControlledLauncher(block_stop=True)
+
+    def launcher_factory(_path, *, accept_eula=False):
+        return launcher
+
+    config = _config()
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = ovxr_session.OvxrSession(
+        host, config, runtime_launcher_factory=launcher_factory
+    )
+    owner.start()
+
+    close_thread, close_errors = _call_in_thread(owner.close)
+    try:
+        assert launcher.stop_started.wait(timeout=1.0)
+        assert owner._pump._runtime._launcher is launcher
+        time.sleep(0.03)
+        assert close_thread.is_alive()
+        assert "interrupt" not in [name for name, _thread in launcher.events]
+        assert "interrupting the owned OpenXR runtime" not in caplog.text
+    finally:
+        launcher.allow_stop.set()
+        close_thread.join(timeout=1.0)
+
+    assert not close_thread.is_alive()
+    assert close_errors == []
+    assert owner._pump._runtime._launcher is None
+    assert launcher.events == [
+        ("stop-start", owner.render_worker_native_thread_id),
+        ("stop-end", owner.render_worker_native_thread_id),
     ]
 
 
@@ -1062,6 +1482,42 @@ def test_cloudxr_stop_failure_is_reported_without_runtime_interrupt(monkeypatch)
     ]
 
 
+def test_partial_startup_failure_retires_context_before_cloudxr_stop(monkeypatch):
+    host = _FakeHost()
+    launcher = _ControlledLauncher(block_stop=True)
+
+    def launcher_factory(_path, *, accept_eula=False):
+        return launcher
+
+    _FakeContext.create_error = RuntimeError("create failed")
+    config = _config()
+    config.cloudxr_env_file = "/cloudxr.env"
+    config.auto_launch_cloudxr = True
+    owner = ovxr_session.OvxrSession(
+        host, config, runtime_launcher_factory=launcher_factory
+    )
+
+    start_thread, start_errors = _call_in_thread(owner.start)
+    assert launcher.stop_started.wait(timeout=1.0)
+    close_thread, close_errors = _call_in_thread(owner.close)
+    try:
+        time.sleep(0.03)
+        assert "interrupt" not in [name for name, _thread in launcher.events]
+    finally:
+        launcher.allow_stop.set()
+        start_thread.join(timeout=1.0)
+        close_thread.join(timeout=1.0)
+
+    assert not start_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert [str(error) for error in start_errors] == ["create failed"]
+    assert [str(error) for error in close_errors] == ["create failed"]
+    assert launcher.events == [
+        ("stop-start", owner.render_worker_native_thread_id),
+        ("stop-end", owner.render_worker_native_thread_id),
+    ]
+
+
 @pytest.mark.parametrize("failure_type", [RuntimeError, _WorkerAbort])
 def test_render_failure_waits_for_borrowers_and_preserves_first_error(
     monkeypatch, failure_type
@@ -1157,6 +1613,8 @@ def test_paused_frames_use_runtime_pacing_without_an_added_idle_wait(
 
         def begin_frame(self):
             self.frames += 1
+            # The runtime owns the next-frame wait, including while physics is
+            # paused. Block in that boundary to check shutdown as well as pace.
             if self.frames == 4:
                 fourth_frame.set()
                 assert release_frame.wait(1.0)
@@ -1259,6 +1717,8 @@ def test_late_peer_exposes_input_handles_after_bootstrap(monkeypatch, publish_sc
         if publish_scene:
             owner.request_render("paused-scene")
             _wait_for_operation("submit")
+        # Scene rendering may proceed before DeviceIO handles exist, exactly
+        # as for an initial failed peer followed by a later headset connection.
         peer_ready.set()
         with owner._worker_condition:
             ready = owner._worker_condition.wait_for(
@@ -1283,6 +1743,253 @@ def test_config_rejects_unknown_session_mode():
         _config(session_mode="automatic")
 
 
+def test_three_products_keep_selection_order_and_one_native_owner(monkeypatch):
+    events = []
+    paths = ("/Render/Head", "/Render/Left", "/Render/Right")
+    panels = tuple(
+        CameraPanelConfig(path, label=label)
+        for path, label in zip(paths, ("Head", "Left", "Right"))
+    )
+
+    def create(configs):
+        assert configs == panels
+        return SimpleNamespace(
+            supports_gpu=False,
+            attach=lambda *_a: events.append("attach"),
+            close=lambda: events.append("close"),
+        )
+
+    monkeypatch.setattr(camera_panels, "OpenXRCameraPanels", create)
+    consumer = CameraPanelConsumer(panels)
+    owner = _session_with_consumers(_FakeHost(), _config(), frame_consumers=(consumer,))
+    owner.start()
+    assert _FakeContext.selected_products == paths
+    assert tuple(box.product_path for box in consumer._mailboxes) == paths
+    owner.close()
+    assert events[-1] == "close"
+
+
+def test_camera_products_reject_duplicate_identity():
+    with pytest.raises(ValueError, match="unique"):
+        CameraPanelConsumer((CameraPanelConfig("/A"), CameraPanelConfig("/A")))
+
+
+@pytest.mark.parametrize("release_fails", [False, True])
+def test_bound_output_reads_finish_before_submit_or_cancel(monkeypatch, release_fails):
+    host = _FakeHost()
+    import ctypes
+
+    host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._pump._binding = host.attach_on_render_thread(object())
+    plan = SimpleNamespace(step_result=77)
+    events = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        host.ordinal_ledger.seal_external(stage_ordinal)
+        events.append("bind")
+        return 0, True
+
+    def release():
+        events.append("unmap")
+        if release_fails:
+            raise RuntimeError("source read completion unproved")
+
+    def submit(_plan, *, additional_layers):
+        assert events == ["bind", "observe", "copy", "unmap"]
+        assert additional_layers == [123]
+        events.append("submit")
+        return 0, SimpleNamespace(submitted=True)
+
+    owner._pump._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        submit_frame=submit,
+        cancel_frame=lambda _plan: events.append("cancel"),
+    )
+
+    class Consumer(ovxr_session.OvxrFrameConsumer):
+        def on_outputs(self, frame):
+            events.extend(["observe", "copy"])
+
+        def composition_layers(self):
+            return (123,)
+
+        def finish_frame(self):
+            release()
+
+        def close(self):
+            release()
+
+    owner._pump._frame_consumers = (Consumer(),)
+
+    def fetch(renderer, result):
+        assert renderer == 123 and result == 77
+        return object()
+
+    monkeypatch.setattr(frame_pump, "completed_outputs", fetch)
+    if release_fails:
+        with pytest.raises(RuntimeError, match="completion unproved"):
+            owner._pump.render(9)
+        assert "submit" not in events and "cancel" not in events
+        assert owner._pump._pending_plan is plan
+    else:
+        owner._pump.render(9)
+        assert events[-1] == "submit" and owner._pump._pending_plan is None
+
+
+def test_no_render_plan_does_not_read_outputs_or_append_layers(monkeypatch):
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._pump._binding = host.attach_on_render_thread(object())
+    plan = SimpleNamespace(step_result=0)
+    submitted = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        return 0, False
+
+    def unexpected(*args):
+        pytest.fail("no-render frame attempted an output read or quad operation")
+
+    owner._pump._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        submit_frame=lambda _plan, **kw: (
+            submitted.append(kw) or 0,
+            SimpleNamespace(submitted=False),
+        ),
+        cancel_frame=unexpected,
+    )
+
+    class Consumer(ovxr_session.OvxrFrameConsumer):
+        on_outputs = unexpected
+        composition_layers = unexpected
+
+        def close(self):
+            pass
+
+    owner._pump._frame_consumers = (Consumer(),)
+    monkeypatch.setattr(frame_pump, "completed_outputs", unexpected)
+    owner._pump.render(9)
+    assert submitted == [{"additional_layers": []}]
+
+
+@pytest.mark.parametrize("cleanup_boundary", ["outputs", "cancel"])
+def test_frame_cleanup_preserves_the_original_bind_error(cleanup_boundary):
+    host = _FakeHost()
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._pump._binding = host.attach_on_render_thread(object())
+
+    failure = RuntimeError("original bind failure")
+    plan = SimpleNamespace(step_result=0)
+
+    def bind(*_args, **_kwargs):
+        raise failure
+
+    def cleanup():
+        raise RuntimeError("cleanup failed")
+
+    owner._pump._context = SimpleNamespace(
+        begin_frame=lambda: (0, plan),
+        bind_frame=bind,
+        cancel_frame=lambda _plan: cleanup() if cleanup_boundary == "cancel" else None,
+    )
+    if cleanup_boundary == "outputs":
+        owner._pump._finish_frame_outputs = cleanup
+    with pytest.raises(RuntimeError, match="original bind failure") as error:
+        owner._pump.render(9)
+    assert error.value is failure
+    assert "cleanup failed" in " ".join(error.value.__notes__)
+    assert owner._pump._pending_plan is plan
+
+
+def test_consumer_retirement_failure_preserves_earlier_publication_error():
+    host = _FakeHost()
+    failure = RuntimeError("publication close failed")
+
+    def close_publication():
+        raise failure
+
+    def close_map():
+        raise RuntimeError("map retirement failed")
+
+    host.close_publication = close_publication
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._pump._frame_consumers = (SimpleNamespace(close=close_map),)
+    with pytest.raises(RuntimeError, match="publication close failed") as error:
+        owner._pump.close()
+    assert error.value is failure
+    assert "map retirement failed" in " ".join(error.value.__notes__)
+    assert not host.events  # Borrowed objects must not retire past a live map.
+
+
+@pytest.mark.parametrize("hide_fails", [False, True])
+@pytest.mark.parametrize("failure_site", ["fetch", "publish"])
+def test_failed_output_hides_cached_quad_until_successful_refresh(
+    monkeypatch, hide_fails, failure_site
+):
+    import ctypes
+
+    host = _FakeHost()
+    host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
+    owner = ovxr_session.OvxrSession(host, _config())
+    owner._pump._binding = host.attach_on_render_thread(object())
+    events = []
+
+    def bind(_plan, _time, *, stage_ordinal):
+        host.ordinal_ledger.seal_external(stage_ordinal)
+        return 0, True
+
+    failing = [True]
+
+    def fetch(*_args):
+        if failing[0] and failure_site == "fetch":
+            raise RuntimeError("fetch failed")
+        return object()
+
+    owner._pump._context = SimpleNamespace(
+        begin_frame=lambda: (0, SimpleNamespace(step_result=77)),
+        bind_frame=bind,
+        submit_frame=lambda *_a, **kw: (
+            events.append(kw["additional_layers"]) or 0,
+            SimpleNamespace(submitted=True),
+        ),
+    )
+    visible = [True]
+
+    def hide():
+        if hide_fails:
+            raise RuntimeError("optional hide failed")
+        visible[0] = False
+
+    def publish(*_args, **_kwargs):
+        if failing[0] and failure_site == "publish":
+            raise RuntimeError("publish failed")
+        visible[0] = True
+
+    consumer = CameraPanelConsumer((CameraPanelConfig("/Camera/Head"),))
+    consumer._native = SimpleNamespace(
+        hide=lambda _index: hide(),
+        publish=publish,
+        layer=lambda _index: 123 if visible[0] else 0,
+    )
+    consumer._mailboxes = [
+        SimpleNamespace(
+            on_outputs=lambda *_a, **_kw: None,
+            close=lambda: None,
+            snapshot=object,
+            error=lambda: None,
+        )
+    ]
+    owner._pump._frame_consumers = (consumer,)
+    monkeypatch.setattr(frame_pump, "completed_outputs", fetch)
+    owner._pump.render(9)
+    assert events == [[]]
+    failing[0] = False
+    owner._pump.render(9)
+    assert events == [[], [123]]
+
+
 @pytest.mark.parametrize(
     "scale", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0]
 )
@@ -1291,12 +1998,19 @@ def test_world_scale_rejects_nonfinite_or_nonpositive_values(scale):
         _config(meters_per_unit=scale)
 
 
-@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
-def test_cancel_failure_does_not_skip_context_and_service_cleanup(
-    monkeypatch, error_type
-):
+def test_slow_context_retirement_keeps_owned_runtime_alive(monkeypatch):
     host = _FakeHost()
     launcher = _ControlledLauncher()
+    entered = threading.Event()
+    resume = threading.Event()
+    destroy = _FakeContext.destroy
+
+    def slow_destroy(context, *, stage_ordinal):
+        entered.set()
+        assert resume.wait(timeout=3.0)
+        destroy(context, stage_ordinal=stage_ordinal)
+
+    monkeypatch.setattr(_FakeContext, "destroy", slow_destroy)
 
     def launcher_factory(*args, **kwargs):
         return launcher
@@ -1307,78 +2021,20 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
     owner = ovxr_session.OvxrSession(
         host, config, runtime_launcher_factory=launcher_factory
     )
-    failure = error_type("cancel failed")
-
-    def cancel(_self, _plan):
-        raise failure
-
-    monkeypatch.setattr(_FakeContext, "cancel_frame", cancel)
     owner.start()
-    owner._pump._pending_plan = SimpleNamespace(step_result=0)
-    with pytest.raises(error_type) as caught:
-        owner.close()
-    assert caught.value is failure
-    assert "destroy" in [name for name, _thread in _FakeContext.operations]
-    assert owner._pump._context is None
-    assert owner._pump._pending_plan is None
-    assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
-    assert [event[0] for event in host.events if isinstance(event, tuple)][-2:] == [
-        "host-close",
-        "environment-close",
-    ]
-    assert not owner.retirement_complete  # Cleanup does not erase the original error.
-
-
-def test_shutdown_timeout_preserves_runtime_until_frame_worker_retires(monkeypatch):
-    host = _FakeHost()
-    frame_wait_entered = threading.Event()
-    release_frame = threading.Event()
-    launcher = _ControlledLauncher()
-
-    class BlockingContext(_FakeContext):
-        def begin_frame(self):
-            frame_wait_entered.set()
-            assert release_frame.wait(timeout=2.0)
-            return super().begin_frame()
-
-    fake_ovxr = _fake_ovxr()
-    fake_ovxr.Context = BlockingContext
-    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: fake_ovxr)
-
-    def launcher_factory(*args, **kwargs):
-        return launcher
-
-    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
-    config = _config()
-    config.cloudxr_env_file = "/cloudxr.env"
-    config.auto_launch_cloudxr = True
-    owner = ovxr_session.OvxrSession(
-        host, config, runtime_launcher_factory=launcher_factory
-    )
-    owner.start()
-    assert owner.request_render("step-1") == 10
-    assert frame_wait_entered.wait(timeout=1.0)
-    context = owner._pump._context
-    failure = RuntimeError("request exit failed")
-    _FakeContext.request_exit_error = failure
+    closing, errors = _call_in_thread(owner.close)
     try:
-        with pytest.raises(
-            TimeoutError, match="OVXR session worker did not stop"
-        ) as error:
-            owner.close()
-        assert error.value.__cause__ is failure
-        assert owner._pump._context is context
-        assert owner._worker.is_alive()
-        assert not owner.retirement_complete
+        assert entered.wait(timeout=1.0)
+        # Slow native retirement must keep its runtime alive until completion.
+        time.sleep(1.1)
+        assert closing.is_alive()
         assert launcher.events == []
-        assert "destroy" not in [name for name, _thread in _FakeContext.operations]
     finally:
-        release_frame.set()
-        owner._worker.join(timeout=1.0)
-    assert not owner._worker.is_alive()
-    with pytest.raises(RuntimeError) as error:
-        owner.close()
-    assert error.value is failure
+        resume.set()
+        closing.join(timeout=2.0)
+    assert not closing.is_alive()
+    assert errors == []
+    assert owner.retirement_complete
     assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
 
 
@@ -1421,40 +2077,42 @@ def test_retired_context_is_unpublished_before_lifecycle_unlock(
     assert context is not None
 
 
-def test_partial_startup_failure_retires_context_before_cloudxr_stop(monkeypatch):
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_cancel_failure_does_not_skip_context_and_service_cleanup(
+    monkeypatch, error_type
+):
     host = _FakeHost()
-    launcher = _ControlledLauncher(block_stop=True)
+    launcher = _ControlledLauncher()
 
-    def launcher_factory(_path, *, accept_eula=False):
+    def launcher_factory(*args, **kwargs):
         return launcher
 
-    _FakeContext.create_error = RuntimeError("create failed")
     config = _config()
     config.cloudxr_env_file = "/cloudxr.env"
     config.auto_launch_cloudxr = True
     owner = ovxr_session.OvxrSession(
         host, config, runtime_launcher_factory=launcher_factory
     )
+    failure = error_type("cancel failed")
 
-    start_thread, start_errors = _call_in_thread(owner.start)
-    assert launcher.stop_started.wait(timeout=1.0)
-    close_thread, close_errors = _call_in_thread(owner.close)
-    try:
-        time.sleep(0.03)
-        assert "interrupt" not in [name for name, _thread in launcher.events]
-    finally:
-        launcher.allow_stop.set()
-        start_thread.join(timeout=1.0)
-        close_thread.join(timeout=1.0)
+    def cancel(_self, _plan):
+        raise failure
 
-    assert not start_thread.is_alive()
-    assert not close_thread.is_alive()
-    assert [str(error) for error in start_errors] == ["create failed"]
-    assert [str(error) for error in close_errors] == ["create failed"]
-    assert launcher.events == [
-        ("stop-start", owner.render_worker_native_thread_id),
-        ("stop-end", owner.render_worker_native_thread_id),
+    monkeypatch.setattr(_FakeContext, "cancel_frame", cancel)
+    owner.start()
+    owner._pump._pending_plan = SimpleNamespace(step_result=0)
+    with pytest.raises(error_type) as caught:
+        owner.close()
+    assert caught.value is failure
+    assert "destroy" in [name for name, _thread in _FakeContext.operations]
+    assert owner._pump._context is None
+    assert owner._pump._pending_plan is None
+    assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
+    assert [event[0] for event in host.events if isinstance(event, tuple)][-2:] == [
+        "host-close",
+        "environment-close",
     ]
+    assert not owner.retirement_complete  # Cleanup does not erase the original error.
 
 
 def test_owner_lane_exit_failure_after_destroy_still_releases_retired_owners(
@@ -1490,121 +2148,6 @@ def test_owner_lane_exit_failure_after_destroy_still_releases_retired_owners(
         "host-close",
         "environment-close",
     ]
-
-
-def test_cloudxr_stop_can_finish_without_runtime_interruption(monkeypatch, caplog):
-    host = _FakeHost()
-    launcher = _ControlledLauncher(block_stop=True)
-
-    def launcher_factory(_path, *, accept_eula=False):
-        return launcher
-
-    config = _config()
-    config.cloudxr_env_file = "/cloudxr.env"
-    config.auto_launch_cloudxr = True
-    owner = ovxr_session.OvxrSession(
-        host, config, runtime_launcher_factory=launcher_factory
-    )
-    owner.start()
-
-    close_thread, close_errors = _call_in_thread(owner.close)
-    try:
-        assert launcher.stop_started.wait(timeout=1.0)
-        assert owner._pump._runtime._launcher is launcher
-        time.sleep(0.03)
-        assert close_thread.is_alive()
-        assert "interrupt" not in [name for name, _thread in launcher.events]
-        assert "interrupting the owned OpenXR runtime" not in caplog.text
-    finally:
-        launcher.allow_stop.set()
-        close_thread.join(timeout=1.0)
-
-    assert not close_thread.is_alive()
-    assert close_errors == []
-    assert owner._pump._runtime._launcher is None
-    assert launcher.events == [
-        ("stop-start", owner.render_worker_native_thread_id),
-        ("stop-end", owner.render_worker_native_thread_id),
-    ]
-
-
-def test_close_times_out_without_blocking_on_startup_teardown_lock(monkeypatch):
-    host = _FakeHost()
-    owner = ovxr_session.OvxrSession(host, _config())
-    entered = threading.Event()
-    resume = threading.Event()
-    destroy = _FakeContext.destroy
-    failure = RuntimeError("startup failed")
-
-    def blocked_destroy(context, *, stage_ordinal):
-        entered.set()
-        assert resume.wait(timeout=2.0)
-        destroy(context, stage_ordinal=stage_ordinal)
-
-    def fail_start():
-        raise failure
-
-    monkeypatch.setattr(_FakeContext, "destroy", blocked_destroy)
-    monkeypatch.setattr(owner._pump, "bootstrap", fail_start)
-    monkeypatch.setattr(ovxr_session, "_WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.01)
-    try:
-        with pytest.raises(RuntimeError) as caught:
-            owner.start()
-        assert caught.value is failure
-        assert entered.wait(timeout=1.0)
-        closing, errors = _call_in_thread(owner.close)
-        closing.join(timeout=0.5)
-        assert not closing.is_alive()
-        assert len(errors) == 1
-        assert isinstance(errors[0], TimeoutError)
-        assert owner._pump._context is not None
-        assert not owner.retirement_complete
-    finally:
-        resume.set()
-        owner._worker.join(timeout=1.0)
-    with pytest.raises(RuntimeError) as caught:
-        owner.close()
-    assert caught.value is failure
-
-
-def test_slow_context_retirement_keeps_owned_runtime_alive(monkeypatch):
-    host = _FakeHost()
-    launcher = _ControlledLauncher()
-    entered = threading.Event()
-    resume = threading.Event()
-    destroy = _FakeContext.destroy
-
-    def slow_destroy(context, *, stage_ordinal):
-        entered.set()
-        assert resume.wait(timeout=3.0)
-        destroy(context, stage_ordinal=stage_ordinal)
-
-    monkeypatch.setattr(_FakeContext, "destroy", slow_destroy)
-
-    def launcher_factory(*args, **kwargs):
-        return launcher
-
-    config = _config()
-    config.cloudxr_env_file = "/cloudxr.env"
-    config.auto_launch_cloudxr = True
-    owner = ovxr_session.OvxrSession(
-        host, config, runtime_launcher_factory=launcher_factory
-    )
-    owner.start()
-    closing, errors = _call_in_thread(owner.close)
-    try:
-        assert entered.wait(timeout=1.0)
-        # Slow native retirement must keep its runtime alive until completion.
-        time.sleep(1.1)
-        assert closing.is_alive()
-        assert launcher.events == []
-    finally:
-        resume.set()
-        closing.join(timeout=2.0)
-    assert not closing.is_alive()
-    assert errors == []
-    assert owner.retirement_complete
-    assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
 
 
 @pytest.mark.parametrize("axis, expected", [("Z", 4), ("Y", 5)])

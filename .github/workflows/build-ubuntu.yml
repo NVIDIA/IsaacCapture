@@ -162,6 +162,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DBUILD_PLUGIN_OAK_CAMERA=ON \
           -DBUILD_VIZ=ON \
+          -DBUILD_OVXR_CAMERA_QUADS=ON \
           -DENABLE_CLOUDXR_BUNDLE_CHECK=ON \
           -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake \
           "${coverage_args[@]}"
@@ -339,6 +340,17 @@ jobs:
         for wheel in "${wheels[@]}"; do
           uv run --project scripts/sbom --python ${{ matrix.python_version }} \
             isaaccapture-sbom check --wheel "${wheel}"
+        done
+
+    - name: Verify camera support in release wheel artifacts
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        wheels=(install/wheels/isaaccapture-*.whl)
+        [[ "${#wheels[@]}" -gt 0 ]] || { echo "No Isaac Capture wheels found"; exit 1; }
+        for wheel in "${wheels[@]}"; do
+          python3 scripts/check_camera_quad_wheel.py "${wheel}" --camera-quads
         done
 
     - name: Create tarball to preserve permissions

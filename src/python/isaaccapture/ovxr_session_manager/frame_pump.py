@@ -9,6 +9,8 @@ import threading
 from collections.abc import Callable, Iterable
 from .interfaces import OvxrApplicationInterface, OvxrSessionBinding, OvxrSessionConfig
 from .runtime_owner import CloudXRRuntimeOwner
+from .camera_mailbox import FrameOutputs
+from .gpu_output import completed_outputs, native_renderer_handle
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,9 +48,11 @@ class OvxrFramePump:
         self._context_lifecycle_lock = threading.Lock()
         self._last_ordinal: int | None = None
         self._first_ordinal_validated = False
+        self._frame_consumers = ()
 
     def attach(self, capability: object) -> None:
         self._binding = self._host.attach_on_render_thread(capability)
+        self._frame_consumers = tuple(self._binding.frame_consumers)
 
     @staticmethod
     def validate_provider() -> None:
@@ -77,6 +81,13 @@ class OvxrFramePump:
         if self._shutdown_requested():
             return
         ovxr = _import_ovxr()
+        paths = tuple(
+            dict.fromkeys(
+                path
+                for consumer in self._frame_consumers
+                for path in consumer.render_product_paths
+            )
+        )
         extensions = list(
             dict.fromkeys(
                 (
@@ -91,9 +102,14 @@ class OvxrFramePump:
                 ovstage=self._binding.stage,
                 application_name=self._config.application_name,
                 display_mode=ovxr.DisplayMode.STEREO,
+                # The server mode must reach OVXR; the browser AR preference cannot
+                # enable transparent rendering in an opaque server projection.
                 session_mode={"ar": ovxr.SessionMode.AR, "vr": ovxr.SessionMode.VR}[
                     self._config.session_mode
                 ],
+                # Empty means OVXR creates its default eye products. Supplying
+                # those names explicitly instead means existing products and
+                # changes the production/authoring contract.
                 render_products=list(self._config.render_products),
                 camera_paths=list(self._config.camera_paths),
                 create_render_products=self._config.create_render_products,
@@ -110,6 +126,12 @@ class OvxrFramePump:
             )
             with self._host.owner_lane():
                 self._context = ovxr.Context(desc)
+                if self._frame_consumers:
+                    self._context.set_frame_render_products(list(paths))
+        for consumer in self._frame_consumers:
+            consumer.on_session_started(
+                self._binding, self._config, self.request_shutdown
+            )
 
     def request_exit(self) -> None:
         """Wake an in-flight OpenXR frame wait without stopping CloudXR."""
@@ -147,6 +169,10 @@ class OvxrFramePump:
             return None
         from isaaccapture.oxr import OpenXRSessionHandles
 
+        vulkan = self._context.get_vulkan_handles() if self._frame_consumers else None
+        for consumer in self._frame_consumers:
+            if not consumer.on_openxr_ready(handles, vulkan):
+                return None
         return OpenXRSessionHandles(
             handles.xr_instance,
             handles.xr_session,
@@ -194,6 +220,8 @@ class OvxrFramePump:
                     raise
                 self._binding.ordinal_ledger.resolve_external(
                     frame_ordinal,
+                    # Publication is independent of the eventual bind result:
+                    # a later failure must not reuse an already sealed ordinal.
                     expected_published=sealed,
                 )
                 if result not in (
@@ -206,7 +234,19 @@ class OvxrFramePump:
                     )
             if result != ovxr.Result.SUCCESS:
                 return True
-            result, _frame = self._context.submit_frame(active_plan)
+            layers = []
+            if self._frame_consumers and active_plan.step_result:
+                try:
+                    renderer = native_renderer_handle(self._binding.renderer)
+                    outputs = completed_outputs(renderer, active_plan.step_result)
+                    layers = self._on_completed_outputs(renderer, outputs)
+                except Exception:
+                    _LOGGER.exception("Optional bound-frame output observation failed")
+                finally:
+                    self._finish_frame_outputs()
+            result, _frame = self._context.submit_frame(
+                active_plan, additional_layers=layers
+            )
             if result not in (
                 ovxr.Result.SUCCESS,
                 ovxr.Result.TIMEOUT,
@@ -215,6 +255,17 @@ class OvxrFramePump:
                 raise RuntimeError(
                     f"OVXR submit_frame failed: {ovxr.result_name(result)}: {self._context.last_error}"
                 )
+            if (
+                result == ovxr.Result.SUCCESS
+                and _frame.submitted
+                and self._frame_consumers
+            ):
+                # Submit consumed the plan; consumer callbacks must not
+                # cancel it even if a callback fails.
+                active_plan = None
+                self._pending_plan = None
+                for consumer in self._frame_consumers:
+                    consumer.on_frame_submitted()
             active_plan = None
             self._pending_plan = None
         except BaseException as error:
@@ -222,7 +273,10 @@ class OvxrFramePump:
             raise
         finally:
             if active_plan is not None:
+                # An unproved copy/unmap keeps the plan and context alive. Never
+                # consume borrowed output storage merely to recover a frame.
                 try:
+                    self._finish_frame_outputs()
                     self._context.cancel_frame(active_plan)
                     self._pending_plan = None
                 except BaseException as cleanup_error:
@@ -243,15 +297,28 @@ class OvxrFramePump:
                 self._host.close_publication()
         except BaseException as exc:
             first_error = exc
-        if self._pending_plan is not None:
-            try:
-                self._context.cancel_frame(self._pending_plan)
-            except BaseException as exc:
-                # Native destroy remains responsible for the pending frame.
-                if first_error is None:
-                    first_error = exc
-            else:
-                self._pending_plan = None
+        try:
+            for consumer in reversed(self._frame_consumers):
+                # A failed completion/unmap must keep the renderer alive: never
+                # destroy storage that an optional consumer might still access.
+                consumer.close()
+            if self._pending_plan is not None:
+                self._finish_frame_outputs()
+                try:
+                    self._context.cancel_frame(self._pending_plan)
+                except BaseException as exc:
+                    # All external mappings are retired. Native destroy remains
+                    # responsible for draining the context's pending frame.
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    self._pending_plan = None
+        except BaseException as retirement_error:
+            if first_error is not None:
+                first_error.add_note(f"Consumer retirement failed: {retirement_error}")
+                # Keep the primary error and the failed retirement cause visible.
+                raise first_error from retirement_error
+            raise
         context_retired = self._context is None
         if self._context is not None:
             assert self._binding is not None
@@ -320,6 +387,21 @@ class OvxrFramePump:
                     first_error.add_note(f"Dependent cleanup failed: {exc}")
         if first_error is not None:
             raise first_error
+
+    def _on_completed_outputs(self, renderer, outputs) -> list[int]:
+        frame = FrameOutputs(renderer, outputs)
+        layers = []
+        for consumer in self._frame_consumers:
+            try:
+                consumer.on_outputs(frame)
+                layers.extend(consumer.composition_layers())
+            except Exception:
+                _LOGGER.exception("Optional frame consumer failed")
+        return layers
+
+    def _finish_frame_outputs(self) -> None:
+        for consumer in self._frame_consumers:
+            consumer.finish_frame()
 
     def retry_runtime_stop(self) -> None:
         """Retry service cleanup only after native borrowers have retired."""

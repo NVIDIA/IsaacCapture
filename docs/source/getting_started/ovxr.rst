@@ -41,14 +41,62 @@ from the Isaac Capture wheel. These packages retain their own licenses:
 CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and CloudXR EULA acceptance.
 
+Optional camera panels
+----------------------
+
+Camera picture-in-picture panels require the native camera helper. The Ubuntu
+release workflow includes it in its wheels and checks the packaged artifact.
+Installing those wheels requires no CMake configuration.
+
+For a source build, follow the source-build guide for your application's Python
+version, then enable camera support and build the wheel:
+
+.. code-block:: bash
+
+   cmake -S . -B build -DBUILD_OVXR_CAMERA_QUADS=ON
+   cmake --build build --target python_package python_stubs python_wheel --parallel
+
+Install the generated wheel with its ``ovxr`` extra using the instructions
+above. The extra requires CUDA 13 Python bindings for GPU camera output;
+``BUILD_OVXR_CAMERA_QUADS`` controls whether the wheel contains the native helper.
+The helper is disabled by default.
+
+Use a CUDA 13-compatible NVIDIA driver (R580 or newer), meeting any stricter
+requirements of the selected bindings and renderer. See the
+`CUDA compatibility requirements <https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html>`_.
+Installing Python packages or a CUDA Toolkit does not update the host driver.
+
+Install the Vulkan development SDK before configuring camera support. Linux
+builds also require the CUDA Toolkit. CMake discovers these installed dependencies.
+Use ``CUDAToolkit_ROOT`` to select a CUDA Toolkit installation and ``VULKAN_SDK``
+to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
+on the host.
+
 Use from another application
 ----------------------------
 
 ``isaaccapture.ovxr_session_manager.ovxr_session`` provides ``OvxrSession``
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
-``camera_paths`` is required and must contain both stereo cameras. Set
-``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
+The binding also supplies optional ``frame_consumers`` after the application has
+resolved its render-product paths. Capture does not depend on an Isaac Lab task
+or scene configuration. ``camera_paths`` is required and must contain both stereo
+cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
+
+``CameraPanelConsumer`` implements the ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
+``CameraPanelConfig`` values, each pairing a render-product path with its placement
+and image bound.
+
+Consumers receive ``FrameOutputs`` on the XR owner thread. Use ``latest_color``
+to select an output, then ``copy_host_rgba`` or ``map_gpu`` to consume it without
+unpacking native result structures. Selected handles are valid only during that
+callback. CPU snapshots are shared within that frame; GPU resources retain their
+completion and retirement rules. A consumer may contribute composition layers that remain valid
+through submission. ``on_openxr_ready`` may be called repeatedly and must be
+idempotent. ``finish_frame`` releases borrowed outputs before submission or
+cancellation; ``close`` must tolerate partial startup and retain resources if
+safe retirement fails. The camera consumer owns one native panel collection,
+which is loaded directly and is not an OpenXR API layer.
 
 For a uv-managed application, declare Isaac Capture with its ``ovxr`` extra and
 select the source-built wheel in the application's project configuration:
