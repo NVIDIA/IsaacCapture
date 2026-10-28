@@ -102,6 +102,16 @@ compatibility shim from your build, which maps `isaacteleop` to
 `isaaccapture`. Isaac Lab pins `isaacteleop~=1.4.145`, so pip may warn about
 that conflict.
 
+pip treats an installed `X.Y+local` as already satisfied, so after a rebuild
+replace it explicitly. `--no-deps` keeps pip from reinstalling Isaac Lab's
+other packages:
+
+```bash
+cd <isaaclab>
+./isaaclab.sh -p -m pip install "isaaccapture==X.Y+local" \
+  --find-links <repo>/install/wheels --force-reinstall --no-deps
+```
+
 ```bash
 cd <isaaclab>
 ./isaaclab.sh -p scripts/environments/teleoperation/teleop_se3_agent.py \

@@ -205,7 +205,8 @@ The example never downloads a published wheel — it runs against the
 ``isaaccapture`` next to it, built from this checkout.  The first install
 compiles the extension modules and takes a few minutes; later ones reuse the
 cached build, and the install is editable, so edits under ``src/python/`` need
-no rebuild.  From ``install/examples/mcap_record_replay`` (after ``cmake
+no rebuild.  After a C++ change, add ``--reinstall-package isaaccapture`` to the
+install to rebuild it.  From ``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
 :doc:`/development/build_from_source/index`.
 
@@ -234,10 +235,6 @@ The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
 ``replay_full_body`` module pairs use the same CLI (positional MCAP path,
 ``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
 ``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
-
-``uv run`` (instead of an activated venv) needs an explicit ``--python 3.11``
-— without it, ``uv`` may resolve against the system Python and fail to match
-the lockfile.
 
 API Reference
 -------------

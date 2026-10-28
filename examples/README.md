@@ -13,9 +13,10 @@ your own project — the last of those is the reason for the layout below.
 Build Isaac Capture from source, then set up a venv from the repository root
 exactly as in [step 4 of Build from source][install-step]: create it on the
 build's Python, activate it, and install `isaaccapture` pinned to `X.Y+local`
-with `--reinstall-package isaaccapture`, so a rebuild replaces the installed
-wheel. `uv pip install` finds a repo-root `.venv` even when it is inactive and
-`python` does not, so activate it in every terminal you run an example from.
+with `--reinstall-package isaaccapture`. Rerun that install after every
+rebuild to replace the installed wheel. `uv pip install` finds a repo-root
+`.venv` even when it is inactive and `python` does not, so activate it in every
+terminal you run an example from.
 
 ```bash
 uv pip install -e ./examples/<name>
@@ -25,7 +26,9 @@ python -m isaaccapture_examples.<name>
 Every example runs this way, and its `README.md` gives the exact command. An
 example whose `pyproject.toml` points `[tool.uv.sources]` at this checkout
 replaces that wheel with an editable build of the checkout, and its first
-install compiles the extensions.
+install compiles the extensions. uv reuses that build, and rebuilding `build/`
+does not reach it, so after a C++ change reinstall such an example with
+`uv pip install -e ./examples/<name> --reinstall-package isaaccapture`.
 
 [install-step]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package
 

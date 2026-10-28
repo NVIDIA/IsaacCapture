@@ -20,10 +20,6 @@ command; a replay given no path picks the newest matching recording there
 (e.g. `replay_hand` picks the newest `hands_*.mcap`) and exits if none
 match -- no silent fallback to a wrong-type recording.
 
-`uv run` (instead of an activated venv) needs an explicit `--python 3.11` --
-without it, `uv` may resolve against the system Python and fail to match the
-lockfile.
-
 The live and replay viewers bind every interface, so a browser on another
 machine can reach them at `http://<this-host>:8080`. Pass `--host 127.0.0.1` to
 keep a viewer local. Replay repeats until Ctrl+C; no loop flag is needed.

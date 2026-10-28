@@ -59,7 +59,7 @@ uv pip install -e ./examples/robot_viz # same environment
 python -m isaaccapture_examples.robot_viz
 ```
 
-Both must land in one environment. Beware `uv pip install isaaccapture` without a path or the `==X.Y+local` pin: it does not resolve at all until `isaaccapture` is published, and once it is, it resolves to a release with no robot twin in it.
+Both must land in one environment. Install `isaaccapture` from a path, or with both `--find-links=./install/wheels/` and the `==X.Y+local` pin: otherwise uv can resolve it to a release from the package index, which is not your build and may have no robot twin in it.
 
 Running additionally needs a GPU with EGL + CUDA, and a headset. On a multi-GPU host, pass the GPU: `SceneTwin` takes a `gl_device_index`, which indexes EGL devices and need not agree with CUDA's ordering. The renderer checks at construction and names both device numbers.
 
