@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../development/build_from_source/index.html
+
 Build from Source
 =================
 

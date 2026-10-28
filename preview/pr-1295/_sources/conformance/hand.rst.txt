@@ -247,7 +247,10 @@ the wrist pose from, go on the same command line.
 
 ``--note TEXT``, ``--plugin-version NAME=VERSION`` and ``--wrist-source SOURCE`` (where a
 glove's wrist pose comes from, such as ``hand_tracking`` or ``controller``) are stored with the
-take. Then:
+take. ``--wrist-source`` defaults to the plugin's own variable, named after it:
+``GLOVE_X_WRIST_SOURCE`` for ``glove_x_plugin`` (upper-cased, without ``_plugin``). If your
+plugin reads its wrist source from an environment variable, name it that way and takes are
+labelled without the flag. Then:
 
 #. Open the capture panel at the address the run prints: http://localhost:8081 unless that port
    was taken, or the ``[capture] headset:`` address in the headset's browser.

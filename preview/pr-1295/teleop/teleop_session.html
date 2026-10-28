@@ -466,11 +466,13 @@ manage them directly:</p>
 <li><p>Handles cleanup via RAII</p></li>
 </ol>
 <p>If resource cleanup fails during entry rollback or exit, <code class="docutils literal notranslate"><span class="pre">cleanup_failed</span></code>
-becomes true. That session is terminal: later entry, stepping and exit raise
-the stored error instead of retrying or treating an exhausted cleanup stack as
-successful drain. Hosts lending OpenXR handles must not release their owning
-renderer/session after this signal. An entry failure with successful rollback
-still permits reuse; the original setup error remains primary in either case.</p>
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling <code class="docutils literal notranslate"><span class="pre">__exit__</span></code> again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.</p>
 </section>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
@@ -1174,7 +1176,7 @@ as in the <a class="reference internal" href="quick_start.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 26, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>

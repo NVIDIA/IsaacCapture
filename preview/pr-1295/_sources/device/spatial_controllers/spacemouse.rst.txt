@@ -53,7 +53,8 @@ read-only for all users. No group membership is needed.
 Build
 -----
 
-Linux only. The plugin builds with the default plugin set:
+Linux only. Complete the :doc:`source-build prerequisites </development/build_from_source/index>`
+first. The plugin builds with the default plugin set:
 
 .. code-block:: bash
 

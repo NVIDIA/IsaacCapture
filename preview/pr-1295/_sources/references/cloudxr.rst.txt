@@ -234,9 +234,14 @@ related environment variables unchanged. Use this when another runtime is alread
 configured (for example Monado) or when a host singleton must not be duplicated
 (see ``examples/robot_viz/README.md`` and ``--no-launch-cloudxr-runtime`` there).
 
+``OpenXRSession`` refuses to start unless ``NV_CXR_RUNTIME_DIR`` and ``XR_RUNTIME_JSON``
+are both set; ``ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS`` skips that check for a runtime
+other than CloudXR:
+
 .. code-block:: bash
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
+   export ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS=1
    python examples/teleop/python/gripper_retargeting_example_simple.py --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
@@ -372,6 +377,31 @@ To inspect the active settings after startup:
 
 Troubleshooting
 ---------------
+
+.. _cloudxr-web-client-refresh:
+
+PICO 4 Ultra keeps failing when retrying a connection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After a failed connection, the PICO browser can require a page refresh before
+another attempt works. Clicking **Connect** again without refreshing can keep
+failing.
+
+In the web client's **Troubleshooting** settings, **Auto Refresh on Session End**
+defaults to **Refresh on any session end (including errors)** for the **Pico 4
+Ultra** device profile. This reloads the page after a clean disconnect or a
+connection failure, once any automatic reconnect attempts have been exhausted.
+Other device profiles default to **Never refresh**. You can also choose
+**Refresh on clean session end** to reload only after a clean disconnect.
+Changing this setting switches the device profile to **Custom** and saves your
+choice; selecting a named device profile again restores that profile's defaults.
+Selecting **Custom** preserves the current settings.
+
+The last error message, including its hexadecimal error code when supplied by
+CloudXR, remains visible after automatic or manual refreshes in the same browser
+tab. It clears when a stream connects successfully. This requires browser session
+storage to be available. A restored error does not itself trigger another refresh;
+click **Connect** to retry from the refreshed page.
 
 .. _cloudxr-form-factor-unavailable:
 

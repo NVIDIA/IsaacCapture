@@ -75,6 +75,24 @@ Use from another application
 ``isaaccapture.ovxr_session_manager.ovxr_session`` provides ``OvxrSession``
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
+The binding also supplies optional ``frame_consumers`` after the application has
+resolved its render-product paths. Capture does not depend on an Isaac Lab task
+or scene configuration.
+
+``CameraPanelConsumer`` implements the ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
+``CameraPanelConfig`` values, each pairing a render-product path with its placement
+and image bound.
+
+Consumers receive ``FrameOutputs`` on the XR owner thread. Use ``latest_color``
+to select an output, then ``copy_host_rgba`` or ``map_gpu`` to consume it without
+unpacking native result structures. Selected handles are valid only during that
+callback. CPU snapshots are shared within that frame; GPU resources retain their
+completion and retirement rules. A consumer may contribute composition layers that remain valid
+through submission. ``on_openxr_ready`` may be called repeatedly and must be
+idempotent. ``finish_frame`` releases borrowed outputs before submission or
+cancellation; ``close`` must tolerate partial startup and retain resources if
+safe retirement fails. The camera consumer owns one native panel collection,
+which is loaded directly and is not an OpenXR API layer.
 
 For a uv-managed application, declare Isaac Capture with its ``ovxr`` extra and
 select the source-built wheel in the application's project configuration:

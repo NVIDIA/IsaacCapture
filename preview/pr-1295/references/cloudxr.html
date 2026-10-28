@@ -682,7 +682,11 @@ the process does not start or attach to CloudXR and leaves <code class="docutils
 related environment variables unchanged. Use this when another runtime is already
 configured (for example Monado) or when a host singleton must not be duplicated
 (see <code class="docutils literal notranslate"><span class="pre">examples/robot_viz/README.md</span></code> and <code class="docutils literal notranslate"><span class="pre">--no-launch-cloudxr-runtime</span></code> there).</p>
+<p><code class="docutils literal notranslate"><span class="pre">OpenXRSession</span></code> refuses to start unless <code class="docutils literal notranslate"><span class="pre">NV_CXR_RUNTIME_DIR</span></code> and <code class="docutils literal notranslate"><span class="pre">XR_RUNTIME_JSON</span></code>
+are both set; <code class="docutils literal notranslate"><span class="pre">ISAAC_</span><wbr><span class="pre">TELEOP_</span><wbr><span class="pre">DISABLE_</span><wbr><span class="pre">CXR_</span><wbr><span class="pre">ENV_</span><wbr><span class="pre">CHECKS</span></code> skips that check for a runtime
+other than CloudXR:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">XR_RUNTIME_JSON</span><span class="o">=</span>/path/to/your/openxr.json
+<span class="nb">export</span><span class="w"> </span><span class="nv">ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS</span><span class="o">=</span><span class="m">1</span>
 python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py<span class="w"> </span>--no-launch-cloudxr-runtime
 </pre></div>
 </div>
@@ -811,6 +815,26 @@ them to <code class="docutils literal notranslate"><span class="pre">--cloudxr-e
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<section id="pico-4-ultra-keeps-failing-when-retrying-a-connection">
+<span id="cloudxr-web-client-refresh"></span><h3>PICO 4 Ultra keeps failing when retrying a connection<a class="headerlink" href="#pico-4-ultra-keeps-failing-when-retrying-a-connection" title="Link to this heading">#</a></h3>
+<p>After a failed connection, the PICO browser can require a page refresh before
+another attempt works. Clicking <strong>Connect</strong> again without refreshing can keep
+failing.</p>
+<p>In the web client’s <strong>Troubleshooting</strong> settings, <strong>Auto Refresh on Session End</strong>
+defaults to <strong>Refresh on any session end (including errors)</strong> for the <strong>Pico 4
+Ultra</strong> device profile. This reloads the page after a clean disconnect or a
+connection failure, once any automatic reconnect attempts have been exhausted.
+Other device profiles default to <strong>Never refresh</strong>. You can also choose
+<strong>Refresh on clean session end</strong> to reload only after a clean disconnect.
+Changing this setting switches the device profile to <strong>Custom</strong> and saves your
+choice; selecting a named device profile again restores that profile’s defaults.
+Selecting <strong>Custom</strong> preserves the current settings.</p>
+<p>The last error message, including its hexadecimal error code when supplied by
+CloudXR, remains visible after automatic or manual refreshes in the same browser
+tab. It clears when a stream connects successfully. This requires browser session
+storage to be available. A restored error does not itself trigger another refresh;
+click <strong>Connect</strong> to retry from the refreshed page.</p>
+</section>
 <section id="xrgetsystem-fails-with-xr-error-form-factor-unavailable-35">
 <span id="cloudxr-form-factor-unavailable"></span><h3><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">ERROR_</span><wbr><span class="pre">FORM_</span><wbr><span class="pre">FACTOR_</span><wbr><span class="pre">UNAVAILABLE</span></code> (-35)<a class="headerlink" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35" title="Link to this heading">#</a></h3>
 <p>-35 is returned <em>after</em> <code class="docutils literal notranslate"><span class="pre">xrCreateInstance</span></code> succeeded, so the runtime was
@@ -901,6 +925,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connect-the-oob-headset-after-application-startup">Connect the OOB headset after application startup</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration">Configuration</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pico-4-ultra-keeps-failing-when-retrying-a-connection">PICO 4 Ultra keeps failing when retrying a connection</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#xrgetsystem-fails-with-xr-error-form-factor-unavailable-35"><code class="docutils literal notranslate"><span class="pre">xrGetSystem</span></code> fails with <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr/><span class="pre">ERROR_</span><wbr/><span class="pre">FORM_</span><wbr/><span class="pre">FACTOR_</span><wbr/><span class="pre">UNAVAILABLE</span></code> (-35)</a></li>
 </ul>
 </li>
@@ -986,7 +1011,7 @@ expose it. <code class="docutils literal notranslate"><span class="pre">VizSessi
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 26, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>

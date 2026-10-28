@@ -25,11 +25,13 @@ manage them directly:
 #. Handles cleanup via RAII
 
 If resource cleanup fails during entry rollback or exit, ``cleanup_failed``
-becomes true. That session is terminal: later entry, stepping and exit raise
-the stored error instead of retrying or treating an exhausted cleanup stack as
-successful drain. Hosts lending OpenXR handles must not release their owning
-renderer/session after this signal. An entry failure with successful rollback
-still permits reuse; the original setup error remains primary in either case.
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling ``__exit__`` again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.
 
 Quick Start
 -----------
