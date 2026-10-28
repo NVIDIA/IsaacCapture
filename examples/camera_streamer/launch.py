@@ -99,6 +99,7 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        # Ctrl+C is a normal operator shutdown; suppress the Python traceback.
         pass
     except (OSError, subprocess.CalledProcessError) as exc:
         sys.exit(str(exc))
