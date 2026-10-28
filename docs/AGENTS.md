@@ -27,8 +27,8 @@ sphinx-multiversion builds every whitelisted ref with `-c` pointing at the check
 invoked it, so `app.confdir` is that checkout while `app.srcdir` is the ref being built.
 Resolve paths from one of those two, never from the working directory or the repo root.
 
-Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches;
-verify CloudXR entries against each branch's `deps/cloudxr/.env.default` when updating them.
+Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches.
+The single CloudXR badge shows the major version, `6`.
 
 The config is therefore a site-wide input, not a per-version one: the deploy job takes
 `docs/` from `main` before building, or a release or tag push renders main's pages with an
