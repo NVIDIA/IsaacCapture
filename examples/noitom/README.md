@@ -25,7 +25,7 @@ when you need Noitom support:
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON -DISAAC_TELEOP_PYTHON_VERSION=3.12
-cmake --build build --target python_package noitom_mocap_plugin --parallel
+cmake --build build --target python_package python_wheel noitom_mocap_plugin --parallel
 cmake --install build
 uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
 ```
