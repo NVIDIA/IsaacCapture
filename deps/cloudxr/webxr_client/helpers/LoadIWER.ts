@@ -24,8 +24,8 @@ declare global {
 }
 
 // Both versions are loaded from CDN; bump them together when upgrading IWER.
-const IWER_version = '2.3.0';
-const IWER_DEVUI_version = '2.3.0';
+const IWER_version = '2.7.0';
+const IWER_DEVUI_version = '2.7.0';
 let pendingIWERLoad: Promise<IWERLoadResult> | null = null;
 
 export interface IWERLoadResult {
@@ -65,7 +65,7 @@ async function loadIWER(): Promise<IWERLoadResult> {
     const script = document.createElement('script');
     script.src = `https://unpkg.com/iwer@${IWER_version}/build/iwer.min.js`;
     script.async = true;
-    script.integrity = 'sha384-m8Xcl9WwdP6j/5Fv7MAs7IvvW3PmWCbNZlbF8IsJAnujyeMZi0/xgUE4mM7Tbm/j';
+    script.integrity = 'sha384-pcGii0Tzet8SSL0v/VOhYIzm2dynTF4sEDPQxzsbepa8wICqZkNQvx3xuRRjj6Lc';
     script.crossOrigin = 'anonymous';
 
     await new Promise<void>(resolve => {
@@ -84,7 +84,7 @@ async function loadIWER(): Promise<IWERLoadResult> {
         devUIScript.src = `https://unpkg.com/@iwer/devui@${IWER_DEVUI_version}/build/iwer-devui.min.js`;
         devUIScript.async = true;
         devUIScript.integrity =
-          'sha384-TAu5gWlv92O6gkVclV8HYctTEswyA/0eoS6ULHjjLCShUVts4kDlUg6iLEKmL1r8';
+          'sha384-9jc9tp/DypE1hvhqLzE0xVpXYx64QqIRMDu6f3FkSIaeTqpwniy+t1ierx3y428X';
         devUIScript.crossOrigin = 'anonymous';
 
         await new Promise<void>(devUIResolve => {
