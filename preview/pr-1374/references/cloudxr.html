@@ -665,8 +665,10 @@ for themselves and need no sourcing.</p>
 <section id="run-teleop-examples-against-the-service">
 <h2>Run teleop examples against the service<a class="headerlink" href="#run-teleop-examples-against-the-service" title="Link to this heading">#</a></h2>
 <p>Nothing to pass. The examples under <code class="docutils literal notranslate"><span class="pre">examples/teleop</span></code> attach to
-whatever runtime is serving, so with a service running they use it:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+whatever runtime is serving, so with a service running they use it. Install
+them once from the repository root, as in <a class="reference internal" href="../teleop/quick_start.html#run-teleop-example"><span class="std std-ref">6. Run a teleop example</span></a>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple
 </pre></div>
 </div>
