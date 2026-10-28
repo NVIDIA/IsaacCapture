@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Test container for Isaac Teleop tests (Python and native C++)
@@ -25,7 +25,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY install/ /app/install/
 
 # Copy test files
-COPY examples/oxr/python/ /app/tests/
+COPY tests/python/xr_runtime/ /app/tests/
 
 # Keep the exact CI wheel and its transition dependency available in one install.
 WORKDIR /app/tests

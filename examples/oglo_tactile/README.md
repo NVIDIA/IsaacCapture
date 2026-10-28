@@ -28,29 +28,37 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 
 1. **System deps**
 
+   Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+   first, then:
+
    ```bash
    sudo apt install libdbus-1-dev          # BlueZ for the BLE plugin
-   sudo apt install pkg-config glslang-tools libvulkan-dev   # BUILD_VIZ=ON below
-   pip install pillow numpy                 # heatmap renderer
-   pip install cupy-cuda12x                 # headset overlay GPU upload (match your CUDA)
+   sudo apt install libvulkan-dev          # BUILD_VIZ=ON below; also needs the CUDA toolkit
    ```
-   `cupy` is only needed for the in-headset overlay; recording works without it.
 
-2. **Build** (plugin + viz + python wheel)
+2. **Build and install** (plugin + viz + python wheel + this example)
 
    ```bash
-   cd IsaacTeleop
+   cd <repo>                       # your IsaacCapture checkout
    cmake -B build -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON
    cmake --build build --parallel
    cmake --install build           # builds the isaaccapture python wheel/package
+   uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
+   uv pip install -e ./examples/oglo_tactile
    ctest --test-dir build -R oglo_packet_parser --output-on-failure   # parser sanity
    ```
    The BLE backend (BlueZ via libdbus, permissive) connects out of the box.
+   CuPy for the in-headset overlay comes with `isaaccapture[cloudxr]`.
+
+   To check the heatmap renderer without gloves or a headset, render a synthetic
+   frame to `recordings/oglo_heatmap_demo.png`:
+
+   ```bash
+   python -m isaaccapture_examples.oglo_tactile.oglo_heatmap
+   ```
 
 3. **Gloves**: confirm both run schema-5 firmware, are charged, and
    advertise `OGLO LEFT` / `OGLO RIGHT` (check with `bluetoothctl scan on`).
-
-4. **CloudXR**: install per the IsaacTeleop Quick Start (`pip install 'isaaccapture[cloudxr]'`).
 
 ---
 
@@ -58,7 +66,7 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 
 **Start the CloudXR runtime** — a background service, so this shell stays free
 ```bash
-cd ~/Documents/IsaacTeleop
+cd <repo>
 source scripts/setup_cloudxr_env.sh
 python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on first run only
 # Note the printed web-client URL, e.g.  https://<laptop-ip>:48322/
@@ -73,14 +81,13 @@ python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on fi
 
 **Gloves + recording + overlay**
 ```bash
-cd ~/Documents/IsaacTeleop
+cd <repo>
 source scripts/setup_cloudxr_env.sh
 source ~/.cloudxr/run/cloudxr.env          # path printed by step above
-cd examples/oglo_tactile
-python oglo_teleop_record.py
+python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record
 ```
 The script: connects both gloves over BLE, starts recording to
-`oglo_teleop_<timestamp>.mcap`, and shows the **two-hand tactile heatmap** in the
+`recordings/oglo_teleop_<timestamp>.mcap`, and shows the **two-hand tactile heatmap** in the
 headset. **Keep hands relaxed for ~1 s** at start so the baseline tares.
 
 Press a glove → the matching finger/taxel lights up (YlOrRd) on the Quest screen.
@@ -93,7 +100,7 @@ Press a glove → the matching finger/taxel lights up (YlOrRd) on the Quest scre
 ## C. Verify the recording
 
 ```bash
-mcap info oglo_teleop_*.mcap
+mcap info recordings/oglo_teleop_*.mcap
 # channels: hands/{left,right}_hand, head/head, oglo_{left,right}/oglo(+_tracked)
 ```
 All streams share `sample_time_local_common_clock`, so Quest pose and OGLO
@@ -101,12 +108,12 @@ tactile align in time.
 
 ---
 
-## Useful flags (`oglo_teleop_record.py`)
+## Useful flags (`isaaccapture_examples.oglo_tactile.oglo_teleop_record`)
 
 | Flag | Purpose |
 |------|---------|
 | `--plugin-bin PATH` | Path to `oglo_tactile_plugin` (auto-detected under `build/`). |
-| `--mcap PATH` | Output file (default timestamped). |
+| `--mcap PATH` | Output file (default `recordings/oglo_teleop_<timestamp>.mcap`). |
 | `--duration S` | Auto-stop after S seconds (0 = until Ctrl+C). |
 | `--raw` | Raw-ADC heatmap (no baseline subtraction). |
 | `--no-overlay` | Record only (skip headset heatmap). |

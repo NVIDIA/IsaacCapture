@@ -135,8 +135,10 @@ WUJI_GLOVE_WRIST_SOURCE=hand_tracking \
 ```
 
 The variable is read by the plugin and also written into the take's provenance file.
-`--wrist-source TEXT` only changes what is written there; it does not change what the
-plugin does.
+The capture reads it for every `--plugin NAME` as `NAME_WRIST_SOURCE`, upper-cased and
+without a trailing `_plugin`, so any glove plugin that names its variable that way is
+labelled too. `--wrist-source TEXT` overrides what is written there, and is required when
+two plugins' variables disagree; it does not change what a plugin does.
 
 `--plugin NAME` takes the plugin's name as its `plugin.yaml` spells it and looks it up
 under `plugins/` and `install/plugins/`. It is launched as required: a plugin that

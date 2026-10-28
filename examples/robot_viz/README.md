@@ -40,7 +40,7 @@ Two calibrations, different in kind. `src/viz/robot_twin/cpp/frames.hpp` is a co
 
 ## Build
 
-Nothing here is compiled; what has to be built is `isaaccapture` itself.
+Nothing here is compiled; what has to be built is `isaaccapture` itself. Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html) first, including the Televiz ones that `BUILD_VIZ=ON` needs.
 
 ```bash
 cmake -B build -DBUILD_VIZ=ON
@@ -189,7 +189,7 @@ Nothing integrates. `mj_step` is never called: the follower is slid by its base,
 
 ## Frames (`robot_twin/cpp/frames.hpp`)
 
-`R_mj_from_xr = Rz(-90) * Rx(+90)`. XR `-Z` → MuJoCo `+x`, XR `+Y` → MuJoCo `+z`, XR `+X` → MuJoCo `-y`. Testable definition: a point 1 m in front of the operator at eye height `h` lands at MuJoCo `(+1, 0, h)` before the workspace translation. It deliberately differs from `examples/cloudxr_mujoco_teleop/visualize_poses_mujoco_example.py`, which applies `Rx(+90)` only.
+`R_mj_from_xr = Rz(-90) * Rx(+90)`. XR `-Z` → MuJoCo `+x`, XR `+Y` → MuJoCo `+z`, XR `+X` → MuJoCo `-y`. Testable definition: a point 1 m in front of the operator at eye height `h` lands at MuJoCo `(+1, 0, h)` before the workspace translation. It deliberately differs from `examples/cloudxr_mujoco_teleop/python/isaaccapture_examples/cloudxr_mujoco_teleop/visualize_poses_mujoco_example.py`, which applies `Rx(+90)` only.
 
 `kTransMjFromXr` is the lever, and it is a calibration that is routinely wrong: `(-1.0, 0.0, -0.73)`, two independent terms. `x` is operator standoff; `z` is a floor datum — MuJoCo `z = 0` is a work surface 0.73 m above the physical floor. That `z` is only right against a floor-origin reference space, and the session does not ask for one. A scene that puts static content on the work surface owns re-tuning it. Neither term may be zeroed.
 

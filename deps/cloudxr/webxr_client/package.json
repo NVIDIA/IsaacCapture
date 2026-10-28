@@ -37,6 +37,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^@helpers/(.*)$": "<rootDir>/helpers/$1"
+    },
     "setupFiles": [
       "<rootDir>/jest.setup.js"
     ],

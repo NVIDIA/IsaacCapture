@@ -17,7 +17,8 @@ The remote side uses the native Linux steering wheel plugin and Isaac Teleop Ope
 
 ## Setup
 
-Build and install Isaac Teleop with examples enabled. From the Isaac Teleop repository root:
+Build and install Isaac Teleop with examples enabled, after the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html).
+From the Isaac Teleop repository root:
 
 ```bash
 cmake -B build -DBUILD_EXAMPLES=ON

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-import config
+from isaaccapture_examples.camera_viz import config
 
 
 def test_shape_config_carries_the_equirect_heading():

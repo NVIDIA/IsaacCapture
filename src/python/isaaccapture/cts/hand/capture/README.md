@@ -34,7 +34,7 @@ stored as `device` in the provenance file.
 |---|---|
 | `--plugin NAME` | Launch a hand plugin, repeatable. `NAME` is the plugin's name in its `plugin.yaml` (`manus_hand_plugin`, `wuji_glove_plugin`), looked up in `plugins/` and `install/plugins/`. Without it the take uses the headset's hands. |
 | `--plugin-version NAME=VERSION` | Record this version instead of the one in `plugin.yaml`. |
-| `--wrist-source SOURCE` | Record where a glove's wrist came from, e.g. `hand_tracking` or `controller`. Defaults to `$WUJI_GLOVE_WRIST_SOURCE`. It labels the take; the plugin reads the variable itself. |
+| `--wrist-source SOURCE` | Record where a glove's wrist came from, e.g. `hand_tracking` or `controller`. Defaults to each `--plugin NAME`'s `$NAME_WRIST_SOURCE`, upper-cased without a trailing `_plugin` (`$WUJI_GLOVE_WRIST_SOURCE` for `wuji_glove_plugin`); required when two plugins' variables disagree. It labels the take; the plugin reads the variable itself. |
 | `--note TEXT` | Free text kept in the provenance file. |
 | `--host HOST` / `--port PORT` | Where the panel listens; `0.0.0.0` and `8081` by default. A busy port moves to the next free one. |
 | CloudXR flags | `--accept-eula`, `--cloudxr-install-dir`, `--cloudxr-device-profile`, `--cloudxr-env-config`, `--[no-]launch-cloudxr-runtime`, `--[no-]host-client`, `--[no-]launch-wss-proxy` |
