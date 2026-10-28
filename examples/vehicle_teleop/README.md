@@ -38,19 +38,6 @@ source .venv/bin/activate
 uv sync --active --inexact --no-install-package isaaccapture
 ```
 
-The example has no single entry point. Each script in `scripts/` runs one module
-with `.venv/bin/python -m`, so the modules can also be run directly:
-
-| Script | Module |
-| --- | --- |
-| `run_isaac_remote_steering_worker.sh` | `isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker --rate-hz 50` |
-| `run_isaac_keyboard_control_worker.sh` | `isaaccapture_examples.vehicle_teleop.isaac_keyboard_control_worker --rate-hz 50` |
-| `run_panda_worker.sh` | `isaaccapture_examples.vehicle_teleop.panda_worker` |
-| `replay_command_mcap.sh` | `isaaccapture_examples.vehicle_teleop.replay_command_mcap` |
-
-`run_panda_worker.sh` also puts `thirdparty/opendbc` and `thirdparty/panda` on
-`PYTHONPATH`; set that yourself when running the Panda worker module directly.
-
 Clone the vehicle-side dependencies into this example's `thirdparty` directory. These repositories are intentionally not added as git submodules.
 
 ```bash
@@ -130,9 +117,26 @@ If the remote worker was started with `--log-mcap`, replay the recorded commands
 
 The replay command prints the retargeted vehicle command values. It does not write to PandaRunner.
 
+## Running the Modules Directly
+
+The example has no single entry point: each script in `scripts/` runs one module
+with `.venv/bin/python -m`. To run a module yourself, from this directory:
+
+```bash
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.isaac_keyboard_control_worker
+PYTHONPATH=thirdparty/opendbc:thirdparty/panda .venv/bin/python -m isaaccapture_examples.vehicle_teleop.panda_worker --connect "tcp://<remote-ip>:5555"
+.venv/bin/python -m isaaccapture_examples.vehicle_teleop.replay_command_mcap logs/vehicle_control.mcap
+```
+
+The Panda worker needs `thirdparty/opendbc` and `thirdparty/panda` on
+`PYTHONPATH`; `run_panda_worker.sh` sets that for you.
+
 ## Troubleshooting
 
 If the steering worker cannot find the native plugin, pass `--plugin-binary` explicitly. In a source build, the default location is usually `build/src/plugins/steering_wheel/steering_wheel_plugin`. In an install tree, it is usually `plugins/steering_wheel/steering_wheel_plugin`.
+
+The default `--config` and `--plugin-binary` are found relative to this example directory, so they resolve in a source checkout set up as in [Setup](#setup) and in an install tree. If you installed the example as a regular, non-editable package, pass both explicitly, with `--config` pointing at this directory's `config/steering_wheel_config.yaml`.
 
 If the worker fails while creating the OpenXR session, confirm that the CloudXR runtime is running, the CloudXR environment has been sourced in the worker terminal, and the OpenXR client is connected.
 
