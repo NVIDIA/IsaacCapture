@@ -509,7 +509,10 @@ a single controller tracker and there is no OpenXR action-set contention.</p>
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Running</a><a class="headerlink" href="#running" title="Link to this heading">#</a></h2>
 <p>The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see <a class="reference internal" href="cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> to manage
-that service yourself). Install the example, then run it:</p>
+that service yourself). Install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> built from this tree into the
+active environment first, for example
+<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;isaaccapture[cloudxr]&quot;</span> <span class="pre">--find-links=./install/wheels/</span></code>.
+Then install the example and run it:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/haptic_feedback
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.haptic_feedback.controller_haptic_example
 </pre></div>
