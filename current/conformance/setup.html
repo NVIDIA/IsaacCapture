@@ -381,6 +381,7 @@
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="overview.html">Device Conformance</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">Set Up the Tools</a></li>
 <li class="toctree-l2"><a class="reference internal" href="hand.html">Hand Suite</a></li>
+<li class="toctree-l2"><a class="reference internal" href="full_body.html">Full-Body Suite</a></li>
 <li class="toctree-l2"><a class="reference internal" href="submit.html">Submit Your Results</a></li>
 </ul>
 </details></li>
@@ -455,8 +456,8 @@
   <section id="set-up-the-tools">
 <span id="cts-setup"></span><h1>Set Up the Tools<a class="headerlink" href="#set-up-the-tools" title="Link to this heading">#</a></h1>
 <p>This page gets a workstation ready to record: the repository built, the CTS tool environments
-created and a headset streaming through CloudXR. Do it once per clone. Run the commands from the
-repository root.</p>
+created and a headset streaming through CloudXR. Do it once per clone; both suites share every step.
+Run the commands from the repository root.</p>
 <nav class="contents local" id="steps">
 <p class="topic-title">Steps</p>
 <ul class="simple">
@@ -509,10 +510,11 @@ CloudXR. See step 4.</p></td>
 <tr class="row-even"><td><p>Your plugin, installed</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code> installs every built plugin into <code class="docutils literal notranslate"><span class="pre">install/plugins/</span></code>; add
 <code class="docutils literal notranslate"><span class="pre">--component</span> <span class="pre">&lt;name&gt;</span></code> to install one, if its plugin declares a component. Headset hand
-tracking needs no plugin.</p></td>
+tracking and PICO body tracking need no plugin.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Space and a helper</p></td>
-<td><p>A table and a chair. A second person at the screen makes the take easier.</p></td>
+<td><p>Hand: a table and a chair. Full body: room to stand, raise both arms and squat. A second
+person at the screen makes either suite easier.</p></td>
 </tr>
 </tbody>
 </table>
@@ -534,11 +536,12 @@ cmake<span class="w"> </span>--install<span class="w"> </span>build
 </section>
 <section id="create-the-tool-environments">
 <h2>3. Create the tool environments<a class="headerlink" href="#create-the-tool-environments" title="Link to this heading">#</a></h2>
-<p>The suite has a checker environment and a capture environment. This line sets up the checker
-first, because the capture environment reads recordings through the bindings the checker
-generates:</p>
+<p>Each suite has a checker environment and a capture environment. Run the line for each suite you
+need; it sets up the checker first, because the capture environment reads recordings through the
+bindings the checker generates:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CTS</span><span class="o">=</span>src/python/isaaccapture/cts
 <span class="nv">$CTS</span>/hand/checker/setup_env.sh<span class="w"> </span>--panel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">$CTS</span>/hand/capture/setup_env.sh
+<span class="nv">$CTS</span>/full_body/checker/setup_env.sh<span class="w"> </span>--panel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">$CTS</span>/full_body/capture/setup_env.sh
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">--panel</span></code> adds the viewer, which replays a take and packages it for submission. To only check
@@ -548,9 +551,10 @@ idempotent and write only inside their own directory; re-run them after pulling 
 <section id="connect-the-headset">
 <span id="cts-setup-headset"></span><h2>4. Connect the headset<a class="headerlink" href="#connect-the-headset" title="Link to this heading">#</a></h2>
 <p>CloudXR is the OpenXR runtime the capture runs on. <strong>Start recording</strong> waits until a headset has
-connected, even when your device produces the joints. Use the capture interpreter, and set <code class="docutils literal notranslate"><span class="pre">PY</span></code>
-in each terminal you open:</p>
+connected, even when your device produces the joints. Use the capture interpreter of either suite,
+and set <code class="docutils literal notranslate"><span class="pre">PY</span></code> in each terminal you open:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">PY</span><span class="o">=</span><span class="nv">$PWD</span>/src/python/isaaccapture/cts/hand/capture/.venv/bin/python
+<span class="c1"># or …/cts/full_body/capture/.venv/bin/python</span>
 </pre></div>
 </div>
 <ol class="arabic">
@@ -586,7 +590,8 @@ why there. Run one service per workstation.</p>
 </div>
 </details><p>The workstation firewall must allow the CloudXR ports (<a class="reference internal" href="../teleop/quick_start.html#whitelist-firewall-ports"><span class="std std-ref">4. Whitelist ports for Firewall</span></a>). For
 device profiles, a detached service or opening the client over USB, see
-<a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a>.</p>
+<a class="reference internal" href="../references/cloudxr.html"><span class="doc">CloudXR Service</span></a>. For PICO body tracking, set up the trackers first:
+<a class="reference internal" href="../device/body_tracking/index.html"><span class="doc">Body Tracking</span></a>.</p>
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
@@ -629,7 +634,7 @@ same network and the firewall allows the CloudXR ports.</p></td>
 </tbody>
 </table>
 </div>
-<p>Next, record a take: <a class="reference internal" href="hand.html"><span class="doc">Hand Suite</span></a>.</p>
+<p>Next, record a take: <a class="reference internal" href="hand.html"><span class="doc">Hand Suite</span></a> or <a class="reference internal" href="full_body.html"><span class="doc">Full-Body Suite</span></a>.</p>
 </section>
 </section>
 

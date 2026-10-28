@@ -585,7 +585,7 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.ser
 </pre></div>
 </div>
 <p>The same <code class="docutils literal notranslate"><span class="pre">--cloudxr-env-config</span></code> flag is available on the teleop examples under
-<code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code>, which register CloudXR’s launcher arguments through
+<code class="docutils literal notranslate"><span class="pre">examples/teleop</span></code>, which register CloudXR’s launcher arguments through
 <code class="docutils literal notranslate"><span class="pre">CloudXRLauncher.add_launcher_arguments()</span></code> — but it applies only when the
 example is the one starting the runtime. With a service already running the
 example attaches to it instead, and prints which settings it had to ignore (see
@@ -805,10 +805,12 @@ to connect to Isaac Teleop.</p>
 </details></section>
 <section id="run-a-teleop-example">
 <span id="run-teleop-example"></span><h2>6. Run a teleop example<a class="headerlink" href="#run-a-teleop-example" title="Link to this heading">#</a></h2>
-<p>Run the simplified gripper retargeting example. This demonstrates the full
+<p>Install the teleop examples into the environment from step 2, then run the
+simplified gripper retargeting example. This demonstrates the full
 pipeline: reading XR controller input via CloudXR, retargeting it through the
 <code class="docutils literal notranslate"><span class="pre">GripperRetargeter</span></code>, and printing the resulting gripper command values:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/teleop
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple
 </pre></div>
 </div>
 <p>Once running, squeeze the <strong>right controller trigger</strong> to control the gripper.
@@ -831,7 +833,7 @@ Running until Ctrl+C.
 </div>
 <p>The example runs until you press <strong>Ctrl+C</strong>. To stop automatically after a
 chosen duration, measured after session startup, pass <code class="docutils literal notranslate"><span class="pre">--duration</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>examples/teleop/python/gripper_retargeting_example_simple.py<span class="w"> </span>--duration<span class="w"> </span><span class="m">20</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.teleop.gripper_retargeting_example_simple<span class="w"> </span>--duration<span class="w"> </span><span class="m">20</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">--duration</span> <span class="pre">0</span></code> also runs until Ctrl+C. Both a timed run and Ctrl+C announce
@@ -842,12 +844,13 @@ CloudXR runtime logs, and browser error and stop-reason codes.</p>
 <p>For proportional controller input, read <code class="docutils literal notranslate"><span class="pre">ControllerInputIndex.</span><wbr><span class="pre">TRIGGER_</span><wbr><span class="pre">VALUE</span></code>
 or use <code class="docutils literal notranslate"><span class="pre">SO101GripperRetargeter</span></code> for SO-101 jaw closedness in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>
 (<code class="docutils literal notranslate"><span class="pre">0</span></code> open, <code class="docutils literal notranslate"><span class="pre">1</span></code> closed); see <a class="reference internal" href="../references/retargeting/so101.html"><span class="doc">Retargeters: SO-101 (5-DOF arm)</span></a>.</p>
-<p>To try other examples, see <code class="docutils literal notranslate"><span class="pre">examples/teleop/python/</span></code> — for instance:</p>
+<p>To try other examples, run another module of <code class="docutils literal notranslate"><span class="pre">isaaccapture_</span><wbr><span class="pre">examples.</span><wbr><span class="pre">teleop</span></code>
+the same way; <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/teleop/README.md" rel="noopener noreferrer" target="_blank">examples/teleop/README.md</a> lists them all. For instance:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">se3_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — maps hand or controller poses to
+<li><p><code class="docutils literal notranslate"><span class="pre">se3_retargeting_example</span></code> — maps hand or controller poses to
 end-effector poses (absolute or relative), with the same <code class="docutils literal notranslate"><span class="pre">--duration</span></code> and Ctrl+C behavior</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example.py</span></code> — bimanual dexterous hand retargeting</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gripper_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example.</span><wbr><span class="pre">py</span></code> — full gripper example with more
+<li><p><code class="docutils literal notranslate"><span class="pre">dex_bimanual_example</span></code> — bimanual dexterous hand retargeting</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gripper_</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">example</span></code> — full gripper example with more
 configuration options</p></li>
 </ul>
 </section>

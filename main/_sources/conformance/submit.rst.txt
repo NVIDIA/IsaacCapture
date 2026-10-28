@@ -20,31 +20,36 @@ integration pull request. You can submit any verdict, as long as its report goes
 Open the pull request that adds your device (:doc:`/device/add_device`,
 :doc:`/development/contributing`). Each form submission refers to that pull request.
 
-2. Record and check a take
---------------------------
+2. Record and check one take per suite
+--------------------------------------
 
-Record and check a take with the :doc:`hand`. Takes are never overwritten, so submit the one you
-want reviewed. Record from a commit you have pushed to the pull request, with nothing under
-``src/python/isaaccapture/cts/`` changed. The
+Record and check one take for each suite your device supports: :doc:`hand`, :doc:`full_body`, or
+both. Takes are never overwritten, so submit the one you want reviewed. Record from a commit you
+have pushed to the pull request, with nothing under ``src/python/isaaccapture/cts/`` changed. The
 take records the commit it was recorded at, and the report whether the checker's code was
 modified; we re-run the checker at that commit.
 
 3. Package the take
 -------------------
 
-Keep the four files of the take together and never rename them. Open the take in the viewer:
+Keep the four files of the take together and never rename them. Open the take in the viewer of
+its suite:
 
 .. code-block:: bash
 
+   # Hand
    src/python/isaaccapture/cts/hand/checker/.venv/bin/python -m hand_cts.panel \
        ~/isaaccapture-cts/<take>/<take>-hand.mcap
+   # Full body
+   src/python/isaaccapture/cts/full_body/checker/.venv/bin/python -m full_body_cts.panel \
+       ~/isaaccapture-cts/<take>/<take>-body.mcap
 
 The viewer serves port 8080, or the next free port; open the address it prints and press
 **package for submission** in the **Submission** folder. When the archive is ready, a
-notification in the viewer offers ``<take>-hand.<verdict>.zip`` with its size. Click it to save
-the archive on the computer running the browser, or right-click it and choose **Save link as**
-to pick where. Under the button, the viewer shows the archive's name, size and the first 12
-characters of its SHA-256; you quote them in step 5.
+notification in the viewer offers ``<take>-hand.<verdict>.zip`` or ``<take>-body.<verdict>.zip``
+with its size. Click it to save the archive on the computer running the browser, or right-click it
+and choose **Save link as** to pick where. Under the button, the viewer shows the archive's name,
+size and the first 12 characters of its SHA-256; you quote them in step 5.
 
 .. code-block:: text
 
@@ -71,7 +76,7 @@ Submit the form once for each archive. The form asks you to sign in with a Googl
 5. Describe the take in your pull request
 -----------------------------------------
 
-Add this block to the pull request description:
+Add one block per suite to the pull request description:
 
 .. code-block:: text
 
