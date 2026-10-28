@@ -168,13 +168,10 @@ def _noitom_settings_from_env() -> NoitomG1Settings:
 
 
 def _plugin_search_paths() -> list[Path]:
-    # Six levels up is the repo root.
-    base = Path(__file__).resolve().parents[5]
-    candidates = [
-        base / "plugins",
-        base / "install" / "plugins",
-    ]
-    return [path for path in candidates if path.exists()]
+    # Six levels up is the repo root from a checkout or an editable install; a
+    # regular wheel install puts this file in site-packages and finds nothing.
+    plugins = Path(__file__).resolve().parents[5] / "install" / "plugins"
+    return [plugins] if plugins.exists() else []
 
 
 def _noitom_plugin_configs(settings: NoitomG1Settings) -> list[PluginConfig]:
@@ -183,7 +180,8 @@ def _noitom_plugin_configs(settings: NoitomG1Settings) -> list[PluginConfig]:
     search_paths = _plugin_search_paths()
     if not search_paths:
         raise RuntimeError(
-            "Noitom plugin directory not found. Run `cmake --install build` "
+            "Noitom plugin directory not found. Install this example editable "
+            "(`pip install -e`) from a checkout, run `cmake --install build` there, "
             "or set NOITOM_MOCAP_AUTO_LAUNCH=0 for a manually started plugin."
         )
     return [
@@ -341,7 +339,7 @@ def register_tasks() -> list[str]:
             id=TASK_ID,
             entry_point="isaaclab.envs:ManagerBasedRLEnv",
             kwargs={
-                "env_cfg_entry_point": ("noitom_tasks:NoitomLocomanipulationG1EnvCfg"),
+                "env_cfg_entry_point": f"{__name__}:NoitomLocomanipulationG1EnvCfg",
             },
             disable_env_checker=True,
         )

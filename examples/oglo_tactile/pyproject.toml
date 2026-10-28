@@ -18,11 +18,6 @@ dependencies = [
     "pillow",
 ]
 
-[project.optional-dependencies]
-# The in-headset overlay uploads the heatmap through CUDA; match your CUDA
-# major version. Without it the renderer still writes PNGs.
-gpu = ["cupy-cuda12x"]
-
 # `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a

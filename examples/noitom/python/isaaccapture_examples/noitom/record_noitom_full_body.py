@@ -37,13 +37,10 @@ NOITOM_VENDOR_ID = "body.noitom"
 
 
 def _plugin_search_paths() -> list[Path]:
-    # Six levels up is the repo root.
-    base = Path(__file__).resolve().parents[5]
-    candidates = [
-        base / "plugins",
-        base / "install" / "plugins",
-    ]
-    return [path for path in candidates if path.exists()]
+    # Six levels up is the repo root from a checkout or an editable install; a
+    # regular wheel install puts this file in site-packages and finds nothing.
+    plugins = Path(__file__).resolve().parents[5] / "install" / "plugins"
+    return [plugins] if plugins.exists() else []
 
 
 def _build_pipeline(collection_id: str, max_flatbuffer_size: int) -> OutputCombiner:
@@ -103,8 +100,9 @@ def main(argv: list[str]) -> int:
         search_paths = _plugin_search_paths()
         if not search_paths:
             sys.exit(
-                "[record] error: no installed plugin directory found. "
-                "Run `cmake --install build` or pass `--no-plugin` for a manually "
+                "[record] error: no installed plugin directory found. Install "
+                "this example editable (`uv pip install -e ./examples/noitom`), run "
+                "`cmake --install build`, or pass `--no-plugin` for a manually "
                 "started plugin."
             )
         plugins.append(

@@ -12,12 +12,12 @@ name = "isaaccapture-examples-noitom"
 version = "0.0.0"  # Internal example - not versioned
 description = "Noitom mocap suit examples: retargeting, Isaac Lab task, MCAP recording"
 requires-python = ">=3.11,<3.14"
-# isaaclab and gymnasium are deliberately absent: noitom_tasks.py runs inside an
-# Isaac Lab environment that already provides them, and neither installs from
-# PyPI. Install this example into that interpreter, not a fresh venv.
+# isaaclab and gymnasium are deliberately absent: only noitom_tasks imports them,
+# and it runs inside Isaac Lab's own interpreter, which provides them.
 dependencies = [
-    "isaaccapture",
+    "isaaccapture[cloudxr]",
     "numpy>=1.23.0",
+    "scipy",
 ]
 
 # `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and

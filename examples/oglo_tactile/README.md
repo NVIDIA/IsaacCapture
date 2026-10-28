@@ -31,27 +31,24 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
    ```bash
    sudo apt install libdbus-1-dev          # BlueZ for the BLE plugin
    sudo apt install pkg-config glslang-tools libvulkan-dev   # BUILD_VIZ=ON below
-   uv pip install -e ./examples/oglo_tactile        # heatmap renderer + deps
-   uv pip install -e './examples/oglo_tactile[gpu]'  # adds the CUDA overlay upload
    ```
-   The `gpu` extra is only needed for the in-headset overlay; recording works
-   without it. Match your CUDA major version if you edit the pin.
 
-2. **Build** (plugin + viz + python wheel)
+2. **Build and install** (plugin + viz + python wheel + this example)
 
    ```bash
    cd IsaacTeleop
    cmake -B build -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON
    cmake --build build --parallel
    cmake --install build           # builds the isaaccapture python wheel/package
+   uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
+   uv pip install -e ./examples/oglo_tactile
    ctest --test-dir build -R oglo_packet_parser --output-on-failure   # parser sanity
    ```
    The BLE backend (BlueZ via libdbus, permissive) connects out of the box.
+   CuPy for the in-headset overlay comes with `isaaccapture[cloudxr]`.
 
 3. **Gloves**: confirm both run schema-5 firmware, are charged, and
    advertise `OGLO LEFT` / `OGLO RIGHT` (check with `bluetoothctl scan on`).
-
-4. **CloudXR**: install per the IsaacTeleop Quick Start (`pip install 'isaaccapture[cloudxr]'`).
 
 ---
 
