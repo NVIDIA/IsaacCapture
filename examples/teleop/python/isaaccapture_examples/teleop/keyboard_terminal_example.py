@@ -17,7 +17,7 @@ terminal loses focus.
 Like every TeleopSession it opens an OpenXR session; the CloudXR launcher arguments start a
 runtime, and no headset needs to connect:
 
-    python keyboard_terminal_example.py
+    python -m isaaccapture_examples.teleop.keyboard_terminal_example
 """
 
 import argparse

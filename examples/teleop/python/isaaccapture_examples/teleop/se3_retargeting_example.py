@@ -12,7 +12,7 @@ import argparse
 import sys
 import numpy as np
 
-from _example_loop import add_duration_argument, run_example_loop
+from ._example_loop import add_duration_argument, run_example_loop
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (

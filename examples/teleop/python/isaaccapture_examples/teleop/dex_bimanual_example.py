@@ -4,7 +4,7 @@
 """
 Dex BiManual Retargeting Example
 
-Demonstrates using DexBiManualRetargeter to control two hands simultaneously.
+Drives both hands at once with one DexHandRetargeter per hand.
 """
 
 import sys
@@ -22,7 +22,6 @@ from isaaccapture.retargeters import (
 )
 from isaaccapture.retargeting_engine.interface import OutputCombiner
 from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConfig
-from isaaccapture.retargeting_engine_ui import MultiRetargeterTuningUIImGui
 
 
 def main():
@@ -50,7 +49,9 @@ def main():
         "--right-params", type=str, help="Path to right hand tunable parameters (JSON)"
     )
     parser.add_argument(
-        "--enable-tuning", action="store_true", help="Enable retargeting tuning UI"
+        "--enable-tuning",
+        action="store_true",
+        help="Enable retargeting tuning UI (needs the ui extra)",
     )
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args()
@@ -165,6 +166,9 @@ def main():
 
         # Open the UI using the context manager
         if args.enable_tuning:
+            # Here, not at the top: imgui is the optional `ui` extra.
+            from isaaccapture.retargeting_engine_ui import MultiRetargeterTuningUIImGui
+
             print("Opening Retargeting UI...")
             ui_context = MultiRetargeterTuningUIImGui(
                 retargeters_to_tune, title="Hand Retargeting Tuning"

@@ -463,7 +463,8 @@ Complete Examples
 
    .. code-block:: bash
 
-      python examples/teleop/python/gripper_retargeting_example_simple.py
+      uv pip install -e ./examples/teleop
+      python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Before vs After
 ^^^^^^^^^^^^^^^

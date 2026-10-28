@@ -214,10 +214,12 @@ Run teleop examples against the service
 ---------------------------------------
 
 Nothing to pass. The examples under ``examples/teleop`` attach to
-whatever runtime is serving, so with a service running they use it:
+whatever runtime is serving, so with a service running they use it. Install
+them once from the repository root, as in :ref:`run-teleop-example`:
 
 .. code-block:: bash
 
+   uv pip install -e ./examples/teleop
    python -m isaaccapture.cloudxr.service start --accept-eula
    python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
@@ -237,7 +239,7 @@ configured (for example Monado) or when a host singleton must not be duplicated
 .. code-block:: bash
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
-   python examples/teleop/python/gripper_retargeting_example_simple.py --no-launch-cloudxr-runtime
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
 ------------------------------------

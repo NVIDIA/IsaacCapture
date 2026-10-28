@@ -327,12 +327,14 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
 6. Run a teleop example
 ------------------------
 
-Run the simplified gripper retargeting example. This demonstrates the full
+Install the teleop examples into the environment from step 2, then run the
+simplified gripper retargeting example. This demonstrates the full
 pipeline: reading XR controller input via CloudXR, retargeting it through the
 ``GripperRetargeter``, and printing the resulting gripper command values:
 
 .. code-block:: bash
 
+   uv pip install -e ./examples/teleop
    python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Once running, squeeze the **right controller trigger** to control the gripper.
@@ -360,7 +362,7 @@ chosen duration, measured after session startup, pass ``--duration``:
 
 .. code-block:: bash
 
-   python examples/teleop/python/gripper_retargeting_example_simple.py --duration 20
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --duration 20
 
 ``--duration 0`` also runs until Ctrl+C. Both a timed run and Ctrl+C announce
 that the session is closing, then print ``Session closed.`` after cleanup.
@@ -372,12 +374,13 @@ For proportional controller input, read ``ControllerInputIndex.TRIGGER_VALUE``
 or use ``SO101GripperRetargeter`` for SO-101 jaw closedness in ``[0, 1]``
 (``0`` open, ``1`` closed); see :doc:`../references/retargeting/so101`.
 
-To try other examples, see ``examples/teleop`` — for instance:
+To try other examples, run another module of ``isaaccapture_examples.teleop``
+the same way; :code-file:`examples/teleop/README.md` lists them all. For instance:
 
-- ``se3_retargeting_example.py`` — maps hand or controller poses to
+- ``se3_retargeting_example`` — maps hand or controller poses to
   end-effector poses (absolute or relative), with the same ``--duration`` and Ctrl+C behavior
-- ``dex_bimanual_example.py`` — bimanual dexterous hand retargeting
-- ``gripper_retargeting_example.py`` — full gripper example with more
+- ``dex_bimanual_example`` — bimanual dexterous hand retargeting
+- ``gripper_retargeting_example`` — full gripper example with more
   configuration options
 
 Next steps

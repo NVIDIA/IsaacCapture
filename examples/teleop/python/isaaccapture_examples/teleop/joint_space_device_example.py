@@ -25,13 +25,14 @@ Two modes:
 
 Examples::
 
-    python joint_space_device_example.py --launch-plugin --mode joint --frames 8
-    python joint_space_device_example.py --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
+    python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode joint --frames 8
+    python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
 """
 
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -59,11 +60,19 @@ SO101_JOINTS = [
 
 _COLLECTION_ID = "so101_leader"
 _POSE_LABELS = ["pos_x", "pos_y", "pos_z", "quat_x", "quat_y", "quat_z", "quat_w"]
-_DEFAULT_PLUGIN_BIN = (
-    # Six levels up is the repo root; see PLUGIN_ROOT_DIR in the sibling examples.
-    Path(__file__).resolve().parents[5]
-    / "build/src/plugins/so101_leader/so101_leader_plugin"
-)
+
+
+def _default_plugin_bin() -> str:
+    # Six levels up is the repo root in a checkout or editable install. A wheel
+    # install puts this file in site-packages, where neither path exists.
+    root = Path(__file__).resolve().parents[5]
+    for cand in (
+        root / "build/src/plugins/so101_leader/so101_leader_plugin",
+        root / "install/plugins/so101_leader/so101_leader_plugin",
+    ):
+        if cand.exists():
+            return str(cand)
+    return "so101_leader_plugin"  # rely on PATH
 
 
 def build_pipeline(
@@ -202,8 +211,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--plugin-bin",
-        default=str(_DEFAULT_PLUGIN_BIN),
-        help="Path to so101_leader_plugin",
+        default=_default_plugin_bin(),
+        help="Path to so101_leader_plugin, or its name on PATH",
     )
     parser.add_argument(
         "--timeout",
@@ -216,13 +225,15 @@ def main() -> None:
 
     plugin_proc = None
     if args.launch_plugin:
-        if not Path(args.plugin_bin).exists():
+        plugin_bin = shutil.which(args.plugin_bin)
+        if plugin_bin is None:
             raise SystemExit(
-                f"plugin binary not found: {args.plugin_bin} (build it first)"
+                f"plugin binary not found: {args.plugin_bin} "
+                "(build it first, or pass --plugin-bin)"
             )
-        print(f"launching plugin: {args.plugin_bin}")
+        print(f"launching plugin: {plugin_bin}")
         # Empty device_path -> synthetic backend; collection id must match the source.
-        plugin_proc = subprocess.Popen([args.plugin_bin, "", _COLLECTION_ID])
+        plugin_proc = subprocess.Popen([plugin_bin, "", _COLLECTION_ID])
         time.sleep(1.5)  # let it create its OpenXR session and start pushing
     try:
         with CloudXRLauncher.launch_context(args):

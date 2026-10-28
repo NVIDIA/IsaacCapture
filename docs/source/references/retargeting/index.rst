@@ -248,7 +248,7 @@ Available Retargeters
       For a complete hand retargeting example (e.g. ``HandsSource`` + ``DexHandRetargeter`` or
       ``TriHandMotionControllerRetargeter``, connect and compute), see
       ``g1_trihand_retargeting_example.py`` and ``dex_bimanual_example.py`` in the
-      :code-dir:`examples/teleop` directory.
+      :code-dir:`examples/teleop/python/isaaccapture_examples/teleop` directory.
 
 .. dropdown:: LocomotionRootCmdRetargeter
 

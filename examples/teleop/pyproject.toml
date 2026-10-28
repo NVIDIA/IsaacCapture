@@ -13,17 +13,20 @@ version = "0.1.0"
 description = "Isaac Teleop Retargeting Examples"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "isaaccapture[retargeters]",
+    "isaaccapture[cloudxr,retargeters]",
     "glfw>=2.7",  # keyboard_printer_example: the window and its platform constants
 ]
 
-# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
-# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
-# the latter keeps only the last path component and would root the wheel at a
-# bare top-level `teleop/`.
+[project.optional-dependencies]
+# The bimanual examples' --enable-tuning window. Optional because imgui does not
+# install on every supported Python; see README.md.
+ui = ["isaaccapture[ui]"]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# teleop -- see the packaging rules in examples/README.md.
 #
-# config/ lives inside the package: dex_bimanual_example and
-# full_bimanual_reordering_example resolve it from __file__.
+# config/ lives inside the package because the bimanual examples resolve it
+# from __file__, so the YAML and URDF must travel with them.
 [tool.hatch.build.targets.wheel]
 only-include = ["python/isaaccapture_examples/teleop"]
 sources = ["python"]

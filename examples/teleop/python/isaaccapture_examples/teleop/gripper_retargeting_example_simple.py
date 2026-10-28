@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 import isaaccapture.deviceio as deviceio
 
-from _example_loop import add_duration_argument, run_example_loop
+from ._example_loop import add_duration_argument, run_example_loop
 
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.retargeters import (
@@ -28,8 +28,8 @@ from isaaccapture.teleop_session_manager import (
 )
 
 
-# Six levels up is the tree root -- the checkout, or the install prefix
-# when running from install/examples/teleop/.
+# Six levels up is the repo root in a checkout or editable install. It has no
+# plugins/ directory, so this example runs without the synthetic-hands plugin.
 PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
 PLUGIN_NAME = "controller_synthetic_hands"
 PLUGIN_ROOT_ID = "synthetic_hands"
