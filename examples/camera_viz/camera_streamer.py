@@ -29,6 +29,7 @@ from typing import List, Optional
 
 import yaml
 
+import cuda_env
 from pipeline import FrameSource
 from sources import (
     PairedFrameSource,
@@ -269,6 +270,7 @@ def _setup_logging() -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     _setup_logging()
+    cuda_env.apply_recorded_cuda_path()
 
     parser = argparse.ArgumentParser(
         description="camera_streamer — RTP H.264 sender (per-camera supervisor)"

@@ -13,8 +13,8 @@ works with any CloudXR / OpenXR-compatible HMD.
 
 | Example | What it shows |
 |---------|---------------|
-| `visualize_poses_mujoco_example.py` | HMD + left/right controller as textured mocap bodies. |
-| `visualize_hands_mujoco_example.py`  | Both hands as 26-joint skeletons (spheres + capsule bones), with the HMD as optional context. |
+| `visualize_poses_mujoco_example` | HMD + left/right controller as textured mocap bodies. |
+| `visualize_hands_mujoco_example`  | Both hands as 26-joint skeletons (spheres + capsule bones), with the HMD as optional context. |
 
 ## Prerequisites
 
@@ -24,9 +24,14 @@ Assumes IsaacTeleop is already built and installed in this tree.
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-   On first launch, `uv run` fetches this example's Python dependencies
-   (`mujoco`, `numpy`, `scipy` — see `pyproject.toml`) into an isolated
-   environment.
+   With `isaaccapture` built from this tree already installed in the active
+   environment (for example
+   `uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`),
+   install the example once; this pulls its Python dependencies
+   (`mujoco`, `numpy`, `scipy` — see `pyproject.toml`):
+   ```bash
+   uv pip install -e ./examples/cloudxr_mujoco_teleop
+   ```
 
 2. **CloudXR environment loaded**, so OpenXR resolves to the CloudXR
    runtime. Source the setup script that ships with your CloudXR install:
@@ -41,21 +46,21 @@ limit, no recording.
 
 ## Examples
 
-### `visualize_poses_mujoco_example.py`
+### `visualize_poses_mujoco_example`
 
 HMD + left + right controller, each rendered as a textured mesh mocap body.
 
 ```bash
-uv run visualize_poses_mujoco_example.py
+python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_poses_mujoco_example
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--assets-dir DIR` | `./vive_assets` | Where to find the device meshes / textures. |
+| `--assets-dir DIR` | `vive_assets/` beside the module | Where to find the device meshes / textures. |
 | `--pose {grip,aim}` | `grip` | Which controller pose drives the mesh — natural "hold" pose or the aim ray. |
 | `--debug` | off | Print `mocap_pos` for all three devices once per second. |
 
-### `visualize_hands_mujoco_example.py`
+### `visualize_hands_mujoco_example`
 
 Both hands as 26-joint skeletons drawn directly into `viewer.user_scn` each
 frame (left = cyan, right = warm orange) — avoids paying for 52 mocap bodies
@@ -63,7 +68,7 @@ in the model. The HMD is shown as context using the same mesh + texture as
 the poses example.
 
 ```bash
-uv run visualize_hands_mujoco_example.py
+python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_hands_mujoco_example
 ```
 
 | Flag | Default | Description |
@@ -81,9 +86,6 @@ HMD will be visible.
   headset position every frame, so zoom always converges on the head.
 - **Left-click drag** — orbit around the headset.
 - **Right-click drag** — pan (the next frame's auto-recentre snaps back).
-- `[` / `]` — cycle cameras: `free` → fixed cameras (the poses example
-  also ships `play_area` and a `follow_head` camera that rides behind/above
-  the HMD via `mode="trackcom"`).
 - Side panels are hidden by default; press `Tab` to toggle them back if you
   need MuJoCo's built-in inspector / rendering options.
 
@@ -92,16 +94,18 @@ HMD will be visible.
 ```
 cloudxr_mujoco_teleop/
 ├── README.md
-├── pyproject.toml                            # uv dependency declaration
-├── visualize_poses_mujoco_example.py
-├── visualize_hands_mujoco_example.py
-└── vive_assets/
-    ├── generic_hmd.obj                       # HMD mesh (~500 KB)
-    ├── generic_hmd_color.png                 # HMD texture
-    ├── vive_focus3_controller_left.obj
-    ├── vive_focus3_controller_left_color.png
-    ├── vive_focus3_controller_right.obj
-    └── vive_focus3_controller_right_color.png
+├── pyproject.toml                            # the distribution
+└── python/isaaccapture_examples/cloudxr_mujoco_teleop/
+    ├── __init__.py
+    ├── visualize_poses_mujoco_example.py
+    ├── visualize_hands_mujoco_example.py
+    └── vive_assets/
+        ├── generic_hmd.obj                   # HMD mesh (~500 KB)
+        ├── generic_hmd_color.png             # HMD texture
+        ├── vive_focus3_controller_left.obj
+        ├── vive_focus3_controller_left_color.png
+        ├── vive_focus3_controller_right.obj
+        └── vive_focus3_controller_right_color.png
 ```
 
 The bundled meshes are a generic HMD and the Vive Focus 3 controllers.

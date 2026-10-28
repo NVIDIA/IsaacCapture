@@ -32,6 +32,7 @@ from isaaccapture.cloudxr import CloudXRLauncher
 
 import cloudxr_env
 import config
+import cuda_env
 import display
 from controls import (
     ControllerControls,
@@ -163,6 +164,7 @@ def _render_extent_note(session, entries) -> List[str]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
+    cuda_env.apply_recorded_cuda_path()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)

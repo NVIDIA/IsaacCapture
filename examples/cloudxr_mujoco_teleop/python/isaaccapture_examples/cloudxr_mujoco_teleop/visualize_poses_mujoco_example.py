@@ -30,8 +30,8 @@ Notes for adaptation
 
 Usage
 -----
-    python visualize_poses_mujoco_example.py
-    python visualize_poses_mujoco_example.py --pose aim --debug
+    python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_poses_mujoco_example
+    python -m isaaccapture_examples.cloudxr_mujoco_teleop.visualize_poses_mujoco_example --pose aim --debug
 """
 
 import argparse
@@ -220,7 +220,7 @@ def main() -> int:
         "--assets-dir",
         default=ASSETS_DIR,
         help="Directory holding the device meshes and textures "
-        "(default: ./vive_assets).",
+        "(default: vive_assets/ beside this module).",
     )
     ap.add_argument(
         "--pose",

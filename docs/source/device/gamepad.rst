@@ -86,8 +86,9 @@ and pass the pad's ``/dev/input/event*`` node into a container.
 Build
 -----
 
-Linux only. The plugin builds with the default plugin set and fetches SDL3 (zlib license) at
-configure time, linking it statically with only its joystick and HIDAPI subsystems:
+Linux only. Complete the :doc:`source-build prerequisites </development/build_from_source/index>`
+first. The plugin builds with the default plugin set and fetches SDL3 (zlib license) at configure
+time, linking it statically with only its joystick and HIDAPI subsystems:
 
 .. code-block:: bash
 

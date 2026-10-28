@@ -28,9 +28,12 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 
 1. **System deps**
 
+   Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+   first, then:
+
    ```bash
    sudo apt install libdbus-1-dev          # BlueZ for the BLE plugin
-   sudo apt install pkg-config glslang-tools libvulkan-dev   # BUILD_VIZ=ON below
+   sudo apt install libvulkan-dev          # BUILD_VIZ=ON below; also needs the CUDA toolkit
    ```
 
 2. **Build and install** (plugin + viz + python wheel + this example)
