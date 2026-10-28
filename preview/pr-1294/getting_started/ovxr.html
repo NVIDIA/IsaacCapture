@@ -527,6 +527,26 @@ relying on the selected build.</p>
 environments and lock files. Each can install the same Isaac Capture wheel
 with its own OVXR/OVRTX/OVStage combination.</p>
 </section>
+<section id="session-lifetime">
+<h2>Session lifetime<a class="headerlink" href="#session-lifetime" title="Link to this heading">#</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code> as a context manager, or call <code class="docutils literal notranslate"><span class="pre">close()</span></code> in a <code class="docutils literal notranslate"><span class="pre">finally</span></code>
+block. Stop application steps and input borrowers before closing. Startup failure
+before handles are borrowed retires its resources on the owner thread; successful
+startup requires explicit closure. Do not rely on interpreter exit or object
+finalizers to stop native rendering.</p>
+<p>The session schedules work; its frame pump owns native frame processing and
+retirement, and its runtime owner stops only the CloudXR process it launched.
+Applications may supply <code class="docutils literal notranslate"><span class="pre">runtime_</span><wbr><span class="pre">launcher_</span><wbr><span class="pre">factory</span></code> for a compatible launcher;
+it receives the environment path and <code class="docutils literal notranslate"><span class="pre">accept_eula</span></code> and returns an object with
+<code class="docutils literal notranslate"><span class="pre">stop()</span></code>. Externally managed runtimes remain externally owned.</p>
+<p><code class="docutils literal notranslate"><span class="pre">OvxrScenePublication</span></code> and <code class="docutils literal notranslate"><span class="pre">OvxrResourceOwner</span></code> describe the two parts of the
+application contract. <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> combines them, so existing
+adapters can continue implementing the combined interface.</p>
+<p>If native context destruction fails without proving the context was consumed,
+closure reports the failure and retains its borrowed resources and runtime.
+Do not treat this as successful retirement or start a replacement session over
+those resources. There is no automatic retry of uncertain native destruction.</p>
+</section>
 </section>
 
 
@@ -582,6 +602,7 @@ with its own OVXR/OVRTX/OVStage combination.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-packages-and-licenses">Optional packages and licenses</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-from-another-application">Use from another application</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#application-specific-ovxr-versions">Application-specific OVXR versions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#session-lifetime">Session lifetime</a></li>
 </ul>
   </nav></div>
 
