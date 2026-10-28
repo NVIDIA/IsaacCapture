@@ -9,9 +9,11 @@ Each example reads hands, controllers or a device through `TeleopSession` and
 prints the result; most retarget it first. Each connects through CloudXR and
 starts the runtime itself if none is serving.
 
-Install `isaaccapture` into the active environment first, as in the
-[Quick Start](https://nvidia.github.io/IsaacCapture/main/teleop/quick_start.html),
-then install this example from the repository root:
+Install `isaaccapture` into the active environment first: from your source
+build as in [Running an example](../README.md#running-an-example), or from the
+package index as in the
+[Quick Start](https://nvidia.github.io/IsaacCapture/main/teleop/quick_start.html).
+Then install this example from the repository root:
 
 ```bash
 uv pip install -e ./examples/teleop
@@ -41,7 +43,9 @@ Every module runs the same way, as
 The bimanual examples default to the dex-retargeting YAML and URDF files in
 [`config/dex_retargeting/`](python/isaaccapture_examples/teleop/config/dex_retargeting/),
 which install with the package. Their `--enable-tuning` window needs ImGui from
-the `ui` extra; `imgui` 2.0.0 does not build on Python 3.13:
+the `ui` extra. Of the supported Pythons, `imgui` 2.0.0 has wheels only for
+3.11: on 3.12 it builds from source and needs a C++ toolchain, and on 3.13 it
+does not build at all:
 
 ```bash
 uv pip install -e './examples/teleop[ui]'

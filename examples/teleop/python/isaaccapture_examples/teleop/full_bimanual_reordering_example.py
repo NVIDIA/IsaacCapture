@@ -55,6 +55,15 @@ def main():
     )
     CloudXRLauncher.add_launcher_arguments(parser)
     args = parser.parse_args()
+    # Before the retargeters load and CloudXR starts: imgui is the optional `ui` extra.
+    if args.enable_tuning:
+        try:
+            from isaaccapture.retargeting_engine_ui import MultiRetargeterTuningUIImGui
+        except ImportError:
+            parser.error(
+                "--enable-tuning needs the ui extra: "
+                "uv pip install -e './examples/teleop[ui]'"
+            )
 
     # Config paths (similar to dex_bimanual_example)
     config_dir = Path(__file__).parent / "config" / "dex_retargeting"
@@ -223,9 +232,6 @@ def main():
         ]
 
         if args.enable_tuning:
-            # Here, not at the top: imgui is the optional `ui` extra.
-            from isaaccapture.retargeting_engine_ui import MultiRetargeterTuningUIImGui
-
             print("Opening Retargeting UI...")
             ui_context = MultiRetargeterTuningUIImGui(
                 retargeters_to_tune, title="Full Bimanual Tuning"

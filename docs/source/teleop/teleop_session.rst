@@ -458,8 +458,11 @@ Complete Examples
 
 #. **Simplified Gripper Example**: ``examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py``
    -- Shows the minimal configuration approach and demonstrates auto-creation
-   of input sources. Run it from the project root, with the environment set up
-   as in the :doc:`Quick Start <quick_start>`:
+   of input sources. Install ``isaaccapture`` into the active environment first:
+   from your source build as in
+   :doc:`step 4 of Build from source </development/build_from_source/index>`, or
+   from the package index as in the :doc:`Quick Start <quick_start>`. Then install
+   this example from the project root:
 
    .. code-block:: bash
 
