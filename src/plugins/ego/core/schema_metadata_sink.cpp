@@ -33,9 +33,10 @@ public:
     SchemaMetadataSink(const std::vector<StreamConfig>& streams,
                        const std::string& collection_prefix,
                        const std::string& plugin_root_id)
-        // TeleopSession creates DeviceIO before launching plugins; avoid an unbounded HMD wait.
+        // Live publication waits for the runtime's system, as other plugins do. Local
+        // capture's status-only session fails fast instead, so it never blocks recording.
         : session_(std::make_shared<core::OpenXRSession>(
-              "EgoCameraPlugin", core::SchemaPusher::get_required_extensions(), false)),
+              "EgoCameraPlugin", core::SchemaPusher::get_required_extensions(), !collection_prefix.empty())),
           plugin_root_id_(plugin_root_id)
     {
         if (!collection_prefix.empty())
