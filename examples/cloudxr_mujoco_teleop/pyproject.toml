@@ -13,7 +13,7 @@ version = "0.1.0"
 description = "Visualize OpenXR / CloudXR headset + controller poses in MuJoCo."
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "isaaccapture",
+    "isaaccapture[cloudxr]",
     "mujoco>=3.0",
     "numpy>=1.22.2",
     "scipy>=1.10",

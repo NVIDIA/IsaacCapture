@@ -13,7 +13,7 @@ version = "0.0.0"  # Internal examples - not versioned
 description = "Isaac Teleop haptic feedback CLI examples (OpenXR controller)."
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "isaaccapture",
+    "isaaccapture[cloudxr]",
     "numpy>=1.23.0",
 ]
 

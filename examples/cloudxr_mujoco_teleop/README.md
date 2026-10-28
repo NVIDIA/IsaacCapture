@@ -24,7 +24,10 @@ Assumes IsaacTeleop is already built and installed in this tree.
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-   Install the example once; this pulls its Python dependencies
+   With `isaaccapture` built from this tree already installed in the active
+   environment (for example
+   `uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`),
+   install the example once; this pulls its Python dependencies
    (`mujoco`, `numpy`, `scipy` — see `pyproject.toml`):
    ```bash
    uv pip install -e ./examples/cloudxr_mujoco_teleop
@@ -96,6 +99,7 @@ cloudxr_mujoco_teleop/
 ├── README.md
 ├── pyproject.toml                            # the distribution
 └── python/isaaccapture_examples/cloudxr_mujoco_teleop/
+    ├── __init__.py
     ├── visualize_poses_mujoco_example.py
     ├── visualize_hands_mujoco_example.py
     └── vive_assets/
