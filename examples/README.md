@@ -94,8 +94,11 @@ the smallest complete one.
   goes in `[tool.hatch.build]` so the sdist gets it too. Without it the sdist
   takes the whole example directory: tracked media, stray `.mcap` recordings
   and, in an example with its own `.gitignore` (hatchling reads only the
-  nearest one), `uv.lock` and build trees. `sources` stays on the wheel: the
-  sdist must keep the `python/` prefix that the wheel build looks for.
+  nearest one), `uv.lock` and build trees. Files the code reads from the
+  example root, such as teleop_ros2's `configs/`, are therefore not in the
+  sdist: run such an example from the source tree or the install tree.
+  `sources` stays on the wheel: the sdist must keep the `python/` prefix that
+  the wheel build looks for.
 - Keep `[tool.uv.sources]` last in the file. `install_python_example()` strips
   it from the installed copy by matching up to the next `[`, so a block after it
   loses its comments.
