@@ -1144,8 +1144,8 @@ interactively keeps it out of shell history and the command line.</p>
 packages or JetPack CUDA wiring prompt for approval on the robot.</p></li>
 <li><p>Render <code class="docutils literal notranslate"><span class="pre">~/.config/systemd/user/camera-streamer.service</span></code>. <code class="docutils literal notranslate"><span class="pre">--streaming-host</span> <span class="pre">IP</span></code> (or
 <code class="docutils literal notranslate"><span class="pre">STREAMING_HOST</span></code>) injects <code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">IP</span></code> into its <code class="docutils literal notranslate"><span class="pre">ExecStart</span></code> without changing the YAML.</p></li>
-<li><p>Enable lingering once with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">loginctl</span> <span class="pre">enable-linger</span></code>, then enable and start the user
-service with <code class="docutils literal notranslate"><span class="pre">systemctl</span> <span class="pre">--user</span> <span class="pre">enable</span> <span class="pre">--now</span></code>.</p></li>
+<li><p>Enable lingering once with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">loginctl</span> <span class="pre">enable-linger</span></code>, then enable the user service and
+restart it, so a redeploy replaces a streamer that is already running.</p></li>
 </ol>
 <p><code class="docutils literal notranslate"><span class="pre">--no-service</span></code> stops after source sync and dependency installation. In that case,
 <code class="docutils literal notranslate"><span class="pre">--streaming-host</span></code> does not configure a running sender; pass <code class="docutils literal notranslate"><span class="pre">--host</span></code> when starting

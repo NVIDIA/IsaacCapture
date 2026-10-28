@@ -684,8 +684,8 @@ interactively keeps it out of shell history and the command line.
    packages or JetPack CUDA wiring prompt for approval on the robot.
 3. Render ``~/.config/systemd/user/camera-streamer.service``. ``--streaming-host IP`` (or
    ``STREAMING_HOST``) injects ``--host IP`` into its ``ExecStart`` without changing the YAML.
-4. Enable lingering once with ``sudo loginctl enable-linger``, then enable and start the user
-   service with ``systemctl --user enable --now``.
+4. Enable lingering once with ``sudo loginctl enable-linger``, then enable the user service and
+   restart it, so a redeploy replaces a streamer that is already running.
 
 ``--no-service`` stops after source sync and dependency installation. In that case,
 ``--streaming-host`` does not configure a running sender; pass ``--host`` when starting
