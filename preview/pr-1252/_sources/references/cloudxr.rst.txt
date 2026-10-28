@@ -66,7 +66,7 @@ You should see output similar to:
 
    ``python -m isaaccapture.cloudxr`` still works and is equivalent to
    ``python -m isaaccapture.cloudxr.service run``. It warns on startup and is
-   removed in Isaac Teleop 1.7.
+   removed in Isaac Capture 1.7.
 
 Take note of the ``source ~/.cloudxr/run/cloudxr.env`` path in the output. You
 will need it in :ref:`load-cloudxr-environment-variables`.
@@ -276,6 +276,19 @@ container that way.
 Setting ``CI`` skips the interactive pause described under `Configuration`_,
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
+.. _cloudxr-deferred-oob-connect:
+
+Connect the OOB headset after application startup
+-------------------------------------------------
+
+Set ``defer_oob_connect=True`` on ``CloudXRService`` or ``CloudXRLauncher``
+to delay OOB automation and WebSocket signaling. Call ``connect_headset()``
+after the OpenXR session and renderer are ready.
+
+Requires ``setup_oob=True`` and a fixed ``NV_DEVICE_PROFILE`` (not ``auto*``).
+For ``CloudXRLauncher``, also set ``run_embedded=True``. The default ``False``
+keeps immediate connection.
+
 Configuration
 -------------
 
@@ -327,7 +340,7 @@ could be watching — a non-interactive stdin, or ``CI`` set — so container
 entrypoints and automated runs continue immediately rather than waiting.
 
 On Jetson Orin the service already selects the experimental runtime package
-and main-thread join. The following are Isaac Teleop launcher overrides only
+and main-thread join. The following are Isaac Capture launcher overrides only
 (not CloudXR native settings). Export them in the process environment, or add
 them to ``--cloudxr-env-config`` if you need them:
 
@@ -359,6 +372,31 @@ To inspect the active settings after startup:
 
 Troubleshooting
 ---------------
+
+.. _cloudxr-web-client-refresh:
+
+PICO 4 Ultra keeps failing when retrying a connection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After a failed connection, the PICO browser can require a page refresh before
+another attempt works. Clicking **Connect** again without refreshing can keep
+failing.
+
+In the web client's **Troubleshooting** settings, **Auto Refresh on Session End**
+defaults to **Refresh on any session end (including errors)** for the **Pico 4
+Ultra** device profile. This reloads the page after a clean disconnect or a
+connection failure, once any automatic reconnect attempts have been exhausted.
+Other device profiles default to **Never refresh**. You can also choose
+**Refresh on clean session end** to reload only after a clean disconnect.
+Changing this setting switches the device profile to **Custom** and saves your
+choice; selecting a named device profile again restores that profile's defaults.
+Selecting **Custom** preserves the current settings.
+
+The last error message, including its hexadecimal error code when supplied by
+CloudXR, remains visible after automatic or manual refreshes in the same browser
+tab. It clears when a stream connects successfully. This requires browser session
+storage to be available. A restored error does not itself trigger another refresh;
+click **Connect** to retry from the refreshed page.
 
 .. _cloudxr-form-factor-unavailable:
 
