@@ -111,6 +111,7 @@ rsync_to_remote() {
         --exclude='.venv/' \
         --exclude='codec/build/' \
         --exclude='python/isaaccapture_examples/camera_viz/argus/build/' \
+        --exclude='python/isaaccapture_examples/camera_viz/argus/*.so' \
         --exclude='__pycache__/' \
         --exclude='*.pyc' \
         --exclude='.pytest_cache/' \
@@ -261,6 +262,7 @@ cmd_deploy() {
     # anything we don't recognize would land in REMOTE_REST (where the
     # positional CONFIG lives).
     local no_service=false
+    local argus_flag=""
     # ``--streaming-host`` → injected as ``--host`` on the streamer's
     # CLI inside the rendered systemd unit. Lets you keep the YAML at
     # 127.0.0.1 for loopback and override only when deploying to a robot.
@@ -269,6 +271,7 @@ cmd_deploy() {
     while (( $# )); do
         case $1 in
             --no-service)     no_service=true; shift;;
+            --with-argus)     argus_flag=" --with-argus"; shift;;
             --streaming-host) streaming_host=$2; shift 2;;
             *)                filtered+=("$1"); shift;;
         esac
@@ -277,7 +280,7 @@ cmd_deploy() {
 
     parse_remote_args "$@"
     [[ "${#REMOTE_REST[@]}" -eq 1 ]] || {
-        log_error "usage: camera_viz.sh deploy --host H --user U [--password P] [--no-service] CONFIG"
+        log_error "usage: camera_viz.sh deploy --host H --user U [--password P] [--no-service] [--with-argus] CONFIG"
         exit 1
     }
     local config="${REMOTE_REST[0]}"
@@ -301,7 +304,7 @@ cmd_deploy() {
     # cupy loader needs. If the Jetson is missing system packages /
     # symlinks, _install_deps.sh prompts on the TTY (ssh -t) and either
     # runs the sudo commands after the operator types ``y`` or aborts.
-    ssh_run_tty "cd $REMOTE_DIR && bash scripts/_install_deps.sh --sender-only --jetson"
+    ssh_run_tty "cd $REMOTE_DIR && bash scripts/_install_deps.sh --sender-only --jetson$argus_flag"
     log_ok "deps installed"
 
     if $no_service; then
@@ -398,7 +401,7 @@ cmd_service_restart() {
 # ──────────────────────────────────────────────────────────────────────
 
 show_help() {
-    cat <<EOF
+    cat <<'EOF'
 camera_viz.sh — local development + Jetson deployment for camera_viz
 
 LOCAL
@@ -448,11 +451,13 @@ LOCAL
 
 REMOTE (Jetson robot)
     deploy [--host H --user U [--password P]]
-           [--streaming-host IP] [--no-service] CONFIG
+           [--streaming-host IP] [--no-service] [--with-argus] CONFIG
                           rsync source, install deps, install + start
                           systemd user service running the streamer.
                           --no-service stops after deps so you can run
                           the streamer by hand first.
+                          --with-argus builds the optional Argus source
+                          on the robot during dependency installation.
                           --streaming-host injects ``--host IP`` into the
                           unit's ExecStart so the sender streams there
                           regardless of streaming.host in the YAML. Same

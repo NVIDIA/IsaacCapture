@@ -724,8 +724,9 @@ interactively keeps it out of shell history and the command line.
 ``deploy`` performs these steps:
 
 1. Sync the example to ``~/camera_viz`` on the robot with ``rsync``.
-2. Run ``scripts/_install_deps.sh --sender-only --jetson`` through ``ssh -t``. Missing system
-   packages or JetPack CUDA wiring prompt for approval on the robot.
+2. Run ``scripts/_install_deps.sh --sender-only --jetson`` through ``ssh -t``. Add
+   ``--with-argus`` to ``deploy`` to build the Argus source on the robot. Missing system packages
+   or JetPack CUDA wiring prompt for approval on the robot.
 3. Render ``~/.config/systemd/user/camera-streamer.service``. ``--streaming-host IP`` (or
    ``STREAMING_HOST``) injects ``--host IP`` into its ``ExecStart`` without changing the YAML.
 4. Enable lingering once with ``sudo loginctl enable-linger``, then enable the user service and

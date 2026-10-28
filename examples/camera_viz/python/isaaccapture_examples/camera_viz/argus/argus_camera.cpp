@@ -669,6 +669,8 @@ bool ArgusCamera::acquire(StreamState& stream, AcquiredFrame& out)
         return false;
     }
     const uint32_t timeout_us = acquire_timeout_us(config_.acquire_timeout_ms);
+    // The nonblocking conversion stream must also order frame acquisition and release.
+    out.stream = convert_stream_;
     CUresult result = cuEGLStreamConsumerAcquireFrame(&stream.connection, &out.resource, &out.stream, timeout_us);
     if (is_acquire_timeout(result))
     {
