@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=96a32199"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -348,10 +348,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
@@ -374,17 +370,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../device/trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../build.html">Build System</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Retargeting Interface</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="sharpa.html">Retargeter: Manus to Sharpa</a></li>
@@ -521,7 +513,7 @@ left-composed, a hand rotation about base Z maps to an EE rotation about base Z.
 <p>The controller stream reaching <code class="docutils literal notranslate"><span class="pre">SO101ClutchRetargeter</span></code> must already be expressed in the robot
 <strong>base</strong> frame. In Isaac Lab the <code class="docutils literal notranslate"><span class="pre">IsaacTeleopDevice</span></code> rebases it upstream via its
 <code class="docutils literal notranslate"><span class="pre">target_frame_prim_path</span></code> (set to the robot base), composing <code class="docutils literal notranslate"><span class="pre">base_T_world</span></code> onto the XR anchor
-before the controllers are transformed; standalone graphs use <code class="docutils literal notranslate"><span class="pre">ControllersSource.</span><wbr><span class="pre">transformed</span></code>.
+before the controllers are transformed; standalone graphs use <code class="docutils literal notranslate"><span class="pre">ControllersSource.transformed</span></code>.
 The clutch applies the delta directly, with no world-&gt;base rotation of its own.</p>
 <p>Under an upstream rigid rebase <code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">-&gt;</span> <span class="pre">R</span> <span class="pre">&#64;</span> <span class="pre">p</span> <span class="pre">+</span> <span class="pre">t</span></code> the rebase’s translation <code class="docutils literal notranslate"><span class="pre">t</span></code> cancels exactly
 in <code class="docutils literal notranslate"><span class="pre">grip_pos</span> <span class="pre">-</span> <span class="pre">origin_pos</span></code>. Its rotation <code class="docutils literal notranslate"><span class="pre">R</span></code> does not: it rotates the translation delta and
@@ -560,21 +552,21 @@ normalize to a unit quaternion and command a quietly wrong orientation, so it is
 construction.</p>
 <p>Home latching on each engage is deliberately <strong>asymmetric</strong>: the home <em>position</em> comes from the
 arm’s measured pose when
-<code class="xref py py-data docutils literal notranslate"><span class="pre">MEASURED_</span><wbr><span class="pre">BASE_</span><wbr><span class="pre">T_</span><wbr><span class="pre">EE_</span><wbr><span class="pre">INPUT</span></code> is connected (so
+<code class="xref py py-data docutils literal notranslate"><span class="pre">MEASURED_BASE_T_EE_INPUT</span></code> is connected (so
 an arm that sagged while disengaged is not snapped back to a stale command), while the home
 <em>orientation</em> is always the last commanded rotation. The 5-DOF wrist tracks orientation only
 softly, so latching the measured orientation would inject that tracking offset into the command on
 every re-clutch.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p>The consequence is that <code class="docutils literal notranslate"><span class="pre">MEASURED_</span><wbr><span class="pre">BASE_</span><wbr><span class="pre">T_</span><wbr><span class="pre">EE_</span><wbr><span class="pre">INPUT</span></code> <strong>cannot deliver rotation</strong>. An owner
+<p>The consequence is that <code class="docutils literal notranslate"><span class="pre">MEASURED_BASE_T_EE_INPUT</span></code> <strong>cannot deliver rotation</strong>. An owner
 whose arm has rotated away from the configured home engages at the measured position and the
 <em>stale</em> orientation – see the attribute’s own documentation for the measured figure. When the
 arm’s achieved rotation is what must be engaged against,
 <code class="xref py py-meth docutils literal notranslate"><span class="pre">set_home_base_T_ee()</span></code> is not the preferred
 route, it is the only one: it reads both blocks.</p>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">MEASURED_</span><wbr><span class="pre">BASE_</span><wbr><span class="pre">T_</span><wbr><span class="pre">EE_</span><wbr><span class="pre">INPUT</span></code> is declared <code class="docutils literal notranslate"><span class="pre">OptionalType</span></code> and a consumer <strong>may omit it entirely</strong>
+<p><code class="docutils literal notranslate"><span class="pre">MEASURED_BASE_T_EE_INPUT</span></code> is declared <code class="docutils literal notranslate"><span class="pre">OptionalType</span></code> and a consumer <strong>may omit it entirely</strong>
 from <code class="docutils literal notranslate"><span class="pre">connect()</span></code> – optional inputs are exempt from the missing-input check. A consumer whose
 owning task slews the arm to a known configured home (Isaac Lab) legitimately leaves it unwired
 and rides the last-commanded fallback; that is a designed path, not degraded mode, so it is
@@ -596,7 +588,7 @@ existing consumer is unaffected.</p>
 <p>It is an <strong>enable precondition, not a safety-rated stop</strong>. Denial does not disengage and does not
 re-arm anything; it holds the pending latch until a permitted frame arrives, and the latch then
 fires against <em>that</em> frame’s controller pose, not the one it was first squeezed at. The same
-<code class="docutils literal notranslate"><span class="pre">ValueInput</span></code>-leaf rule as <code class="docutils literal notranslate"><span class="pre">MEASURED_</span><wbr><span class="pre">BASE_</span><wbr><span class="pre">T_</span><wbr><span class="pre">EE_</span><wbr><span class="pre">INPUT</span></code> applies: a producer that wires it must
+<code class="docutils literal notranslate"><span class="pre">ValueInput</span></code>-leaf rule as <code class="docutils literal notranslate"><span class="pre">MEASURED_BASE_T_EE_INPUT</span></code> applies: a producer that wires it must
 send the key on every step.</p>
 <p>The motivating consumer is <code class="docutils literal notranslate"><span class="pre">examples/robot_viz</span></code>, whose owner shows the operator an SO-101
 follower before engaging and withholds permission until the operator’s wrist is turned the way

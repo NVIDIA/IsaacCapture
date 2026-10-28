@@ -33,8 +33,6 @@ Prerequisites
 -------------
 - **Linux** — x86_64 (tested on Ubuntu 22.04 / 24.04).
 - **Haptikos API** for Linux.
-- **Source-build prerequisites** — the toolchain and system packages in
-  :doc:`/development/build_from_source/index`.
 
 
 Quick Start

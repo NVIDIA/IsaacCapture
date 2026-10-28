@@ -40,31 +40,15 @@ to clone the repository for a couple quick samples to run.
    replaces the legacy package and keeps old imports working temporarily.
    See :doc:`/development/migration`.
 
-Install the package into a virtual environment. Without one, ``pip install`` fails on Ubuntu 24.04
-with ``externally-managed-environment`` and ``uv pip install`` with ``No virtual environment
-found``. In a new terminal, from the repository root, create and activate one with
-`uv <https://docs.astral.sh/uv/>`__, which downloads the requested Python if the system lacks it
-(Python 3.11 to 3.13 are supported). If ``uv`` is missing, install it first as shown in
-:ref:`one-time-setup`.
+In a new terminal, activate your preferred virtual or conda environment, then install the latest
+stable release from PyPI:
 
 .. code-block:: bash
 
-   # --seed adds pip, so plain pip install also works in this venv.
-   uv venv --python 3.11 --seed .venv
-   source .venv/bin/activate
-
-To use an existing venv, or a conda environment other than ``base`` (``uv`` treats ``base`` as a
-system Python), activate it and skip ``uv venv``. Activate the environment again in every new
-terminal you use for the steps below.
-
-Install the latest stable release from PyPI:
-
-.. code-block:: bash
-
-   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+   pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions:
+and an opt-in to pre-release versions — shown here with `uv <https://docs.astral.sh/uv/>`__:
 
 .. code-block:: bash
 
@@ -291,11 +275,6 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    3. Click **Connect** to begin teleoperation.
 
    .. note::
-      On PICO 4 Ultra, the web client refreshes after session ends and connection
-      failures by default, keeping the last error visible until a stream connects.
-      See :ref:`web client refresh troubleshooting <cloudxr-web-client-refresh>`
-      for refresh settings and retry behavior.
-
       For advanced usage and troubleshooting of CloudXR, see the `CloudXR documentation`_ for more
       details.
 

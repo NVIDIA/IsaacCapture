@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Device Conformance Testing" href="../conformance/overview.html" />
-    <link rel="prev" title="VIVE Ultimate Tracker" href="trackers/vive_ultimate_tracker.html" />
+    <link rel="next" title="System Requirements" href="../references/requirements.html" />
+    <link rel="prev" title="Spatial Trackers and Device Data" href="trackers.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -348,10 +348,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -374,17 +370,13 @@
 <li class="toctree-l1"><a class="reference internal" href="cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -541,9 +533,6 @@ which uses <code class="docutils literal notranslate"><span class="pre">SchemaPu
 <code class="docutils literal notranslate"><span class="pre">Pack()</span></code>, then call <code class="docutils literal notranslate"><span class="pre">pusher_.push_buffer(ptr,</span> <span class="pre">size,</span> <span class="pre">sample_time_local_common_clock_ns,</span>
 <span class="pre">sample_time_raw_device_clock_ns)</span></code>. Use a monotonic clock (e.g. <code class="docutils literal notranslate"><span class="pre">core::os_monotonic_now_ns()</span></code>)
 for the local common clock; use the device’s own clock for the raw device clock if available.</p></li>
-<li><p><strong>Shutdown</strong> — To stop a plugin, the plugin manager sends <code class="docutils literal notranslate"><span class="pre">SIGINT</span></code> and kills the process if
-it is still running 2 seconds later. A plugin that needs longer to close its files sets
-<code class="docutils literal notranslate"><span class="pre">shutdown_</span><wbr><span class="pre">timeout_</span><wbr><span class="pre">seconds</span></code> (greater than 0, at most 3600) in its <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>.</p></li>
 </ul>
 <p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
 <code class="docutils literal notranslate"><span class="pre">core::SchemaPusher</span></code> member, opens the Linux joystick device, maps axes to
@@ -573,8 +562,6 @@ MCAP channel names, and class names; override only genuine exceptions (<code cla
 <code class="docutils literal notranslate"><span class="pre">HapticCommandPushTracker</span></code>). Cross-process <strong>consumers</strong> that bucket multiple
 <code class="docutils literal notranslate"><span class="pre">HapticCommand.endpoint</span></code> samples on one collection (e.g. <code class="docutils literal notranslate"><span class="pre">HapticCommandReaderTracker</span></code> for Manus
 haptics) stay hand-written — see <a class="reference internal" href="../references/generated_trackers.html"><span class="doc">Generated Tracker Code</span></a>.</p>
-<p>A device that describes itself once (a layout, a calibration) rather than in every frame declares
-that description as the tracker’s <code class="docutils literal notranslate"><span class="pre">metadata</span></code>; see <a class="reference internal" href="../references/generated_trackers.html#tracker-metadata"><span class="std std-ref">Trackers with metadata</span></a>.</p>
 <p>For what the generator emits, which trackers it covers today, and which shapes are not supported
 yet, see <a class="reference internal" href="../references/generated_trackers.html"><span class="doc">Generated Tracker Code</span></a>.</p>
 <p>Diagnose surprising defaults with:</p>
@@ -626,12 +613,12 @@ samples, writes each of them to MCAP when channels are attached, and publishes t
 one. A tick with no new samples leaves the last-known handle in place; an absent
 collection empties it.</p></li>
 <li><p><strong>get_data()</strong> — Return the published handle. See
-<a class="reference internal" href="trackers/index.html#data-schema-convention"><span class="std std-ref">Reading a payload</span></a> for what a consumer may assume about it.</p></li>
+<a class="reference internal" href="trackers.html#data-schema-convention"><span class="std std-ref">Reading a payload</span></a> for what a consumer may assume about it.</p></li>
 </ul>
 <p>Recording needs no per-tracker serialization code: <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> writes through
 <code class="docutils literal notranslate"><span class="pre">McapTrackerChannels</span></code>, which wraps the payload in the Record type with its
 <code class="docutils literal notranslate"><span class="pre">DeviceDataTimestamp</span></code>. It writes two sub-channels, and replay reads only the
-second – see <a class="reference internal" href="trackers/index.html#tracked-sub-channel"><span class="std std-ref">The _tracked recording sub-channel</span></a> before overriding <code class="docutils literal notranslate"><span class="pre">mcap_channels</span></code> in a
+second – see <a class="reference internal" href="trackers.html#tracked-sub-channel"><span class="std std-ref">The _tracked recording sub-channel</span></a> before overriding <code class="docutils literal notranslate"><span class="pre">mcap_channels</span></code> in a
 manifest entry.</p>
 <p>Reference implementation — generated <code class="docutils literal notranslate"><span class="pre">SchemaTracker</span></code> reader and a hand-written OpenXR
 locate tracker:</p>
@@ -719,10 +706,6 @@ trackers during the update loop.</p></li>
 </ul>
 <p>For the shared library build and contribution workflow, see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> and <a class="reference internal" href="../development/contributing.html"><span class="doc">Contributing</span></a>.</p>
-<div class="admonition seealso">
-<p class="admonition-title">See also</p>
-<p>Once your device publishes hand poses, prove it with <a class="reference internal" href="../conformance/overview.html"><span class="doc">Device Conformance Testing</span></a>.</p>
-</div>
 </section>
 </section>
 
@@ -737,20 +720,20 @@ trackers during the update loop.</p></li>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="trackers/vive_ultimate_tracker.html"
+       href="trackers.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">VIVE Ultimate Tracker</p>
+        <p class="prev-next-title">Spatial Trackers and Device Data</p>
       </div>
     </a>
     <a class="right-next"
-       href="../conformance/overview.html"
+       href="../references/requirements.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Device Conformance Testing</p>
+        <p class="prev-next-title">System Requirements</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

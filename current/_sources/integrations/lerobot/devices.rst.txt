@@ -101,7 +101,7 @@ Learn more
 
 For the device and retargeting internals behind these flows, see the Isaac Teleop references:
 
-- :doc:`/device/trackers/index` — the device interface (trackers).
+- :doc:`/device/trackers` — the device interface (trackers).
 - :doc:`/device/add_device` — the device plugin model.
 - :doc:`/device/joint_space/index` — the SO-101 leader (joint-space) device and its plugin.
 - :doc:`/references/retargeting/index` — the retargeting interface.

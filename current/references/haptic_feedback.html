@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -64,7 +64,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -314,7 +314,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -347,10 +347,6 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -373,17 +369,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="build.html">Build System</a></li>
-<li class="toctree-l1"><a class="reference internal" href="sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -468,8 +460,8 @@ graph outputs and writes them <em>out</em> to a device after the graph runs.</p>
 <li><p><strong>Device-side schemas</strong> (<code class="docutils literal notranslate"><span class="pre">TensorGroupType</span></code>) describe what a device consumes.
 <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code> carries <code class="docutils literal notranslate"><span class="pre">[amplitude,</span> <span class="pre">frequency_hz,</span> <span class="pre">duration_s]</span></code>;
 <code class="docutils literal notranslate"><span class="pre">EndEffectorForce</span></code> carries a 3-DoF force for future grounded devices. They
-live in <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">engine.</span><wbr><span class="pre">tensor_</span><wbr><span class="pre">types</span></code>.</p></li>
-<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">retargeters.</span><wbr><span class="pre">tactile_</span><wbr><span class="pre">retargeters</span></code> map
+live in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeting_engine.tensor_types</span></code>.</p></li>
+<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeters.tactile_retargeters</span></code> map
 sim-side tactile data (a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code> / <code class="docutils literal notranslate"><span class="pre">TactileHeatmap</span></code>) to a
 device-side schema — e.g. <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code>.</p></li>
 <li><p><strong>HapticSink</strong> (<code class="docutils literal notranslate"><span class="pre">IDeviceIOSink</span></code>) is the vendor-neutral output node. It stores
@@ -479,7 +471,7 @@ device after the graph, with the active session in scope. Register it with
 <li><p><strong>IHapticDevice</strong> is the vendor adapter. <code class="docutils literal notranslate"><span class="pre">ControllerHapticDevice</span></code> is the
 in-process reference; it drives the controller’s vibration actuator through the
 same <code class="docutils literal notranslate"><span class="pre">ControllerTracker</span></code> that <code class="docutils literal notranslate"><span class="pre">ControllersSource</span></code> reads on the input side
-(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">left_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">right_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code>).
+(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_left_haptic_feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_right_haptic_feedback</span></code>).
 OpenXR specifics stay in the live tracker layer, so the device, sink, and schema
 are runtime-neutral.</p></li>
 </ul>
@@ -494,7 +486,7 @@ are runtime-neutral.</p></li>
 </section>
 <section id="example">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Example</a><a class="headerlink" href="#example" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">controller_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">example</span></code> in <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback</span></code> is the minimal
+<p><code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python/controller_haptic_example.py</span></code> is the minimal
 end-to-end wiring: pull a controller’s trigger and that <strong>same</strong> controller
 rumbles. <code class="docutils literal notranslate"><span class="pre">TriggerToTactile</span></code> turns the trigger value into a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code>,
 <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code> turns that into a <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code>,
@@ -509,12 +501,9 @@ a single controller tracker and there is no OpenXR action-set contention.</p>
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Running</a><a class="headerlink" href="#running" title="Link to this heading">#</a></h2>
 <p>The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see <a class="reference internal" href="cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> to manage
-that service yourself). Install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> built from this tree into the
-active environment first, for example
-<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;isaaccapture[cloudxr]&quot;</span> <span class="pre">--find-links=./install/wheels/</span></code>.
-Then install the example and run it:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/haptic_feedback
-python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.haptic_feedback.controller_haptic_example
+that service yourself). Run it from the <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python</span></code>
+directory:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>controller_haptic_example.py
 </pre></div>
 </div>
 <p>No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
@@ -536,7 +525,7 @@ foundation.</p>
 <section id="see-also">
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">See also</a><a class="headerlink" href="#see-also" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p>Example + tests: <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/</span></code> and
+<li><p>Example + tests: <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python/</span></code> and
 <code class="docutils literal notranslate"><span class="pre">tests/python/core/retargeting_engine/test_haptic_devices.py</span></code> /
 <code class="docutils literal notranslate"><span class="pre">test_haptic_sink.py</span></code>.</p></li>
 </ul>

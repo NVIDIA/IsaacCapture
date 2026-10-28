@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=96a32199"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="EgoHand" href="../ego_post_processing/egohand.html" />
+    <link rel="next" title="Build from Source" href="../development/build_from_source/index.html" />
     <link rel="prev" title="Teleop Session" href="teleop_session.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.6.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -348,10 +348,6 @@
 <li class="toctree-l1"><a class="reference internal" href="teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Teleop Control State Machine</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
-</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
@@ -374,17 +370,13 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -458,11 +450,11 @@ this output contract:</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">reset_event</span></code>: bool pulse</p></li>
 </ul>
 <p>When provided, <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> decodes these outputs into
-<code class="docutils literal notranslate"><span class="pre">ComputeContext.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events</span></code> so downstream retargeters and high-level app
+<code class="docutils literal notranslate"><span class="pre">ComputeContext.execution_events</span></code> so downstream retargeters and high-level app
 logic can read:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">state</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">context.</span><wbr><span class="pre">execution_</span><wbr><span class="pre">events.</span><wbr><span class="pre">reset</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.execution_state</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">context.execution_events.reset</span></code></p></li>
 </ul>
 <p>Isaac Teleop provides <code class="docutils literal notranslate"><span class="pre">DefaultTeleopStateManager</span></code> as a ready-to-use default
 state machine. It should work for most setups, but you can also implement your
@@ -603,11 +595,11 @@ or other high-level behavior:</p>
       </div>
     </a>
     <a class="right-next"
-       href="../ego_post_processing/egohand.html"
+       href="../development/build_from_source/index.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">EgoHand</p>
+        <p class="prev-next-title">Build from Source</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
