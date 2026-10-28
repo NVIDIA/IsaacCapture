@@ -6,6 +6,7 @@
 #include "schema_tracker_base.hpp"
 
 #include <flatbuffers/flatbuffers.h>
+#include <flatbuffers/verifier.h>
 #include <mcap/tracker_channels.hpp>
 #include <schema/serialized.hpp>
 
@@ -14,6 +15,29 @@
 
 namespace core
 {
+
+namespace detail
+{
+
+template <typename DataTableT>
+const DataTableT* verified_flatbuffer_root(const std::vector<uint8_t>& buffer)
+{
+    if (buffer.empty())
+    {
+        return nullptr;
+    }
+
+    // Tensor bytes cross a runtime/process trust boundary. GetRoot() only computes
+    // a pointer, so verify the complete typed buffer before any field access or adoption.
+    flatbuffers::Verifier verifier(buffer.data(), buffer.size());
+    if (!verifier.VerifyBuffer<DataTableT>(nullptr))
+    {
+        return nullptr;
+    }
+    return flatbuffers::GetRoot<DataTableT>(buffer.data());
+}
+
+} // namespace detail
 
 /**
  * @brief Typed SchemaTracker that optionally records to MCAP.
@@ -84,24 +108,31 @@ public:
             return;
         }
 
-        if (mcap_channels_)
+        SampleResult* latest_valid_sample = nullptr;
+        Serialized<RecordT> last_record;
+        for (auto& sample : samples_)
         {
-            Serialized<RecordT> last_record;
-            for (const auto& sample : samples_)
+            const auto* fb = detail::verified_flatbuffer_root<DataTableT>(sample.buffer);
+            if (fb == nullptr)
             {
-                auto fb = flatbuffers::GetRoot<DataTableT>(sample.buffer.data());
-                if (!fb)
-                {
-                    continue;
-                }
-
-                NativeDataT latest;
-                fb->UnPackTo(&latest);
-
-                last_record = pack_record<RecordT>(&latest, sample.timestamp);
-                mcap_channels_->write(mcap_channel_index_, last_record);
+                continue;
             }
 
+            latest_valid_sample = &sample;
+            if (!mcap_channels_)
+            {
+                continue;
+            }
+
+            NativeDataT latest;
+            fb->UnPackTo(&latest);
+
+            last_record = pack_record<RecordT>(&latest, sample.timestamp);
+            mcap_channels_->write(mcap_channel_index_, last_record);
+        }
+
+        if (mcap_channels_)
+        {
             // The tracked channel marks the final sample of the tick, which is the record
             // just written: same payload, same timestamp, so the bytes are identical and
             // this is a second write rather than a second encode. Empty when every sample
@@ -112,10 +143,12 @@ public:
             }
         }
 
-        // Adopt the final sample's bytes rather than copying them: the wire type is the
-        // published type. Each tick owns its own buffer, so a consumer still holding last
-        // tick's handle keeps last tick's values.
-        out = Serialized<DataTableT>::adopt(std::move(samples_.back().buffer));
+        if (latest_valid_sample != nullptr)
+        {
+            // Adopt the final valid sample's bytes rather than copying them. Invalid
+            // samples must not replace the last-known-good value held by the consumer.
+            out = Serialized<DataTableT>::adopt(std::move(latest_valid_sample->buffer));
+        }
     }
 
 private:

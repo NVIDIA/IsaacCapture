@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -18,6 +18,17 @@
 
 namespace core
 {
+
+namespace detail
+{
+
+inline bool is_valid_schema_sample_layout(uint32_t sample_size, uint32_t sample_stride, size_t maximum_size) noexcept
+{
+    return sample_size > 0 && sample_size <= maximum_size && sample_stride >= sample_size &&
+           sample_stride <= maximum_size;
+}
+
+} // namespace detail
 
 /*!
  * @brief Configuration for OpenXR tensor-backed FlatBuffer readers (used by SchemaTracker).

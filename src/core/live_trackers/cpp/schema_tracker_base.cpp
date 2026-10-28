@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "inc/live_trackers/schema_tracker_base.hpp"
@@ -132,12 +132,16 @@ bool SchemaTrackerBase::ensure_collection()
             continue;
         }
 
-        if (coll_props.data.totalSampleSize > m_config.max_flatbuffer_size)
+        // Runtime metadata controls both allocation and copy sizes. Store it only after
+        // validating the complete sample layout against the configured payload limit.
+        if (!detail::is_valid_schema_sample_layout(
+                coll_props.data.totalSampleSize, coll_props.sampleBatchStride, m_config.max_flatbuffer_size))
         {
             throw std::runtime_error(
                 "SchemaTracker: collection '" + m_config.collection_id +
-                "' reports totalSampleSize=" + std::to_string(coll_props.data.totalSampleSize) +
-                " which exceeds configured max_flatbuffer_size=" + std::to_string(m_config.max_flatbuffer_size));
+                "' reports invalid sample layout: totalSampleSize=" + std::to_string(coll_props.data.totalSampleSize) +
+                ", sampleBatchStride=" + std::to_string(coll_props.sampleBatchStride) +
+                ", max_flatbuffer_size=" + std::to_string(m_config.max_flatbuffer_size));
         }
 
         m_sample_batch_stride = coll_props.sampleBatchStride;
