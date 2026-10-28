@@ -77,8 +77,8 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 
 - Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
-- `python/xr_runtime/` — standalone scripts for CloudXR GPU CI, not pytest: no
-  `pyproject.toml` or CTest wiring. `scripts/run_tests_with_cloudxr.sh` lists the
-  ones CI runs; the test image copies the directory flat to `/app/tests`.
+- `tests/python/xr_runtime/` — standalone scripts for CloudXR GPU CI, not pytest:
+  no `pyproject.toml` or CTest wiring. `scripts/run_tests_with_cloudxr.sh` lists
+  the ones CI runs.
 - ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.
 - `scripts/sbom/tests/` — the SBOM collector's tests, run from its own uv project.

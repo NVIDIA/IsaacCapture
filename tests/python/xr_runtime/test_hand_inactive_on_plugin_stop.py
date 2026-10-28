@@ -13,14 +13,15 @@ Test sequence:
 5. Poll for a few seconds and assert that both hands become inactive (data is None).
 """
 
+import argparse
+import sys
 import time
+from pathlib import Path
 
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
 import isaaccapture.plugin_manager as pm
-from install_tree import plugins_dir
-
-PLUGIN_ROOT_DIR = plugins_dir()
+from install_tree import add_plugin_root_argument
 
 ACTIVE_WAIT_S = 15.0  # max time to wait for hands to become active
 INACTIVE_WAIT_S = 5.0  # max time to wait for hands to become inactive after stop
@@ -35,18 +36,18 @@ def poll_hands(hand_tracker, deviceio_session):
     return left is not None, right is not None
 
 
-def run_test():
+def run_test(plugin_root: Path):
     print("=" * 80)
     print("Hand Inactive On Plugin Stop Test")
     print("=" * 80)
     print()
 
-    if not PLUGIN_ROOT_DIR.exists():
-        print(f"✗ Plugin directory not found at {PLUGIN_ROOT_DIR}")
-        print("  Please build and install the project first.")
+    if not plugin_root.exists():
+        print(f"✗ Plugin directory not found at {plugin_root}")
+        print("  Please build and install the project first, or pass --plugin-root.")
         return False
 
-    manager = pm.PluginManager([str(PLUGIN_ROOT_DIR)])
+    manager = pm.PluginManager([str(plugin_root)])
     plugin_name = "controller_synthetic_hands"
     plugin_root_id = "synthetic_hands"
 
@@ -146,6 +147,6 @@ def run_test():
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.exit(0 if run_test() else 1)
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_plugin_root_argument(parser)
+    sys.exit(0 if run_test(parser.parse_args().plugin_root) else 1)

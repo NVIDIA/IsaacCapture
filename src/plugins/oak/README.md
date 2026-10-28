@@ -147,9 +147,14 @@ with TeleopSession(config) as session:
         session.step()  # metadata is recorded each update
 ```
 
-See also `tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher` for a
-standalone PluginManager + DeviceIOSession example of the same SchemaPusher
-flow.
+The test script `tests/python/xr_runtime/test_oak_camera.py` runs the same
+SchemaPusher flow with PluginManager and DeviceIOSession directly. After
+`cmake --install build`, with the CloudXR environment sourced
+(`source ~/.cloudxr/run/cloudxr.env`), run it from the repository root:
+
+```bash
+python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
+```
 
 ## Configuration
 

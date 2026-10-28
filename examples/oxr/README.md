@@ -38,23 +38,36 @@ examples/oxr/
     └── modular_example_with_mcap.py
 ```
 
-The `test_*.py` scripts that CloudXR GPU CI runs against this API are in
-[`tests/python/xr_runtime/`](../../tests/python/xr_runtime/).
+The `test_*.py` scripts in [`tests/python/xr_runtime/`](../../tests/python/xr_runtime/)
+exercise the same API. CloudXR GPU CI runs the ones listed in
+[`scripts/run_tests_with_cloudxr.sh`](../../scripts/run_tests_with_cloudxr.sh).
+To run one by hand, use `python tests/python/xr_runtime/<script>.py` from the
+project root, sourcing the CloudXR environment first as for the C++ examples.
+The scripts that start a plugin look in `install/plugins` after
+`cmake --install build`, or pass `--plugin-root`.
 
 ## Python Examples
 
 ### Running Python Examples
 
-Install `isaaccapture` built from this tree into the active environment
-first, for example
-`uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`.
-Then install the example once and run a module from anywhere:
+Install `isaaccapture` from this build into a virtual environment made with the
+build's Python and activated, as in
+[Build from source, step 4](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package).
+Then, from the project root, with `X.Y` the first two numbers of `VERSION`:
 
 ```bash
+uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 uv pip install -e ./examples/oxr
-export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
 python -m isaaccapture_examples.oxr.modular_example
+python -m isaaccapture_examples.oxr.modular_example_with_mcap   # writes recordings/tracking_recording_<timestamp>.mcap
 ```
+
+Each module attaches to the running CloudXR runtime, or starts one in the
+background and leaves it running; stop it with
+`python -m isaaccapture.cloudxr.service stop`. The first start asks you to
+accept the CloudXR EULA, and `--accept-eula` accepts it without the prompt. To
+use a different OpenXR runtime, set `XR_RUNTIME_JSON` and pass
+`--no-launch-cloudxr-runtime`.
 
 ### Available Python Examples
 
@@ -79,8 +92,12 @@ cmake --install build
 **oxr_session_sharing** - Demonstrates session sharing between multiple DeviceIOSession instances
 **oxr_simple_api_demo** - Demonstrates the simple API
 
+They do not start CloudXR. With the service running
+(`python -m isaaccapture.cloudxr.service start`), source its environment, which
+sets `XR_RUNTIME_JSON`:
+
 ```bash
-export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
+source ~/.cloudxr/run/cloudxr.env
 
 # From build directory
 ./build/examples/oxr/cpp/oxr_session_sharing
@@ -100,10 +117,12 @@ cmake -B build
 cmake --build build
 cmake --install build
 
-# Run Python example
-uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/
+# Run Python example. Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION and
+# X.Y with the first two numbers of VERSION.
+uv venv --python 3.11 --seed .venv
+source .venv/bin/activate
+uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 uv pip install -e ./examples/oxr
-export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
 python -m isaaccapture_examples.oxr.modular_example
 ```
 
@@ -113,8 +132,8 @@ python -m isaaccapture_examples.oxr.modular_example
 cmake -B build
 cmake --build build
 
-# Run C++ example
-export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
+# Run C++ example, with the CloudXR service running
+source ~/.cloudxr/run/cloudxr.env
 ./build/examples/oxr/cpp/oxr_session_sharing
 ```
 

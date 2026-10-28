@@ -13,7 +13,7 @@ Supports three metadata modes (--mode):
 
 Note: Plugin crashes will raise pm.PluginCrashException
       By default, video is saved to the plugin's working directory under ./recordings/
-      MCAP file is saved in the current directory with timestamped filename.
+      The MCAP file is saved under ./recordings/ with a timestamped filename.
 """
 
 import sys
@@ -25,9 +25,7 @@ from pathlib import Path
 import isaaccapture.plugin_manager as pm
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
-from install_tree import plugins_dir
-
-PLUGIN_ROOT_DIR = plugins_dir()
+from install_tree import add_plugin_root_argument
 
 MODE_NO_METADATA = "no-metadata"
 MODE_SCHEMA_PUSHER = "schema-pusher"
@@ -119,21 +117,21 @@ def _run_schema_pusher(
                 print(f"  ✓ {name}: {metadata_samples.get(name, 0)} metadata samples")
 
 
-def run_test(duration: float = 10.0, mode: str = MODE_NO_METADATA):
+def run_test(plugin_root: Path, duration: float = 10.0, mode: str = MODE_NO_METADATA):
     print("=" * 80)
     print(f"OAK Camera Plugin Test  [mode: {mode}]")
     print("=" * 80)
     print()
 
-    if not PLUGIN_ROOT_DIR.exists():
-        print(f"Error: Plugin directory not found at {PLUGIN_ROOT_DIR}")
-        print("Please build and install the project first.")
+    if not plugin_root.exists():
+        print(f"Error: Plugin directory not found at {plugin_root}")
+        print("Please build and install the project first, or pass --plugin-root.")
         return False
 
     # 1. Initialize Plugin Manager
     print("[Step 1] Initializing Plugin Manager...")
-    print(f"  Search path: {PLUGIN_ROOT_DIR}")
-    manager = pm.PluginManager([str(PLUGIN_ROOT_DIR)])
+    print(f"  Search path: {plugin_root}")
+    manager = pm.PluginManager([str(plugin_root)])
 
     plugins = manager.get_plugin_names()
     print(f"  Discovered plugins: {plugins}")
@@ -159,7 +157,9 @@ def run_test(duration: float = 10.0, mode: str = MODE_NO_METADATA):
     stream_names = ["Color", "MonoLeft"]
     collection_prefix = "oak_camera"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mcap_filename = f"camera_metadata_{timestamp}.mcap"
+    mcap_filename = f"recordings/camera_metadata_{timestamp}.mcap"
+    if mode != MODE_NO_METADATA:
+        Path(mcap_filename).parent.mkdir(exist_ok=True)
 
     trackers = {}
     required_extensions = []
@@ -225,7 +225,7 @@ def run_test(duration: float = 10.0, mode: str = MODE_NO_METADATA):
     print()
     print("=" * 80)
     print("Test completed successfully!")
-    recordings_dir = PLUGIN_ROOT_DIR / "oak_camera" / "recordings"
+    recordings_dir = plugin_root / "oak_camera" / "recordings"
     print(f"  Color H.264:    {recordings_dir / Path(color_path).name}")
     print(f"  MonoLeft H.264: {recordings_dir / Path(mono_left_path).name}")
     if mode in (MODE_SCHEMA_PUSHER, MODE_PLUGIN_MCAP):
@@ -255,9 +255,10 @@ def main():
         default=MODE_NO_METADATA,
         help="Metadata mode (default: schema-pusher)",
     )
+    add_plugin_root_argument(parser)
     args = parser.parse_args()
 
-    success = run_test(duration=args.duration, mode=args.mode)
+    success = run_test(args.plugin_root, duration=args.duration, mode=args.mode)
     sys.exit(0 if success else 1)
 
 
