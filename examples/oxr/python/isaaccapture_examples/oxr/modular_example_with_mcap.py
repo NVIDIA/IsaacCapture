@@ -7,14 +7,16 @@ OpenXR Modular Tracking Example with MCAP Recording
 Demonstrates the modular architecture with MCAP data capture:
 - Create independent trackers
 - Add only the trackers you need
-- Record all tracker data to an MCAP file for playback/analysis
-- Pass mcap_filename and mcap_channels to DeviceIOSession.run() to enable recording
+- Record all tracker data to ./recordings/tracking_recording_<timestamp>.mcap
+- Pass a McapRecordingConfig to DeviceIOSession.run() to enable recording
+- Replay the file with ReplaySession, no OpenXR session needed
 """
 
 import argparse
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
 from isaaccapture.cloudxr import CloudXRLauncher
@@ -35,7 +37,8 @@ def main():
 
     # Generate timestamped filename for recording
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mcap_filename = f"tracking_recording_{timestamp}.mcap"
+    mcap_filename = f"recordings/tracking_recording_{timestamp}.mcap"
+    Path(mcap_filename).parent.mkdir(exist_ok=True)
 
     with CloudXRLauncher.launch_context(args):
         # Create trackers independently

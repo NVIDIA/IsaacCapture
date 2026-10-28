@@ -14,35 +14,31 @@ This test:
 Note: Plugin crashes will raise pm.PluginCrashException
 """
 
+import argparse
 import time
 from pathlib import Path
 
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
 import isaaccapture.plugin_manager as pm
-
-# Paths
-# The test will look for plugins in the install directory relative to this script
-# This script is in install/examples/oxr/python
-# Plugins are in install/plugins
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "plugins"
+from install_tree import add_plugin_root_argument
 
 
-def run_test():
+def run_test(plugin_root: Path):
     print("=" * 80)
     print("Controller Synthetic Hands Plugin Test")
     print("=" * 80)
     print()
 
-    if not PLUGIN_ROOT_DIR.exists():
-        print(f"Error: Plugin directory not found at {PLUGIN_ROOT_DIR}")
-        print("Please build and install the project first.")
+    if not plugin_root.exists():
+        print(f"Error: Plugin directory not found at {plugin_root}")
+        print("Please build and install the project first, or pass --plugin-root.")
         return
 
     # 1. Initialize Plugin Manager
     print("[Step 1] Initializing Plugin Manager...")
-    print(f"  Search path: {PLUGIN_ROOT_DIR}")
-    manager = pm.PluginManager([str(PLUGIN_ROOT_DIR)])
+    print(f"  Search path: {plugin_root}")
+    manager = pm.PluginManager([str(plugin_root)])
 
     plugins = manager.get_plugin_names()
     print(f"  Discovered plugins: {plugins}")
@@ -130,4 +126,6 @@ def run_test():
 
 
 if __name__ == "__main__":
-    run_test()
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_plugin_root_argument(parser)
+    run_test(parser.parse_args().plugin_root)

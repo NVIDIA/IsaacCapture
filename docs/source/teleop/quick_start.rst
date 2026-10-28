@@ -291,6 +291,11 @@ running the CloudXR runtime and wss proxy in containerized environment; or using
    3. Click **Connect** to begin teleoperation.
 
    .. note::
+      On PICO 4 Ultra, the web client refreshes after session ends and connection
+      failures by default, keeping the last error visible until a stream connects.
+      See :ref:`web client refresh troubleshooting <cloudxr-web-client-refresh>`
+      for refresh settings and retry behavior.
+
       For advanced usage and troubleshooting of CloudXR, see the `CloudXR documentation`_ for more
       details.
 
