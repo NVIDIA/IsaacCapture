@@ -361,8 +361,10 @@ REMOTE
 )
     ssh_run_tty "$linger_cmd"
 
-    log_step "Enabling + starting service"
-    ssh_run "systemctl --user enable --now ${SERVICE_NAME}.service"
+    # restart, not `enable --now`: a redeploy must replace a streamer that is
+    # already running the previous unit.
+    log_step "Enabling + (re)starting service"
+    ssh_run "systemctl --user enable ${SERVICE_NAME}.service && systemctl --user restart ${SERVICE_NAME}.service"
     log_ok "deployed."
 
     log_info "Tail logs with:   ./camera_viz.sh service-logs --host $REMOTE_HOST --user $REMOTE_USER"
