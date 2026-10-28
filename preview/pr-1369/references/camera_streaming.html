@@ -557,9 +557,15 @@ the choice). It also installs the sample itself there as an editable package, wh
 <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz</span></code> imports. When required system packages are
 missing, it prints the exact <code class="docutils literal notranslate"><span class="pre">apt-get</span></code> line to approve — declining, or a non-interactive run,
 aborts.</p>
-<p>Setup selects CuPy using <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, the toolkit containing <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> on <code class="docutils literal notranslate"><span class="pre">PATH</span></code>, or
-<code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code>, in that order. It checks the loaded NVRTC version and executes a GPU
-kernel before reporting success.</p>
+<p>Setup selects CuPy for the toolkit at <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, if set. Otherwise it takes the first CUDA
+12 or 13 toolkit among those of each <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> on <code class="docutils literal notranslate"><span class="pre">PATH</span></code> and <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code>: first one
+with a version file (<code class="docutils literal notranslate"><span class="pre">version.json</span></code>, <code class="docutils literal notranslate"><span class="pre">version.txt</span></code>, or a <code class="docutils literal notranslate"><span class="pre">cuda-X.Y</span></code> directory), then one
+whose <code class="docutils literal notranslate"><span class="pre">nvcc</span> <span class="pre">--version</span></code> it can read and whose <code class="docutils literal notranslate"><span class="pre">include/</span></code> holds the CUDA headers, such as the
+distro <code class="docutils literal notranslate"><span class="pre">nvidia-cuda-toolkit</span></code> at <code class="docutils literal notranslate"><span class="pre">/usr</span></code>. CuPy finds the headers of that second kind only
+through <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, so setup records it in the venv, and <code class="docutils literal notranslate"><span class="pre">camera_viz.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">camera_streamer.py</span></code> and <code class="docutils literal notranslate"><span class="pre">scripts/check_cuda.py</span></code> set it unless <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code> or
+<code class="docutils literal notranslate"><span class="pre">CUDA_HOME</span></code> already is. Setup checks the loaded NVRTC version and executes a GPU kernel
+before reporting success.</p>
 <p>By default <code class="docutils literal notranslate"><span class="pre">setup</span></code> provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
 needs. Flags trim or extend that:</p>
@@ -1264,8 +1270,8 @@ directory (<code class="docutils literal notranslate"><span class="pre">configs/
 <li><p><strong>A source fails asking for CuPy / CUDA</strong> — check the matching CUDA headers, NVRTC, and
 <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> target (<a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a> on Jetson), then rerun setup.
 <code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> checks driver support, not installed headers. To test GPU execution,
-run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code> and expect <code class="docutils literal notranslate"><span class="pre">[1</span> <span class="pre">2</span> <span class="pre">3</span> <span class="pre">4]</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import cupy as cp; print((cp.arange(4) + 1).get())'</span>
+run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code> and expect <code class="docutils literal notranslate"><span class="pre">CuPy</span> <span class="pre">kernel</span> <span class="pre">check</span> <span class="pre">passed</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>scripts/check_cuda.py
 </pre></div>
 </div>
 </li>
@@ -1323,6 +1329,7 @@ Televiz as the compositor at the end of the chain:</p>
 │   ├── config.py          — YAML parsing and validation
 │   ├── display.py         — VizSession + one layer per surface
 │   ├── cloudxr_env.py     — display.cloudxr → runtime env file
+│   ├── cuda_env.py        — applies the CUDA_PATH setup records
 │   ├── dashboard.py       — terminal status panel
 │   ├── controls/          — XR controller bindings, shapes, stereo geometry, HUD
 │   ├── pipeline/          — source ABC + threaded runner

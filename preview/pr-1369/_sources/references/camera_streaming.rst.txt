@@ -81,9 +81,15 @@ the choice). It also installs the sample itself there as an editable package, wh
 missing, it prints the exact ``apt-get`` line to approve — declining, or a non-interactive run,
 aborts.
 
-Setup selects CuPy using ``CUDA_PATH``, the toolkit containing ``nvcc`` on ``PATH``, or
-``/usr/local/cuda``, in that order. It checks the loaded NVRTC version and executes a GPU
-kernel before reporting success.
+Setup selects CuPy for the toolkit at ``CUDA_PATH``, if set. Otherwise it takes the first CUDA
+12 or 13 toolkit among those of each ``nvcc`` on ``PATH`` and ``/usr/local/cuda``: first one
+with a version file (``version.json``, ``version.txt``, or a ``cuda-X.Y`` directory), then one
+whose ``nvcc --version`` it can read and whose ``include/`` holds the CUDA headers, such as the
+distro ``nvidia-cuda-toolkit`` at ``/usr``. CuPy finds the headers of that second kind only
+through ``CUDA_PATH``, so setup records it in the venv, and ``camera_viz.py``,
+``camera_streamer.py`` and ``scripts/check_cuda.py`` set it unless ``CUDA_PATH`` or
+``CUDA_HOME`` already is. Setup checks the loaded NVRTC version and executes a GPU kernel
+before reporting success.
 
 By default ``setup`` provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
@@ -815,11 +821,11 @@ Troubleshooting
 - **A source fails asking for CuPy / CUDA** — check the matching CUDA headers, NVRTC, and
   ``/usr/local/cuda`` target (:ref:`camera-streaming-jetson-cuda` on Jetson), then rerun setup.
   ``nvidia-smi`` checks driver support, not installed headers. To test GPU execution,
-  run from ``examples/camera_viz`` and expect ``[1 2 3 4]``:
+  run from ``examples/camera_viz`` and expect ``CuPy kernel check passed``:
 
   .. code-block:: bash
 
-     .venv/bin/python -c 'import cupy as cp; print((cp.arange(4) + 1).get())'
+     .venv/bin/python scripts/check_cuda.py
 
 - **Python cannot find dependencies** — use the sample's ``.venv/bin/python``, or select an
   environment with :ref:`setup --venv <camera-streaming-external-venv>`.
@@ -884,6 +890,7 @@ Televiz as the compositor at the end of the chain:
    │   ├── config.py          — YAML parsing and validation
    │   ├── display.py         — VizSession + one layer per surface
    │   ├── cloudxr_env.py     — display.cloudxr → runtime env file
+   │   ├── cuda_env.py        — applies the CUDA_PATH setup records
    │   ├── dashboard.py       — terminal status panel
    │   ├── controls/          — XR controller bindings, shapes, stereo geometry, HUD
    │   ├── pipeline/          — source ABC + threaded runner
