@@ -11,7 +11,7 @@ import time
 
 import zmq
 
-from vehicle_teleop.vehicle_command import VehicleControlCommand, clamp
+from .vehicle_command import VehicleControlCommand, clamp
 
 
 DEFAULT_CONNECT = "tcp://127.0.0.1:5555"

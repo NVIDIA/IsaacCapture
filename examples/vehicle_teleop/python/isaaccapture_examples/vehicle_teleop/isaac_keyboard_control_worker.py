@@ -19,7 +19,7 @@ from isaaccapture.retargeters import (
 )
 from isaaccapture.schema import SteeringWheelOutput
 
-from vehicle_teleop.vehicle_command import (
+from .vehicle_command import (
     VehicleControlCommand,
     clamp,
     isaac_command_to_wire_command,

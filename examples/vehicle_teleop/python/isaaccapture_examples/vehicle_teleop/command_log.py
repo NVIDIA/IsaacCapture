@@ -11,7 +11,7 @@ from typing import BinaryIO, Iterable
 from mcap.reader import make_reader
 from mcap.writer import CompressionType, Writer
 
-from vehicle_teleop.vehicle_command import VehicleControlCommand
+from .vehicle_command import VehicleControlCommand
 
 
 @dataclass(frozen=True)

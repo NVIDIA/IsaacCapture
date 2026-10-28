@@ -26,19 +26,30 @@ cmake --build build --parallel 4
 cmake --install build
 ```
 
-Create the example virtual environment from this directory. The scripts use
-`.venv/bin/python` directly, so keep the virtual environment at
-`examples/vehicle_teleop/.venv`.
+Create the example virtual environment from this directory, and install the
+example into it. The scripts use `.venv/bin/python` directly, so keep the
+virtual environment at `examples/vehicle_teleop/.venv`.
 
 ```bash
 cd examples/vehicle_teleop
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python --find-links ../../build/wheels "isaaccapture[cloudxr]"
 source .venv/bin/activate
-cd python
-uv sync --active --inexact --no-install-project --no-install-package isaaccapture
-cd ..
+uv sync --active --inexact --no-install-package isaaccapture
 ```
+
+The example has no single entry point. Each script in `scripts/` runs one module
+with `.venv/bin/python -m`, so the modules can also be run directly:
+
+| Script | Module |
+| --- | --- |
+| `run_isaac_remote_steering_worker.sh` | `isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker --rate-hz 50` |
+| `run_isaac_keyboard_control_worker.sh` | `isaaccapture_examples.vehicle_teleop.isaac_keyboard_control_worker --rate-hz 50` |
+| `run_panda_worker.sh` | `isaaccapture_examples.vehicle_teleop.panda_worker` |
+| `replay_command_mcap.sh` | `isaaccapture_examples.vehicle_teleop.replay_command_mcap` |
+
+`run_panda_worker.sh` also puts `thirdparty/opendbc` and `thirdparty/panda` on
+`PYTHONPATH`; set that yourself when running the Panda worker module directly.
 
 Clone the vehicle-side dependencies into this example's `thirdparty` directory. These repositories are intentionally not added as git submodules.
 
@@ -126,3 +137,5 @@ If the steering worker cannot find the native plugin, pass `--plugin-binary` exp
 If the worker fails while creating the OpenXR session, confirm that the CloudXR runtime is running, the CloudXR environment has been sourced in the worker terminal, and the OpenXR client is connected.
 
 If the Panda worker cannot import `opendbc` or `panda`, confirm the two dependency repositories were cloned under `examples/vehicle_teleop/thirdparty/`.
+
+If `python -m` reports `No module named 'isaaccapture_examples'`, the example is not installed in that virtual environment. Rerun the `uv sync` step in [Setup](#setup).

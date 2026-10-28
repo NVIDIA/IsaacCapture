@@ -25,8 +25,8 @@ from isaaccapture.retargeters import (
 )
 from isaaccapture.schema import SteeringWheelOutput
 
-from vehicle_teleop.command_log import McapCommandLogger, SteeringWheelSample
-from vehicle_teleop.vehicle_command import (
+from .command_log import McapCommandLogger, SteeringWheelSample
+from .vehicle_command import (
     VehicleControlCommand,
     isaac_command_to_wire_command,
 )
@@ -46,7 +46,9 @@ DEFAULT_AXIS_MAPPING = {
 
 
 def example_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    # Four levels up is the example root, where config/ sits -- in the source
+    # tree and in the install tree alike.
+    return Path(__file__).resolve().parents[3]
 
 
 def default_config_path() -> Path:

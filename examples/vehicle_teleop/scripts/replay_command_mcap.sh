@@ -14,5 +14,5 @@ fi
 
 export PYTHONPATH="${EXAMPLE_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec "${PYTHON}" -m vehicle_teleop.replay_command_mcap \
+exec "${PYTHON}" -m isaaccapture_examples.vehicle_teleop.replay_command_mcap \
     "$@"

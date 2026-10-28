@@ -14,6 +14,6 @@ fi
 
 export PYTHONPATH="${EXAMPLE_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec "${PYTHON}" -m vehicle_teleop.isaac_remote_steering_worker \
+exec "${PYTHON}" -m isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker \
     --rate-hz 50 \
     "$@"
