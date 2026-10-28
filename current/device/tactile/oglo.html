@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -59,13 +59,13 @@
 
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Spatial Trackers and Device Data" href="../trackers.html" />
+    <link rel="next" title="Spatial controllers" href="../spatial_controllers/index.html" />
     <link rel="prev" title="Tactile devices" href="index.html" />
 
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -348,6 +348,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../development/build_from_source/index.html">Build from Source</a></li>
@@ -373,13 +377,17 @@
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">OGLO Tactile Glove Plugin</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -484,7 +492,8 @@ time-synced with the operator’s hand/head tracking.</span><a class="headerlink
 </section>
 <section id="build">
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Build</a><a class="headerlink" href="#build" title="Link to this heading">#</a></h2>
-<p>Linux only (BlueZ). The plugin is off by default.</p>
+<p>Linux only (BlueZ). The plugin is off by default. Complete the
+<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a> first, then:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>libdbus-1-dev<span class="w">          </span><span class="c1"># BlueZ daemon + libdbus for the BLE backend</span>
 cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DBUILD_PLUGIN_OGLO<span class="o">=</span>ON
 cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>oglo_tactile_plugin<span class="w"> </span>--parallel
@@ -517,9 +526,9 @@ legacy schema-4 fallback), so payload sizes are never hardcoded.</p>
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">Recorded data</a><a class="headerlink" href="#recorded-data" title="Link to this heading">#</a></h2>
 <p>The host <code class="docutils literal notranslate"><span class="pre">OgloTactileTracker</span></code> records per hand into channels
 <code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo</span></code> and <code class="docutils literal notranslate"><span class="pre">oglo_&lt;side&gt;/oglo_tracked</span></code>, carrying
-<code class="docutils literal notranslate"><span class="pre">core.OgloGloveSampleRecord</span></code>: <code class="docutils literal notranslate"><span class="pre">seq</span></code>, <code class="docutils literal notranslate"><span class="pre">device_time_us</span></code>, <code class="docutils literal notranslate"><span class="pre">taxels[80]</span></code> (raw
+<code class="docutils literal notranslate"><span class="pre">core.</span><wbr><span class="pre">OgloGloveSampleRecord</span></code>: <code class="docutils literal notranslate"><span class="pre">seq</span></code>, <code class="docutils literal notranslate"><span class="pre">device_time_us</span></code>, <code class="docutils literal notranslate"><span class="pre">taxels[80]</span></code> (raw
 12-bit, <code class="docutils literal notranslate"><span class="pre">finger,row,col</span></code>), and a 6-axis IMU, each with a <code class="docutils literal notranslate"><span class="pre">DeviceDataTimestamp</span></code>
-whose <code class="docutils literal notranslate"><span class="pre">sample_time_local_common_clock</span></code> is on the shared host monotonic clock —
+whose <code class="docutils literal notranslate"><span class="pre">sample_</span><wbr><span class="pre">time_</span><wbr><span class="pre">local_</span><wbr><span class="pre">common_</span><wbr><span class="pre">clock</span></code> is on the shared host monotonic clock —
 so OGLO aligns in time with hand/head streams.</p>
 <p><strong>Naming.</strong> The glove’s identity threads through several layers, but all of them
 derive from the single <code class="docutils literal notranslate"><span class="pre">--collection-prefix</span></code> you pick (<code class="docutils literal notranslate"><span class="pre">oglo</span></code> below), with the
@@ -610,11 +619,11 @@ ctest<span class="w"> </span>--test-dir<span class="w"> </span>build<span class=
       </div>
     </a>
     <a class="right-next"
-       href="../trackers.html"
+       href="../spatial_controllers/index.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Spatial Trackers and Device Data</p>
+        <p class="prev-next-title">Spatial controllers</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

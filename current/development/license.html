@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=96a32199"></script>
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -348,6 +348,10 @@
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="build_from_source/index.html">Build from Source</a></li>
@@ -370,13 +374,17 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -443,6 +451,9 @@
 <section id="known-exceptions">
 <h2>Known exceptions<a class="headerlink" href="#known-exceptions" title="Link to this heading">#</a></h2>
 <ul class="simple">
+<li><p>EgoPost in <code class="docutils literal notranslate"><span class="pre">src/python/isaaccapture_egopost/</span></code> is licensed under
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt" rel="noopener noreferrer" target="_blank">OpenMDW-1.1</a>,
+with explicit third-party exceptions preserved.</p></li>
 <li><p>Certain headers from the <a class="reference external" href="https://github.com/KhronosGroup/OpenXR-SDK" rel="noopener noreferrer" target="_blank">OpenXR SDK</a> or related
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/deps/cloudxr/openxr_extensions" rel="noopener noreferrer" target="_blank">extensions</a>
 are imported from their original source and are licensed under the
@@ -453,18 +464,12 @@ are imported from their original source and are licensed under the
 </section>
 <section id="license-headers">
 <h2>License headers<a class="headerlink" href="#license-headers" title="Link to this heading">#</a></h2>
-<p>We use <a class="reference external" href="https://reuse.software/" rel="noopener noreferrer" target="_blank">REUSE</a> to enforce SPDX license headers on source files.
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/.pre-commit-config.yaml" rel="noopener noreferrer" target="_blank">Pre-commit</a> runs
-<code class="docutils literal notranslate"><span class="pre">reuse</span> <span class="pre">lint-file</span></code> on changed files (e.g. <code class="docutils literal notranslate"><span class="pre">.py</span></code>, <code class="docutils literal notranslate"><span class="pre">.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">.md</span></code>, <code class="docutils literal notranslate"><span class="pre">.yaml</span></code>):</p>
-<ol class="arabic simple">
-<li><p><strong>Required fields</strong>: Each file must have <code class="docutils literal notranslate"><span class="pre">SPDX-FileCopyrightText</span></code> and <code class="docutils literal notranslate"><span class="pre">SPDX-License-Identifier</span></code>.</p></li>
-<li><p><strong>License</strong>: <code class="docutils literal notranslate"><span class="pre">SPDX-License-Identifier</span></code> must be <code class="docutils literal notranslate"><span class="pre">Apache-2.0</span></code> (full text in <code class="docutils literal notranslate"><span class="pre">LICENSES/Apache-2.0.txt</span></code>).</p></li>
-</ol>
-<p>Example header (for Python files):</p>
-<div class="code-100col highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
-<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
-</pre></div>
-</div>
+<p>Pre-commit automatically checks and updates license headers with
+<a class="reference external" href="https://reuse.software/" rel="noopener noreferrer" target="_blank">REUSE</a>. It selects <code class="docutils literal notranslate"><span class="pre">Apache-2.0</span></code> by default and
+<code class="docutils literal notranslate"><span class="pre">LicenseRef-OpenMDW-1.1</span></code> for EgoPost, preserving existing attribution and
+explicit third-party exceptions. Review and stage any automatic edits before
+committing. Checked-in third-party files record upstream’s terms; see <em>What stops
+the Release build</em> in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/scripts/sbom/README.md" rel="noopener noreferrer" target="_blank">scripts/sbom/README.md</a>.</p>
 <p>You can also run <code class="docutils literal notranslate"><span class="pre">reuse</span> <span class="pre">spdx</span> <span class="pre">-o</span> <span class="pre">project.spdx</span></code> to generate an SPDX report for the project.</p>
 </section>
 </section>

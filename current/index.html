@@ -46,7 +46,7 @@
 
 
 
-    <script src="_static/documentation_options.js?v=96a32199"></script>
+    <script src="_static/documentation_options.js?v=e7766bc0"></script>
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -64,7 +64,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.6.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -314,7 +314,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.2-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -347,6 +347,10 @@
 <li class="toctree-l1"><a class="reference internal" href="teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="development/build_from_source/index.html">Build from Source</a></li>
@@ -369,13 +373,17 @@
 <li class="toctree-l1"><a class="reference internal" href="device/cameras/index.html">Cameras</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device/joint_space/index.html">Joint-space devices</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device/tactile/index.html">Tactile devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="references/requirements.html">System Requirements</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="references/sbom.html">Wheel contents SBOM and license evidence</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/generated_trackers.html">Generated Tracker Code</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/retargeting/index.html">Retargeting Interface</a></li>
 <li class="toctree-l1"><a class="reference internal" href="references/device_provider_monitoring.html">Device provider monitoring</a></li>
@@ -413,8 +421,7 @@
                   
   <section id="welcome-to-isaac-capture">
 <h1>Welcome to Isaac Capture<a class="headerlink" href="#welcome-to-isaac-capture" title="Link to this heading">#</a></h1>
-<a class="reference external image-reference" href="development/license.html"><img alt="License" class="license-badge" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" />
-</a>
+<p><a class="reference external" href="development/license.html"><img alt="Default: Apache-2.0" class="license-badge" src="https://img.shields.io/badge/Default-Apache--2.0-blue.svg" /></a> <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt" rel="noopener noreferrer" target="_blank"><img alt="EgoPost: OpenMDW-1.1" class="license-badge" src="https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg" /></a></p>
 <p><strong>NVIDIA Isaac Capture</strong> is a shared library for teleoperation and egocentric data
 capture. It brings device plugins, retargeters, and data utilities together so
 applications can collect and use human demonstration data across robot and
@@ -472,6 +479,24 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l2"><a class="reference internal" href="teleop/control_state_machine.html#default-state-machine-behavior">Default State Machine Behavior</a></li>
 <li class="toctree-l2"><a class="reference internal" href="teleop/control_state_machine.html#connecting-inputs">Connecting Inputs</a></li>
 <li class="toctree-l2"><a class="reference internal" href="teleop/control_state_machine.html#using-context-in-high-level-app-logic">Using Context in High-Level App Logic</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="toctree-wrapper compound">
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="ego_post_processing/egohand.html">EgoHand</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#setup">Setup</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#example">Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#outputs">Outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#hand-reconstruction">Hand Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#d-hand-boxes">2D Hand Boxes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#keypoints-to-soma-converter">Keypoints to SOMA converter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#docker">Docker</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#performance">Performance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#limitations">Limitations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ego_post_processing/egohand.html#license">License</a></li>
 </ul>
 </li>
 </ul>
@@ -550,6 +575,7 @@ headset setup, and your first session. Existing users can consult
 </li>
 <li class="toctree-l1"><a class="reference internal" href="device/cameras/index.html">Cameras</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="device/cameras/oak.html">OAK Camera Plugin</a></li>
+<li class="toctree-l2"><a class="reference internal" href="device/camera/sensing.html">SENSING GMSL Camera</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="device/joint_space/index.html">Joint-space devices</a></li>
@@ -557,8 +583,20 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l2"><a class="reference internal" href="device/tactile/oglo.html">OGLO Tactile Glove Plugin</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="device/trackers.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="device/spatial_controllers/index.html">Spatial controllers</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="device/spatial_controllers/spacemouse.html">SpaceMouse Plugin</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="device/gamepads/index.html">Gamepads</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="device/gamepad.html">Gamepad Plugin</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="device/trackers/index.html">Spatial trackers</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="device/trackers/vive_ultimate_tracker.html">VIVE Ultimate Tracker</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conformance/overview.html">Device Conformance</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
@@ -581,9 +619,16 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l2"><a class="reference internal" href="references/build.html#reference">Reference</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="references/sbom.html">Wheel contents SBOM and license evidence</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="references/sbom.html#what-a-wheel-carries">What a wheel carries</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/sbom.html#evidence-published-with-a-release">Evidence published with a release</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/sbom.html#verifying-a-wheel">Verifying a wheel</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="references/generated_trackers.html">Generated Tracker Code</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#how-it-works">How it works</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#what-each-entry-produces">What each entry produces</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#trackers-with-metadata">Trackers with metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#generated-today">Generated today</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#still-hand-written">Still hand-written</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/generated_trackers.html#future-work">Future work</a></li>
@@ -608,6 +653,7 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l1"><a class="reference internal" href="references/camera_streaming.html">Camera Streaming</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#requirements">Requirements</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#setup">Setup</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#command-overview">Command overview</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#web-client-for-camera-visualization">Web client for camera visualization</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#first-run-a-recording-no-camera-required">First run — a recording, no camera required</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#supported-sources">Supported sources</a></li>
@@ -617,6 +663,7 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#cloudxr-runtime-flags">CloudXR runtime flags</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#split-mode-robot-workstation-over-rtp">Split mode — robot → workstation over RTP</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#configuration">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#status-panel">Status panel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#troubleshooting">Troubleshooting</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#how-it-works">How it works</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/camera_streaming.html#sharing-the-xr-session-with-teleopsession">Sharing the XR session with TeleopSession</a></li>
@@ -640,6 +687,7 @@ headset setup, and your first session. Existing users can consult
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#run-teleop-examples-against-the-service">Run teleop examples against the service</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#use-a-system-openxr-runtime-no-cloudxr-attach">Use a system OpenXR runtime (no CloudXR attach)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#run-the-service-in-a-container-or-ci">Run the service in a container or CI</a></li>
+<li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#connect-the-oob-headset-after-application-startup">Connect the OOB headset after application startup</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#configuration">Configuration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="references/cloudxr.html#troubleshooting">Troubleshooting</a></li>
 </ul>

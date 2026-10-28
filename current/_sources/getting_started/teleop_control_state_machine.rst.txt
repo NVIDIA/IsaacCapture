@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../teleop/control_state_machine.html
+
 Teleop Control State Machine
 ============================
 
