@@ -55,10 +55,8 @@ viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 # Build with its build.sh; ``./camera_viz.sh setup`` does this automatically.
 # Requires CUDA toolkit + NVIDIA driver (libnvidia-encode + libnvcuvid).
 
-# `isaaccapture_examples` is a PEP 420 namespace shared by every example dist and
-# must stay without an __init__.py. `only-include` + `sources`, not `packages`:
-# the latter keeps only the last path component and would root the wheel at a
-# bare top-level `camera_viz/`.
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# camera_viz -- see the packaging rules in examples/README.md.
 #
 # The native codec's .so is built in place by codec/build.sh, so it is picked up
 # from the source tree rather than shipped by this build. Hatchling reads only
