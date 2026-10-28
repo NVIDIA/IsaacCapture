@@ -28,7 +28,7 @@ optional plugin when you need Noitom support:
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON -DISAAC_TELEOP_PYTHON_VERSION=3.12
 cmake --build build --target python_package python_wheel noitom_mocap_plugin --parallel
 cmake --install build
-uv venv --python 3.12 --seed .venv
+uv venv --python 3.12 --seed .venv   # skip if .venv already runs 3.12; --clear switches it (deletes its packages)
 source .venv/bin/activate
 uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 ```
@@ -102,15 +102,7 @@ compatibility shim from your build, which maps `isaacteleop` to
 `isaaccapture`. Isaac Lab pins `isaacteleop~=1.4.145`, so pip may warn about
 that conflict.
 
-pip treats an installed `X.Y+local` as already satisfied, so after a rebuild
-replace it explicitly. `--no-deps` keeps pip from reinstalling Isaac Lab's
-other packages:
-
-```bash
-cd <isaaclab>
-./isaaclab.sh -p -m pip install "isaaccapture==X.Y+local" \
-  --find-links <repo>/install/wheels --force-reinstall --no-deps
-```
+Then launch the task:
 
 ```bash
 cd <isaaclab>
@@ -119,6 +111,16 @@ cd <isaaclab>
   --visualizer kit \
   --xr \
   --external_callback isaaccapture_examples.noitom.noitom_tasks.register_tasks
+```
+
+pip treats an installed `X.Y+local` as already satisfied, so after a rebuild
+replace it explicitly. `--no-deps` keeps pip from reinstalling Isaac Lab's
+other packages:
+
+```bash
+cd <isaaclab>
+./isaaclab.sh -p -m pip install "isaaccapture==X.Y+local" \
+  --find-links <repo>/install/wheels --force-reinstall --no-deps
 ```
 
 For advanced manual plugin control, start the plugin yourself and disable

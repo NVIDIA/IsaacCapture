@@ -370,6 +370,13 @@ differently:
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 
+.. _build-from-source-editable-examples:
+
+An example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout replaces this
+wheel with an editable build of the checkout when you install it. Its first install compiles the
+extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
+``uv pip install -e ./examples/<name> --reinstall-package isaaccapture``.
+
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
 ``import isaacteleop`` resolves without installing anything else. See

@@ -23,14 +23,14 @@ uv pip install -e ./examples/<name>
 python -m isaaccapture_examples.<name>
 ```
 
-Every example runs this way, and its `README.md` gives the exact command. An
-example whose `pyproject.toml` points `[tool.uv.sources]` at this checkout
-replaces that wheel with an editable build of the checkout, and its first
-install compiles the extensions. uv reuses that build, and rebuilding `build/`
-does not reach it, so after a C++ change reinstall such an example with
-`uv pip install -e ./examples/<name> --reinstall-package isaaccapture`.
+Every example runs this way except camera_viz and vehicle_teleop, whose
+wrapper scripts call `.venv/bin/python` inside the example directory; their
+READMEs set up that venv. An example whose `pyproject.toml` points
+`[tool.uv.sources]` at this checkout installs an editable build instead of the
+wheel; [step 4][editable-examples] says how to rebuild it.
 
 [install-step]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#install-the-isaaccapture-pip-package
+[editable-examples]: https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html#build-from-source-editable-examples
 
 An example with one obvious entry point puts it in `__main__.py`, so
 `python -m isaaccapture_examples.<name>` runs it. An example that is several

@@ -202,11 +202,10 @@ Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
 The example never downloads a published wheel — it runs against the
-``isaaccapture`` next to it, built from this checkout.  The first install
-compiles the extension modules and takes a few minutes; later ones reuse the
-cached build, and the install is editable, so edits under ``src/python/`` need
-no rebuild.  After a C++ change, add ``--reinstall-package isaaccapture`` to the
-install to rebuild it.  From ``install/examples/mcap_record_replay`` (after ``cmake
+``isaaccapture`` next to it, built from this checkout.  The install is editable,
+so edits under ``src/python/`` need no rebuild; for C++ changes see
+:ref:`step 4 of Build from source <build-from-source-editable-examples>`.  From
+``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
 :doc:`/development/build_from_source/index`.
 

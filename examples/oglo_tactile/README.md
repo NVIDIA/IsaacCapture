@@ -43,7 +43,7 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
    cmake -B build -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON
    cmake --build build --parallel
    cmake --install build           # builds the isaaccapture python wheel/package
-   uv venv --python 3.11 --seed .venv
+   uv venv --python 3.11 --seed .venv   # skip if .venv already runs 3.11; --clear switches it (deletes its packages)
    source .venv/bin/activate
    uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
    uv pip install -e ./examples/oglo_tactile
