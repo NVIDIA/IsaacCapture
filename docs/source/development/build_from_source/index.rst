@@ -350,6 +350,9 @@ From the repository root:
    uv venv --python 3.11 --seed .venv
    source .venv/bin/activate
 
+If ``.venv`` already exists on the build's Python, activate it and skip ``uv venv``. To switch it
+to another Python, rerun ``uv venv`` with ``--clear``, which deletes everything installed in it.
+
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
 selects your build for the venv's Python, so a newer published ``isaaccapture`` cannot replace it.

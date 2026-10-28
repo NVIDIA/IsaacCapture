@@ -66,7 +66,8 @@ Run the example
 
 The example supports a device-free synthetic pose, recorded keypoints, and a
 real Wuji hand. Install it from the repository root, in a venv set up as in
-:ref:`step 4 of Build from source <build-from-source-install-package>`:
+:ref:`step 4 of Build from source <build-from-source-install-package>`, with
+``wuji`` added to the extras that step installs:
 
 .. code-block:: console
 
