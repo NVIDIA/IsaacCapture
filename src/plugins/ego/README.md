@@ -242,8 +242,10 @@ sidecars; MCAP holds structured records and media indices.
 
 #### TeleopSession: one MCAP with other trackers
 
-Live publication requires a running OpenXR runtime and the built/installed
-Python package. Complete the full build and install the wheel first:
+Live publication requires the CloudXR runtime (see the
+[CloudXR guide](../../../docs/source/references/cloudxr.rst)) and the built/installed
+Python package. The plugin waits for the runtime's OpenXR system before it opens
+the camera. Complete the full build and install the wheel first:
 
 ```bash
 cmake --build build-ego-py3.11 --parallel
@@ -651,7 +653,9 @@ overwrite outputs and return nonzero for unverified or incomplete results.
 | Nonzero exit or `.partial` remains | Preserve capture and logs; check queue loss, output failures, reconnect timeout, and control restoration. |
 | MCAP verifier cannot read a native run | Use the two-eye `metadata.mcap` layout; install uv, or the Python MCAP reader in the active environment. Missing wrapper manifests/logs reduce the checks performed. |
 | Video does not open in a desktop player | Decode it with FFmpeg, then remux/transcode to MP4. Keep other SEI data intact when diagnosing decode errors. |
-| TeleopSession cannot publish EGO data | Check the running OpenXR runtime, installed Python bindings, plugin search path, and collection prefix. |
+| Live plugin stalls at `waiting for a system...` | The runtime has no OpenXR system yet; see `XR_ERROR_FORM_FACTOR_UNAVAILABLE` in the [CloudXR guide](../../../docs/source/references/cloudxr.rst). |
+| TeleopSession cannot publish EGO data | Check the CloudXR environment, installed Python bindings, plugin search path, and collection prefix. |
+| Local recording logs an `NV_CXR_RUNTIME_DIR` error | Expected under PluginManager without the CloudXR environment: device status publication is skipped and recording continues. |
 | Embedded session has no final file | Check clean context exit, matching spool/fragment paths, fresh output paths, and `ego_mcap_merge` beside the plugin. |
 | Audio cadence or sync audit fails | Preserve data and logs; audio requires a validated time model and continuity evidence. |
 

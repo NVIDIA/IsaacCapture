@@ -116,7 +116,10 @@ Data flow and published collections
 Standalone recording writes media and structured records locally and requires
 no OpenXR runtime. For live sessions, ``--collection-prefix`` publishes
 structured data through OpenXR SchemaPusher; DeviceIO trackers read it during
-session updates. Live publication requires a running OpenXR runtime.
+session updates. Live publication requires the CloudXR runtime, and a process
+that starts the plugin itself needs its environment loaded (see
+:ref:`load-cloudxr-environment-variables`). The plugin waits until the runtime
+provides an OpenXR system before it opens the camera.
 The native options ``--mcap-filename`` and ``--collection-prefix`` select these
 two workflows and are mutually exclusive.
 
@@ -192,6 +195,21 @@ For one self-contained multi-device MCAP, use
 for embedded media. The full configuration, matching media-spool path, and
 clean-stop procedure are documented under "TeleopSession: one MCAP with other
 trackers" in the :code-file:`plugin README <src/plugins/ego/README.md>`.
+
+The test script :code-file:`tests/python/xr_runtime/test_ego_camera.py` runs the
+live flow with ``PluginManager`` and ``DeviceIOSession`` directly and checks that
+every EGO collection keeps arriving. It loads the plugin from ``install/plugins``,
+so it needs a full build and install with the EGO plugin enabled. With
+``isaaccapture`` installed in the active environment and the CloudXR environment
+loaded, run from the repository root:
+
+.. code-block:: bash
+
+   python tests/python/xr_runtime/test_ego_camera.py --mode schema-pusher --duration 30
+
+Each run writes its media, calibration, and MCAP to a new
+``recordings/ego_<time>/`` directory. ``--mode plugin-mcap`` and
+``--mode no-metadata`` record without the CloudXR runtime.
 
 Replay and visualization
 ------------------------
@@ -272,8 +290,13 @@ Troubleshooting
   the current plugin rejects H.264/H.265 profiles above 30 FPS.
 - **Partial MCAP:** the recording did not finish successfully. Preserve it and
   the log for diagnosis before starting a new recording.
-- **Publisher startup failure:** check the running OpenXR runtime and plugin
-  search path.
+- **Live plugin stalls at** ``waiting for a system...``: the runtime has no
+  OpenXR system yet; see :ref:`cloudxr-form-factor-unavailable`.
+- **Publisher startup failure:** check that the CloudXR environment is loaded
+  and the plugin search path is correct.
+- **Local recording logs an** ``NV_CXR_RUNTIME_DIR`` **error:** under
+  ``PluginManager`` without the CloudXR environment, the plugin skips device
+  status publication and keeps recording, as the warning after it says.
 - **No embedded final output:** check normal context exit, committed fragment,
   matching spool path, and the merge tool beside the selected plugin.
 - **Native decoder unavailable:** build camera_viz's codec with CUDA, or choose
