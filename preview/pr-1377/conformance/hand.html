@@ -1,0 +1,1016 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Hand Suite &#8212; Isaac Capture Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=a95f357e85573c9b56d5" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5" />
+
+
+
+    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=2c21a7a3"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'conformance/hand';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="../_static/favicon.ico"/>
+
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Submit Your Results" href="submit.html" />
+    <link rel="prev" title="Set Up the Tools" href="setup.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.7.x" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+      
+        <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="Isaac Capture Documentation - Home"/>
+    <img src="../_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="Isaac Capture Documentation - Home"/>
+  
+  
+    <p class="title logo__title">Isaac Capture Documentation</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item"><!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+</div>
+        
+          <div class="navbar-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA/IsaacCapture" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://isaac-sim.github.io/IsaacLab" title="Isaac Lab" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/IsaacLab-3.0-silver.svg" class="icon-link-image" alt="Isaac Lab"/></a>
+        </li>
+</ul></div>
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../overview/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/isaac_teleop.html">Isaac Teleop</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../overview/ecosystem.html">Ecosystem</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Ego Post Processing</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../ego_post_processing/egohand.html">EgoHand</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../development/build_from_source/index.html">Build from Source</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/televiz.html">Televiz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/migration.html">Migrating to <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../development/license.html">License</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Integrations</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_lab_sim.html">Isaac Lab &amp; Sim</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/isaac_ros.html">Isaac ROS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../integrations/lerobot/index.html">LeRobot and SO-101</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Devices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../device/xr/index.html">XR headsets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/hand_tracking/index.html">Hand tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/body_tracking/index.html">Body tracking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/cameras/index.html">Cameras</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/joint_space/index.html">Joint-space devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/tactile/index.html">Tactile devices</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/spatial_controllers/index.html">Spatial controllers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="overview.html">Device Conformance</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="setup.html">Set Up the Tools</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Hand Suite</a></li>
+<li class="toctree-l2"><a class="reference internal" href="submit.html">Submit Your Results</a></li>
+</ul>
+</details></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../references/requirements.html">System Requirements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/build.html">Build System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/sbom.html">Wheel contents SBOM and license evidence</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/generated_trackers.html">Generated Tracker Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/retargeting/index.html">Retargeting Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/device_provider_monitoring.html">Device provider monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/camera_streaming.html">Camera Streaming</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/mcap_record_replay.html">MCAP Recording &amp; Replay</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/cloudxr.html">CloudXR Service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/oob_teleop_control.html">Out-of-Band Teleop Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../references/haptic_feedback.html">Haptic Feedback</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="overview.html" class="nav-link">Device Conformance Testing</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Hand Suite</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="hand-suite">
+<span id="cts-hand"></span><h1>Hand Suite<a class="headerlink" href="#hand-suite" title="Link to this heading">#</a></h1>
+<div class="caution admonition">
+<p class="admonition-title">Preview</p>
+<p>The hand tolerances are provisional and not yet calibrated against glove
+recordings, so treat a result close to a limit as indicative.</p>
+</div>
+<p>Run this suite if your device publishes hand poses: a glove through its plugin, or a
+headset’s own optical hand tracking. You record one take of eleven scripted gestures; the checker
+reads the recording and its labels and returns a verdict.</p>
+<div class="pst-scrollable-table-container"><table class="table" id="id1">
+<caption><span class="caption-text">At a glance</span><a class="headerlink" href="#id1" title="Link to this table">#</a></caption>
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 80.0%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p>Data</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">core.HandPoseRecord</span></code>, left and right hand channels</p></td>
+</tr>
+<tr class="row-even"><td><p>Joints</p></td>
+<td><p>26 OpenXR joints per hand, 21 judged. PALM and the four non-thumb metacarpals
+are optional, so a 21-joint glove can pass.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Script</p></td>
+<td><p>11 steps, seated at a table. About 2 minutes, paced by a timer: you press only
+<strong>Start recording</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p>Checks</p></td>
+<td><p>40, in four groups: signal, hand shape, placement, and the scripted steps</p></td>
+</tr>
+<tr class="row-odd"><td><p>Your plugin</p></td>
+<td><p>Injects both hands with <code class="docutils literal notranslate"><span class="pre">plugin_utils::HandInjector</span></code>: the suite records what Isaac Capture’s OpenXR hand tracker reads, not a channel of
+your own. Joints in metres, placed in the room, at 30 Hz or more. A glove with no
+wrist pose takes one from headset hand tracking or a controller
+(<code class="docutils literal notranslate"><span class="pre">plugin_utils::WristPoseSource</span></code>).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Finish <a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a> first: tool environments, your plugin installed, and the headset
+connected through CloudXR.</p>
+<section id="how-each-step-runs">
+<span id="cts-hand-pacing"></span><h2>How each step runs<a class="headerlink" href="#how-each-step-runs" title="Link to this heading">#</a></h2>
+<figure class="align-default" id="id2">
+<a class="reference internal image-reference" href="../_images/hand-pacing.svg"><img alt="Timeline of one take: eleven steps in a row, each a spoken cue, a three-count count-in, a beep, a hold and a tick. One step is enlarged." src="../_images/hand-pacing.svg" style="width: 100%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">The cue is spoken, three counts lead in, a beep opens the hold, a tick
+closes it. The capture panel shows <strong>listen</strong>, <strong>get into position</strong> (3, 2, 1), <strong>hold</strong>.</span><a class="headerlink" href="#id2" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<ul class="simple">
+<li><p><strong>Audio is optional.</strong> The capture panel shows each cue as text, with the count. To hear
+the cues, connect speakers to the workstation; they do not play in the headset. Without
+speakers, keep the capture panel in the performer’s view or have the helper read each cue
+aloud; the beep is the moment the panel switches to <strong>hold</strong>.</p></li>
+<li><p><strong>Be in the pose by the beep, then keep still.</strong> Move during the cue and count-in.</p></li>
+<li><p><strong>The first 40% of each hold is ignored</strong>, so a slightly late arrival is fine.</p></li>
+<li><p><strong>The two rolls are measured whole, from beep to tick.</strong> The cue’s “at the tone” means
+the beep, not the count-in: start turning then, at least 90° out, then back.</p></li>
+</ul>
+<p>Every step is also checked for the gross motion its name asks for
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>); a missed step gives <code class="docutils literal notranslate"><span class="pre">retake</span></code>.</p>
+</section>
+<section id="the-eleven-steps">
+<span id="cts-hand-steps"></span><h2>The eleven steps<a class="headerlink" href="#the-eleven-steps" title="Link to this heading">#</a></h2>
+<p>Both hands perform every step together, except the two rolls.</p>
+<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
+<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-2 sd-row-cols-md-2 sd-row-cols-lg-2 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Both hands lie flat on the table, palms down, fingers together." class="sd-card-img-top" src="../_images/01-flat_on_table_open.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+1 · Flat on the table</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 4 s</span> <em>“Rest both hands flat on the table, palms down,
+fingers together.”</em></p>
+<p class="sd-card-text">Fingers straight and together, pressed onto the table. Do not hover.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: fingers straight (<code class="docutils literal notranslate"><span class="pre">posture.</span><wbr><span class="pre">flat_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">extension</span></code>), joints in one plane
+(<code class="docutils literal notranslate"><span class="pre">table.fingers_coplanar</span></code>), level (<code class="docutils literal notranslate"><span class="pre">table.level</span></code>), both hands at one height
+(<code class="docutils literal notranslate"><span class="pre">table.hands_same_height</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Two tight fists, thumbs over the fingers; the view circles them to show every side." class="sd-card-img-top" src="../_images/02-fist.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+2 · Fists</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 4 s</span> <em>“Make two tight fists.”</em></p>
+<p class="sd-card-text">Curl every finger fully, thumb wrapped over the fingers.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: fingers curled (<code class="docutils literal notranslate"><span class="pre">posture.fist_closure</span></code>), more than in the flat steps
+(<code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">step_</span><wbr><span class="pre">order_</span><wbr><span class="pre">matches_</span><wbr><span class="pre">labels</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="On both hands the thumb closes onto the index fingertip over one second, then holds." class="sd-card-img-top" src="../_images/03-pinch_index.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+3 · Pinch: index</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 3 s</span> <em>“Thumb to index fingertip.”</em></p>
+<p class="sd-card-text">Pad to pad on both hands, the other fingers relaxed and open.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the tip nearest the thumb is the index (<code class="docutils literal notranslate"><span class="pre">pinch.finger_identity</span></code>).
+Measured: thumb-to-tip distance (<code class="docutils literal notranslate"><span class="pre">pinch.contact_distance</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="On both hands the thumb closes onto the middle fingertip over one second, then holds." class="sd-card-img-top" src="../_images/04-pinch_middle.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+4 · Pinch: middle</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 3 s</span> <em>“Thumb to middle fingertip.”</em></p>
+<p class="sd-card-text">Pad to pad on both hands, the other fingers relaxed and open.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the tip nearest the thumb is the middle (<code class="docutils literal notranslate"><span class="pre">pinch.finger_identity</span></code>).
+Measured: thumb-to-tip distance (<code class="docutils literal notranslate"><span class="pre">pinch.contact_distance</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="On both hands the thumb closes onto the ring fingertip over one second, then holds." class="sd-card-img-top" src="../_images/05-pinch_ring.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+5 · Pinch: ring</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 3 s</span> <em>“Thumb to ring fingertip.”</em></p>
+<p class="sd-card-text">Pad to pad on both hands, the other fingers relaxed and open.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the tip nearest the thumb is the ring (<code class="docutils literal notranslate"><span class="pre">pinch.finger_identity</span></code>).
+Measured: thumb-to-tip distance (<code class="docutils literal notranslate"><span class="pre">pinch.contact_distance</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="On both hands the thumb closes onto the little fingertip over one second, then holds." class="sd-card-img-top" src="../_images/06-pinch_little.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+6 · Pinch: little</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 3 s</span> <em>“Thumb to little fingertip.”</em></p>
+<p class="sd-card-text">Pad to pad on both hands, the other fingers relaxed and open.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the tip nearest the thumb is the little (<code class="docutils literal notranslate"><span class="pre">pinch.finger_identity</span></code>).
+Measured: thumb-to-tip distance (<code class="docutils literal notranslate"><span class="pre">pinch.contact_distance</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Palms pressed flat together, fingers up, seen first from your side and then from either side." class="sd-card-img-top" src="../_images/07-palms_together.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+7 · Palms together</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 4 s</span> <em>“Press your palms together, fingers up.”</em></p>
+<p class="sd-card-text">Palms flat against each other, fingers up, thumbs closed alongside the index.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: each fingertip sits opposite its namesake on the other hand, within 5 cm
+(<code class="docutils literal notranslate"><span class="pre">palms.fingertip_gap</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Hands raised, palms facing you, move together until the middle fingertips touch." class="sd-card-img-top" src="../_images/08-tips_together.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+8 · Fingertips together</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 3 s</span> <em>“Raise both hands, palms facing you. Touch middle
+fingertips.”</em></p>
+<p class="sd-card-text">Fingers point at each other; only the two middle fingertips touch.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the middle tips touch; this is the still reference for the rolls
+(<code class="docutils literal notranslate"><span class="pre">tips.roll_contact</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Tips touching, the right palm turns out and back; the left hand stays still." class="sd-card-img-top" src="../_images/09-right_tip_roll.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+9 · Right tip roll</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">turn 6 s</span> <em>“Fingertips touching. At the tone, turn the right
+palm out, then back.”</em></p>
+<p class="sd-card-text">Left hand still. At the beep, turn the right palm out at least 90° and back,
+tips touching.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the turning tip stays on the still one (<code class="docutils literal notranslate"><span class="pre">tips.roll_contact</span></code>); the
+wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.</span><wbr><span class="pre">position_</span><wbr><span class="pre">orientation_</span><wbr><span class="pre">same_</span><wbr><span class="pre">frame</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Tips touching, the left palm turns out and back; the right hand stays still." class="sd-card-img-top" src="../_images/10-left_tip_roll.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+10 · Left tip roll</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">turn 6 s</span> <em>“Fingertips touching. At the tone, turn the left
+palm out, then back.”</em></p>
+<p class="sd-card-text">Right hand still. At the beep, turn the left palm out at least 90° and back,
+tips touching.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the turning tip stays on the still one (<code class="docutils literal notranslate"><span class="pre">tips.roll_contact</span></code>); the
+wrist turns with the joints (<code class="docutils literal notranslate"><span class="pre">consistency.</span><wbr><span class="pre">position_</span><wbr><span class="pre">orientation_</span><wbr><span class="pre">same_</span><wbr><span class="pre">frame</span></code>).</p>
+</div>
+</div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-sm docutils">
+<img alt="Both hands lie flat on the table again, palms down." class="sd-card-img-top" src="../_images/11-flat_on_table_close.gif" />
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+11 · Flat on the table again</div>
+<p class="sd-card-text"><span class="sd-sphinx-override sd-badge sd-bg-secondary sd-bg-text-secondary">hold 4 s</span> <em>“Hands flat on the table again.”</em></p>
+<p class="sd-card-text">Same as step 1: fingers straight and together, pressed onto the table.</p>
+</div>
+<div class="sd-card-footer docutils">
+<p class="sd-card-text">Checked: the four step 1 checks. Measured: shape and height drift since step 1
+(<code class="docutils literal notranslate"><span class="pre">drift.</span><wbr><span class="pre">flat_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">between_</span><wbr><span class="pre">windows</span></code>).</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<p>A roll under 90°, or middle tips more than 8 cm apart in step 8, gives <code class="docutils literal notranslate"><span class="pre">retake</span></code>.
+How often each of the 26 joints is valid is measured (<code class="docutils literal notranslate"><span class="pre">coverage.</span><wbr><span class="pre">all_</span><wbr><span class="pre">26_</span><wbr><span class="pre">valid_</span><wbr><span class="pre">rate</span></code>),
+not required.</p>
+</section>
+<section id="rehearse">
+<span id="cts-hand-rehearse"></span><h2>Rehearse<a class="headerlink" href="#rehearse" title="Link to this heading">#</a></h2>
+<p>Download <a class="reference download internal" download="" href="../_downloads/42e9871f2e36488d34d636939f88d59a/hand-rehearsal.mp3"><code class="xref download docutils literal notranslate"><span class="pre">hand-rehearsal.mp3</span></code></a> (about 2 minutes). It
+plays the cues, counts, beeps and ticks at the real timing. Perform along with it before
+your first take.</p>
+<ul class="simple">
+<li><p><strong>Press and touch for real</strong>: hands on the table, palms together, fingertips meeting.</p></li>
+<li><p><strong>You cannot pause or skip.</strong> If a step goes wrong, let it finish and record again.</p></li>
+<li><p><strong>Practice takes cost nothing.</strong> Takes are never overwritten; submit your best one.</p></li>
+<li><p><strong>Have a helper watch the capture panel</strong> while you perform.</p></li>
+</ul>
+</section>
+<section id="record">
+<span id="cts-hand-record"></span><h2>Record<a class="headerlink" href="#record" title="Link to this heading">#</a></h2>
+<p>Run <code class="docutils literal notranslate"><span class="pre">record.sh</span></code> from the repository root. The first argument is required and names
+your device: free text that names the take directory and files and is stored as
+<code class="docutils literal notranslate"><span class="pre">device</span></code> in the provenance. The performer wears the connected headset; for headset
+hands, or a glove wrist from hand tracking, it must see the hands.</p>
+<p>Headset optical hands, no plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/hand/capture/record.sh<span class="w"> </span>quest3
+</pre></div>
+</div>
+<p>A glove, through its plugin. <code class="docutils literal notranslate"><span class="pre">glovex</span></code> and <code class="docutils literal notranslate"><span class="pre">glove_x_plugin</span></code> are placeholders for a
+fictional Glove X: use your device’s name and the <code class="docutils literal notranslate"><span class="pre">name:</span></code> from your plugin’s
+<code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>. The plugin is loaded from <code class="docutils literal notranslate"><span class="pre">install/plugins/</span></code> (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>), and one that
+fails to load stops the take. Environment variables your plugin reads, such as where it takes
+the wrist pose from, go on the same command line.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/hand/capture/record.sh<span class="w"> </span>glovex<span class="w"> </span>--plugin<span class="w"> </span>glove_x_plugin
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--note</span> <span class="pre">TEXT</span></code>, <code class="docutils literal notranslate"><span class="pre">--plugin-version</span> <span class="pre">NAME=VERSION</span></code> and <code class="docutils literal notranslate"><span class="pre">--wrist-source</span> <span class="pre">SOURCE</span></code> (where a
+glove’s wrist pose comes from, such as <code class="docutils literal notranslate"><span class="pre">hand_tracking</span></code> or <code class="docutils literal notranslate"><span class="pre">controller</span></code>) are stored with the
+take. <code class="docutils literal notranslate"><span class="pre">--wrist-source</span></code> defaults to the plugin’s own variable, named after it:
+<code class="docutils literal notranslate"><span class="pre">GLOVE_X_WRIST_SOURCE</span></code> for <code class="docutils literal notranslate"><span class="pre">glove_x_plugin</span></code> (upper-cased, without <code class="docutils literal notranslate"><span class="pre">_plugin</span></code>). If your
+plugin reads its wrist source from an environment variable, name it that way and takes are
+labelled without the flag. Then:</p>
+<ol class="arabic simple">
+<li><p>Open the capture panel at the address the run prints: <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a> unless that port
+was taken, or the <code class="docutils literal notranslate"><span class="pre">[capture]</span> <span class="pre">headset:</span></code> address in the headset’s browser.</p></li>
+<li><p>Press <strong>Start recording</strong>. The script starts once both hands have had a valid
+joint. A red <strong>No hand data after 10 s</strong> box lists causes; the take keeps running.</p></li>
+<li><p>Perform the eleven steps. After <em>“Done. You can stop now.”</em> the capture panel writes the
+labels and audits them, row by row, <code class="docutils literal notranslate"><span class="pre">ok</span></code> or <code class="docutils literal notranslate"><span class="pre">BAD</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">hand</span> <span class="pre">channels</span></code> or <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">label_</span><wbr><span class="pre">alignment</span></code>: one hand sent
+no records, or the step windows have no frames. Look at the data stream.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BAD</span></code> on <code class="docutils literal notranslate"><span class="pre">segmentation.</span><wbr><span class="pre">labelled_</span><wbr><span class="pre">step_</span><wbr><span class="pre">actually_</span><wbr><span class="pre">performed</span></code>: a step was missed
+(the detail names it). Record another take.</p></li>
+</ul>
+</li>
+<li><p>Press Ctrl+C when you have read it.</p></li>
+</ol>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>~/isaaccapture-cts/glovex_2026-03-04_101530/
+├── glovex_2026-03-04_101530-hand.mcap          the recording
+├── glovex_2026-03-04_101530-hand.labels.json   one window per step
+├── glovex_2026-03-04_101530-hand.json          provenance: device, plugins, commit
+└── glovex_2026-03-04_101530-hand.log           capture panel output and label audit
+</pre></div>
+</div>
+<p>Keep the four files together and never rename them. The labels are stamped during the
+take and cannot be regenerated.</p>
+</section>
+<section id="check">
+<span id="cts-hand-check"></span><h2>Check<a class="headerlink" href="#check" title="Link to this heading">#</a></h2>
+<p>Point the checker at the <code class="docutils literal notranslate"><span class="pre">.mcap</span></code> inside its take directory, so it finds the labels file
+beside it (to check on another machine, copy the whole directory):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/hand/checker/.venv/bin/python<span class="w"> </span>-m<span class="w"> </span>hand_cts.cli<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>~/isaaccapture-cts/&lt;take&gt;/&lt;take&gt;-hand.mcap
+</pre></div>
+</div>
+<p>It prints the verdict and one line per check, and exits 0 <code class="docutils literal notranslate"><span class="pre">pass</span></code>, 1 <code class="docutils literal notranslate"><span class="pre">fail</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">retake</span></code>
+or 3 <code class="docutils literal notranslate"><span class="pre">insufficient_data</span></code>, or 4 when the check could not run; <a class="reference internal" href="overview.html#cts-overview-verdicts"><span class="std std-ref">Verdicts</span></a>
+says what each means and what to do.
+Each <code class="docutils literal notranslate"><span class="pre">[FAIL]</span></code> line names the check and what it measured;
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/cts/hand/checker/README.md" rel="noopener noreferrer" target="_blank">hand/checker/README.md</a>
+explains every check. The output for a synthetic reference take, shortened:</p>
+<div class="code-100col highlight-text notranslate"><div class="highlight"><pre><span></span>source   hand/oracle/fixtures/golden_full_script.mcap
+frames   8100
+topic    hands/left_hand  schema core.HandPoseRecord
+verdict  PASS
+
+  …
+  [pass] rate.minimum_rate                      left: 60.0 Hz; right: 60.0 Hz
+  [pass] rate.frame_gaps                        left: no gaps; right: no gaps
+  [pass] continuity.max_joint_velocity          left: peak 1.5 m/s; right: peak 1.5 m/s
+  …
+  [pass] posture.fist_closure                   left: straightness 0.39; right: straightness 0.39
+  …
+  [pass] palms.fingertip_gap                    index 18 mm, middle 22 mm, ring 18 mm, little 10 mm
+  …
+</pre></div>
+</div>
+<p>If the report says <code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">motion-step</span> <span class="pre">labels</span> <span class="pre">beside</span> <span class="pre">the</span> <span class="pre">recording</span></code>, fix the path before
+trusting a <code class="docutils literal notranslate"><span class="pre">pass</span></code>. <code class="docutils literal notranslate"><span class="pre">--json</span></code> prints the machine-readable report, <code class="docutils literal notranslate"><span class="pre">--list-checks</span></code> lists
+every check without a recording, and <code class="docutils literal notranslate"><span class="pre">--check</span> <span class="pre">NAME</span></code> runs only that check.</p>
+</section>
+<section id="view">
+<span id="cts-hand-view"></span><h2>View<a class="headerlink" href="#view" title="Link to this heading">#</a></h2>
+<p>The viewer needs the checker environment set up with <code class="docutils literal notranslate"><span class="pre">--panel</span></code> (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>src/python/isaaccapture/cts/hand/checker/.venv/bin/python<span class="w"> </span>-m<span class="w"> </span>hand_cts.panel<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>~/isaaccapture-cts/&lt;take&gt;/&lt;take&gt;-hand.mcap
+</pre></div>
+</div>
+<p>It prints the same report and the address it serves, <a class="reference external" href="http://127.0.0.1:8080" rel="noopener noreferrer" target="_blank">http://127.0.0.1:8080</a> by default
+(<code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">0.0.0.0</span></code> to reach it from another machine). The viewer replays both hands with the
+current step and lists the checks, the deciding ones first; invalid joints show red. Its
+<strong>package for submission</strong> button builds the archive you send: see <a class="reference internal" href="submit.html"><span class="doc">Submit Your Results</span></a>.</p>
+<figure class="align-default" id="id3">
+<a class="reference internal image-reference" href="../_images/hand-checker-panel.png"><img alt="The hand viewer: both hands lying flat on a table grid, and a sidebar with a green PASS banner, playback controls, a Submission folder with the package for submission button, and the checks that decide the take." src="../_images/hand-checker-panel.png" style="width: 100%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">The viewer on a synthetic reference take, during step 1.</span><a class="headerlink" href="#id3" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 40.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>What you see</p></th>
+<th class="head"><p>What to do</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Start recording</strong> hangs after <code class="docutils literal notranslate"><span class="pre">waiting</span> <span class="pre">for</span> <span class="pre">a</span> <span class="pre">system...</span></code> in the terminal</p></td>
+<td><p>No headset is connected to CloudXR; connect it (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>) and the take
+goes on. Ctrl+C does not work here; close the terminal to get out.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>No hand data after 10 s</strong></p></td>
+<td><p>Plugin: it exited, the glove is off, unpaired or uncalibrated, or no wrist
+source is tracked. Headset: hand tracking is off or the hands are out of view.</p></td>
+</tr>
+<tr class="row-even"><td><p>The capture panel shows <code class="docutils literal notranslate"><span class="pre">21</span> <span class="pre">/</span> <span class="pre">26</span> <span class="pre">valid</span></code> in red</p></td>
+<td><p>Expected for a 21-joint glove; only the 21 required joints are judged.</p></td>
+</tr>
+<tr class="row-odd"><td><p>The capture panel says <strong>Spoken cues are off</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aplay</span></code> is missing. Install <code class="docutils literal notranslate"><span class="pre">alsa-utils</span></code> and restart the panel to hear the cues, or
+record with the on-screen cues only.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">…</span> <span class="pre">is</span> <span class="pre">a</span> <span class="pre">Git</span> <span class="pre">LFS</span> <span class="pre">pointer,</span> <span class="pre">not</span> <span class="pre">audio</span></code> at startup</p></td>
+<td><p>Install <code class="docutils literal notranslate"><span class="pre">git-lfs</span></code> and run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">lfs</span> <span class="pre">pull</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><em>the session did not open: … Required plugin … was not discovered</em>, or <code class="docutils literal notranslate"><span class="pre">--plugin</span> <span class="pre">given</span>
+<span class="pre">but</span> <span class="pre">no</span> <span class="pre">plugins/</span> <span class="pre">or</span> <span class="pre">install/plugins/</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">repo</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">--plugin</span></code> must match the <code class="docutils literal notranslate"><span class="pre">name:</span></code> in an installed <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>. Run
+<code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span> <span class="pre">build</span></code> (<a class="reference internal" href="setup.html"><span class="doc">Set Up the Tools</span></a>), then record again.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>More in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/cts/hand/README.md" rel="noopener noreferrer" target="_blank">hand/README.md</a>
+(recording) and
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/src/python/isaaccapture/cts/hand/checker/README.md" rel="noopener noreferrer" target="_blank">hand/checker/README.md</a>
+(every check and the report format).</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="setup.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Set Up the Tools</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="submit.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Submit Your Results</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-each-step-runs">How each step runs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-eleven-steps">The eleven steps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#rehearse">Rehearse</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#record">Record</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#check">Check</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#view">View</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=a95f357e85573c9b56d5"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=a95f357e85573c9b56d5"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="../_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
