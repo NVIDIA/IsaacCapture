@@ -645,12 +645,14 @@ SO-101 Leader</label><div class="sd-tab-content docutils">
 Isaac Teleop’s <code class="docutils literal notranslate"><span class="pre">so101_leader</span></code> plugin, which the script launches for you.</p>
 <ol class="arabic">
 <li><p><strong>Build the so101_leader plugin.</strong> It is part of Isaac Capture’s C++ source, not the
-<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package, so build it from an Isaac Capture checkout:</p>
+<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> pip package. Install the
+<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a> first, then
+build it from an Isaac Capture checkout:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
 <p>The binary lands at <code class="docutils literal notranslate"><span class="pre">install/plugins/so101_leader/so101_leader_plugin</span></code>. For details see
-<a class="reference internal" href="../../device/joint_space/index.html#so101-leader-plugin"><span class="std std-ref">The SO-101 leader plugin</span></a> and <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
+<a class="reference internal" href="../../device/joint_space/index.html#so101-leader-plugin"><span class="std std-ref">The SO-101 leader plugin</span></a>.</p>
 </li>
 <li><p><strong>Calibrate the leader</strong> so the leader and follower agree on each joint’s zero and range.
 This reuses the serial SO-101 leader’s calibration (stored under <code class="docutils literal notranslate"><span class="pre">so_leader/&lt;id&gt;.json</span></code>

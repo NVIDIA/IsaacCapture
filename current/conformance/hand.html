@@ -732,7 +732,10 @@ the wrist pose from, go on the same command line.</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">--note</span> <span class="pre">TEXT</span></code>, <code class="docutils literal notranslate"><span class="pre">--plugin-version</span> <span class="pre">NAME=VERSION</span></code> and <code class="docutils literal notranslate"><span class="pre">--wrist-source</span> <span class="pre">SOURCE</span></code> (where a
 glove’s wrist pose comes from, such as <code class="docutils literal notranslate"><span class="pre">hand_tracking</span></code> or <code class="docutils literal notranslate"><span class="pre">controller</span></code>) are stored with the
-take. Then:</p>
+take. <code class="docutils literal notranslate"><span class="pre">--wrist-source</span></code> defaults to the plugin’s own variable, named after it:
+<code class="docutils literal notranslate"><span class="pre">GLOVE_X_WRIST_SOURCE</span></code> for <code class="docutils literal notranslate"><span class="pre">glove_x_plugin</span></code> (upper-cased, without <code class="docutils literal notranslate"><span class="pre">_plugin</span></code>). If your
+plugin reads its wrist source from an environment variable, name it that way and takes are
+labelled without the flag. Then:</p>
 <ol class="arabic simple">
 <li><p>Open the capture panel at the address the run prints: <a class="reference external" href="http://localhost:8081" rel="noopener noreferrer" target="_blank">http://localhost:8081</a> unless that port
 was taken, or the <code class="docutils literal notranslate"><span class="pre">[capture]</span> <span class="pre">headset:</span></code> address in the headset’s browser.</p></li>
