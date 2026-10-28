@@ -37,12 +37,10 @@ NOITOM_VENDOR_ID = "body.noitom"
 
 
 def _plugin_search_paths() -> list[Path]:
-    base = Path(__file__).resolve().parents[2]
-    candidates = [
-        base / "plugins",
-        base / "install" / "plugins",
-    ]
-    return [path for path in candidates if path.exists()]
+    # Six levels up is the repo root from a checkout or an editable install; a
+    # regular wheel install puts this file in site-packages and finds nothing.
+    plugins = Path(__file__).resolve().parents[5] / "install" / "plugins"
+    return [plugins] if plugins.exists() else []
 
 
 def _build_pipeline(collection_id: str, max_flatbuffer_size: int) -> OutputCombiner:
@@ -70,7 +68,9 @@ def _resolve_output(path_arg: str | None) -> Path:
     if path_arg:
         path = Path(path_arg)
     else:
-        out_dir = Path(__file__).resolve().parent / "recordings"
+        # CWD-relative, matching mcap_record_replay: anchoring to __file__ would
+        # write inside the package, and into site-packages once installed.
+        out_dir = Path.cwd() / "recordings"
         path = out_dir / f"noitom_full_body_{datetime.now():%Y%m%d_%H%M%S}.mcap"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
@@ -100,8 +100,9 @@ def main(argv: list[str]) -> int:
         search_paths = _plugin_search_paths()
         if not search_paths:
             sys.exit(
-                "[record] error: no installed plugin directory found. "
-                "Run `cmake --install build` or pass `--no-plugin` for a manually "
+                "[record] error: no installed plugin directory found. Install "
+                "this example editable (`uv pip install -e ./examples/noitom`), run "
+                "`cmake --install build`, or pass `--no-plugin` for a manually "
                 "started plugin."
             )
         plugins.append(

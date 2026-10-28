@@ -83,7 +83,7 @@ wuji = [
 ]
 cloudxr = [
     "cryptography>=3.0",
-    "websockets>=14.0",
+    "websockets>=17.3",
     "Pillow>=10.0; sys_platform == 'linux'",
     "cupy-cuda12x>=13.0; sys_platform == 'linux'",
 ]

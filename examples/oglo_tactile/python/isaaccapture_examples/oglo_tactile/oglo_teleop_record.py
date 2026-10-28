@@ -16,7 +16,7 @@ advertising; the project built with -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON and
 the Python wheel installed. ``cupy`` is required for the headset overlay
 (recording still works without it).
 
-    python oglo_teleop_record.py --plugin-bin <path-to>/oglo_tactile_plugin
+    python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record --plugin-bin <path-to>/oglo_tactile_plugin
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import numpy as np
 import isaaccapture.deviceio as deviceio
 import isaaccapture.viz as viz
 
-from oglo_heatmap import NUM_TAXELS, Normalizer, TactileHeatmapRenderer
+from .oglo_heatmap import NUM_TAXELS, Normalizer, TactileHeatmapRenderer
 
 OVERLAY_W, OVERLAY_H = 1024, 512
 COLLECTION_PREFIX = "oglo"
@@ -50,8 +50,12 @@ def _on_signal(signum: int, frame: FrameType | None) -> None:
 
 
 def _default_plugin_bin() -> str:
+    # Only meaningful from a source checkout: examples/oglo_tactile/python/
+    # isaaccapture_examples/oglo_tactile/ is five levels below the repo root. An
+    # installed copy lands in site-packages, where this finds nothing and the
+    # PATH fallback below takes over.
     here = Path(__file__).resolve()
-    root = here.parents[2]  # repo root
+    root = here.parents[5]
     for cand in (
         root / "build/src/plugins/oglo_tactile/oglo_tactile_plugin",
         root / "install/plugins/oglo_tactile/oglo_tactile_plugin",
@@ -156,7 +160,9 @@ def main(argv: list[str] | None = None) -> int:
         help="path to oglo_tactile_plugin",
     )
     parser.add_argument(
-        "--mcap", default=None, help="output MCAP path (default: timestamped)"
+        "--mcap",
+        default=None,
+        help="output MCAP path (default: recordings/oglo_teleop_<timestamp>.mcap)",
     )
     parser.add_argument(
         "--duration",
@@ -237,9 +243,12 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
-    mcap_path = (
-        args.mcap or f"oglo_teleop_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mcap"
-    )
+    if args.mcap:
+        mcap_path = Path(args.mcap)
+    else:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mcap_path = Path.cwd() / "recordings" / f"oglo_teleop_{stamp}.mcap"
+    mcap_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- trackers: Quest hand/head + both gloves --------------------------------
     hand = deviceio.HandTracker()
@@ -296,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     norm_r = Normalizer(raw=args.raw)
 
     recording = deviceio.McapRecordingConfig(
-        mcap_path,
+        str(mcap_path),
         [
             (hand, "hands"),
             (head, "head"),

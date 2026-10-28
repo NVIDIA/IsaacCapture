@@ -1456,7 +1456,7 @@ def _aligned_skeleton_positions(
     settings: NoitomRetargetingSettings,
     calib_view: NoitomCalibrationView,
 ) -> dict[int, np.ndarray]:
-    from noitom_reference_draw import (
+    from .noitom_reference_draw import (
         ReferenceSkeletonLengths,
         aligned_reference_skeleton_from_frame,
     )
