@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The panel's renderer only. The checker itself must keep running without any of this,
+# which tests/test_panel_boundary.py asserts.
+# 1.1 for gui.add_uplot, which the rate curve uses.
+viser>=1.1.0

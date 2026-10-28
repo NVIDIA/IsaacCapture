@@ -72,7 +72,7 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 
 ### Check a Device Integration
 
-The CTS records one scripted take from a hand-tracking device and checks it against the data a retargeter needs; start with the [hand guide](src/python/isaaccapture/cts/hand/README.md).
+The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.
 
 
 ### Install & Run Isaac Lab
