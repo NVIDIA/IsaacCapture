@@ -61,8 +61,7 @@ bool is_secure_dir(const std::string& dir)
 //   1. VIVE_SE3_COLLECTIONS_FILE, if set, wins verbatim (caller's responsibility).
 //   2. else $XDG_RUNTIME_DIR (systemd gives a per-user, mode-0700 dir).
 //   3. else a private /tmp/vive_se3_tracker-<uid> we create 0700 and verify we own.
-// Falls through to the plain /tmp file only if the private dir can't be secured,
-// and warns — never silently write to a world-writable fixed path.
+// Disables the advertisement if the private directory cannot be secured.
 // Keep in sync with record_se3_vive.py.
 std::string resolve_collections_file()
 {
@@ -83,7 +82,7 @@ std::string resolve_collections_file()
         ->warn(
             "could not secure a per-user directory for the collections file; set VIVE_SE3_COLLECTIONS_FILE to a "
             "private path.");
-    return dir + "/" + kCollectionsFileName; // best effort; open still O_TRUNC-guarded below
+    return {};
 }
 
 core::SchemaPusherConfig make_pusher_config(const std::string& collection_id)
