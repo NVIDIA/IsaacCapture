@@ -87,6 +87,9 @@ class Editor:
                 "Local package map JSON",
                 json.dumps(state.model.get("packages", {})),
             )
+            self.urdf_scale = g.add_number(
+                "URDF scale", state.model.get("scale", 1.0), min=1e-6
+            )
             self.sides = g.add_dropdown(
                 "New model hands",
                 ("left", "right", "both"),
@@ -96,6 +99,7 @@ class Editor:
             )
             self.button("New document", lambda: self.guard(self.reset))
             self.button("Load URDF", lambda: self.guard(self.load_new))
+            self.button("Apply URDF scale", self.scale_model)
             self.open_path = g.add_text("Metadata JSON", args.metadata or "")
             self.json_side = g.add_dropdown(
                 "Assign JSON to", ("left", "right"), initial_value=self.side.value
@@ -317,7 +321,11 @@ class Editor:
         if state.model.get("urdf"):
             try:
                 self.install_model(
-                    geo.Model(state.model["urdf"], state.model.get("packages", {}))
+                    geo.Model(
+                        state.model["urdf"],
+                        state.model.get("packages", {}),
+                        state.model.get("scale", 1.0),
+                    )
                 )
             except (OSError, ValueError) as exc:
                 self.log(
@@ -441,15 +449,29 @@ class Editor:
                 k: str(Path(v).resolve())
                 for k, v in json.loads(self.packages.value).items()
             },
+            scale=self.urdf_scale.value,
             q0={},
         )
-        model = geo.Model(cfg["urdf"], cfg["packages"])
+        model = geo.Model(cfg["urdf"], cfg["packages"], cfg["scale"])
         sides = ("left", "right") if self.sides.value == "both" else (self.sides.value,)
         self.reset()
         self.state, self.started = State({s: Document(s) for s in sides}, cfg), True
         self.side.options, self.side.value = sides, sides[0]
         self.install_model(model)
         self.switch()
+
+    def scale_model(self):
+        if not self.model:
+            raise ValueError("Load a URDF before applying its scale")
+        scale = self.urdf_scale.value
+        model = geo.Model(
+            self.state.model["urdf"],
+            self.state.model.get("packages", {}),
+            scale,
+        )
+        self.change(self.state.model.update, scale=scale)
+        self.install_model(model)
+        self.clear_layout()
 
     def open(self):
         side, path = self.json_side.value, self.open_path.value

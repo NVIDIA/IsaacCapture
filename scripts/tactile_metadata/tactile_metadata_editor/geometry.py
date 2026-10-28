@@ -66,7 +66,10 @@ def frames(rows, root):
 
 
 class Model:
-    def __init__(self, path, packages):
+    def __init__(self, path, packages, scale=1.0):
+        if not np.isfinite(scale) or scale <= 0:
+            raise ValueError("URDF scale must be finite and positive")
+        self.scale = float(scale)
         self.path, self.missing, self.surfaces = Path(path).resolve(), [], {}
         self.handles, self.attachments = {}, {}
         # Instance-owned caches must not keep replaced models alive.
@@ -99,6 +102,7 @@ class Model:
             transform, name = scene.graph.get(frame_to=node, frame_from=link)
             mesh = scene.geometry[name].copy()
             mesh.apply_transform(transform)
+            mesh.apply_scale(self.scale)
             for i, part in enumerate(mesh.split(only_watertight=False)):
                 self.surfaces[f"{link}/{node}/{i}"] = (link, part)
 
@@ -114,6 +118,8 @@ class Model:
                 @ self.urdf.get_transform(link).copy()
                 for link in self.links
             }
+            for transform in result.values():
+                transform[:3, 3] *= self.scale
         self._fk_cache[configuration] = result
         if len(self._fk_cache) > 4:
             self._fk_cache.popitem(last=False)
