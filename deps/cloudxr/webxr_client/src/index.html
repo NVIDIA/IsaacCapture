@@ -1563,14 +1563,14 @@ limitations under the License.
                 <div class="config-text">
                   How long to wait for the video stream to attach before treating the session as
                   stuck ("passthrough-only" - entered XR with nothing rendering). Independent of
-                  Retry on Error above: this detection always runs; doubles on each retry attempt
-                  when retry is also on.
+                  Retry on Error above: this detection runs even with retry off; doubles on each
+                  retry attempt when retry is also on. Set to 0 to disable.
                 </div>
               </div>
 
               <div class="config-section">
                 <label for="cloudxrWarmupBeginTimeoutMs" class="input-label"
-                  >Warm-up Begin Timeout (ms, default: 10000 / 10 seconds)</label
+                  >Warm-up Begin Timeout (ms, default: 0 / disabled)</label
                 >
                 <input
                   id="cloudxrWarmupBeginTimeoutMs"
@@ -1580,18 +1580,19 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up begin timeout in ms"
                   spellcheck="false"
-                  value="10000"
+                  value="0"
                 />
                 <div class="config-text">
                   How long to wait, after the stream attaches, for the first sign that decoder
                   warm-up has started before treating the session as stuck. Independent of Stream
-                  Attach Timeout above (a separate, later window); does not grow on retry.
+                  Attach Timeout above (a separate, later window); does not grow on retry. Set to 0
+                  to disable.
                 </div>
               </div>
 
               <div class="config-section">
                 <label for="cloudxrWarmupEndTimeoutMs" class="input-label"
-                  >Warm-up End Timeout (ms, default: 30000 / 30 seconds)</label
+                  >Warm-up End Timeout (ms, default: 0 / disabled)</label
                 >
                 <input
                   id="cloudxrWarmupEndTimeoutMs"
@@ -1601,11 +1602,12 @@ limitations under the License.
                   step="1000"
                   placeholder="Warm-up end timeout in ms"
                   spellcheck="false"
-                  value="30000"
+                  value="0"
                 />
                 <div class="config-text">
                   How long to wait for decoder warm-up to finish once it has begun before treating
-                  the session as stuck. Does not grow on retry.
+                  the session as stuck. Does not grow on retry. Set to 0 to disable all warm-up
+                  detection, including the Warm-up Begin Timeout above.
                 </div>
               </div>
 
