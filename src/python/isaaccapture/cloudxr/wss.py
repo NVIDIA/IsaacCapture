@@ -38,39 +38,10 @@ try:
     from websockets.http11 import Response
 except ImportError:
     sys.exit(
-        "Missing dependency: websockets >= 14\n"
-        f"Install with: uv pip install --python {sys.executable} 'websockets>=14'"
+        "Missing dependency: websockets >= 17.3\n"
+        f"Install with: uv pip install --python {sys.executable} 'websockets>=17.3'"
     )
 
-
-def _patch_request_parser_for_cors():
-    """Allow HTTP OPTIONS through the websockets request parser.
-
-    ``websockets >= 14`` rejects non-GET methods in ``Request.parse`` before
-    ``process_request`` fires.  This wraps the parser so that OPTIONS requests
-    (CORS preflight) are surfaced as a normal ``Request`` — the existing
-    ``process_request`` hook in ``_make_http_handler`` already returns the
-    correct 200 + CORS-headers response for them.
-    """
-    from websockets.http11 import Request, parse_headers
-
-    _orig_parse = Request.parse.__func__
-
-    @classmethod
-    def _cors_aware_parse(cls, read_line):
-        """Monkey-patched ``Request.parse`` that maps OPTIONS requests to a synthetic CORS path."""
-        try:
-            return (yield from _orig_parse(cls, read_line))
-        except ValueError as exc:
-            if "got OPTIONS" not in str(exc):
-                raise
-            headers = yield from parse_headers(read_line)
-            return cls("/__cors_preflight__", headers)
-
-    Request.parse = _cors_aware_parse
-
-
-_patch_request_parser_for_cors()
 
 log = logging.getLogger("isaaccapture.cloudxr.wss")
 
@@ -663,6 +634,7 @@ async def run(
     try:
         resolved_port = wss_proxy_port() if proxy_port is None else proxy_port
 
+        # Wire DEBUG logs include headers and query strings containing tokens.
         logging.getLogger("websockets").setLevel(logging.WARNING)
         cert_paths = default_cert_paths()
 

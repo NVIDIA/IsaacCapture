@@ -24,7 +24,7 @@ dependencies = [
     "pyzmq",
     "scons",
     "tqdm",
-    "websockets>=14",
+    "websockets>=17.3",
 ]
 
 # `only-include` + `sources`, not `packages`, and no __init__.py above
