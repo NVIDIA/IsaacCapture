@@ -218,6 +218,10 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 }
 
 interface TeleopKeyboardShortcutOptions {
+  /**
+   * showRecordingControls. Gates every shortcut, T and X included: it is off by
+   * default, which leaves these letters to host keyboard teleop.
+   */
   recordingEnabled: boolean;
   startTeleop?: () => void;
   teleopStartDisabled?: boolean;
@@ -251,7 +255,7 @@ export function useTeleopShortcutHandler({
 
   return useCallback(
     (event: KeyboardEvent): boolean => {
-      if (!recordingEnabled && !startTeleop && !resetTeleop) return false;
+      if (!recordingEnabled) return false;
 
       const key =
         event.code === 'KeyT'
@@ -270,7 +274,6 @@ export function useTeleopShortcutHandler({
         if (!startTeleop || teleopStartDisabled) return false;
         startTeleop();
       } else if (key === 'c') {
-        if (!recordingEnabled) return false;
         if (recorder.mode === 'recording') {
           stopRecord();
         } else if (recorder.mode === 'idle') {
@@ -279,7 +282,6 @@ export function useTeleopShortcutHandler({
           return false;
         }
       } else if (key === 'p') {
-        if (!recordingEnabled) return false;
         if (recorder.mode === 'replaying') {
           stopReplay();
         } else if (recorder.mode === 'idle' && savedRecording) {
@@ -288,7 +290,7 @@ export function useTeleopShortcutHandler({
           return false;
         }
       } else if (key === 's') {
-        if (!recordingEnabled || recorder.mode !== 'idle' || !savedRecording) return false;
+        if (recorder.mode !== 'idle' || !savedRecording) return false;
         onSaveRecording();
       } else if (key === 'x') {
         if (!resetTeleop) return false;

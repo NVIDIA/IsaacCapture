@@ -298,8 +298,9 @@ export default function CloudXR3DUI({
 }: CloudXRUIProps) {
   const recorder = useRecorder();
   // T/C/P/S/X. Delivered from a real keyboard, or synthesised over CDP so a host
-  // can drive an unattended run. Record is on C because 'r' is already taken by
-  // the panel reset below, which shares this component's one keydown listener.
+  // can drive an unattended run. Only active with showRecordingControls. Record is
+  // on C because 'r' is already taken by the panel reset below, which shares this
+  // component's one keydown listener.
   const handleTeleopShortcut = useTeleopShortcutHandler({
     recordingEnabled: showRecordingControls,
     startTeleop: onStartTeleop,
