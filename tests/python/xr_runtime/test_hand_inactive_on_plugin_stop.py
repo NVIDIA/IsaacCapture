@@ -14,15 +14,13 @@ Test sequence:
 """
 
 import time
-from pathlib import Path
 
 import isaaccapture.deviceio as deviceio
 import isaaccapture.oxr as oxr
 import isaaccapture.plugin_manager as pm
+from install_tree import plugins_dir
 
-# Six levels up is the tree root -- the checkout, or the install prefix
-# when running from install/examples/.
-PLUGIN_ROOT_DIR = Path(__file__).resolve().parents[5] / "plugins"
+PLUGIN_ROOT_DIR = plugins_dir()
 
 ACTIVE_WAIT_S = 15.0  # max time to wait for hands to become active
 INACTIVE_WAIT_S = 5.0  # max time to wait for hands to become inactive after stop

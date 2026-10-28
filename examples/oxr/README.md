@@ -33,33 +33,33 @@ examples/oxr/
 │   └── oxr_simple_api_demo.cpp
 ├── pyproject.toml          # the distribution
 └── python/isaaccapture_examples/oxr/
+    ├── __init__.py
     ├── modular_example.py
-    ├── test_modular.py
-    ├── test_extensions.py
-    └── test_session_sharing.py
+    └── modular_example_with_mcap.py
 ```
+
+The `test_*.py` scripts that CloudXR GPU CI runs against this API are in
+[`tests/python/xr_runtime/`](../../tests/python/xr_runtime/).
 
 ## Python Examples
 
 ### Running Python Examples
 
-Install the example once, then run any module from anywhere:
+Install `isaaccapture` built from this tree into the active environment
+first, for example
+`uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/`.
+Then install the example once and run a module from anywhere:
 
 ```bash
 uv pip install -e ./examples/oxr
 export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
-python -m isaaccapture_examples.oxr.test_modular
+python -m isaaccapture_examples.oxr.modular_example
 ```
-
-The installed tree works the same way — `uv pip install -e
-install/examples/oxr` resolves against the wheel that build produced.
 
 ### Available Python Examples
 
 - **modular_example** - Basic hand + head tracking
-- **test_modular** - Complete API test
-- **test_extensions** - Extension query demonstration
-- **test_session_sharing** - Session sharing between DeviceIOSession instances
+- **modular_example_with_mcap** - The same trackers recorded to an MCAP file, then replayed
 
 ## C++ Examples
 
@@ -101,9 +101,10 @@ cmake --build build
 cmake --install build
 
 # Run Python example
-uv pip install -e install/examples/oxr
+uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/
+uv pip install -e ./examples/oxr
 export XR_RUNTIME_JSON=/path/to/cloudxr/openxr_cloudxr-dev.json
-python -m isaaccapture_examples.oxr.test_modular
+python -m isaaccapture_examples.oxr.modular_example
 ```
 
 ### C++ Example

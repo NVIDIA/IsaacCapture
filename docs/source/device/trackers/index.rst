@@ -225,7 +225,7 @@ Tracks articulated hand joints (26 joints per hand, following the OpenXR
 
   - :code-file:`tests/cpp/core/schema/test_hand.cpp`
   - :code-file:`tests/python/core/schema/test_hand.py`
-  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_synthetic_hands.py`
+  - :code-file:`tests/python/xr_runtime/test_synthetic_hands.py`
 
 - Examples:
 
@@ -247,7 +247,7 @@ axis inputs. Uses standard OpenXR action bindings.
 
   - :code-file:`tests/cpp/core/schema/test_controller.cpp`
   - :code-file:`tests/python/core/schema/test_controller.py`
-  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_controller_tracker.py`
+  - :code-file:`tests/python/xr_runtime/test_controller_tracker.py`
 
 - Examples:
 
@@ -273,7 +273,7 @@ reads the PICO ``XR_BD_body_tracking`` extension directly.
 
   - :code-file:`tests/cpp/core/schema/test_full_body.cpp`
   - :code-file:`tests/python/core/schema/test_full_body.py`
-  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_full_body_tracker.py`
+  - :code-file:`tests/python/xr_runtime/test_full_body_tracker.py`
 
 - Examples:
 
@@ -409,7 +409,7 @@ utility internally.
 
   - :code-file:`tests/cpp/core/schema/test_oak.cpp`
   - :code-file:`tests/python/core/schema/test_camera.py`
-  - :code-file:`examples/oxr/python/isaaccapture_examples/oxr/test_oak_camera.py`
+  - :code-file:`tests/python/xr_runtime/test_oak_camera.py`
 
 - Examples:
 

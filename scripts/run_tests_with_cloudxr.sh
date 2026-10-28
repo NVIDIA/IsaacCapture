@@ -24,12 +24,11 @@ set -euo pipefail
 # the ctest configuration in `build-ubuntu.yml` instead, so that they can be
 # run on a runner without GPU support immediately after the build.
 #==============================================================================
-# Paths are relative to /app/tests in the test image, which is a copy of
-# examples/oxr/python/ -- so they carry the namespace prefix.
+# Scripts in tests/python/xr_runtime/, which the test image copies to /app/tests.
 CXR_PYTHON_GPU_TESTS=(
-    "isaaccapture_examples/oxr/test_package_version.py"
-    "isaaccapture_examples/oxr/test_extensions.py"
-    "isaaccapture_examples/oxr/test_modular.py"
+    "test_package_version.py"
+    "test_extensions.py"
+    "test_modular.py"
 )
 
 CXR_NATIVE_GPU_TESTS=(
