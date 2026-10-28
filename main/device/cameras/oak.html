@@ -681,9 +681,18 @@ also <a class="reference internal" href="../../references/mcap_record_replay.htm
         <span class="n">session</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>  <span class="c1"># metadata is recorded each update</span>
 </pre></div>
 </div>
-<p>See also <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/oxr/python/test_oak_camera.py" rel="noopener noreferrer" target="_blank">examples/oxr/python/test_oak_camera.py</a> (<code class="docutils literal notranslate"><span class="pre">--mode</span>
-<span class="pre">schema-pusher</span></code>) for a standalone PluginManager + DeviceIOSession example of
-the same SchemaPusher flow.</p>
+<p>The test script <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/xr_runtime/test_oak_camera.py" rel="noopener noreferrer" target="_blank">tests/python/xr_runtime/test_oak_camera.py</a> runs the
+same SchemaPusher flow with <code class="docutils literal notranslate"><span class="pre">PluginManager</span></code> and <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code> directly.
+It loads the plugin from <code class="docutils literal notranslate"><span class="pre">install/plugins</span></code>, so it needs a full build and install
+of the tree configured above, not only <code class="docutils literal notranslate"><span class="pre">camera_plugin_oak</span></code>. With <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code>
+installed in the active environment (step 4 of <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>)
+and the CloudXR environment loaded (see <a class="reference internal" href="../../references/cloudxr.html#load-cloudxr-environment-variables"><span class="std std-ref">Load CloudXR environment variables</span></a>),
+run from the repository root:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel
+cmake<span class="w"> </span>--install<span class="w"> </span>build
+python<span class="w"> </span>tests/python/xr_runtime/test_oak_camera.py<span class="w"> </span>--mode<span class="w"> </span>schema-pusher
+</pre></div>
+</div>
 </section>
 </section>
 </section>
