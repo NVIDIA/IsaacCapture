@@ -799,6 +799,8 @@ uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> <
 <span class="nb">source</span><span class="w"> </span>.venv/bin/activate
 </pre></div>
 </div>
+<p>If <code class="docutils literal notranslate"><span class="pre">.venv</span></code> already exists on the build’s Python, activate it and skip <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">venv</span></code>. To switch it
+to another Python, rerun <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">venv</span></code> with <code class="docutils literal notranslate"><span class="pre">--clear</span></code>, which deletes everything installed in it.</p>
 <p>Install it by version. A local build is always <code class="docutils literal notranslate"><span class="pre">X.Y+local</span></code>, where <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> is the first two
 numbers of the repository’s <code class="docutils literal notranslate"><span class="pre">VERSION</span></code> file; they also appear in the wheel’s file name. The pin
 selects your build for the venv’s Python, so a newer published <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> cannot replace it.

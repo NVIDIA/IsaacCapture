@@ -96,11 +96,6 @@ set up as in :ref:`step 4 of Build from source <build-from-source-install-packag
    uv pip install -e ./examples/soma_body_publisher
    uv pip install -e ./examples/soma_hand_publisher
 
-   .venv/bin/cmake -S . -B build
-   .venv/bin/cmake --build build \
-     --target isaacteleop_python \
-     -j4
-
 The example packages install ``py-soma-x==0.3.1``.
 The publishers use the Python-accessible ``TensorPushTracker`` and its native
 ``SchemaPusher`` transport; no separate sender executable is needed. Demo samples
