@@ -225,7 +225,8 @@ the path to the extracted EGO SDK:
 The viewer uses GPU upload for MJPEG and NVDEC for H.264/H.265. The command
 above displays the two eyes side by side in a desktop window; XR mode uses
 separate eye textures. The viewer and recording plugin each open the camera;
-run them one at a time. See :code-file:`examples/camera_viz/ego_preview/README.md`
+run them one at a time. See
+:code-file:`examples/camera_viz/python/isaaccapture_examples/camera_viz/ego_preview/README.md`
 for decoder requirements and XR configuration.
 
 Sample-time association

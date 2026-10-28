@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Codec selection preserves the existing H.264 source API."""
 
-import sys
 from types import SimpleNamespace
 
 import pytest
 
-from sources._nv_decode import NvH264Decoder, NvVideoDecoder
+from isaaccapture_examples import camera_viz
+from isaaccapture_examples.camera_viz.sources._nv_decode import (
+    NvH264Decoder,
+    NvVideoDecoder,
+)
 
 
 @pytest.mark.parametrize(
@@ -27,14 +30,15 @@ def test_native_codec_selection_and_reset(monkeypatch, name, expected):
         def reset(self):
             calls.append("reset")
 
-    monkeypatch.setitem(
-        sys.modules,
+    monkeypatch.setattr(
+        camera_viz,
         "codec",
         SimpleNamespace(
             DecoderConfig=SimpleNamespace,
             DecoderCodec=SimpleNamespace(H264="h264", HEVC="hevc"),
             VideoDecoder=NativeDecoder,
         ),
+        raising=False,
     )
     decoder = NvVideoDecoder(1600, 1300, gpu_id=2, codec=name)
     assert calls == []

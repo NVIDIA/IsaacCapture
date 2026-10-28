@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 import yaml
 
-from pipeline import VizRunner
-from sources.ego import EgoSource
-from sources.stereo_sbs import StereoSideBySideSource
+from isaaccapture_examples.camera_viz.pipeline import VizRunner
+from isaaccapture_examples.camera_viz.sources.ego import EgoSource
+from isaaccapture_examples.camera_viz.sources.stereo_sbs import StereoSideBySideSource
 
 
 @pytest.fixture
@@ -24,7 +24,11 @@ def preview(monkeypatch):
     cp.cuda.runtime.getDevice.return_value = 0
     capture = MagicMock()
     monkeypatch.setitem(sys.modules, "cupy", cp)
-    monkeypatch.setitem(sys.modules, "ego_preview", SimpleNamespace(Capture=capture))
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaccapture_examples.camera_viz.ego_preview",
+        SimpleNamespace(Capture=capture),
+    )
     source = EgoSource("ego-test", width=2, height=1)
     yield source, cp, capture
     source.stop()
@@ -66,7 +70,10 @@ def run_encoded_pairs(preview, monkeypatch, codec, pairs):
     decoders = [MagicMock(), MagicMock()]
     for decoder in decoders:
         decoder.decode.return_value = True
-    monkeypatch.setattr("sources.ego.NvVideoDecoder", MagicMock(side_effect=decoders))
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.NvVideoDecoder",
+        MagicMock(side_effect=decoders),
+    )
     pending = iter(pairs)
 
     def next_pair(timeout):
@@ -214,7 +221,10 @@ def test_interrupted_start_retains_thread_for_shutdown(preview, monkeypatch):
     thread = MagicMock()
     thread.start.side_effect = KeyboardInterrupt
     thread.is_alive.return_value = False
-    monkeypatch.setattr("sources.ego.threading.Thread", lambda **kwargs: thread)
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.threading.Thread",
+        lambda **kwargs: thread,
+    )
     with pytest.raises(KeyboardInterrupt):
         source.start()
     assert source._thread is thread
@@ -230,7 +240,9 @@ def test_reconnect_keeps_both_decoders_on_renderer_gpu(preview, monkeypatch, cod
     source._renderer_cuda_device_id = 2
     decoders = [MagicMock(), MagicMock()]
     make_decoder = MagicMock(side_effect=decoders)
-    monkeypatch.setattr("sources.ego.NvVideoDecoder", make_decoder)
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.NvVideoDecoder", make_decoder
+    )
     calls = 0
 
     def next_pair(timeout):
@@ -284,7 +296,10 @@ def test_decode_failure_is_fatal_but_waiting_for_output_is_not(
         decoder.decode.side_effect = failure
     else:
         decoder.decode.return_value = False
-    monkeypatch.setattr("sources.ego.NvVideoDecoder", lambda *args, **kwargs: decoder)
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.NvVideoDecoder",
+        lambda *args, **kwargs: decoder,
+    )
 
     def next_pair(timeout):
         source._stop.set()
@@ -390,7 +405,10 @@ def test_encoded_timeouts_sei_and_no_output_keep_sequence_continuity(
     decoders = [MagicMock(), MagicMock()]
     for decoder in decoders:
         decoder.decode.side_effect = [True, False, False, True]
-    monkeypatch.setattr("sources.ego.NvVideoDecoder", MagicMock(side_effect=decoders))
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.NvVideoDecoder",
+        MagicMock(side_effect=decoders),
+    )
     pairs = iter(
         [
             encoded_pair(codec, 0),
@@ -472,7 +490,7 @@ def test_hevc_cra_recovery_drops_rasl_until_trailing_picture(preview, monkeypatc
 def test_viewer_cleans_up_after_ego_startup_or_producer_failure(
     preview, monkeypatch, tmp_path, failure_kind
 ):
-    import camera_viz
+    from isaaccapture_examples.camera_viz import camera_viz
 
     _, _, capture = preview
     events = []

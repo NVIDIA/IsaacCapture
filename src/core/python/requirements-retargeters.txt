@@ -16,13 +16,12 @@ nlopt>=2.6.2
 # `mode="joint"` never imports it.
 #
 # Constraints MUST mirror requirements-grounding.txt: CI installs every extra into
-# one environment, so a higher `pin` floor here (e.g. pin>=4, which needs
-# cmeel-urdfdom>=6) is unsatisfiable against grounding's cmeel-urdfdom<5. The cmeel
-# caps keep pin's compiled bindings linking the sonames they were built against;
-# newer cmeel-urdfdom 6.x / cmeel-tinyxml2 11.x break `import pinocchio` at runtime.
-pin>=2.7.0
-cmeel-urdfdom<5
-cmeel-tinyxml2<11
+# one environment, so diverging `pin` / cmeel bounds here are unsatisfiable. The
+# cmeel bounds keep pin's compiled bindings linking the sonames they were built
+# against; see requirements-grounding.txt.
+pin>=4.1
+cmeel-urdfdom>=6,<7
+cmeel-tinyxml2>=11,<12
 
 # The Sharpa retargeter's runtime dependencies live in
 # requirements-grounding.txt; its public V2D source ships in every Teleop wheel.

@@ -12,11 +12,11 @@ import numpy as np
 import pytest
 import yaml
 
-import config
-from pipeline import Frame, FrameSource, SourceSpec
+from isaaccapture_examples.camera_viz import config
+from isaaccapture_examples.camera_viz.pipeline import Frame, FrameSource, SourceSpec
 from repo_paths import repo_root
-from sources import build_local_camera
-from sources.stereo_sbs import StereoSideBySideSource
+from isaaccapture_examples.camera_viz.sources import build_local_camera
+from isaaccapture_examples.camera_viz.sources.stereo_sbs import StereoSideBySideSource
 
 
 class StaticSource(FrameSource):
@@ -123,8 +123,14 @@ def test_ego_uses_renderer_gpu_or_standalone_selection(
             ),
         ),
     )
-    monkeypatch.setitem(sys.modules, "ego_preview", SimpleNamespace(Capture=object))
-    monkeypatch.setattr("sources.ego.threading.Thread", Thread)
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaccapture_examples.camera_viz.ego_preview",
+        SimpleNamespace(Capture=object),
+    )
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.threading.Thread", Thread
+    )
     cfg = {
         "cameras": [{"name": "ego", "type": "ego", "stereo": True, "gpu_id": requested}]
     }
@@ -142,7 +148,9 @@ def test_ego_rejects_gpu_conflicts_before_imports_or_allocation(
     monkeypatch, requested, renderer
 ):
     monkeypatch.setitem(sys.modules, "cupy", None)
-    monkeypatch.setitem(sys.modules, "ego_preview", None)
+    monkeypatch.setitem(
+        sys.modules, "isaaccapture_examples.camera_viz.ego_preview", None
+    )
     (source,) = build_local_camera(
         {"name": "ego", "type": "ego", "stereo": True, "gpu_id": requested},
         renderer_cuda_device_id=renderer,
@@ -156,7 +164,9 @@ def test_ego_rejects_gpu_conflicts_before_imports_or_allocation(
 def test_renderer_gpu_context_does_not_change_other_sources(monkeypatch):
     # SyntheticSource allocates in __init__; factory tests must stay GPU-free.
     constructor = MagicMock()
-    monkeypatch.setattr("sources.SyntheticSource", constructor)
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.SyntheticSource", constructor
+    )
     spec = {"name": "synthetic", "type": "synthetic", "width": 4, "height": 2}
     (source,) = build_local_camera(spec, renderer_cuda_device_id=2)
     assert source is constructor.return_value
@@ -208,7 +218,11 @@ def test_ego_mjpeg_conversion_drop_keeps_stereo_publication_and_closes_sdk(monke
         def close(self):
             closed.append(True)
 
-    monkeypatch.setitem(sys.modules, "ego_preview", SimpleNamespace(Capture=Capture))
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaccapture_examples.camera_viz.ego_preview",
+        SimpleNamespace(Capture=Capture),
+    )
     monkeypatch.setitem(
         sys.modules,
         "cupy",
@@ -221,7 +235,9 @@ def test_ego_mjpeg_conversion_drop_keeps_stereo_publication_and_closes_sdk(monke
             ),
         ),
     )
-    monkeypatch.setattr("sources.ego.alloc_pinned_host", np.empty)
+    monkeypatch.setattr(
+        "isaaccapture_examples.camera_viz.sources.ego.alloc_pinned_host", np.empty
+    )
     source._buffers_left = [np.full((1, 2, 4), 255, dtype=np.uint8)]
     source._buffers_right = [np.full((1, 2, 4), 255, dtype=np.uint8)]
     source._produce_loop()
@@ -242,7 +258,7 @@ def test_sbs_cli_override_and_xr_rejection():
     assert config.resolve_stereo_debug(cfg, None, "window") == "sbs"
     with pytest.raises(ValueError, match="requires --mode window"):
         config.resolve_stereo_debug(cfg, None, "xr")
-    with pytest.raises(ValueError, match="off\\|sbs"):
+    with pytest.raises(ValueError, match=r"off\|sbs"):
         config.resolve_stereo_debug({}, "invalid", "window")
 
 

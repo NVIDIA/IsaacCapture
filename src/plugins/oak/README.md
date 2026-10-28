@@ -22,6 +22,9 @@ builds are fast.
 
 ### Prerequisites
 
+Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+first, then install the OAK-specific dependencies:
+
 ```bash
 # Install build tools for vcpkg to build libusb (Linux)
 sudo apt install libudev-dev autoconf automake libtool pkg-config

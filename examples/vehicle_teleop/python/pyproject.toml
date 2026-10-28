@@ -18,7 +18,7 @@ dependencies = [
     "pyzmq",
     "scons",
     "tqdm",
-    "websockets>=14",
+    "websockets>=17.3",
 ]
 
 [[tool.uv.index]]

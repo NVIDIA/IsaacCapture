@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -9,7 +9,8 @@ Python examples demonstrating the OpenXR tracking API using the `isaaccapture` P
 
 ## Prerequisites
 
-1. **Build and install the project** (from the project root):
+1. **Build and install the project** from the project root, after the
+   [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html):
    ```bash
    cd ../../..
    cmake -B build
