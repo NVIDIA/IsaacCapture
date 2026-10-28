@@ -11,7 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <string>
-#include <vector>
 
 namespace plugins
 {
@@ -19,30 +18,40 @@ namespace io_exo_glove_ros2
 {
 
 /*!
- * @brief The exoskeleton's articulation, re-expressed as an anatomical OpenXR hand.
+ * @brief The exoskeleton's fingertip motion, re-expressed as an anatomical OpenXR hand.
  *
  * The exoskeleton publishes the poses of its *linkage mechanism*: in the vendor's own URDF each
  * finger is a chain of four revolute links whose segments are 7.6 cm and 7.5 cm long, roughly twice a
  * human phalanx, and whose arm leaves the finger plane by 7 cm between two joints. Injecting those
  * frames as hand joints therefore yields a hand with a palm of a few millimetres and fingers twice a
- * palm long. What carries over is the *articulation*: the bend at each linkage joint, and the spread
- * at the knuckle. This module reads those joint angles from the published frame quaternions and drives
- * a hand skeleton whose landmarks come from the vendor's human-hand model instead. A linkage bend is
- * not a joint angle -- the mechanism moves roughly half as far as the finger -- so each one is
- * calibrated against the recording's open and fist plateaus and mapped onto its human range; see the
- * table and ``read_hand_angles`` in the .cpp.
+ * palm long. What carries over is the *articulation*: the bend of the finger and the spread at the
+ * knuckle. This module reads that articulation from the glove's own frames and drives a hand skeleton
+ * whose landmarks come from the vendor's human-hand model instead.
+ *
+ * Flexion is derived from the **fingertip**, not from the linkage's joint angles. For each finger the
+ * chord is the distance between the knuckle frame (``link_<Side>Skeleton<Finger>1``, or
+ * ``link_<Side>SkeletonThumbBase`` for the thumb) and the vendor's own tip frame
+ * (``<side>_<finger>_tip``); that chord can only shrink when the finger curls, so no session-specific
+ * sign or gain can invert the hand. The chord is converted to one total bend of the anatomical chain
+ * (MCP/PIP/DIP with fixed segment lengths) and split over the three joints with fixed weights; see
+ * @c kFingerBendWeights and @c solve_total_bend. The bend's sign is the sign of the tip's palmward
+ * angle in the palm frame, so a tip that is on the palm side always curls the hand towards the palm.
+ * The knuckle spread and the thumb's mount still come from the linkage's own joint angles (they are
+ * not flexion), and the palm frame is built from the knuckle row.
  *
  * Everything below is a constant derived from the two URDFs that ship with the vendor SDK
  * (`io_exotrans2hand_project_zenoh_22.04_x86_v2.1.4/src/exo_tf_pkg/description/`), so nothing here
  * depends on when a frame happens to arrive:
  *
  *  - ``blender_human_skeleton_v5.urdf`` gives the mechanism's chain: ``joint_<side>SkeletonBase`` is
- *    the fixed root, and each finger is ``joint_<F>1`` (the knuckle spread) followed by ``joint_<F>2``,
+ *    the fixed root, and each finger is ``joint_<F>1`` (the knuckle spread) followed by ``<F>2``,
  *    ``3``, ``4`` (the bends). The thumb has one more link: ``ThumbBase`` is a *revolute* mount,
  *    ``Thumb1`` lifts the thumb out of the palm, and ``Thumb2``..``Thumb4`` are its three bends.
- *    Every joint carries an ``<origin rpy>`` rest rotation and a revolute ``<axis>``, so the published
- *    child frame is parent * R_rest(rpy) * R(axis, theta); the joint's absolute angle follows from the
- *    two frames' quaternions (see the table in the .cpp).
+ *    The first frame of a finger is the knuckle; the second is the first bend joint's origin only
+ *    1.1 cm away along the knuckle row, not the next phalanx. The knuckle's spread axis is local
+ *    ``+Z``, i.e. the palm normal: the four first-frame ``+Z`` axes agree to within 2 degrees and
+ *    match the mechanism root's ``+Z``. The palm frame below therefore takes @e dorsal from those
+ *    axes and @e across from the knuckle row, which is exactly the pair that stays live and rigid.
  *  - ``blender_human.urdf`` gives the anatomy: the wrist frame is ``link_<side>Hand_Y``, each finger
  *    starts at ``joint_<side>InHand<F>`` (the metacarpal base) and continues through
  *    ``joint_<side>Hand<F>1`` (MCP), ``2`` (PIP) and ``3`` (DIP). The exported model leaves every
@@ -53,7 +62,8 @@ namespace io_exo_glove_ros2
  * The anatomy is placed in the OpenXR wrist frame directly -- ``-Z`` runs along each bone, ``+Y`` is
  * the back of the hand, ``+X`` points from the little finger towards the index -- which is the
  * convention ``XR_EXT_hand_tracking`` states, so no frame alignment between the glove and the headset
- * is needed at run time: only angles cross over, and the wrist pose comes from the wrist source.
+ * is needed at run time: only the tip chords and the spread cross over, and the wrist pose comes from
+ * the wrist source.
  */
 
 //! One anatomical landmark: the OpenXR joint and its offset from the parent landmark, in metres.
@@ -154,26 +164,28 @@ inline constexpr std::array<float, 3> kThumbFlexAxis = { 0.00f, -1.00f, 0.00f };
 
 //! The mechanism's frame suffixes per finger, in chain order. ``mechanism`` names are
 //! ``link_<Side>Skeleton<...>``. The four entries are the revolute joints whose angles drive the
-//! anatomy: the knuckle spread (F1, or Thumb1 for the thumb, which *lifts* it out of the palm) then
-//! the three bends (F2..F4, or Thumb2..Thumb4). @c parent is the frame the first joint hangs off;
-//! the thumb's is the revolute ThumbBase, which is read too.
+//! knuckle spread (F1, or Thumb1 for the thumb, which *lifts* it out of the palm); the bends come
+//! from the tip chord, so only F1 is read as an angle. @c parent is the frame the first joint hangs
+//! off; the thumb's is the revolute ThumbBase, which is read too. @c tip is the vendor fingertip
+//! frame suffix: ``<side>_<tip>_tip`` (the little finger's link is ``Pinky`` but its tip frame is
+//! ``pinky``).
 struct RigFinger
 {
     const char* name;
-    std::array<const char*, 4> links; //!< F1, F2, F3, F4
+    const char* tip;
+    std::array<const char*, 4> links; //!< F1, F2, F3, F4 (only F1 is read as an angle)
     const char* parent;
 };
 
 //! Mechanism chain per finger (left; the right hand's names differ only in ``Left``/``Right``).
 //! ``ThumbBase`` is the revolute mount whose child is ``Thumb1``, so the thumb's lift is ``Thumb1``
-//! and the three bends are ``Thumb2``, ``Thumb3`` and ``Thumb4`` -- the same F1..F4 pattern as the
-//! fingers, shifted one link out, plus the mount's own angle.
+//! and its chord runs from the mount to the tip.
 inline constexpr RigFinger kRigFingers[] = {
-    { "thumb", { "Thumb1", "Thumb2", "Thumb3", "Thumb4" }, "ThumbBase" },
-    { "index", { "Index1", "Index2", "Index3", "Index4" }, "" },
-    { "middle", { "Middle1", "Middle2", "Middle3", "Middle4" }, "" },
-    { "ring", { "Ring1", "Ring2", "Ring3", "Ring4" }, "" },
-    { "little", { "Pinky1", "Pinky2", "Pinky3", "Pinky4" }, "" },
+    { "thumb", "thumb", { "Thumb1", "Thumb2", "Thumb3", "Thumb4" }, "ThumbBase" },
+    { "index", "index", { "Index1", "Index2", "Index3", "Index4" }, "" },
+    { "middle", "middle", { "Middle1", "Middle2", "Middle3", "Middle4" }, "" },
+    { "ring", "ring", { "Ring1", "Ring2", "Ring3", "Ring4" }, "" },
+    { "little", "pinky", { "Pinky1", "Pinky2", "Pinky3", "Pinky4" }, "" },
 };
 
 //! Articulation read from one frame of the mechanism: per finger, the knuckle spread and the bends.
@@ -183,7 +195,7 @@ struct FingerAngles
     //! positive out of the palm.
     float spread = 0.0f;
     //! Bends along the chain, radians, positive towards the palm. Fingers: MCP, PIP, DIP. Thumb:
-    //! CMC, MCP, IP (mechanism Thumb2, Thumb3, Thumb4).
+    //! CMC, MCP, IP. Derived from the tip chord, not from the linkage's joint angles.
     std::array<float, 3> bend{ 0.0f, 0.0f, 0.0f };
     //! Thumb only: the revolute ThumbBase angle, radians, positive as the mechanism's own axis.
     float base = 0.0f;
@@ -193,119 +205,104 @@ struct FingerAngles
 struct HandAngles
 {
     std::array<FingerAngles, 5> fingers{};
+    //! Knuckle-to-tip chord per finger, metres, as read from the mechanism (before the model's
+    //! length clamps). Diagnostics and the stale-wrist check use it.
+    std::array<float, 5> chord_m{};
+    //! Palmward angle of the chord per finger, radians, positive towards the palm. This is the sign
+    //! the bend takes, so an inverted linkage cannot invert the injected hand.
+    std::array<float, 5> palmward_rad{};
     bool valid = false;
 };
 
-//! Number of revolute mechanism joints calibrated per hand: four per finger (F1..F4) plus the
-//! thumb's mount (ThumbBase). The offsets are indexed in the plugin's table order -- thumb F1..F4,
-//! index F1..F4, middle F1..F4, ring F1..F4, little F1..F4, then ThumbBase last.
-inline constexpr std::size_t kJointZeroOffsetCount = kRigFingerCount * 4 + 1;
-
-//! Per-hand open-hand zero correction, radians. Each value is added to that joint's baked table
-//! ``zero``; @c set is false when no config key was given (or it was empty), which keeps the baked
-//! table exactly. The sign and gain are never replaced.
-struct JointZeroOffsets
+//! One finger's tip chord in the palm frame.
+struct TipChord
 {
-    std::array<float, kJointZeroOffsetCount> radians{};
-    bool set = false;
+    //! Distance from the knuckle to the vendor tip frame, metres.
+    float chord_m = 0.0f;
+    //! Angle of the chord from the palm's distal axis towards the palm (negative = dorsal).
+    float palmward_rad = 0.0f;
+    bool valid = false;
 };
 
-//! One held-pose window: each sample is a full set of unwrapped linkage angles, in
-//! @c kJointZeroOffsetCount order.
-using LinkageSamples = std::vector<std::array<float, kJointZeroOffsetCount>>;
+//! All five fingers' chords from one link message, and whether the whole hand was present.
+struct HandChords
+{
+    std::array<TipChord, kHumanFingerCount> fingers{};
+    bool valid = false;
+};
+
+//! Fixed weights that split one total bend over a finger's three joints, in chain order
+//! (MCP, PIP, DIP; the thumb's CMC, MCP, IP). The MCP leads, as it does in a real fist. The weights
+//! are the same for the thumb's chain; see @c kThumbBendMaxRad for its smaller ranges.
+inline constexpr std::array<float, 3> kFingerBendWeights = { 0.45f, 0.35f, 0.20f };
+
+//! Human maxima the bend is clamped to, radians, in chain order: finger MCP 85 deg, PIP 95, DIP 70.
+inline constexpr std::array<float, 3> kFingerBendMaxRad = {
+    1.48353f,
+    1.65806f,
+    1.22173f,
+};
+
+//! The thumb's three joints are the CMC (35 deg), MCP (55) and IP (75); the same weights split its
+//! total bend, and each joint is clamped to its own maximum.
+inline constexpr std::array<float, 3> kThumbBendMaxRad = {
+    0.61087f,
+    0.95993f,
+    1.30900f,
+};
+
+//! The anatomical chain one finger's chord is solved against: the three bone lengths from the MCP to
+//! the tip (the thumb's from its mount), the bend weights and the joint maxima.
+struct BendModel
+{
+    std::array<float, 3> segment_m;
+    std::array<float, 3> weights;
+    std::array<float, 3> max_rad;
+};
+
+//! Chain model for @p finger (0 = thumb), built from the landmark table's bone lengths. The thumb's
+//! chord starts at the mechanism's ThumbBase and spans the CMC metacarpal too, so its first segment
+//! is the CMC->MCP bone; a finger's chord starts at its MCP.
+BendModel bend_model(std::size_t finger);
 
 /*!
- * @brief Previous angle of every mechanism joint per hand, so a continuously turning revolute joint
- * is not wrapped to (-pi, pi].
+ * @brief Total bend of @p model's chain whose MCP-to-tip chord is @p chord_m, radians.
  *
- * ``signed_angle_about`` returns the shortest signed angle, which is right for one message but jumps
- * by 2*pi when the joint crosses the boundary. The left ThumbBase motivated this: the v5 left mount
- * lacks the pi roll the right's has, so its physical rest is a half turn from the URDF rest and the
- * open reading sits near +pi; flexion then crosses the boundary and the raw series jumps a full turn
- * even though the mount turned smoothly. The derived rest constant below moves the open reference to
- * zero, and this keeps any remaining crossing continuous: the last value per hand and joint is kept
- * and +-2*pi is added until the new reading is within pi of it; the first sample initialises. Call
- * @c reset when a glove drops out, so the first frame after a gap re-initialises rather than
- * unwrapping against a stale pose.
+ * The chain is planar: each joint bends the bones after it towards the palm by its share of the
+ * total, and the chord is the distance from the first joint to the tip. A longer chord is a
+ * straighter finger, so the chord falls monotonically as the total bend grows; the total is found by
+ * bisection between 0 and the value at which every joint has reached its maximum. A chord longer
+ * than the straight chain returns 0; one shorter than the fully curled chain returns that maximum
+ * bend, so the result is always in range and bone lengths never change.
  */
-struct JointAngleUnwrapper
-{
-    //! Unwraps @p value for one mechanism joint against its previous value for @p hand.
-    float unwrap(Hand hand, std::size_t finger, std::size_t slot, float value);
-    //! Same for ThumbBase, which is a revolute joint outside the four-slot finger table.
-    float unwrap_thumb_base(Hand hand, float value);
-    //! Forgets both hands' previous readings.
-    void reset();
+float solve_total_bend(const BendModel& model, float chord_m);
 
-private:
-    std::array<std::array<std::array<float, 4>, kRigFingerCount>, 2> m_joint{};
-    std::array<std::array<std::array<bool, 4>, kRigFingerCount>, 2> m_joint_initialized{};
-    std::array<float, 2> m_thumb_base{};
-    std::array<bool, 2> m_thumb_base_initialized{};
-};
+//! @p total_bend split by @p model's weights, each joint clamped to its maximum, radians.
+std::array<float, 3> distribute_bend(const BendModel& model, float total_bend);
 
-//! Reads the mechanism's articulation out of one link message. Valid only when the root and every
-//! finger's four link frames are present: a hand missing any finger is invalid, because that finger
-//! would otherwise sit at its open zero and be injected as an open finger. False when the mechanism
-//! is absent, i.e. that glove is not streaming. @p unwrapper, when given, carries the previous
-//! angles across messages so a joint that crosses +-pi stays continuous; the plugin keeps one per
-//! hand.
-//!
-//! @p flip_bends, when true, injects every bend with the opposite sense -- the runtime correction for
-//! a glove whose bend direction disagrees with the model. The signed raw delta (the calibrated
-//! ``sign * (raw - zero)``) is multiplied by -1 before the gain mapping and the dead-band clamp, so
-//! the open hand stays open and its slight extension does not eat the flipped fist's travel. The
-//! spread and the thumb's mount are not bends and are left alone.
-//!
-//! @p zero_offsets, when set, is added to the baked ``zero`` of every joint before the spread, bend
-//! and mount mappings (see @c JointZeroOffsets). This re-zeroes the pose that reads as the open hand;
-//! the baked sign, fist reference and human maximum are unchanged, and the fist travel is measured
-//! from the calibrated zero.
-HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg,
-                            Hand hand,
-                            JointAngleUnwrapper* unwrapper = nullptr,
-                            bool flip_bends = false,
-                            const JointZeroOffsets* zero_offsets = nullptr);
+/*!
+ * @brief Reads the five fingertips' chords in the glove's palm frame.
+ *
+ * The palm frame is built from the knuckle row: @e across is index knuckle - little knuckle (mirrored
+ * for the right hand so it always points anatomically from the little side towards the index), and
+ * @e dorsal is the mean of the four first-frame local ``+Z`` axes -- the URDF's knuckle-spread axis,
+ * i.e. the palm normal. @e distal is ``dorsal x across``. (The linkage's second frame is the first
+ * bend joint's origin only 1.1 cm from the first along the knuckle row, so "knuckle -> next frame" is
+ * not a distal direction on this rig; the spread axis is the reliable live palm normal.)
+ *
+ * Each finger's chord is ``|<side>_<finger>_tip - knuckle|`` and its palmward angle is measured from
+ * @e distal towards the palm, so a flexed tip is positive on both hands. Every frame used must carry
+ * the same ``header.frame_id``: translations in different parents cannot be subtracted. A missing
+ * frame, a frame mismatch or a degenerate palm frame makes the whole hand invalid, exactly like a
+ * finger missing its linkage: half a hand must not be injected.
+ */
+HandChords read_tip_chords(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
-//! Reads one message's raw linkage angles, after unwrapping, into @p out in @c kJointZeroOffsetCount
-//! order. False when the hand is absent or incomplete, exactly like read_hand_angles(). @p unwrapper
-//! carries the continuity across messages; a calibration run keeps its own per hand, so sampling does
-//! not disturb the run-time reading.
-bool read_linkage_angles(const tf2_msgs::msg::TFMessage& msg,
-                         Hand hand,
-                         JointAngleUnwrapper* unwrapper,
-                         std::array<float, kJointZeroOffsetCount>& out);
-
-//! The baked open-hand zero of one joint, radians, indexed in @c kJointZeroOffsetCount order.
-float baked_joint_zero(Hand hand, std::size_t index);
-
-//! Maximum range of any one joint across @p samples, radians: max(angle) - min(angle) per joint,
-//! then the largest of those. Zero for an empty window.
-float linkage_window_drift_rad(const LinkageSamples& samples);
-
-//! True while every joint in @p samples stays strictly inside @p max_drift_rad of its own values.
-//! At or beyond the bound the window counts as moved and is rejected, like the aim calibration's.
-bool linkage_window_still(const LinkageSamples& samples, float max_drift_rad);
-
-//! A calibration window is rejected when any joint moves this far, radians (2 deg).
-inline constexpr float kJointZeroMaxDriftRad = 2.0f * 3.14159265358979323846f / 180.0f;
-
-//! Per-joint mean of @p samples. An empty window returns all zeros.
-std::array<float, kJointZeroOffsetCount> average_linkage_angles(const LinkageSamples& samples);
-
-//! Offsets that make @p open_radians the zero pose: ``open - baked zero`` per joint, in the baked
-//! table's units. The result is marked set, so it can be passed to read_hand_angles().
-JointZeroOffsets joint_zero_offsets_from_open_pose(Hand hand,
-                                                   const std::array<float, kJointZeroOffsetCount>& open_radians);
-
-//! Parses a config value of @c kJointZeroOffsetCount degrees, separated by whitespace or commas.
-//! Empty (or whitespace-only) text is the unset state and keeps the baked table. Throws
-//! std::runtime_error naming @p what when the count is wrong or a field is not a finite number.
-JointZeroOffsets parse_joint_zero_offsets(const std::string& text, const std::string& what);
-
-//! The config-file spelling of @p offsets: kJointZeroOffsetCount space-separated degrees, two
-//! decimals, ready to paste into config/io_exo_glove_ros2.yaml.
-std::string format_joint_zero_offsets_deg(const JointZeroOffsets& offsets);
+//! Reads the whole hand's articulation: the spread and thumb mount from the linkage angles, the
+//! three bends of every finger from its tip chord (see @c read_tip_chords). False @c valid when any
+//! frame or finger is missing, or the tip frames are not in one frame. No previous message and no
+//! per-session calibration is involved.
+HandAngles read_hand_angles(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
 //! Builds the anatomical 26-joint skeleton for @p hand from an articulation reading, expressed in the
 //! OpenXR wrist frame (the wrist is the identity pose). Every joint is filled and carries a unit
@@ -317,90 +314,68 @@ HandSkeleton build_anatomical_skeleton(const HandAngles& angles, Hand hand);
 //! The skeleton is wrist-relative, so this is a frame-free scalar for the injected middle finger.
 float middle_joint_span(const HandSkeleton& skeleton);
 
-//! Distance between the mechanism's ``link_<Side>SkeletonMiddle1`` and ``<side>_middle_tip``
-//! translations, in metres, both published in the same frame by the driver. False when either frame
-//! is absent or they are expressed in different frames, in which case no span can be measured.
-bool mechanism_middle_span(const tf2_msgs::msg::TFMessage& msg, Hand hand, float& span_m);
-
-//! Size of the rolling window the bend-direction check keeps per hand, samples at the hand tick.
-inline constexpr std::size_t kBendDirectionWindow = 64;
-//! Samples required before a correlation is computed.
-inline constexpr std::size_t kBendDirectionMinSamples = 40;
-//! Swing (max - min) one of the two series must exceed before it is correlated, in metres. A flat
-//! hand carries no direction information and must not flip anything.
-inline constexpr float kBendDirectionSwingM = 0.010f;
-//! A correlation below -kBendDirectionCorrelation flips the bends; above + it flips them back. In
-//! between is inconclusive and keeps the current decision.
-inline constexpr float kBendDirectionCorrelation = 0.5f;
-//! Minimum time between two decisions, in seconds, so a flipping hypothesis cannot chatter.
-inline constexpr double kBendDirectionPeriodS = 2.0;
-
 /*!
- * @brief Decides, from data per hand, whether the glove's bend direction matches the injected model.
+ * @brief Detects a wrist source that has stopped updating while the fingers keep moving.
  *
- * The glove's sign is not reliable across sessions: the same finger code and driver session can
- * publish the mechanism's quaternions with the opposite sense, which injects an inverted hand (a
- * flat hand looks curled and a fist looks extended). This keeps a rolling window of two frame-free
- * scalars sampled on every hand tick -- the nominal model's MIDDLE_PROXIMAL -> MIDDLE_TIP distance in
- * the wrist frame, and the mechanism's own link_<Side>SkeletonMiddle1 -> <side>_middle_tip distance --
- * and correlates them. Both shrink together when the directions agree and move apart when they do
- * not, without comparing positions across frames.
- *
- * The model series is built with the nominal (unflipped) bends, so a decision never feeds back into
- * its own input: negative correlation means "glove opposite to model" -> flip; positive correlation
- * means "glove matches model" -> no flip, so a later positive correlation flips a hand back. Windows
- * with fewer than kBendDirectionMinSamples samples, too little swing, or a correlation inside
- * +-kBendDirectionCorrelation are inconclusive and leave the decision as it was (no flip at start).
+ * A live optical wrist changes every frame; a stalled one repeats bit-identically while the glove's
+ * tip chords keep changing. The guard counts frames whose wrist pose equals the previous one (all
+ * seven floats) while any chord moved more than @c kChordMotionM; after @c kFrozenHoldS of that it
+ * reports the wrist frozen, once, and asks the caller to switch to a controller (when one is
+ * available) or to withhold the hand for those frames. Any change in the wrist pose clears the
+ * state, so a genuinely live source can never latch. Before the hold elapses the frame is still
+ * pushed: a source that updates more slowly than the glove (a valid-but-untracked optical pose, for
+ * example) repeats a pose for a frame or two without being stale, and the caller's smoothing already
+ * gives those frames distinct wrist poses.
  */
-class BendDirectionChecker
+class FrozenWristGuard
 {
 public:
-    //! What a sample changed, for the caller to log.
-    enum class Change
+    //! Chord motion that counts as "the fingers moved", metres.
+    static constexpr float kChordMotionM = 0.002f;
+    //! Continuous duplicate-wrist time before the source is called frozen, seconds.
+    static constexpr double kFrozenHoldS = 0.2;
+
+    //! What the caller should do with this frame.
+    enum class Action
     {
-        None,
-        Flipped,
-        Unflipped,
+        Push, //!< Inject the hand normally.
+        Suppress, //!< Do not push the hand this frame: the wrist is stale.
+        SwitchToController, //!< Use the controller wrist source for this frame.
     };
 
-    //! Feeds one hand tick's pair of spans and, when the window is ready and the period has elapsed,
-    //! re-decides. @p now_s is a monotonic clock in seconds.
-    Change sample(float model_span_m, float glove_span_m, double now_s);
-
-    //! True while every bend of this hand is injected with the opposite sense.
-    bool flipped() const
+    struct Result
     {
-        return m_flipped;
+        Action action = Action::Push;
+        bool newly_frozen = false;
+        bool thawed = false;
+    };
+
+    //! Feeds one frame's raw (pre-smoothing) wrist pose and tip chords. @p now_s is monotonic
+    //! seconds. @p controller_available says whether the caller has a controller wrist source that
+    //! can take over; when it is false a frozen wrist is suppressed instead.
+    Result update(const XrPosef& pose,
+                  const std::array<float, kHumanFingerCount>& chords_m,
+                  bool controller_available,
+                  double now_s);
+
+    bool frozen() const
+    {
+        return m_frozen;
     }
 
-    //! Pearson correlation of the current window, or 0 until one has been computed.
-    float correlation() const
-    {
-        return m_correlation;
-    }
-
-    //! Samples currently in the window.
-    std::size_t samples() const
-    {
-        return m_count;
-    }
-
-    //! Drops the window and its timing, e.g. when the glove drops out, but keeps the decision.
-    void clear_window();
+    //! Forgets the previous pose and the freeze state, e.g. when the glove or the source drops out.
+    void reset();
 
 private:
-    std::array<float, kBendDirectionWindow> m_model{};
-    std::array<float, kBendDirectionWindow> m_glove{};
-    std::size_t m_count = 0;
-    std::size_t m_next = 0;
-    bool m_flipped = false;
-    bool m_evaluated = false;
-    double m_last_evaluation_s = 0.0;
-    float m_correlation = 0.0f;
-};
+    Action frozen_action(bool controller_available) const;
 
-//! Root frame of the mechanism for @p hand, e.g. ``link_LeftSkeletonBase``.
-const char* mechanism_root_frame(Hand hand);
+    bool m_has_pose = false;
+    bool m_frozen = false;
+    XrPosef m_pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+    std::array<float, kHumanFingerCount> m_chords{};
+    bool m_has_duplicate = false;
+    double m_first_duplicate_s = 0.0;
+};
 
 } // namespace io_exo_glove_ros2
 } // namespace plugins

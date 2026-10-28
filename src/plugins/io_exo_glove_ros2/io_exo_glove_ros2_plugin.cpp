@@ -54,17 +54,6 @@ constexpr auto kAimTrackingTimeout = std::chrono::seconds(3);
 constexpr auto kAimRetryPause = std::chrono::milliseconds(500);
 constexpr int kAimMaxAttempts = 3;
 
-//! `--calibrate-zero` sampling: the same 200 Hz / 1 s / 3 attempts shape as the aim mode, but reading
-//! the glove's link stream through ROS instead of the controller trackers.
-constexpr auto kZeroSamplePeriod = std::chrono::milliseconds(5);
-constexpr auto kZeroWindowLength = std::chrono::milliseconds(1000);
-constexpr auto kZeroTrackingTimeout = std::chrono::seconds(3);
-constexpr auto kZeroRetryPause = std::chrono::milliseconds(500);
-constexpr int kZeroMaxAttempts = 3;
-//! Fewer frames than this in the 1 s window cannot show a held hand (nor its drift), so the window is
-//! rejected and retried rather than averaged from a stale or nearly silent stream.
-constexpr std::size_t kZeroMinSamples = 10;
-
 //! ROS 2 header stamp -> nanoseconds, or 0 if unset (sec == 0 && nanosec == 0).
 int64_t stamp_to_ns(const builtin_interfaces::msg::Time& stamp)
 {
@@ -137,11 +126,6 @@ const char* hand_name(std::size_t side)
     return side == 0 ? "left" : "right";
 }
 
-Hand hand_of(std::size_t side)
-{
-    return side == 0 ? Hand::Left : Hand::Right;
-}
-
 } // namespace
 
 bool IoExoGloveRos2Plugin::Throttler::ready()
@@ -161,20 +145,18 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
       m_logger(isaaccapture::Logger::get("isaaccapture.plugins.io_exo_glove_ros2."
                                          "IoExoGloveRos2Plugin"))
 {
-    // Validate the configured zero offsets before the session exists: a wrong count is a config
-    // error, and failing here keeps it out of the first frame's callback.
-    m_joint_zero_offsets[0] = parse_joint_zero_offsets(m_opts.left_joint_zero_offsets, "left_joint_zero_offsets");
-    m_joint_zero_offsets[1] = parse_joint_zero_offsets(m_opts.right_joint_zero_offsets, "right_joint_zero_offsets");
-    if (m_joint_zero_offsets[0].set || m_joint_zero_offsets[1].set)
+    // The old per-joint zero offsets are accepted (an existing config file must still load) but do
+    // nothing: the tip chord cannot be inverted or biased by a session's open pose.
+    if (!m_opts.left_joint_zero_offsets.empty() || !m_opts.right_joint_zero_offsets.empty())
     {
-        m_logger->info("joint zero offsets: left '{}', right '{}'", m_opts.left_joint_zero_offsets.c_str(),
-                       m_opts.right_joint_zero_offsets.c_str());
+        m_logger->warn("left/right_joint_zero_offsets are ignored: flexion is derived from the fingertip chords");
     }
 
     // The wrist source's trackers and extensions have to be known before the session exists, since
     // the session is what the injection and the queries run on.
     plugin_utils::WristSourceConfig wrist_config;
     wrist_config.mode = parse_wrist_source(m_opts.wrist_source);
+    m_detect_stale_wrist = wrist_config.mode != plugin_utils::WristSourceMode::Controller;
     wrist_config.left_aim_to_wrist = parse_pose(m_opts.left_aim_to_wrist, "left_aim_to_wrist");
     wrist_config.right_aim_to_wrist = parse_pose(m_opts.right_aim_to_wrist, "right_aim_to_wrist");
     const plugin_utils::WristPoseSource::Requirements wrist_requirements =
@@ -199,6 +181,17 @@ IoExoGloveRos2Plugin::IoExoGloveRos2Plugin(const Options& options)
     }
     m_wrist_source = std::make_unique<plugin_utils::WristPoseSource>(
         wrist_config, handles, m_deviceio_session.get(), wrist_requirements.controller_tracker);
+    // Under "auto" the primary source only falls back to the controller when optical tracking is
+    // absent. A frozen optical pose is still "tracked", so a second controller-only source is kept
+    // for the stale-wrist handover; it shares the same DeviceIOSession and controller tracker.
+    if (wrist_config.mode == plugin_utils::WristSourceMode::Auto && wrist_requirements.controller_tracker != nullptr &&
+        m_deviceio_session != nullptr)
+    {
+        plugin_utils::WristSourceConfig controller_config = wrist_config;
+        controller_config.mode = plugin_utils::WristSourceMode::Controller;
+        m_controller_wrist_source = std::make_unique<plugin_utils::WristPoseSource>(
+            controller_config, handles, m_deviceio_session.get(), wrist_requirements.controller_tracker);
+    }
 
     m_joints_left_pusher = std::make_unique<core::SchemaPusher>(
         m_session->get_handles(), core::SchemaPusherConfig{ .collection_id = m_opts.joints_left_collection_id,
@@ -373,176 +366,6 @@ void IoExoGloveRos2Plugin::calibrate_aim(float behind_m, float height_m, bool ai
         "flat and still");
 }
 
-void IoExoGloveRos2Plugin::calibrate_zero()
-{
-    // The link stream is the only input this mode needs. Stop the injection timer for this one-shot
-    // run: it would otherwise push a skeleton on every spin, and nothing here reads its state.
-    if (m_hand_timer != nullptr)
-    {
-        m_hand_timer->cancel();
-    }
-
-    // A dedicated subscription keeps the window independent of the run-time callback: each sample is
-    // the last link message, whether or not hand frames are being updated for injection. The message
-    // is copied out under the lock and parsed outside it.
-    std::mutex capture_mutex;
-    tf2_msgs::msg::TFMessage latest;
-    std::uint64_t sequence = 0;
-    bool has_message = false;
-    const auto capture =
-        create_subscription<tf2_msgs::msg::TFMessage>(m_opts.links_topic, rclcpp::SensorDataQoS(),
-                                                      [&](const tf2_msgs::msg::TFMessage::SharedPtr msg)
-                                                      {
-                                                          std::lock_guard<std::mutex> lock(capture_mutex);
-                                                          latest = *msg;
-                                                          ++sequence;
-                                                          has_message = true;
-                                                      });
-
-    const auto spin = [this] { rclcpp::spin_some(shared_from_this()); };
-    const auto read_latest = [&](JointAngleUnwrapper& unwrapper, Hand hand,
-                                 std::array<float, kJointZeroOffsetCount>& angles) -> bool
-    {
-        tf2_msgs::msg::TFMessage msg;
-        {
-            std::lock_guard<std::mutex> lock(capture_mutex);
-            if (!has_message)
-            {
-                return false;
-            }
-            msg = latest;
-        }
-        return read_linkage_angles(msg, hand, &unwrapper, angles);
-    };
-
-    // Wait for the mechanism frames. Both hands have to stream: the printed config has one line per
-    // hand, and a missing glove would silently produce a plausible zero for a hand that was never
-    // read. The timeout is the same 3 s the aim mode gives its controllers.
-    std::array<JointAngleUnwrapper, kSideCount> unwrappers;
-    std::array<bool, kSideCount> seen{ false, false };
-    std::array<float, kJointZeroOffsetCount> reading{};
-    const std::chrono::steady_clock::time_point tracking_deadline =
-        std::chrono::steady_clock::now() + kZeroTrackingTimeout;
-    while (std::chrono::steady_clock::now() < tracking_deadline && !(seen[0] && seen[1]))
-    {
-        spin();
-        for (std::size_t side = 0; side < kSideCount; ++side)
-        {
-            seen[side] = seen[side] || read_latest(unwrappers[side], hand_of(side), reading);
-        }
-        if (!(seen[0] && seen[1]))
-        {
-            std::this_thread::sleep_for(kZeroSamplePeriod);
-        }
-    }
-    if (!(seen[0] && seen[1]))
-    {
-        std::string missing;
-        for (std::size_t side = 0; side < kSideCount; ++side)
-        {
-            if (!seen[side])
-            {
-                missing += missing.empty() ? hand_name(side) : std::string(" and ") + hand_name(side);
-            }
-        }
-        throw std::runtime_error("--calibrate-zero: no mechanism frames from the " + missing + " hand on '" +
-                                 m_opts.links_topic + "'; is the glove streaming?");
-    }
-
-    for (int attempt = 1; attempt <= kZeroMaxAttempts; ++attempt)
-    {
-        m_logger->info("zero calibration: hold both hands open and straight for {} ms (attempt {}/{})",
-                       kZeroWindowLength.count(), attempt, kZeroMaxAttempts);
-
-        std::array<LinkageSamples, kSideCount> windows;
-        // Only frames that arrive during this window count: a message left over from before the
-        // attempt must not become the only sample.
-        std::uint64_t last_sequence = 0;
-        {
-            std::lock_guard<std::mutex> lock(capture_mutex);
-            last_sequence = sequence;
-        }
-        const std::chrono::steady_clock::time_point window_end = std::chrono::steady_clock::now() + kZeroWindowLength;
-        while (std::chrono::steady_clock::now() < window_end)
-        {
-            spin();
-            std::uint64_t current_sequence = 0;
-            {
-                std::lock_guard<std::mutex> lock(capture_mutex);
-                current_sequence = sequence;
-            }
-            // One sample per link message: spin_some() can leave several loop iterations without a
-            // new frame, and replaying the same angles would bias the mean towards it.
-            if (current_sequence != last_sequence)
-            {
-                last_sequence = current_sequence;
-                for (std::size_t side = 0; side < kSideCount; ++side)
-                {
-                    std::array<float, kJointZeroOffsetCount> sample{};
-                    if (read_latest(unwrappers[side], hand_of(side), sample))
-                    {
-                        windows[side].push_back(sample);
-                    }
-                }
-            }
-            std::this_thread::sleep_for(kZeroSamplePeriod);
-        }
-
-        bool still = true;
-        for (std::size_t side = 0; side < kSideCount; ++side)
-        {
-            if (windows[side].empty())
-            {
-                m_logger->warn(
-                    "zero calibration: no mechanism frames from the {} hand during the window", hand_name(side));
-                still = false;
-                continue;
-            }
-            if (windows[side].size() < kZeroMinSamples)
-            {
-                m_logger->warn("zero calibration: only {} frames from the {} hand during the window; retrying",
-                               windows[side].size(), hand_name(side));
-                still = false;
-                continue;
-            }
-            if (!linkage_window_still(windows[side], kJointZeroMaxDriftRad))
-            {
-                const float drift = linkage_window_drift_rad(windows[side]) * (180.0f / 3.14159265358979323846f);
-                m_logger->warn("zero calibration: the {} hand moved {:.1f} deg during the window; hold still",
-                               hand_name(side), drift);
-                still = false;
-            }
-        }
-        if (!still)
-        {
-            if (attempt == kZeroMaxAttempts)
-            {
-                break;
-            }
-            m_logger->warn("zero calibration: window rejected, retrying -- hold both hands open and still");
-            std::this_thread::sleep_for(kZeroRetryPause);
-            continue;
-        }
-
-        std::array<JointZeroOffsets, kSideCount> offsets;
-        for (std::size_t side = 0; side < kSideCount; ++side)
-        {
-            const std::array<float, kJointZeroOffsetCount> open = average_linkage_angles(windows[side]);
-            offsets[side] = joint_zero_offsets_from_open_pose(hand_of(side), open);
-        }
-
-        // The printed lines are the config value exactly; --print-config reports the same spelling.
-        std::cout << "left_joint_zero_offsets:  \"" << format_joint_zero_offsets_deg(offsets[0]) << "\"\n"
-                  << "right_joint_zero_offsets: \"" << format_joint_zero_offsets_deg(offsets[1]) << "\"\n"
-                  << "Paste both lines into config/io_exo_glove_ros2.yaml, then restart the plugin." << std::endl;
-        return;
-    }
-
-    throw std::runtime_error(
-        "--calibrate-zero: could not collect a still 1 s window; rerun and hold both hands open and "
-        "straight");
-}
-
 void IoExoGloveRos2Plugin::push_joint_state(const sensor_msgs::msg::JointState& msg)
 {
     // ROS 2 specifies that a JointState's arrays are either empty or equally sized. A mismatched
@@ -696,21 +519,9 @@ void IoExoGloveRos2Plugin::update_hand_frames(const tf2_msgs::msg::TFMessage& ms
         {
             const std::size_t side = side_index(hand);
             HandFrame& frame = m_hand_frames[side];
-            const HandAngles nominal_angles =
-                read_hand_angles(msg, hand, &m_unwrappers[side], false, &m_joint_zero_offsets[side]);
-            // The model series is always the nominal (unflipped) anatomy, so a decision never feeds
-            // back into the series it is computed from; only the injected skeleton follows the flip.
-            const HandSkeleton nominal = build_anatomical_skeleton(nominal_angles, hand);
-            frame.model_middle_span = middle_joint_span(nominal);
-            frame.glove_middle_span = 0.0f;
-            frame.spans_valid = nominal_angles.valid && mechanism_middle_span(msg, hand, frame.glove_middle_span);
-            frame.skeleton = nominal;
-            if (m_bend_direction[side].flipped())
-            {
-                const HandAngles flipped_angles =
-                    read_hand_angles(msg, hand, &m_unwrappers[side], true, &m_joint_zero_offsets[side]);
-                frame.skeleton = build_anatomical_skeleton(flipped_angles, hand);
-            }
+            const HandAngles angles = read_hand_angles(msg, hand);
+            frame.skeleton = build_anatomical_skeleton(angles, hand);
+            frame.chord_m = angles.chord_m;
             frame.stamp = now;
             frame.valid = frame.skeleton.tracked();
         }
@@ -797,53 +608,26 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side,
     }
 
     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
     const bool fresh = frame.valid && (now - frame.stamp) < kHandStaleThreshold;
     if (!fresh)
     {
-        // The glove is absent: forget its previous angles, so the first frame after it returns
-        // initialises the unwrapper instead of unwrapping against a stale pose. The bend window is
-        // dropped too, but its decision is kept: only a new correlation may reverse that.
-        {
-            std::lock_guard<std::mutex> lock(m_hand_mutex);
-            m_unwrappers[side].reset();
-            m_bend_direction[side].clear_window();
-        }
+        // The glove is absent: forget the stale-wrist baseline, so the first frame after it returns
+        // starts clean, and drop the injector so the runtime reports the hand inactive.
+        m_frozen_wrist[side].reset();
         injector.reset();
         return;
     }
-    // The update callback reads the decision (to build the skeleton) and this timer thread writes it,
-    // so the checker is guarded by the same mutex as the hand frames.
-    BendDirectionChecker::Change change = BendDirectionChecker::Change::None;
-    float correlation = 0.0f;
-    std::size_t samples = 0;
-    if (frame.spans_valid)
+
+    const auto ensure_injector = [&]()
     {
-        const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
-        std::lock_guard<std::mutex> lock(m_hand_mutex);
-        change = m_bend_direction[side].sample(frame.model_middle_span, frame.glove_middle_span, now_s);
-        correlation = m_bend_direction[side].correlation();
-        samples = m_bend_direction[side].samples();
-    }
-    if (change == BendDirectionChecker::Change::Flipped)
-    {
-        m_logger->warn(
-            "hand {}: the glove's bend direction is opposite to the injected model (Pearson {:.2f} over {} samples); "
-            "every bend for this hand is now flipped",
-            hand_name(side), correlation, samples);
-    }
-    else if (change == BendDirectionChecker::Change::Unflipped)
-    {
-        m_logger->warn(
-            "hand {}: the glove's bend direction now matches the injected model (Pearson {:.2f} over {} samples); "
-            "the bend flip is removed",
-            hand_name(side), correlation, samples);
-    }
-    if (injector == nullptr)
-    {
-        const core::OpenXRSessionHandles handles = m_session->get_handles();
-        injector = std::make_unique<plugin_utils::HandInjector>(
-            handles.instance, handles.session, side == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, handles.space);
-    }
+        if (injector == nullptr)
+        {
+            const core::OpenXRSessionHandles handles = m_session->get_handles();
+            injector = std::make_unique<plugin_utils::HandInjector>(
+                handles.instance, handles.session, side == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, handles.space);
+        }
+    };
 
     plugin_utils::WristSample wrist;
     if (m_wrist_source != nullptr)
@@ -851,15 +635,9 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side,
         wrist = m_wrist_source->query(side == 0, time);
     }
 
-    if (wrist.valid && wrist.tracked)
-    {
-        // Optical hand tracking is noisy, and a glove in front of the headset makes it worse; the
-        // glove's own articulation is not, so only the anchor is filtered.
-        wrist.pose = smooth_wrist(side, wrist.pose, dt_s);
-    }
-
     if (!wrist.valid)
     {
+        m_frozen_wrist[side].reset();
         // No wrist source tracked: publish the anatomy at the space origin with the valid-but-untracked
         // flags. Consumers see the shape and know the placement is not tracked, which is honest; the
         // runtime is not left with a frozen pose.
@@ -868,9 +646,70 @@ void IoExoGloveRos2Plugin::push_hand(std::size_t side,
             m_logger->warn("hand {}: no wrist pose from the '{}' source, injecting the skeleton untracked",
                            hand_name(side), m_opts.wrist_source.c_str());
         }
+        ensure_injector();
         injector->push(frame.skeleton.joints.data(), time);
         return;
     }
+
+    // The raw pose, before smoothing, is what tells a live source from a stalled one: smoothing a
+    // repeated pose would still produce a slightly different value and hide the stall. A configured
+    // controller source is legitimately static, so it is not checked.
+    if (m_detect_stale_wrist)
+    {
+        const FrozenWristGuard::Result guard =
+            m_frozen_wrist[side].update(wrist.pose, frame.chord_m, m_controller_wrist_source != nullptr, now_s);
+        if (guard.newly_frozen)
+        {
+            m_logger->warn("hand {}: the wrist pose has not changed for {:.0f} ms while the fingertip chords moved; {}",
+                           hand_name(side), FrozenWristGuard::kFrozenHoldS * 1000.0,
+                           m_controller_wrist_source != nullptr ? "switching to the controller wrist source" :
+                                                                  "withholding the hand until the wrist moves");
+        }
+        if (guard.thawed)
+        {
+            m_logger->info("hand {}: the wrist pose is live again", hand_name(side));
+        }
+        if (guard.action == FrozenWristGuard::Action::Suppress)
+        {
+            // Drop the push device: the runtime reports the hand inactive instead of holding the
+            // frozen wrist, and the next live frame creates a fresh injector.
+            injector.reset();
+            return;
+        }
+        if (guard.action == FrozenWristGuard::Action::SwitchToController && m_controller_wrist_source != nullptr)
+        {
+            const plugin_utils::WristSample controller = m_controller_wrist_source->query(side == 0, time);
+            if (controller.valid && controller.tracked)
+            {
+                wrist = controller;
+                // The controller pose is not the optical one, so the smoother must start from it
+                // rather than blend the two sources together.
+                m_smoothed_wrists[side].has = false;
+            }
+            else
+            {
+                if (m_wrist_warn[side].ready())
+                {
+                    m_logger->warn(
+                        "hand {}: the wrist source is frozen and no controller is tracked; withholding the hand",
+                        hand_name(side));
+                }
+                injector.reset();
+                return;
+            }
+        }
+    }
+
+    if (wrist.valid)
+    {
+        // Optical hand tracking is noisy, and a glove in front of the headset makes it worse; the
+        // glove's own articulation is not, so only the anchor is filtered. Smoothing a valid but
+        // not-actively-tracked pose too means a source that updates slower than the glove still
+        // produces a distinct pose on every injected frame instead of repeating one bit-identically.
+        wrist.pose = smooth_wrist(side, wrist.pose, dt_s);
+    }
+
+    ensure_injector();
 
     // The skeleton is anatomical and wrist-relative, so placing it needs no frame alignment: the wrist
     // pose is the one constant the anatomy already assumes, and the glide's own frame contributes only

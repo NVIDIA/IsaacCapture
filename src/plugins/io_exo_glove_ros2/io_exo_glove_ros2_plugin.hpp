@@ -54,8 +54,9 @@ namespace io_exo_glove_ros2
  *    ``type: hand_tracker``) through ``plugin_utils::HandInjector``, which is what the device
  *    conformance suite records: it reads Isaac Teleop's OpenXR hand tracker, not a channel of the
  *    plugin's own. The exoskeleton's links are a *linkage mechanism* -- its fingers are twice a human
- *    phalanx long -- so the injected skeleton is the vendor's human-hand anatomy driven by the
- *    mechanism's articulation (see io_exo_glove_ros2_kinematics.hpp). It is placed in the room by a
+ *    phalanx long -- so the injected skeleton is the vendor's human-hand anatomy: flexion from the
+ *    fingertip chords, the knuckle spread and the thumb mount from the linkage's joint angles (see
+ *    io_exo_glove_ros2_kinematics.hpp). It is placed in the room by a
  *    wrist pose from the headset's own hand tracking or from a controller
  *    (``plugin_utils::WristPoseSource``), because the glove's own frame is not anchored in the room.
  *
@@ -90,10 +91,9 @@ public:
         //! keeps the hand on the aim pose. Only used when the wrist comes from a controller.
         std::string left_aim_to_wrist = "0,0,0,0,0,0,1";
         std::string right_aim_to_wrist = "0,0,0,0,0,0,1";
-        //! Per-joint open-hand zero correction, per hand, as 21 whitespace- or comma-separated degrees
-        //! in @c kJointZeroOffsetCount order. Each value is added to that joint's baked table zero, so
-        //! the measured open pose becomes the zero; the sign, fist reference and human range stay the
-        //! baked ones. Empty (the default) keeps the baked table. --calibrate-zero prints these lines.
+        //! Legacy per-joint open-hand zero corrections. Flexion now comes from the tip chord, so
+        //! these values are **unused**: the keys are still parsed (an old config file must not fail
+        //! to load) and the plugin logs once that they are ignored. Empty is the normal value.
         std::string left_joint_zero_offsets;
         std::string right_joint_zero_offsets;
         //! Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is
@@ -127,35 +127,17 @@ public:
      */
     void calibrate_aim(float behind_m, float height_m, bool aim_flip);
 
-    /*!
-     * @brief One-shot `--calibrate-zero` session: averages the glove's raw linkage angles while both
-     * hands are held open and straight and prints the per-joint zero offsets for the config file.
-     *
-     * Needs only the same ``/io_fusion/tf_exoskeleton`` stream the plugin already consumes (no
-     * controller and no wrist-source requirement). Waits up to 3 s for the mechanism frames, then
-     * samples for 1 s per attempt. A window in which any joint moves 2 deg or more is rejected and
-     * retried, because the mean would not be an open pose. The printed values are the measured
-     * angles minus the baked table, in degrees, ready for ``left_joint_zero_offsets`` /
-     * ``right_joint_zero_offsets``. Throws std::runtime_error if the glove does not stream or no
-     * still window can be collected; the caller's handler logs it and exits non-zero.
-     */
-    void calibrate_zero();
-
 private:
     //! Hands the plugin bridges, and their index into the per-hand state arrays.
     static constexpr std::size_t kSideCount = 2;
 
-    //! Latest skeleton read from the link stream, with the time it arrived. The two spans are the
-    //! frame-free scalars the bend-direction check correlates: the nominal model's middle-finger span
-    //! and the mechanism's own, both measured in the same message. @c spans_valid is false when the
-    //! mechanism does not publish the two frames the glove span needs.
+    //! Latest skeleton read from the link stream, with the time it arrived and the fingertip chords
+    //! the stale-wrist guard compares from frame to frame.
     struct HandFrame
     {
         HandSkeleton skeleton;
         std::chrono::steady_clock::time_point stamp{};
-        float model_middle_span = 0.0f;
-        float glove_middle_span = 0.0f;
-        bool spans_valid = false;
+        std::array<float, kHumanFingerCount> chord_m{};
         bool valid = false;
     };
 
@@ -230,15 +212,14 @@ private:
 
     std::mutex m_hand_mutex;
     std::array<HandFrame, kSideCount> m_hand_frames;
-    //! Previous joint angles per hand, so a mount crossing +-pi is unwrapped before calibration. It
-    //! is reset when the glove drops out, so the first frame after a gap initialises again.
-    std::array<JointAngleUnwrapper, kSideCount> m_unwrappers;
-    //! Parsed config zero offsets per hand; unset means the baked table. Parsed once at construction,
-    //! so a wrong count fails before the first frame rather than mid-take.
-    std::array<JointZeroOffsets, kSideCount> m_joint_zero_offsets;
-    //! Per-hand bend-direction decisions, taken from the middle finger's two frame-free spans. The
-    //! glove's sign is not reliable across sessions, so it is verified from data instead of assumed.
-    std::array<BendDirectionChecker, kSideCount> m_bend_direction;
+    //! Controller-only wrist source, created under ``wrist_source: auto`` so a frozen optical wrist
+    //! can hand over to the controller instead of withholding the hand. Null otherwise.
+    std::unique_ptr<plugin_utils::WristPoseSource> m_controller_wrist_source;
+    //! Per-hand stale-wrist detection, fed the raw (pre-smoothing) wrist pose and the tip chords.
+    std::array<FrozenWristGuard, kSideCount> m_frozen_wrist;
+    //! A configured controller aim pose is legitimately static, so only the optical sources are
+    //! checked for a stall.
+    bool m_detect_stale_wrist = false;
     bool m_slots_logged = false;
 
     std::array<SmoothedWrist, kSideCount> m_smoothed_wrists;

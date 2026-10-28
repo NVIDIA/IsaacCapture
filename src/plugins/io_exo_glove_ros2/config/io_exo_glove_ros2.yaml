@@ -43,8 +43,8 @@ wrist_source: "auto"
 # mounted on the glove, which the plugin cannot know, so it is configuration; the identity keeps the
 # hand on the raw aim pose, which puts it roughly a hand's width off. Only used when the wrist pose
 # comes from a controller ("controller", or "auto" falling back to it).
-left_aim_to_wrist: "0,0,0,0,0,0,1"
-right_aim_to_wrist: "0,0,0,0,0,0,1"
+left_aim_to_wrist: "-0.0504 0.0167 0.0680 0.000000 0.000000 -0.810555 0.585663"
+right_aim_to_wrist: "0.0544 0.0167 0.0680 0.000000 0.000000 -0.810555 -0.585663"
 
 # Low-pass time constant for the tracked wrist, in milliseconds. Optical hand tracking is noisy (and a
 # glove in front of the headset makes it worse) while the glove's own articulation is not, so the
@@ -63,3 +63,7 @@ joints_left_collection_id: "exo_glove_joints_left"
 joints_right_collection_id: "exo_glove_joints_right"
 tips_left_collection_id: "exo_glove_tips_left"
 tips_right_collection_id: "exo_glove_tips_right"
+
+# Per-session open-hand zero offsets (degrees; --calibrate-zero prints them).
+left_joint_zero_offsets: ""
+right_joint_zero_offsets: ""

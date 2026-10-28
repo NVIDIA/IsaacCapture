@@ -46,11 +46,9 @@ struct CliOverrides
     std::optional<std::string> left_aim_to_wrist;
     std::optional<std::string> right_aim_to_wrist;
     std::optional<double> wrist_smoothing_ms;
-    //! One-shot calibrations; CLI-only, not config-file keys. The aim offsets are per-run and shared
-    //! by both hands, because the controller mounting is the same left and right; the zero mode
-    //! prints one config line per hand.
+    //! One-shot calibration; CLI-only, not a config-file key. The aim offsets are per-run and shared
+    //! by both hands, because the controller mounting is the same left and right.
     bool calibrate_aim = false;
-    bool calibrate_zero = false;
     bool aim_flip = false;
     std::optional<double> aim_behind_m;
     std::optional<double> aim_height_m;
@@ -88,9 +86,6 @@ void print_usage(const char* prog)
               << "                                 fingers, in metres (default 0.04)\n"
               << "  --aim-height=M                 Calibration: wrist offset below the aim origin, in metres\n"
               << "                                 (default 0.06)\n"
-              << "  --calibrate-zero               One-shot: hold both hands open and straight, print the per-joint\n"
-              << "                                 open-hand zero offsets for both hands and exit\n"
-              << "                                 (the glove link stream is the input; no controller needed)\n"
               << "  --print-config                 Print the resolved settings and the file they came from, then exit\n"
               << "  --help                         Show this help\n"
               << "\nEverything from --ros-args onwards is handed to ROS 2 unchanged." << std::endl;
@@ -103,13 +98,6 @@ int fail_empty_flag(const char* prog, const char* flag)
     std::cerr << "Error: --" << flag << "= must not be empty." << std::endl;
     print_usage(prog);
     return 1;
-}
-
-//! --print-config spelling for the optional per-joint zero offsets: the value, or what an empty one
-//! means, so the line documents the key even when the baked table is in use.
-std::string zero_offsets_text(const std::string& value)
-{
-    return value.empty() ? std::string("<empty: baked table>") : value;
 }
 
 //! Returns the value of a `--key=value` argument, or nullopt when @p arg is not that key.
@@ -199,10 +187,6 @@ try
         else if (arg == "--calibrate-aim")
         {
             cli.calibrate_aim = true;
-        }
-        else if (arg == "--calibrate-zero")
-        {
-            cli.calibrate_zero = true;
         }
         else if (arg == "--aim-flip")
         {
@@ -419,16 +403,13 @@ try
                   << "wrist_source            = " << options.wrist_source << "\n"
                   << "left_aim_to_wrist       = " << options.left_aim_to_wrist << "\n"
                   << "right_aim_to_wrist      = " << options.right_aim_to_wrist << "\n"
-                  << "left_joint_zero_offsets  = " << zero_offsets_text(options.left_joint_zero_offsets) << "\n"
-                  << "right_joint_zero_offsets = " << zero_offsets_text(options.right_joint_zero_offsets) << "\n"
                   << "wrist_smoothing_ms      = " << options.wrist_smoothing_ms << "\n"
                   << "joints buffer (bytes)   = " << IoExoGloveRos2Plugin::kJointsMaxFlatbufferSize << "\n"
                   << "tips buffer (bytes)     = " << kTipMaxFlatbufferSize
                   << "\n(Both sizes are the consumer trackers' own defaults -- JointStateTracker and "
                      "JointSe3PoseTracker -- so no explicit size is needed for either collection.)\n"
-                     "(left/right_joint_zero_offsets: 21 whitespace- or comma-separated degrees,\n"
-                     " in the plugin's joint order -- thumb F1..F4, index..little F1..F4, then ThumbBase;\n"
-                     " empty = baked table)"
+                     "(left/right_joint_zero_offsets are accepted but ignored: flexion is derived from the\n"
+                     " fingertip chords, so no per-session open-hand zero is needed.)"
                   << std::endl;
         return 0;
     }
@@ -438,13 +419,6 @@ try
         logger()->info("Loaded config: {}", resolution.loaded_path);
     }
 
-    // The two one-shot modes measure different things and print different config lines; running both
-    // would make one of the two windows meaningless, so reject the combination.
-    if (cli.calibrate_aim && cli.calibrate_zero)
-    {
-        logger()->error("--calibrate-aim and --calibrate-zero are mutually exclusive");
-        return 1;
-    }
     // This mode writes the aim-to-wrist constants for the controller source; any other source has no
     // aim pose to calibrate, so fail before creating a session rather than after.
     if (cli.calibrate_aim && options.wrist_source != "controller")
@@ -493,13 +467,6 @@ try
     {
         node->calibrate_aim(static_cast<float>(cli.aim_behind_m.value_or(kDefaultAimBehindM)),
                             static_cast<float>(cli.aim_height_m.value_or(kDefaultAimHeightM)), cli.aim_flip);
-        rclcpp::shutdown();
-        return 0;
-    }
-    if (cli.calibrate_zero)
-    {
-        logger()->info("Zero calibration: waiting for the glove link stream on '{}'", options.links_topic);
-        node->calibrate_zero();
         rclcpp::shutdown();
         return 0;
     }

@@ -8,6 +8,12 @@
 ``--urdf-dir`` (or ``$IO_EXO_URDF_DIR``) points at the vendor SDK's
 ``src/exo_tf_pkg/description``; it defaults to the path the constants were derived from.
 
+.. note::
+   Flexion is derived from the fingertip chord since round 12. The plugin now consumes only the
+   knuckle-spread/lift and ThumbBase rows derived below (their open zero and sign); the per-joint
+   bend zeros, directions, fist references and gains are kept for the historical derivation and for
+   the A-pose checks, and are not read at run time.
+
 The recording is a capture of ``/io_fusion/tf_exoskeleton`` (one ``{"t", "frames"}`` object per
 message, as written by ``build/raw_tf_recorder.py``).  The thumb block is derived from the clean
 thumb-only recording (``--thumb-recording``, default: the positional recording); the fingers are
@@ -544,8 +550,9 @@ def raw_angles(recording, mech):
 def unwrap_series(values):
     """Unwrap a joint's raw signed angles so the value stays continuous across +-pi.
 
-    The first sample initialises; every later sample has +-2*pi added until it is within pi of the
-    previous one.  This is the same rule the plugin's ``JointAngleUnwrapper`` applies per message.
+        The first sample initialises; every later sample has +-2*pi added until it is within pi of the
+        previous one.  This is the same rule the old joint-angle path applied per message; the tip-driven
+    runtime no longer needs it, but the derivation below still unwraps before fitting.
     """
     values = list(values)
     if not values:

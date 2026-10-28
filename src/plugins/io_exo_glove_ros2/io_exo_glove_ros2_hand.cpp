@@ -177,11 +177,12 @@ XrPosef invert_pose(const XrPosef& pose)
     return oxr_utils::multiply_poses(pure_rotation, negated_position);
 }
 
-HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper)
+HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand)
 {
-    // The mechanism supplies the articulation and the anatomy supplies the landmarks; see
-    // io_exo_glove_ros2_kinematics.hpp for why the linkage cannot be injected directly.
-    return build_anatomical_skeleton(read_hand_angles(msg, hand, unwrapper), hand);
+    // The mechanism supplies the fingertip chords and the spread; the anatomy supplies the
+    // landmarks. See io_exo_glove_ros2_kinematics.hpp for why the linkage cannot be injected
+    // directly and why the chord cannot invert the hand.
+    return build_anatomical_skeleton(read_hand_angles(msg, hand), hand);
 }
 
 } // namespace io_exo_glove_ros2

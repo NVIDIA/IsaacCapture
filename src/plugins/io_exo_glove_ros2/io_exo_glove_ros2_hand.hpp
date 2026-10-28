@@ -48,13 +48,9 @@ struct HandSkeleton
     }
 };
 
-struct JointAngleUnwrapper;
-
-//! Reads one hand's anatomy from the glove's articulation in @p msg. A skeleton whose
+//! Reads one hand's anatomy from the glove's fingertip chords in @p msg. A skeleton whose
 //! @c wrist_frame is empty means the mechanism was absent, i.e. that glove is not streaming.
-//! @p unwrapper, when given, carries the previous joint angles across messages so a joint crossing
-//! +-pi stays continuous; the plugin keeps one per hand.
-HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand, JointAngleUnwrapper* unwrapper = nullptr);
+HandSkeleton build_hand_skeleton(const tf2_msgs::msg::TFMessage& msg, Hand hand);
 
 //! Composes @p rotation onto @p pose: the rotation is applied to the pose's orientation and to its
 //! position, i.e. the pose is re-expressed one frame further out.
