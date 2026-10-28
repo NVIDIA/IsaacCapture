@@ -59,10 +59,10 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   not the repo root.
 - A stand-in child process must stay alive on its own (`python -m <builtin>`
   exits at once), and `Popen()` can return while the child's
-  `/proc/<pid>/cmdline` still reads empty: wait for it to be non-empty before
-  any check, including one that expects no match, which an empty cmdline
-  passes without testing anything (`python/core/cloudxr/test_background.py`
-  does both).
+  `/proc/<pid>/cmdline` still reads empty or the parent's argv: wait for the
+  child's own argv before any check, including one that expects no match,
+  which either stale value passes without testing anything
+  (`python/core/cloudxr/test_background.py` does both).
 
 ## Adding tests
 

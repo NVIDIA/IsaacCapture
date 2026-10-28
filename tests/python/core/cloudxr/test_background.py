@@ -35,14 +35,16 @@ def stand_in_service(tmp_path, monkeypatch):
 
 
 def _await_exec(pid: int) -> None:
-    """Wait for *pid*'s cmdline: Popen() can return mid-exec, while it reads empty.
+    """Wait for *pid*'s own cmdline: Popen() can return mid-exec.
 
-    An empty cmdline matches nothing, so a check made then fails a positive
-    test and passes a negative one without testing anything.
+    Until exec finishes it reads empty or, on the posix_spawn path, briefly
+    this process's argv. Neither names the service, so a check made then fails
+    a positive test and passes a negative one without testing anything.
     """
     cmdline = Path(f"/proc/{pid}/cmdline")
+    ours = Path("/proc/self/cmdline").read_bytes()
     deadline = time.monotonic() + 5.0
-    while not cmdline.read_bytes():
+    while cmdline.read_bytes() in (b"", ours):
         if time.monotonic() > deadline:
             pytest.fail(f"{cmdline} is still empty 5s after the spawn")
         time.sleep(0.01)
