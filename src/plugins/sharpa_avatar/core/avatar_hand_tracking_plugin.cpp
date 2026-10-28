@@ -203,6 +203,12 @@ constexpr std::array<std::optional<size_t>, XR_HAND_JOINT_COUNT_EXT> kOpenXRSlot
     14,           15, 16, 17, 18, 19, 20, 21, 22, 23, std::nullopt, std::nullopt, 24,
 };
 
+// Avatar HUMAN uses +Z toward the fingertips and -X toward the back of the hand.
+// OpenXR uses -Z toward the fingertips and +Y toward the back of the hand.
+constexpr float kInvSqrt2 = 0.70710678f;
+constexpr XrPosef kAvatarToOpenXR = { { kInvSqrt2, -kInvSqrt2, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } };
+constexpr XrPosef kOpenXRToAvatar = { { -kInvSqrt2, kInvSqrt2, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } };
+
 } // anonymous namespace
 
 // Wrist offsets for XR controllers: align the controller aim pose to a natural
@@ -685,7 +691,9 @@ void AvatarTracker::map_landmarks_to_openxr(const std::vector<::avatar::Pose>& l
         local_pose.orientation.z = lp.orientation.z;
         local_pose.orientation.w = lp.orientation.w;
 
-        out_joints[j].pose = oxr_utils::multiply_poses(root_pose, local_pose);
+        const XrPosef openxr_pose =
+            oxr_utils::multiply_poses(kAvatarToOpenXR, oxr_utils::multiply_poses(local_pose, kOpenXRToAvatar));
+        out_joints[j].pose = oxr_utils::multiply_poses(root_pose, openxr_pose);
         out_joints[j].radius = 0.01f;
         out_joints[j].locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
 
