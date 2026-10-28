@@ -378,6 +378,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -468,8 +469,8 @@ graph outputs and writes them <em>out</em> to a device after the graph runs.</p>
 <li><p><strong>Device-side schemas</strong> (<code class="docutils literal notranslate"><span class="pre">TensorGroupType</span></code>) describe what a device consumes.
 <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code> carries <code class="docutils literal notranslate"><span class="pre">[amplitude,</span> <span class="pre">frequency_hz,</span> <span class="pre">duration_s]</span></code>;
 <code class="docutils literal notranslate"><span class="pre">EndEffectorForce</span></code> carries a 3-DoF force for future grounded devices. They
-live in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeting_engine.tensor_types</span></code>.</p></li>
-<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaaccapture.retargeters.tactile_retargeters</span></code> map
+live in <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">retargeting_</span><wbr><span class="pre">engine.</span><wbr><span class="pre">tensor_</span><wbr><span class="pre">types</span></code>.</p></li>
+<li><p><strong>Retargeters</strong> in <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">retargeters.</span><wbr><span class="pre">tactile_</span><wbr><span class="pre">retargeters</span></code> map
 sim-side tactile data (a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code> / <code class="docutils literal notranslate"><span class="pre">TactileHeatmap</span></code>) to a
 device-side schema — e.g. <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code>.</p></li>
 <li><p><strong>HapticSink</strong> (<code class="docutils literal notranslate"><span class="pre">IDeviceIOSink</span></code>) is the vendor-neutral output node. It stores
@@ -479,7 +480,7 @@ device after the graph, with the active session in scope. Register it with
 <li><p><strong>IHapticDevice</strong> is the vendor adapter. <code class="docutils literal notranslate"><span class="pre">ControllerHapticDevice</span></code> is the
 in-process reference; it drives the controller’s vibration actuator through the
 same <code class="docutils literal notranslate"><span class="pre">ControllerTracker</span></code> that <code class="docutils literal notranslate"><span class="pre">ControllersSource</span></code> reads on the input side
-(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_left_haptic_feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_right_haptic_feedback</span></code>).
+(via the per-side <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">left_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code> / <code class="docutils literal notranslate"><span class="pre">apply_</span><wbr><span class="pre">right_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">feedback</span></code>).
 OpenXR specifics stay in the live tracker layer, so the device, sink, and schema
 are runtime-neutral.</p></li>
 </ul>
@@ -494,7 +495,7 @@ are runtime-neutral.</p></li>
 </section>
 <section id="example">
 <h2><a class="toc-backref" href="#id2" role="doc-backlink">Example</a><a class="headerlink" href="#example" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python/controller_haptic_example.py</span></code> is the minimal
+<p><code class="docutils literal notranslate"><span class="pre">controller_</span><wbr><span class="pre">haptic_</span><wbr><span class="pre">example</span></code> in <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback</span></code> is the minimal
 end-to-end wiring: pull a controller’s trigger and that <strong>same</strong> controller
 rumbles. <code class="docutils literal notranslate"><span class="pre">TriggerToTactile</span></code> turns the trigger value into a <code class="docutils literal notranslate"><span class="pre">TactileVector</span></code>,
 <code class="docutils literal notranslate"><span class="pre">TactileVectorToControllerPulse</span></code> turns that into a <code class="docutils literal notranslate"><span class="pre">ControllerHapticPulse</span></code>,
@@ -509,9 +510,12 @@ a single controller tracker and there is no OpenXR action-set contention.</p>
 <h2><a class="toc-backref" href="#id3" role="doc-backlink">Running</a><a class="headerlink" href="#running" title="Link to this heading">#</a></h2>
 <p>The example connects through the CloudXR / OpenXR runtime, which it starts
 itself if nothing is serving (see <a class="reference internal" href="cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a> to manage
-that service yourself). Run it from the <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python</span></code>
-directory:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>controller_haptic_example.py
+that service yourself). Install <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> built from this tree into the
+active environment first, for example
+<code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;isaaccapture[cloudxr]&quot;</span> <span class="pre">--find-links=./install/wheels/</span></code>.
+Then install the example and run it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/haptic_feedback
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.haptic_feedback.controller_haptic_example
 </pre></div>
 </div>
 <p>No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
@@ -533,7 +537,7 @@ foundation.</p>
 <section id="see-also">
 <h2><a class="toc-backref" href="#id5" role="doc-backlink">See also</a><a class="headerlink" href="#see-also" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p>Example + tests: <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/python/</span></code> and
+<li><p>Example + tests: <code class="docutils literal notranslate"><span class="pre">examples/haptic_feedback/</span></code> and
 <code class="docutils literal notranslate"><span class="pre">tests/python/core/retargeting_engine/test_haptic_devices.py</span></code> /
 <code class="docutils literal notranslate"><span class="pre">test_haptic_sink.py</span></code>.</p></li>
 </ul>
@@ -667,7 +671,7 @@ foundation.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>

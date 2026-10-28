@@ -379,6 +379,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../device/gamepads/index.html">Gamepads</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/trackers/index.html">Spatial trackers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../device/add_device.html">Add a New Device</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../conformance/overview.html">Device Conformance</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">References</span></p>
 <ul class="current nav bd-sidenav">
@@ -550,14 +551,22 @@ run the sample’s one-time setup:</p>
 sample’s own environment: <code class="docutils literal notranslate"><span class="pre">isaaccapture[cloudxr]</span></code> — the <code class="docutils literal notranslate"><span class="pre">cloudxr</span></code> extra is not optional here,
 since XR is the default display mode and the viewer launches the runtime itself — plus every
 other Python dependency, into an isolated <code class="docutils literal notranslate"><span class="pre">.venv/</span></code> via <code class="docutils literal notranslate"><span class="pre">uv</span></code> (no <code class="docutils literal notranslate"><span class="pre">--system-site-packages</span></code>).
-It resolves a release matching the checkout’s major/minor version, falling back to a release
-candidate and then, after asking, to a source build
-of the surrounding checkout (see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/scripts/_install_deps.sh" rel="noopener noreferrer" target="_blank">scripts/_install_deps.sh</a>; <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> and <code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code> override
-the choice). When required system packages are missing, it prints the exact <code class="docutils literal notranslate"><span class="pre">apt-get</span></code> line
-to approve — declining, or a non-interactive run, aborts.</p>
-<p>Setup selects CuPy using <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, the toolkit containing <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> on <code class="docutils literal notranslate"><span class="pre">PATH</span></code>, or
-<code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code>, in that order. It checks the loaded NVRTC version and executes a GPU
-kernel before reporting success.</p>
+For <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> it resolves a release matching the checkout’s major/minor version, falling
+back to a release candidate and then, after asking, to a source build of the surrounding
+checkout (see <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/scripts/_install_deps.sh" rel="noopener noreferrer" target="_blank">scripts/_install_deps.sh</a>; <code class="docutils literal notranslate"><span class="pre">--wheel</span></code> and <code class="docutils literal notranslate"><span class="pre">--build-from-source</span></code> override
+the choice). It also installs the sample itself there as an editable package, which is what
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz</span></code> imports. When required system packages are
+missing, it prints the exact <code class="docutils literal notranslate"><span class="pre">apt-get</span></code> line to approve — declining, or a non-interactive run,
+aborts.</p>
+<p>Setup selects CuPy for the toolkit at <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, if set. Otherwise it takes the first CUDA
+12 or 13 toolkit among those of each <code class="docutils literal notranslate"><span class="pre">nvcc</span></code> on <code class="docutils literal notranslate"><span class="pre">PATH</span></code> and <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code>: first one
+with a version file (<code class="docutils literal notranslate"><span class="pre">version.json</span></code>, <code class="docutils literal notranslate"><span class="pre">version.txt</span></code>, or a <code class="docutils literal notranslate"><span class="pre">cuda-X.Y</span></code> directory), then one
+whose <code class="docutils literal notranslate"><span class="pre">nvcc</span> <span class="pre">--version</span></code> it can read and whose <code class="docutils literal notranslate"><span class="pre">include/</span></code> holds the CUDA headers, such as the
+distro <code class="docutils literal notranslate"><span class="pre">nvidia-cuda-toolkit</span></code> at <code class="docutils literal notranslate"><span class="pre">/usr</span></code>. CuPy finds the headers of that second kind only
+through <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code>, so setup records it in the venv, and <code class="docutils literal notranslate"><span class="pre">camera_viz.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">camera_streamer.py</span></code> and <code class="docutils literal notranslate"><span class="pre">scripts/check_cuda.py</span></code> set it unless <code class="docutils literal notranslate"><span class="pre">CUDA_PATH</span></code> or
+<code class="docutils literal notranslate"><span class="pre">CUDA_HOME</span></code> already is. Setup checks the loaded NVRTC version and executes a GPU kernel
+before reporting success.</p>
 <p>By default <code class="docutils literal notranslate"><span class="pre">setup</span></code> provisions the direct-mode path — USB / UVC and OAK-D camera support. Split
 mode (RTP) and ZED support are opt-in, since both pull in dependencies the direct path never
 needs. Flags trim or extend that:</p>
@@ -667,7 +676,8 @@ path, such as <code class="docutils literal notranslate"><span class="pre">confi
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">run</span> <span class="pre">CONFIG</span> <span class="pre">[VIEWER_FLAGS]</span></code></p></td>
-<td><p>Run the viewer; flags after <code class="docutils literal notranslate"><span class="pre">CONFIG</span></code> are forwarded to <code class="docutils literal notranslate"><span class="pre">camera_viz.py</span></code>.</p></td>
+<td><p>Run the viewer; flags after <code class="docutils literal notranslate"><span class="pre">CONFIG</span></code> are forwarded to
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz</span></code>.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">loopback</span> <span class="pre">CONFIG</span></code></p></td>
 <td><p>Run a local sender and receiver to test RTP. Requires <code class="docutils literal notranslate"><span class="pre">setup</span> <span class="pre">--with-rtp</span></code>.</p></td>
@@ -690,7 +700,8 @@ path, such as <code class="docutils literal notranslate"><span class="pre">confi
 <p><code class="docutils literal notranslate"><span class="pre">deploy</span></code> and <code class="docutils literal notranslate"><span class="pre">service-*</span></code> use the SSH credentials described in <a class="reference internal" href="#split-mode"><span class="std std-ref">Split mode — robot → workstation over RTP</span></a>.
 The <code class="docutils literal notranslate"><span class="pre">service-*</span></code> commands manage the robot’s RTP sender; CloudXR has separate
 <a class="reference internal" href="#camera-cloudxr-runtime"><span class="std std-ref">service commands</span></a>.</p>
-<p>Run <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span> <span class="pre">camera_viz.py</span> <span class="pre">--help</span></code> for viewer and CloudXR launcher flags.</p>
+<p>Run <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz</span> <span class="pre">--help</span></code> for viewer and CloudXR
+launcher flags.</p>
 </section>
 <section id="web-client-for-camera-visualization">
 <span id="camera-streaming-web-client"></span><h2><a class="toc-backref" href="#id9" role="doc-backlink">Web client for camera visualization</a><a class="headerlink" href="#web-client-for-camera-visualization" title="Link to this heading">#</a></h2>
@@ -950,8 +961,8 @@ VRAM (reported at startup); <code class="docutils literal notranslate"><span cla
 </pre></div>
 </div>
 <p>Limits are <code class="docutils literal notranslate"><span class="pre">plane_distance_min_cm</span></code>, <code class="docutils literal notranslate"><span class="pre">plane_distance_max_cm</span></code>, <code class="docutils literal notranslate"><span class="pre">size_range_m</span></code>,
-<code class="docutils literal notranslate"><span class="pre">offset_y_range_m</span></code>, <code class="docutils literal notranslate"><span class="pre">cylinder_angle_range_deg</span></code>, <code class="docutils literal notranslate"><span class="pre">equirect_h_range_deg</span></code>, and
-<code class="docutils literal notranslate"><span class="pre">equirect_v_half_range_deg</span></code>. Defaults stay within what the layers accept; see
+<code class="docutils literal notranslate"><span class="pre">offset_y_range_m</span></code>, <code class="docutils literal notranslate"><span class="pre">cylinder_</span><wbr><span class="pre">angle_</span><wbr><span class="pre">range_</span><wbr><span class="pre">deg</span></code>, <code class="docutils literal notranslate"><span class="pre">equirect_h_range_deg</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">equirect_</span><wbr><span class="pre">v_</span><wbr><span class="pre">half_</span><wbr><span class="pre">range_</span><wbr><span class="pre">deg</span></code>. Defaults stay within what the layers accept; see
 <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/configs/zed.yaml" rel="noopener noreferrer" target="_blank">configs/zed.yaml</a> for a commented example.</p>
 <p>A quad’s <code class="docutils literal notranslate"><span class="pre">distance</span></code> and a cylinder’s <code class="docutils literal notranslate"><span class="pre">cylinder_radius_m</span></code> stay YAML-only. Apparent size is
 <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">atan((width</span> <span class="pre">/</span> <span class="pre">2)</span> <span class="pre">/</span> <span class="pre">distance)</span></code> and arc width is <code class="docutils literal notranslate"><span class="pre">radius</span> <span class="pre">*</span> <span class="pre">angle</span></code> (angle in radians),
@@ -960,7 +971,7 @@ apparent size. The real distance to the surface still affects stereo depth.</p>
 </section>
 <section id="stereo-plane-distance">
 <h3><a class="toc-backref" href="#id17" role="doc-backlink">Stereo plane distance</a><a class="headerlink" href="#stereo-plane-distance" title="Link to this heading">#</a></h3>
-<p>A stereo layer draws each eye’s image on its own plane. <code class="docutils literal notranslate"><span class="pre">stereo_plane_distance_cm</span></code> sets
+<p>A stereo layer draws each eye’s image on its own plane. <code class="docutils literal notranslate"><span class="pre">stereo_</span><wbr><span class="pre">plane_</span><wbr><span class="pre">distance_</span><wbr><span class="pre">cm</span></code> sets
 the gap between them:</p>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">display</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">placements</span><span class="p">:</span>
@@ -983,7 +994,7 @@ restores it when switching back to stereo.</p>
 <p>The gap has no effect on the equirect sphere at its default infinite radius, so the right
 stick pans that shape instead. Televiz also offers <code class="docutils literal notranslate"><span class="pre">stereo_convergence_deg</span></code>, a rotation-based
 equivalent for curved layers that works at any radius. Live gap adjustment requires
-<code class="docutils literal notranslate"><span class="pre">Layer.set_stereo_baseline_mm</span></code>; when using an older wheel without that method, the binding
+<code class="docutils literal notranslate"><span class="pre">Layer.</span><wbr><span class="pre">set_</span><wbr><span class="pre">stereo_</span><wbr><span class="pre">baseline_</span><wbr><span class="pre">mm</span></code>; when using an older wheel without that method, the binding
 disables itself with a notice while <code class="docutils literal notranslate"><span class="pre">A</span></code>, <code class="docutils literal notranslate"><span class="pre">B</span></code>, <code class="docutils literal notranslate"><span class="pre">X</span></code>, and <code class="docutils literal notranslate"><span class="pre">Y</span></code> remain available.</p>
 </section>
 </section>
@@ -1071,8 +1082,8 @@ service, activate the example venv (or any environment with <code class="docutil
 <span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">isaaccapture</span><span class="o">.</span><span class="n">cloudxr</span><span class="o">.</span><span class="n">service</span> <span class="n">stop</span>
 </pre></div>
 </div>
-<p>Run <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span> <span class="pre">camera_viz.py</span> <span class="pre">--help</span></code> for the rest (install dir, env-config file,
-WSS proxy toggle).</p>
+<p>Run <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz</span> <span class="pre">--help</span></code> for the rest (install dir,
+env-config file, WSS proxy toggle).</p>
 <p>Runtime settings themselves are declared in the config rather than exported. The viewer ships
 defaults (pose wait off, runtime foveation on), and <code class="docutils literal notranslate"><span class="pre">display.cloudxr</span></code> overrides them per
 deployment — list only what you want to change:</p>
@@ -1103,7 +1114,7 @@ client-reconstructed streaming.</p>
 </section>
 <section id="split-mode-robot-workstation-over-rtp">
 <span id="split-mode"></span><h2><a class="toc-backref" href="#id21" role="doc-backlink">Split mode — robot → workstation over RTP</a><a class="headerlink" href="#split-mode-robot-workstation-over-rtp" title="Link to this heading">#</a></h2>
-<p>Split mode runs the capture side on the robot (<code class="docutils literal notranslate"><span class="pre">camera_streamer.py</span></code>) and ships RTP H.264 to
+<p>Split mode runs the capture side on the robot (the <code class="docutils literal notranslate"><span class="pre">camera_streamer</span></code> module) and ships RTP H.264 to
 the viewer on the workstation (<code class="docutils literal notranslate"><span class="pre">source:</span> <span class="pre">rtp</span></code>).</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
@@ -1140,13 +1151,13 @@ interactively keeps it out of shell history and the command line.</p>
 packages or JetPack CUDA wiring prompt for approval on the robot.</p></li>
 <li><p>Render <code class="docutils literal notranslate"><span class="pre">~/.config/systemd/user/camera-streamer.service</span></code>. <code class="docutils literal notranslate"><span class="pre">--streaming-host</span> <span class="pre">IP</span></code> (or
 <code class="docutils literal notranslate"><span class="pre">STREAMING_HOST</span></code>) injects <code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">IP</span></code> into its <code class="docutils literal notranslate"><span class="pre">ExecStart</span></code> without changing the YAML.</p></li>
-<li><p>Enable lingering once with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">loginctl</span> <span class="pre">enable-linger</span></code>, then enable and start the user
-service with <code class="docutils literal notranslate"><span class="pre">systemctl</span> <span class="pre">--user</span> <span class="pre">enable</span> <span class="pre">--now</span></code>.</p></li>
+<li><p>Enable lingering once with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">loginctl</span> <span class="pre">enable-linger</span></code>, then enable the user service and
+restart it, so a redeploy replaces a streamer that is already running.</p></li>
 </ol>
 <p><code class="docutils literal notranslate"><span class="pre">--no-service</span></code> stops after source sync and dependency installation. In that case,
 <code class="docutils literal notranslate"><span class="pre">--streaming-host</span></code> does not configure a running sender; pass <code class="docutils literal notranslate"><span class="pre">--host</span></code> when starting
-<code class="docutils literal notranslate"><span class="pre">camera_streamer.py</span></code> manually. The sender retries across unplug, SDK errors, and network
-blips. Operate the installed unit with:</p>
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture_examples.camera_viz.camera_streamer</span></code> manually. The sender retries
+across unplug, SDK errors, and network blips. Operate the installed unit with:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./camera_viz.sh<span class="w"> </span>service-status
 ./camera_viz.sh<span class="w"> </span>service-logs
 ./camera_viz.sh<span class="w"> </span>service-restart
@@ -1247,9 +1258,9 @@ the viewer prints one line every five seconds with the same numbers.</p>
 <li><p><strong>The XR session fails to create</strong> — check <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/cxr_server.*.log</span></code> and
 <code class="docutils literal notranslate"><span class="pre">~/.cloudxr/logs/runtime_worker_stderr.log</span></code> (<code class="docutils literal notranslate"><span class="pre">runtime_stderr.log</span></code> with
 <code class="docutils literal notranslate"><span class="pre">ISAACCAPTURE_LOGGING=off</span></code>) for the startup failure.
-<code class="docutils literal notranslate"><span class="pre">XR_ERROR_FORM_FACTOR_UNAVAILABLE</span></code>
+<code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">ERROR_</span><wbr><span class="pre">FORM_</span><wbr><span class="pre">FACTOR_</span><wbr><span class="pre">UNAVAILABLE</span></code>
 (-35) means the runtime is up but no headset has clicked CONNECT yet; XR mode waits
-according to <code class="docutils literal notranslate"><span class="pre">display.xr.system_wait_seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
+according to <code class="docutils literal notranslate"><span class="pre">display.</span><wbr><span class="pre">xr.</span><wbr><span class="pre">system_</span><wbr><span class="pre">wait_</span><wbr><span class="pre">seconds</span></code> (default <code class="docutils literal notranslate"><span class="pre">-1</span></code> to wait
 indefinitely; <code class="docutils literal notranslate"><span class="pre">0</span></code> fails fast; positive values wait that many seconds;
 override with <code class="docutils literal notranslate"><span class="pre">--xr-wait</span></code>). Pass <code class="docutils literal notranslate"><span class="pre">--mode</span> <span class="pre">window</span></code> to
 render to a desktop window instead (no runtime involved).</p></li>
@@ -1260,13 +1271,15 @@ directory (<code class="docutils literal notranslate"><span class="pre">configs/
 <li><p><strong>A source fails asking for CuPy / CUDA</strong> — check the matching CUDA headers, NVRTC, and
 <code class="docutils literal notranslate"><span class="pre">/usr/local/cuda</span></code> target (<a class="reference internal" href="#camera-streaming-jetson-cuda"><span class="std std-ref">Jetson CUDA prerequisites</span></a> on Jetson), then rerun setup.
 <code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code> checks driver support, not installed headers. To test GPU execution,
-run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code> and expect <code class="docutils literal notranslate"><span class="pre">[1</span> <span class="pre">2</span> <span class="pre">3</span> <span class="pre">4]</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import cupy as cp; print((cp.arange(4) + 1).get())'</span>
+run from <code class="docutils literal notranslate"><span class="pre">examples/camera_viz</span></code> and expect <code class="docutils literal notranslate"><span class="pre">CuPy</span> <span class="pre">kernel</span> <span class="pre">check</span> <span class="pre">passed</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>.venv/bin/python<span class="w"> </span>scripts/check_cuda.py
 </pre></div>
 </div>
 </li>
 <li><p><strong>Python cannot find dependencies</strong> — use the sample’s <code class="docutils literal notranslate"><span class="pre">.venv/bin/python</span></code>, or select an
-environment with <a class="reference internal" href="#camera-streaming-external-venv"><span class="std std-ref">setup –venv</span></a>.</p></li>
+environment with <a class="reference internal" href="#camera-streaming-external-venv"><span class="std std-ref">setup –venv</span></a>.
+<code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">module</span> <span class="pre">named</span> <span class="pre">'isaaccapture_examples'</span></code> means the sample is not installed in that
+environment; rerun <code class="docutils literal notranslate"><span class="pre">./camera_viz.sh</span> <span class="pre">setup</span></code> (with the same <code class="docutils literal notranslate"><span class="pre">--venv</span></code>, if you used one).</p></li>
 <li><p><strong>No video on Orin.</strong> When the CloudXR runtime runs on Jetson Orin, set
 <strong>Video Codec</strong> to <strong>H.264</strong> in the CloudXR web client. See
 <a class="reference internal" href="../teleop/quick_start.html#connect-xr-headset"><span class="std std-ref">5. Connect an XR headset</span></a>.</p></li>
@@ -1308,38 +1321,40 @@ per-source breadcrumbs on both ends.</p></li>
 <p>The sample is organized so that capture, transport, and visualization are cleanly separated, with
 Televiz as the compositor at the end of the chain:</p>
 <div class="code-100col highlight-text notranslate"><div class="highlight"><pre><span></span>camera_viz/
-├── camera_viz.sh        — CLI: setup / loopback / run / deploy / service-*
-├── camera_viz.py        — receiver / viewer (drives a Televiz VizSession)
-├── camera_streamer.py   — robot-side RTP sender (per-camera supervisor)
-├── config.py            — YAML parsing and validation
-├── display.py           — VizSession + one layer per surface
-├── cloudxr_env.py       — display.cloudxr → runtime env file
-├── dashboard.py         — terminal status panel
-├── controls/            — XR controller bindings, shapes, stereo geometry, HUD
-├── pipeline/            — source ABC + threaded runner
-├── placements/          — XR lock-mode strategies (world / head / lazy / gimbal)
-├── sources/             — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
-├── transports/          — RTP sender + receiver (native + GStreamer)
-├── codec/               — native NVENC / NVDEC pybind module
-├── configs/             — one YAML per source kind
-├── test_data/           — sample replay clip (Git LFS)
+├── camera_viz.sh          — CLI: setup / loopback / run / deploy / service-*
+├── configs/               — one YAML per source kind
+├── test_data/             — sample replay clip (Git LFS)
+├── python/isaaccapture_examples/camera_viz/
+│   ├── camera_viz.py      — receiver / viewer (drives a Televiz VizSession)
+│   ├── camera_streamer.py — robot-side RTP sender (per-camera supervisor)
+│   ├── config.py          — YAML parsing and validation
+│   ├── display.py         — VizSession + one layer per surface
+│   ├── cloudxr_env.py     — display.cloudxr → runtime env file
+│   ├── cuda_env.py        — applies the CUDA_PATH setup records
+│   ├── dashboard.py       — terminal status panel
+│   ├── controls/          — XR controller bindings, shapes, stereo geometry, HUD
+│   ├── pipeline/          — source ABC + threaded runner
+│   ├── placements/        — XR lock-mode strategies (world / head / lazy / gimbal)
+│   ├── sources/           — V4L2 / OAK-D / ZED / video replay / synthetic / rtp_h264
+│   ├── transports/        — RTP sender + receiver (native + GStreamer)
+│   └── codec/             — native NVENC / NVDEC pybind module
 └── scripts/
     ├── _install_deps.sh             — installer (setup + deploy)
     └── camera-streamer.service.in   — systemd unit template
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
-hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
+<li><p><strong>Sources</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/sources" rel="noopener noreferrer" target="_blank">sources/</a>) implement a common source ABC and
+hand frames to a threaded runner in <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/pipeline" rel="noopener noreferrer" target="_blank">pipeline/</a>. Each
 source produces GPU frames where possible — e.g. the ZED source uses <code class="docutils literal notranslate"><span class="pre">retrieve_image(MEM.GPU)</span></code> so
 BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.</p></li>
-<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
+<li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and adds one <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> per enabled camera, then submits each frame to its layer
 and calls <code class="docutils literal notranslate"><span class="pre">render()</span></code> once per frame. Stereo cameras submit both eyes.</p></li>
-<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
+<li><p><strong>Transport</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/transports" rel="noopener noreferrer" target="_blank">transports/</a>) carries the split mode:
 an RTP H.264 sender on the robot and a receiver on the workstation, with a native NVENC/NVDEC codec
-module (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
-<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
+module (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/codec" rel="noopener noreferrer" target="_blank">codec/</a>) or a GStreamer fallback.</p></li>
+<li><p><strong>Placement</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/placements" rel="noopener noreferrer" target="_blank">placements/</a>) holds the XR lock-mode
 strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
 sets each frame.</p></li>
 </ul>
@@ -1349,7 +1364,7 @@ sets each frame.</p></li>
 <p>Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> owns the session and hands its handles to <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> / <code class="docutils literal notranslate"><span class="pre">DeviceIOSession</span></code>,
 which then skip creating their own. The viewer builds the session with the trackers’ required
-extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.oxr_handles</span></code>:</p>
+extensions and forwards the handles through <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig.</span><wbr><span class="pre">oxr_</span><wbr><span class="pre">handles</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cfg</span><span class="o">.</span><span class="n">required_extensions</span> <span class="o">=</span> <span class="n">DeviceIOSession</span><span class="o">.</span><span class="n">get_required_extensions</span><span class="p">(</span><span class="n">trackers</span><span class="p">)</span>
 <span class="n">viz_session</span> <span class="o">=</span> <span class="n">televiz</span><span class="o">.</span><span class="n">VizSession</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
 
@@ -1364,7 +1379,7 @@ extensions and forwards the handles through <code class="docutils literal notran
 (imports, frame loop, and how the two sessions’ lifecycles relate), and
 <a class="reference internal" href="../teleop/teleop_session.html"><span class="doc">Teleop Session</span></a> for the <code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> side.</p>
 <p><code class="docutils literal notranslate"><span class="pre">viz_session.get_oxr_handles()</span></code> returns <code class="docutils literal notranslate"><span class="pre">(instance,</span> <span class="pre">session,</span> <span class="pre">space,</span> <span class="pre">proc_addr)</span></code> as raw
-<code class="docutils literal notranslate"><span class="pre">uint64</span></code> values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> outside <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz.DisplayMode.kXr</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">uint64</span></code> values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> outside <code class="docutils literal notranslate"><span class="pre">isaaccapture.</span><wbr><span class="pre">viz.</span><wbr><span class="pre">DisplayMode.</span><wbr><span class="pre">kXr</span></code>.</p>
 </section>
 <section id="next-steps">
 <h2><a class="toc-backref" href="#id28" role="doc-backlink">Next steps</a><a class="headerlink" href="#next-steps" title="Link to this heading">#</a></h2>
@@ -1550,7 +1565,7 @@ the <a class="reference internal" href="retargeting/index.html"><span class="doc
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 22, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>
