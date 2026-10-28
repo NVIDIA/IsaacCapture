@@ -195,7 +195,6 @@ private:
     Throttler m_joint_size_warn{ std::chrono::milliseconds(5000) };
     Throttler m_tip_frame_warn{ std::chrono::milliseconds(5000) };
     Throttler m_tip_size_warn{ std::chrono::milliseconds(5000) };
-    Throttler m_tracker_warn{ std::chrono::milliseconds(5000) };
     std::array<Throttler, kSideCount> m_wrist_warn{ Throttler{ std::chrono::milliseconds(5000) },
                                                     Throttler{ std::chrono::milliseconds(5000) } };
 

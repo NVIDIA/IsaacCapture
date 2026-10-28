@@ -393,22 +393,11 @@ void IoExoGloveRos2Plugin::hand_tick()
 {
     if (m_deviceio_session != nullptr)
     {
-        try
-        {
-            m_deviceio_session->update();
-        }
-        catch (const std::exception& e)
-        {
-            // Losing the tracker session means the wrist pose is gone; drop the injectors so the
-            // runtime reports the hands as inactive rather than keeping the last pose.
-            if (m_tracker_warn.ready())
-            {
-                m_logger->error("wrist tracker update failed: {}", e.what());
-            }
-            m_left_injector.reset();
-            m_right_injector.reset();
-            return;
-        }
+        // DeviceIOSession::update() documents a throw as fatal: the application is expected to
+        // terminate. Let it propagate out of the timer callback and rclcpp::spin, where main's
+        // handler logs it and returns 1; catching it here would keep a recording running with no
+        // hands and nothing failing.
+        m_deviceio_session->update();
     }
     if (!m_time_converter.has_value())
     {

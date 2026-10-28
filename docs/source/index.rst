@@ -70,6 +70,7 @@ Table of Contents
    device/oak
    device/oglo
    device/wuji_glove
+   device/hand_tracking/io_exo_glove_ros2
    device/sharpa_avatar
    device/haptikos
    device/spacemouse
