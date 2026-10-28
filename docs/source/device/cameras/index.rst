@@ -12,4 +12,5 @@ camera feeds to clients, see :doc:`/references/camera_streaming`.
    :titlesonly:
 
    oak
+   ego
    /device/camera/sensing

@@ -12,3 +12,7 @@ endif()
 if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
+
+if(BUILD_PLUGIN_EGO_CAMERA OR BUILD_EGO_MEDIA_TOOLS)
+    add_subdirectory(ego)
+endif()

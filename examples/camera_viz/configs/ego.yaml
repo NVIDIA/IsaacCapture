@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+source: local
+verbose: false
+
+display:
+  mode: window
+  window:
+    # Set to sbs (or pass --stereo-debug sbs) to inspect ColorLeft|ColorRight
+    # in the desktop window. XR always submits the two eyes independently.
+    stereo_debug: "off"
+  placements:
+    ego:
+      lock_mode: world
+      size: [1.0, 0.8125]
+
+cameras:
+  - name: ego
+    enabled: true
+    type: ego
+    stereo: true
+    device_uid: ""
+    width: 1600
+    height: 1300
+    fps: 30
+    format: h264
+    gpu_id: 0  # Auto: follow the renderer's CUDA GPU; nonzero pins must match it.

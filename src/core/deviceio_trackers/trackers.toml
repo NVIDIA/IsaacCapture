@@ -93,6 +93,48 @@ channel = "oak"
 header = "frame_metadata_tracker_oak"
 max_flatbuffer_size = 128
 
+# The orbbec_ego_* sizes must equal EGO_MAX_FLATBUFFER_SIZE in schema/ego_limits.hpp.
+[[tracker]]
+name = "orbbec_ego_frame_metadata"
+table = "OrbbecEgoFrameMetadata"
+schema = "orbbec_ego_camera"
+tensor_identifier = "frame_metadata"
+max_flatbuffer_size = 32768
+mcap_channels = ["FrameMetadata", "FrameMetadata_tracked"]
+replay_channels = ["FrameMetadata"]
+
+[[tracker]]
+name = "orbbec_ego_imu"
+table = "OrbbecEgoImuBatch"
+tensor_identifier = "imu_batch"
+max_flatbuffer_size = 32768
+mcap_channels = ["Imu", "Imu_tracked"]
+replay_channels = ["Imu"]
+
+[[tracker]]
+name = "orbbec_ego_audio"
+table = "OrbbecEgoAudioChunk"
+tensor_identifier = "audio_chunk"
+max_flatbuffer_size = 32768
+mcap_channels = ["Audio", "Audio_tracked"]
+replay_channels = ["Audio"]
+
+[[tracker]]
+name = "orbbec_ego_calibration"
+table = "OrbbecEgoCalibration"
+tensor_identifier = "calibration"
+max_flatbuffer_size = 32768
+mcap_channels = ["Calibration", "Calibration_tracked"]
+replay_channels = ["Calibration"]
+
+[[tracker]]
+name = "orbbec_ego_device_state"
+table = "OrbbecEgoDeviceState"
+tensor_identifier = "device_state"
+max_flatbuffer_size = 32768
+mcap_channels = ["DeviceState", "DeviceState_tracked"]
+replay_channels = ["DeviceState"]
+
 [[tracker]]
 name = "steering_wheel"
 table = "SteeringWheelOutput"

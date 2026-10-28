@@ -36,6 +36,7 @@ v4l2 = ["opencv-python>=4.5"]
 # wheel as v4l2, listed separately so --no-v4l2 setups can still ask for it.
 video = ["opencv-python>=4.5"]
 oakd = ["depthai>=3.0"]
+ego = ["pybind11>=2.11"]
 # pyzed isn't on PyPI — the ZED SDK's bundled ``get_python_api.py``
 # produces a Python-version-specific wheel. ``camera_viz.sh setup --with-zed``
 # runs that and installs the result.
@@ -58,13 +59,17 @@ viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 # `only-include` + `sources`, not `packages`, and no __init__.py above
 # camera_viz -- see the packaging rules in examples/README.md.
 #
-# The native codec's .so is built in place by codec/build.sh, so it is picked up
+# Native extensions are built in place by their build.sh scripts and picked up
 # from the source tree rather than shipped by this build. Hatchling reads only
-# this directory's .gitignore, so the codec build tree is excluded here.
+# this directory's .gitignore, so native build trees are excluded here.
 [tool.hatch.build.targets.wheel]
 only-include = ["python/isaaccapture_examples/camera_viz"]
 sources = ["python"]
-exclude = ["/python/isaaccapture_examples/camera_viz/codec/build", "*.so"]
+exclude = [
+    "/python/isaaccapture_examples/camera_viz/codec/build",
+    "/python/isaaccapture_examples/camera_viz/ego_preview/build",
+    "*.so",
+]
 
 [tool.uv]
 python-preference = "only-managed"

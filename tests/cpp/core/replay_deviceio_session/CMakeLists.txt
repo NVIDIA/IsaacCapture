@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.20)
 
 add_executable(replay_deviceio_session_tests
     test_replay_session.cpp
+    test_ego_replay.cpp
 )
 
 target_link_libraries(replay_deviceio_session_tests PRIVATE

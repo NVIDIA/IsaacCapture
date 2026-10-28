@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+enum OrbbecEgoAudioSampleFormat : byte { S16LE = 0 }
+
+// Indices count retained PCM frames per channel within a continuous segment.
+// continuity_known is false when the SDK cannot report physical sample loss.
+table OrbbecEgoAudioTiming {
+  segment_id: uint64 (id: 0);
+  first_sample_index: uint64 (id: 1);
+  continuity_known: bool (id: 2);
+  discontinuity: bool (id: 3);
+}
+
+table OrbbecEgoAudioChunk {
+  sequence_number: uint64 (id: 0);
+  sample_rate_hz: uint32 (id: 1);
+  channel_count: uint16 (id: 2);
+  bits_per_sample: uint16 (id: 3);
+  sample_format: OrbbecEgoAudioSampleFormat (id: 4);
+  sample_count: uint32 (id: 5);
+  wav_data_offset: uint64 (id: 6);
+  byte_count: uint32 (id: 7);
+  capture_epoch: uint32 (id: 8);
+  timing: OrbbecEgoAudioTiming (id: 9);
+}
+
+table OrbbecEgoAudioChunkTracked { data: OrbbecEgoAudioChunk (id: 0); }
+
+table OrbbecEgoAudioChunkRecord {
+  data: OrbbecEgoAudioChunk (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+// PCM block retained verbatim in an embedded-media MCAP.  The existing
+// OrbbecEgoAudioChunk remains the lightweight WAV-sidecar index used by the
+// sidecar and SchemaPusher paths.
+table OrbbecEgoPcmAudioChunk {
+  sequence_number: uint64 (id: 0);
+  sample_rate_hz: uint32 (id: 1);
+  channel_count: uint16 (id: 2);
+  bits_per_sample: uint16 (id: 3);
+  sample_format: OrbbecEgoAudioSampleFormat (id: 4);
+  sample_count: uint32 (id: 5);
+  pcm_data: [ubyte] (id: 6);
+  capture_epoch: uint32 (id: 7);
+  timing: OrbbecEgoAudioTiming (id: 8);
+}
+
+table OrbbecEgoPcmAudioChunkRecord {
+  data: OrbbecEgoPcmAudioChunk (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type OrbbecEgoAudioChunkRecord;

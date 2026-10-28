@@ -1627,8 +1627,15 @@ class TestStatusMonitoringIntegration:
                 tracker_cls.assert_called_once_with(f"{plugin}/device_status")
                 assert session.get_device_status(f"{plugin}/{plugin}") is not None
 
-    def test_only_manus_is_monitored_and_plugin_launch_order_is_preserved(
-        self, tmp_path
+    @pytest.mark.parametrize(
+        "plugin_name,root,path",
+        [
+            ("manus_hand_plugin", "/manus", "/hand/left"),
+            ("orbbec_ego_camera", "ego_instance", "/camera/ego"),
+        ],
+    )
+    def test_supported_inventory_preserves_plugin_launch_order(
+        self, tmp_path, plugin_name, root, path
     ):
         class StatusTracker:
             def __init__(self):
@@ -1646,18 +1653,16 @@ class TestStatusMonitoringIntegration:
                 self.process_poll_count += 1
                 return super().get_process_snapshot()
 
-        manager = MockPluginManager(plugin_names=["legacy_plugin", "manus_hand_plugin"])
+        manager = MockPluginManager(plugin_names=["legacy_plugin", plugin_name])
         legacy_context = CountingContext()
         manus_context = CountingContext()
         manager._contexts["legacy_plugin"] = legacy_context
-        manager._contexts["manus_hand_plugin"] = manus_context
+        manager._contexts[plugin_name] = manus_context
         manager.get_plugin_info = MagicMock(
             return_value=SimpleNamespace(
                 name="Manus",
                 devices=(
-                    SimpleNamespace(
-                        path="/hand/left", type="hand", description="Left hand"
-                    ),
+                    SimpleNamespace(path=path, type="hand", description="Left hand"),
                 ),
             )
         )
@@ -1672,8 +1677,8 @@ class TestStatusMonitoringIntegration:
                     search_paths=[tmp_path],
                 ),
                 PluginConfig(
-                    plugin_name="manus_hand_plugin",
-                    plugin_root_id="/manus",
+                    plugin_name=plugin_name,
+                    plugin_root_id=root,
                     search_paths=[tmp_path],
                 ),
             ],
@@ -1691,12 +1696,12 @@ class TestStatusMonitoringIntegration:
         ):
             session = TeleopSession(config)
             with session:
-                tracker_cls.assert_called_once_with("/manus/device_status")
-                manager.get_plugin_info.assert_called_once_with("manus_hand_plugin")
+                tracker_cls.assert_called_once_with(f"{root}/device_status")
+                manager.get_plugin_info.assert_called_once_with(plugin_name)
                 assert collected_trackers == [tracker]
                 assert [call["plugin_name"] for call in manager.start_calls] == [
                     "legacy_plugin",
-                    "manus_hand_plugin",
+                    plugin_name,
                 ]
                 assert len(session.plugin_managers) == 2
                 assert len(session.plugin_contexts) == 2
@@ -1704,11 +1709,11 @@ class TestStatusMonitoringIntegration:
                 snapshot = session.get_status()
                 assert {provider.id for provider in snapshot.providers} == {
                     "openxr/runtime",
-                    "plugin//manus",
+                    f"plugin/{root}",
                 }
                 assert {device.id for device in snapshot.devices} == {
                     "openxr/headset",
-                    "/manus/hand/left",
+                    f"{root}{path}",
                 }
                 assert session.get_provider_status("plugin//legacy") is None
                 assert session.get_device_status("/legacy/device") is None
