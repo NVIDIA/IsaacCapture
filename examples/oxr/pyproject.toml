@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-oxr"
+version = "0.0.0"  # Internal examples - not versioned
+description = "OpenXR Tracking Python Examples"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "isaaccapture[cloudxr]",
+]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# oxr -- see the packaging rules in examples/README.md.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/oxr"]
+sources = ["python"]

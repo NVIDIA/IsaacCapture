@@ -1,0 +1,17 @@
+{
+  "voice": "en_GB-alba-medium",
+  "length_scale": "1.25",
+  "text_sha1": {
+    "a_pose_still": "7ecb6110f5bd59fe",
+    "t_pose_hold_open": "c413c900701e2b9a",
+    "neutral_stance": "ff367e7cba1ab75e",
+    "left_arm_raise": "2606a393f6a371ac",
+    "right_arm_raise": "3c0893460c548b46",
+    "left_leg_raise": "ee15d520a5c95a96",
+    "right_leg_raise": "80f63578017ead61",
+    "squat_x2": "a7e06943553c3724",
+    "march_in_place": "e92febe14c6be290",
+    "t_pose_hold_close": "9ea066fd1d846010",
+    "closing": "5b9a4c18a75801ef"
+  }
+}

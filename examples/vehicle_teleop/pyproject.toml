@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-vehicle-teleop"
+version = "0.0.0"
+description = "Isaac Teleop vehicle steering and Panda control example"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "crcmod",
+    "isaaccapture[cloudxr]",
+    "libusb-package",
+    "libusb1",
+    "mcap>=1.2.0",
+    "pycapnp==2.1.0",
+    "pycryptodome",
+    "pyyaml",
+    "pyzmq",
+    "scons",
+    "tqdm",
+    "websockets>=17.3",
+]
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# vehicle_teleop -- see the packaging rules in examples/README.md.
+[tool.hatch.build.targets.wheel]
+only-include = ["python/isaaccapture_examples/vehicle_teleop"]
+sources = ["python"]
+
+[[tool.uv.index]]
+url = "https://pypi.nvidia.com"

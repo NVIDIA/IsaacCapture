@@ -13,16 +13,16 @@ from isaaccapture.retargeters import (
     VehicleControlRetargeterConfig,
 )
 
-from vehicle_teleop.isaac_keyboard_control_worker import (
+from isaaccapture_examples.vehicle_teleop.isaac_keyboard_control_worker import (
     IsaacKeyboardControlState,
     IsaacKeyboardControlWorker,
     TerminalKeyReader,
 )
-from vehicle_teleop.isaac_remote_steering_worker import (
+from isaaccapture_examples.vehicle_teleop.isaac_remote_steering_worker import (
     IsaacRemoteSteeringWorker,
     build_parser,
 )
-from vehicle_teleop.vehicle_command import VehicleControlCommand
+from isaaccapture_examples.vehicle_teleop.vehicle_command import VehicleControlCommand
 
 
 @pytest.fixture

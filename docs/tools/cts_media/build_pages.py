@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Write the render-only page capture.mjs draws the CTS step GIFs from.
+"""Write the render-only pages capture.mjs draws the CTS step GIFs from.
 
     python3 docs/tools/cts_media/build_pages.py --out "$TMP/cts_media"
 
-The motion is the hand oracle's synthetic reference take, with sway, tremor and noise
-switched off so the GIFs stay small; the steps, holds and order come from the hand
-capture/session.py. Steps other than the rolls are drawn here from the oracle's poses
-and placements (HAND_START, HAND_ORBIT); the oracle itself is untouched.
+The motion is the oracles' synthetic reference take, with sway, tremor and noise
+switched off so the GIFs stay small; the steps, holds and order come from each
+suite's capture/session.py. Hand steps other than the rolls are drawn here from the
+oracle's poses and placements (HAND_START, HAND_ORBIT); the oracle itself is untouched.
 """
 
 from __future__ import annotations
@@ -25,14 +25,18 @@ from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 CTS = HERE.parents[2] / "src/python/isaaccapture/cts"
-sys.path[:0] = [str(CTS / "hand/oracle")]
+sys.path[:0] = [str(CTS / "hand/oracle"), str(CTS / "full_body/oracle")]
 
 import hand_model as hm  # noqa: E402
+import posture_script  # noqa: E402
 import script as hand_oracle  # noqa: E402
+import skeleton as sk  # noqa: E402
 
 HAND_FPS = 10
+BODY_FPS = 12.5
 HAND_LEAD_S = 1.2  # rolls: the oracle's move into the pose, before the beep
 HAND_MOVE_S = 1.0  # other steps: the drawn move into the pose, before the beep
+BODY_LEAD_S = 0.64  # still steps: the oracle's 0.55 s arm blend, before the press
 
 HAND_VIEW = {
     "flat_on_table_open": "above",
@@ -67,6 +71,38 @@ HAND_START = {
 HAND_ORBIT = {
     "fist": lambda u: 2 * math.pi * hand_oracle._smooth(u),
     "palms_together": lambda u: math.radians(70) * math.sin(2 * math.pi * u),
+}
+
+# label -> (view, limbs drawn thick)
+BODY_VIEW = {
+    "a_pose_still": ("front", []),
+    "t_pose_hold_open": ("front", ["LEFT_ARM", "RIGHT_ARM"]),
+    "neutral_stance": ("front", []),
+    "left_arm_raise": ("front", ["LEFT_ARM"]),
+    "right_arm_raise": ("front", ["RIGHT_ARM"]),
+    "left_leg_raise": ("three_quarter", ["LEFT_LEG"]),
+    "right_leg_raise": ("three_quarter", ["RIGHT_LEG"]),
+    "squat_x2": ("three_quarter", ["LEFT_LEG", "RIGHT_LEG"]),
+    "march_in_place": ("three_quarter", ["LEFT_LEG", "RIGHT_LEG"]),
+    "t_pose_hold_close": ("front", ["LEFT_ARM", "RIGHT_ARM"]),
+}
+LIMBS = {
+    "LEFT_ARM": [
+        "LEFT_COLLAR",
+        "LEFT_SHOULDER",
+        "LEFT_ELBOW",
+        "LEFT_WRIST",
+        "LEFT_HAND",
+    ],
+    "RIGHT_ARM": [
+        "RIGHT_COLLAR",
+        "RIGHT_SHOULDER",
+        "RIGHT_ELBOW",
+        "RIGHT_WRIST",
+        "RIGHT_HAND",
+    ],
+    "LEFT_LEG": ["LEFT_HIP", "LEFT_KNEE", "LEFT_ANKLE", "LEFT_FOOT"],
+    "RIGHT_LEG": ["RIGHT_HIP", "RIGHT_KNEE", "RIGHT_ANKLE", "RIGHT_FOOT"],
 }
 
 # Palms together: each thumb lies straight in its own hand's finger plane, 10 degrees
@@ -290,22 +326,86 @@ def hand_data() -> dict:
     }
 
 
+def body_data() -> dict:
+    steps_in = session_steps("full_body")
+    windows = {w["label"]: w for w in posture_script.step_windows()}
+    absent = [label for label, _, _ in steps_in if label not in windows]
+    if absent:
+        raise SystemExit(f"the full-body oracle does not perform: {absent}")
+    posture_script.random = SimpleNamespace(Random=Quiet)
+    rec = posture_script.build_posture()
+    rate = posture_script.RATE_HZ
+
+    def joints_at(t: float):
+        """Joint positions (mm) at oracle time t, linear between samples."""
+        x = min(t * rate, len(rec.frames) - 1.0)
+        i = int(x)
+        a, f = rec.frames[i].joints, x - i
+        b = rec.frames[min(i + 1, len(rec.frames) - 1)].joints
+        return [
+            [round((pa + (pb - pa) * f) * 1000) for pa, pb in zip(ja.pos, jb.pos)]
+            for ja, jb in zip(a, b)
+        ]
+
+    steps = []
+    for label, duration, _ in steps_in:
+        w = windows[label]
+        still = label in posture_script.STILL_STEPS
+        # The oracle's windows are shorter than the real ones: the hold is resampled
+        # to play for the session's duration. Still steps open on the oracle's blend
+        # into the pose, which a performer does before pressing.
+        lead_o = BODY_LEAD_S if still else 0.0
+        span_o = w["end_s"] - 1 / rate - (w["start_s"] + lead_o)
+        lead = round(lead_o * BODY_FPS)
+        times = [w["start_s"] + k / BODY_FPS for k in range(lead)]
+        count = round(duration * BODY_FPS) + 1
+        times += [
+            w["start_s"] + lead_o + span_o * k / (count - 1) for k in range(count)
+        ]
+        view, limbs = BODY_VIEW[label]
+        steps.append(
+            {
+                "label": label,
+                "duration": duration,
+                "still": still,
+                "view": view,
+                "active": sorted(
+                    {sk.J[name] for limb in limbs for name in LIMBS[limb]}
+                ),
+                "frames": [joints_at(t) for t in times],
+                "lead": lead,
+            }
+        )
+    side = [
+        "L" if n.startswith("LEFT") else "R" if n.startswith("RIGHT") else "C"
+        for n in sk.JOINT_NAMES
+    ]
+    return {
+        "steps": steps,
+        "parent": sk.PARENT,
+        "side": side,
+        "fps": BODY_FPS,
+        "hands": [sk.J["LEFT_HAND"], sk.J["RIGHT_HAND"]],
+        "head": sk.J["HEAD"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    data = hand_data()
-    html = (HERE / "hand.html").read_text()
-    assert "/*DATA*/null" in html
-    html = html.replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
-    (args.out / "hand.html").write_text(html)
-    print(
-        "wrote",
-        args.out / "hand.html",
-        "steps:",
-        [len(s["frames"]) for s in data["steps"]],
-    )
+    for name, data in (("hand", hand_data()), ("full_body", body_data())):
+        html = (HERE / f"{name}.html").read_text()
+        assert "/*DATA*/null" in html
+        html = html.replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
+        (args.out / f"{name}.html").write_text(html)
+        print(
+            "wrote",
+            args.out / f"{name}.html",
+            "steps:",
+            [len(s["frames"]) for s in data["steps"]],
+        )
 
 
 if __name__ == "__main__":

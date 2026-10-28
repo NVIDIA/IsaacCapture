@@ -66,7 +66,7 @@ Usage
 
 Start the plugin with the session through ``TeleopSessionConfig.plugins``, from the copy bundled
 with ``isaaccapture`` (wheel installs included), and read it with ``SpaceMouseSource``, as
-:code-file:`examples/teleop/python/spacemouse_printer_example.py` does:
+:code-file:`examples/teleop/python/isaaccapture_examples/teleop/spacemouse_printer_example.py` does:
 
 .. code-block:: python
 
