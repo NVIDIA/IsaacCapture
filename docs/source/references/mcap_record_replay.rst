@@ -156,7 +156,7 @@ additional source nodes (``HeadSource``, ``ControllersSource``, …) in
 
 For a live browser view of **all** human DeviceIO trackers at once (hands, head,
 controllers, and full body), see ``examples/deviceio_live_view/`` and its
-``README.md``:
+``README.md``. From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
@@ -173,7 +173,7 @@ A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
 Live preview
 ^^^^^^^^^^^^
 
-From the repo root:
+From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
@@ -188,7 +188,7 @@ opened from another machine; pass ``--host 127.0.0.1`` to keep one local.
 Recording
 ^^^^^^^^^
 
-From the repo root:
+From the repo root, in the same venv:
 
 .. code-block:: bash
 

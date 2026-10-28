@@ -49,6 +49,8 @@ cmake --build build --parallel
 
 There is no flag for the twin: a Linux `BUILD_VIZ` build has it. The first configure fetches MuJoCo and its six vendored dependencies from GitHub and compiles them (~40 s on 12 cores).
 
+Then run `cmake --install build`, and install the wheel and this example as in [Running an example](../README.md#running-an-example).
+
 To just run it, `uv pip install .` drives the same CMake and skips the `build/` tree:
 
 ```bash
@@ -57,7 +59,7 @@ uv pip install -e ./examples/robot_viz # same environment
 python -m isaaccapture_examples.robot_viz
 ```
 
-Both must land in one environment. Beware `uv pip install isaaccapture` without a path or `--find-links`: it does not resolve at all until `isaaccapture` is published, and once it is, it resolves to a release with no robot twin in it.
+Both must land in one environment. Beware `uv pip install isaaccapture` without a path or the `==X.Y+local` pin: it does not resolve at all until `isaaccapture` is published, and once it is, it resolves to a release with no robot twin in it.
 
 Running additionally needs a GPU with EGL + CUDA, and a headset. On a multi-GPU host, pass the GPU: `SceneTwin` takes a `gl_device_index`, which indexes EGL devices and need not agree with CUDA's ordering. The renderer checks at construction and names both device numbers.
 

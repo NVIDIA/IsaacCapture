@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # MCAP record / replay
 
 Record DeviceIO tracking to an MCAP file and replay it into a viser 3D view.
-Live viewers are included for watching without recording.
+Live viewers are included for watching without recording. In a venv set up
+as in [Running an example](../README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/mcap_record_replay

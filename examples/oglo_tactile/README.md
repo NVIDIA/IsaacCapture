@@ -43,10 +43,17 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
    cmake -B build -DBUILD_PLUGIN_OGLO=ON -DBUILD_VIZ=ON
    cmake --build build --parallel
    cmake --install build           # builds the isaaccapture python wheel/package
-   uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
+   uv venv --python 3.11 --seed .venv
+   source .venv/bin/activate
+   uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
    uv pip install -e ./examples/oglo_tactile
    ctest --test-dir build -R oglo_packet_parser --output-on-failure   # parser sanity
    ```
+   The venv and install lines follow
+   [Running an example](../README.md#running-an-example): `3.11` is the default
+   `ISAAC_TELEOP_PYTHON_VERSION` and `X.Y` the first two numbers of the
+   repository's `VERSION` file.
+
    The BLE backend (BlueZ via libdbus, permissive) connects out of the box.
    CuPy for the in-headset overlay comes with `isaaccapture[cloudxr]`.
 
@@ -67,6 +74,7 @@ session, records, and draws the overlay). `oglo_heatmap.py` is the renderer.
 **Start the CloudXR runtime** — a background service, so this shell stays free
 ```bash
 cd <repo>
+source .venv/bin/activate
 source scripts/setup_cloudxr_env.sh
 python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on first run only
 # Note the printed web-client URL, e.g.  https://<laptop-ip>:48322/
@@ -82,6 +90,7 @@ python -m isaaccapture.cloudxr.service start --accept-eula   # flag needed on fi
 **Gloves + recording + overlay**
 ```bash
 cd <repo>
+source .venv/bin/activate
 source scripts/setup_cloudxr_env.sh
 source ~/.cloudxr/run/cloudxr.env          # path printed by step above
 python -m isaaccapture_examples.oglo_tactile.oglo_teleop_record

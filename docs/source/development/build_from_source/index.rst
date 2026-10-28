@@ -332,6 +332,8 @@ When ``BUILD_TESTING`` is ``ON``, CTest is enabled at the top level. Run all tes
 
 The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build-ubuntu.yml>`).
 
+.. _build-from-source-install-package:
+
 4. Install the ``isaaccapture`` pip package
 -------------------------------------------
 

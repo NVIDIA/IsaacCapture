@@ -18,6 +18,8 @@ Install them first, then run this example against the installed plugin.
 
 ## Run
 
+Run the last two commands in a venv set up as in [Running an example](../README.md#running-an-example).
+
 ```bash
 ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 cmake -B build \

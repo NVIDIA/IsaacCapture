@@ -28,11 +28,17 @@ optional plugin when you need Noitom support:
 cmake -B build -DBUILD_PLUGIN_NOITOM_MOCAP=ON -DISAAC_TELEOP_PYTHON_VERSION=3.12
 cmake --build build --target python_package python_wheel noitom_mocap_plugin --parallel
 cmake --install build
-uv pip install --find-links=install/wheels "isaaccapture[cloudxr]"
+uv venv --python 3.12 --seed .venv
+source .venv/bin/activate
+uv pip install "isaaccapture[cloudxr]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
 ```
 
 Python 3.12 matches Isaac Lab 3.0, which Example 2 needs. The wheel installs
 only on the Python it was built for, so use a 3.12 venv for Example 1 too.
+`X.Y` is your build's version, the first two numbers of the repository's
+`VERSION` file. The venv and install lines follow
+[Running an example](../README.md#running-an-example); activate the venv in
+every terminal you run Example 1 from.
 
 Run `cmake --install build` again whenever `plugin.yaml` changes so the updated
 configuration is copied to `install/plugins/noitom_mocap/plugin.yaml`.
@@ -81,8 +87,7 @@ The callback runs inside Isaac Lab's own interpreter, so install isaaccapture
 and this example into *that* environment rather than a venv of your own. Build
 with `-DISAAC_TELEOP_PYTHON_VERSION=3.12` as above: Isaac Lab 3.0 runs Python
 3.12, and pip skips a wheel built for another version. Deactivate any venv
-first, because `isaaclab.sh -p` uses `$VIRTUAL_ENV` when it is set. `X.Y` is
-your build's version, the first two numbers of the repository's `VERSION` file.
+first, because `isaaclab.sh -p` uses `$VIRTUAL_ENV` when it is set.
 
 ```bash
 deactivate    # only if a venv is active

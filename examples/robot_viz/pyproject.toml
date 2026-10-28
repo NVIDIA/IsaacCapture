@@ -4,7 +4,8 @@
 # Pure Python -- nothing here is compiled. The scene backend lives in
 # isaaccapture.viz.robot, which ships with Televiz on Linux.
 #
-#     uv pip install "isaaccapture[cloudxr]" --find-links=./install/wheels/
+# Install isaaccapture as in examples/README.md, "Running an example", then:
+#
 #     uv pip install -e ./examples/robot_viz
 #     python -m isaaccapture_examples.robot_viz          # needs a headset; fetches its
 #                                                       # scene on the first run

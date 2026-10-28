@@ -125,7 +125,8 @@ produced in your target joint order.
 Run the example
 ---------------
 
-The repo ships a bimanual demo in ``examples/retargeting``:
+The repo ships a bimanual demo in ``examples/retargeting``. Install it from the
+repository root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: console
 

@@ -5,8 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Retargeting engine examples
 
-Standalone demos of the retargeting engine. Install once, then run whichever
-one you want:
+Standalone demos of the retargeting engine. In a venv set up as in
+[Running an example](../README.md#running-an-example), install once, then run
+whichever one you want:
 
 ```bash
 uv pip install -e ./examples/retargeting

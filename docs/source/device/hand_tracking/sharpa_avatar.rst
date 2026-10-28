@@ -118,7 +118,8 @@ See :ref:`dedicated-cloudxr-runtime` and
 
 ``TeleopSession`` can launch the same binary through ``plugin.yaml``. The
 visualization example does that for you (CloudXR and the plugin start unless
-you opt out):
+you opt out). Run it from the repository root, in a venv set up as in
+:ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 

@@ -87,7 +87,8 @@ Build the examples
 
 Start with a configured Isaac Capture checkout. See
 :doc:`../../development/build_from_source/index` for the complete build
-prerequisites. Install the live viewer and both deterministic publishers:
+prerequisites. Install the live viewer and both deterministic publishers into a venv
+set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 

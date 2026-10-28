@@ -20,7 +20,8 @@ feeder -> "tactile"          (TactileDataArray, every frame)
             -> TactileTracker -> printer, and tactile/* MCAP channels
 ```
 
-Install the example:
+Install the example into a venv set up as in
+[Running an example](../README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/tactile
