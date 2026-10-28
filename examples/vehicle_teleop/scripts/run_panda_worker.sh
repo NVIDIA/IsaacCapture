@@ -8,7 +8,7 @@ PYTHON="${EXAMPLE_ROOT}/.venv/bin/python"
 
 if [[ ! -x "${PYTHON}" ]]; then
     echo "Missing example virtual environment: ${EXAMPLE_ROOT}/.venv" >&2
-    echo "Create it with: uv venv --python 3.11 .venv" >&2
+    echo "Set it up as in Setup in ${EXAMPLE_ROOT}/README.md" >&2
     exit 1
 fi
 
