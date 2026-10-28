@@ -12,6 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 - 实现以本目录的 `DESIGN.md` 为依据；协议事实以仓库 schema、绑定和共享校验器为准。发现冲突时提供具体代码证据，并同步修正设计与实现提示词。
 - 首版的手套规则留在手部适配层；左右配置独立，通用编辑状态不使用 `HandJoint` 枚举作为内部标识。
 - 评审改变输入范围、术语或编辑实体时，同时更新界面、持久化、算法、验收与实现提示词；已取消的产品概念不能留作隐藏的数据模型。
+- 评审替代性 UI 规格时，以当前稿为产品范围，只把 schema/API 约束视为阻塞；不要把旧功能、状态增强或可接受的瞬态覆盖升级为要求，并逐字核对交互手势。
 - 对设计文档的结构与表达要求应直接落实到目标文档；页面布局按区块列出具体控件，不以聊天中的补充说明代替文档修改。
 - Keep URDF driving separate from taxel deformation: HandPose supplies skeleton and LBS poses, while live URDF motion uses JointState only. Remove obsolete driver controls, persisted options, algorithms, and acceptance cases together.
 - Draft forms always read the editable Document. Validation reports errors without blocking draft edits or replacements; received metadata replaces only explicitly selected sections and never becomes a form source by changing the visualization.
