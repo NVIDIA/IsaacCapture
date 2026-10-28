@@ -76,3 +76,13 @@ def test_legacy_receiver_profile(tmp_path):
     path = tmp_path / "legacy.yaml"
     path.write_text(yaml.safe_dump(cfg))
     assert _load_config(path) == cfg
+
+
+def test_default_profile_is_independent_of_working_directory(
+    tmp_path, monkeypatch, capsys
+):
+    from camera_receiver import main
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["--dry-run", "--host", "127.0.0.1"]) == 0
+    assert "config ok" in capsys.readouterr().out

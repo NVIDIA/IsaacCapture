@@ -127,9 +127,9 @@ Codec SDK archive from the source-configured NVIDIA artifact server.
 cd ~/IsaacCapture/examples/camera_streamer
 uv venv .venv --python 3.12
 uv pip install --python .venv/bin/python -e '.[receiver,test]'
-cmake -S televiz/camera_receiver/codec -B televiz/camera_receiver/codec/build \
+cmake -S camera_receiver/codec -B camera_receiver/codec/build \
   -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-cmake --build televiz/camera_receiver/codec/build --parallel 2
+cmake --build camera_receiver/codec/build --parallel 2
 ```
 
 Create the environment only once. Reinstall dependencies/rebuild after relevant
@@ -232,10 +232,10 @@ These are rig-specific steps; the sender does not install drivers or change PWM.
 
 ```bash
 cd ~/isaac-camera-streamer/camera_streamer
-cmake -S televiz/argus_sender -B televiz/argus_sender/build \
+cmake -S argus_sender -B argus_sender/build \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build televiz/argus_sender/build --parallel 2
-televiz/argus_sender/build/argus_sender --list-modes
+cmake --build argus_sender/build --parallel 2
+argus_sender/build/argus_sender --list-modes
 ```
 
 Verify both eye devices and mode indices against the chosen shared YAML. The
@@ -262,9 +262,9 @@ Exit the preview before sending. No host process is needed for this check.
 ```bash
 cd ~/isaac-camera-streamer/camera_streamer
 PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
-televiz/argus_sender/build/argus_sender \
+argus_sender/build/argus_sender \
   --config "configs/${PROFILE}.yaml" --check-config
-televiz/argus_sender/build/argus_sender \
+argus_sender/build/argus_sender \
   --config "configs/${PROFILE}.yaml"
 ```
 
@@ -278,7 +278,7 @@ After the shared host installation, run in the first host terminal:
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
 PROFILE=s56-stereo-2560x1984-30 # Choose your resolution
-.venv/bin/python televiz/camera_receiver/camera_receiver.py \
+.venv/bin/python camera_receiver/camera_receiver.py \
   --config "configs/${PROFILE}.yaml" \
   --host "${ROBOT_IP:?Set ROBOT_IP first}"
 ```
@@ -292,13 +292,13 @@ In a second host terminal:
 
 ```bash
 cd ~/IsaacCapture/examples/camera_streamer
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock
 ```
 
 Expect `head.left` and `head.right` for stereo, or `head` for mono. This command is not a
 CloudXR launcher; headset display needs a compatible AVS1 CUDA IPC source in
-camera_viz. See [viewer options](televiz/cuda_ipc_consumer/README.md).
+camera_viz. See [viewer options](cuda_ipc_consumer/README.md).
 Close the window, press q/Esc with the window focused, or Ctrl+C in its terminal.
 
 #### Display size and stream selection
@@ -316,17 +316,17 @@ all streams. For the supplied profiles, stereo names are `head.left` and
 
 ```bash
 # Show both eyes at half size to fit a smaller screen.
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock \
   --scale 0.5 --streams head.left,head.right
 
 # Inspect one eye at full resolution (1.0 is also the default).
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock \
   --scale 1.0 --streams head.left
 
 # Display the single stream from a mono profile.
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock --streams head
 ```
 
@@ -347,7 +347,7 @@ On a CUDA 13-only host, the optional CuPy pixel-mean diagnostic needs NVRTC 12:
 cd ~/IsaacCapture/examples/camera_streamer
 uv pip install --python .venv/bin/python nvidia-cuda-nvrtc-cu12
 export LD_LIBRARY_PATH="$PWD/.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock --no-display --frames 120 --sample-mean
 ```
 
@@ -363,7 +363,7 @@ sender, receiver and consumer. The direct commands above are the primary workflo
 cd ~/IsaacCapture/examples/camera_streamer
 uv pip install --python .venv/bin/python -e ".[test]"
 .venv/bin/python -m pytest tests
-ctest --test-dir televiz/argus_sender/build --output-on-failure
+ctest --test-dir argus_sender/build --output-on-failure
 ```
 
 Run the native sender tests on the robot where that sender was built.
@@ -374,9 +374,9 @@ are not promoted to tested modes by configuration checks alone.
 
 | Directory | Purpose |
 |---|---|
-| `televiz/argus_sender` | Native Argus capture, hardware HEVC and AVS1/TCP |
-| `televiz/camera_receiver` | AVS1 parsing, NVDEC extension, GPU rings and CUDA IPC |
-| `televiz/cuda_ipc_consumer` | Standalone viewer and timing diagnostics |
+| `argus_sender` | Native Argus capture, hardware HEVC and AVS1/TCP |
+| `camera_receiver` | AVS1 parsing, NVDEC extension, GPU rings and CUDA IPC |
+| `cuda_ipc_consumer` | Standalone viewer and timing diagnostics |
 | `tests` | C++ unit tests, Python receiver/config tests and opt-in hardware tests |
 | `configs` | Shared device/resolution profiles for sender and receiver |
 
@@ -388,3 +388,9 @@ Explicit upstream license notices are preserved. Files without a license grant
 remain `LicenseRef-NVIDIA-Internal-Review` in REUSE metadata. The owners have approved
 public review of this GMSL/Argus extraction; maintainers should finalize the
 license metadata before merging. This example is not included in Isaac Capture wheels.
+
+## Rebuilding after a source-directory move
+
+CMake caches absolute source paths. After updating an existing deployment, configure
+and build the native sender and decoder again at the paths shown above. Do not move
+or reuse an old build directory from a different source location.

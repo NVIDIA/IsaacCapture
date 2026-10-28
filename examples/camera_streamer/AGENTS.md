@@ -41,3 +41,5 @@ SPDX-License-Identifier: Apache-2.0
   an open thread can describe code already fixed in an earlier commit.
 - Concurrency regression tests must synchronize inside the operation under test;
   a pre-call flag and a fixed sleep do not establish lock contention.
+- Keep argus_sender, camera_receiver and cuda_ipc_consumer directly under camera_streamer;
+  do not group standalone transport components under the TeleViz visualization name.

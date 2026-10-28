@@ -185,7 +185,7 @@ overlap, gaps, unknown flags, unsupported versions, or inconsistent presence.
 ## Minimal Python framing
 
 The standalone parser is
-`televiz/camera_receiver/avs_wire.py` relative to the example root. This fragment shows the outer framing
+`camera_receiver/avs_wire.py` relative to the example root. This fragment shows the outer framing
 and fixed descriptor structs:
 
 ```python

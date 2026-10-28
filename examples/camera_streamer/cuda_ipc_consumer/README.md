@@ -17,11 +17,11 @@ for mono and stereo examples. These options do not change decoded resolution.
 From `examples/camera_streamer`, useful variants are:
 
 ```bash
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock --streams head.left,head.right --scale 0.35
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock --no-display --frames 120
-.venv/bin/python televiz/cuda_ipc_consumer/consumer.py \
+.venv/bin/python cuda_ipc_consumer/consumer.py \
   --socket /tmp/isaac-camera-streamer.sock --no-display --latency-csv /tmp/camera_latency.csv
 ```
 

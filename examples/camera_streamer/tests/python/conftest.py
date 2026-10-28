@@ -4,4 +4,4 @@ import sys
 from pathlib import Path
 
 # The receiver is also supported as a standalone script directory.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "televiz/camera_receiver"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "camera_receiver"))

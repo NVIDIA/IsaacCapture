@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "televiz/camera_receiver"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "camera_receiver"))
 
 from avs_wire import (  # noqa: E402
     BUNDLE_SENDER_CLOCK_VALID,

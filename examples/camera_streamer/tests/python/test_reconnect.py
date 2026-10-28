@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "televiz/camera_receiver"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "camera_receiver"))
 
 import camera_receiver  # noqa: E402
 from camera_receiver import Avs1TcpReceiver  # noqa: E402

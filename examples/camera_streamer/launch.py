@@ -9,8 +9,8 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parent
-SENDER = ROOT / "televiz/argus_sender"
-RECEIVER = ROOT / "televiz/camera_receiver"
+SENDER = ROOT / "argus_sender"
+RECEIVER = ROOT / "camera_receiver"
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
         commands = [
             [
                 sys.executable,
-                str(ROOT / "televiz/cuda_ipc_consumer/consumer.py"),
+                str(ROOT / "cuda_ipc_consumer/consumer.py"),
                 "--socket",
                 "/tmp/isaac-camera-streamer.sock",
                 *extra,
