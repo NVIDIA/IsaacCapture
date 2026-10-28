@@ -496,10 +496,11 @@ installer.</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">BUILD_VIZ=ON</span></code> additionally requires <strong>glslangValidator</strong> to compile shaders to SPIR-V
 (<code class="docutils literal notranslate"><span class="pre">glslang-tools</span></code> on Linux, <code class="docutils literal notranslate"><span class="pre">brew</span> <span class="pre">install</span> <span class="pre">glslang</span></code> on macOS; ships with the Vulkan SDK
-on Windows), and on Linux <strong>wayland-scanner</strong> (<code class="docutils literal notranslate"><span class="pre">libwayland-dev</span></code>) for GLFW’s Wayland
-backend — pass <code class="docutils literal notranslate"><span class="pre">-DGLFW_BUILD_WAYLAND=OFF</span></code> to build Televiz against X11 only instead.
-Neither gates the auto-default: if one is missing, the configure fails naming it rather
-than quietly dropping the module. Most users do not need any of this:
+on Windows). On Linux, GLFW’s Wayland backend also requires <strong>wayland-scanner</strong>
+(<code class="docutils literal notranslate"><span class="pre">libwayland-dev</span></code>) and <strong>xkbcommon &gt;= 0.5.0</strong> (<code class="docutils literal notranslate"><span class="pre">libxkbcommon-dev</span></code>). Pass
+<code class="docutils literal notranslate"><span class="pre">-DGLFW_BUILD_WAYLAND=OFF</span></code> to build Televiz against X11 only instead.
+These dependencies do not gate the auto-default: if one is missing, configure fails
+naming it rather than quietly dropping the module. Most users do not need any of this:
 <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">isaaccapture</span></code> already ships the compiled <code class="docutils literal notranslate"><span class="pre">isaaccapture.viz</span></code> module. See
 <a class="reference internal" href="#other-build-options">Other Build options</a> for the full option table.</p>
 </div>
@@ -509,7 +510,9 @@ than quietly dropping the module. Most users do not need any of this:
 <p>Install build tools and dependencies, such as CMake, clang-format. See <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/.github/workflows/build-ubuntu.yml" rel="noopener noreferrer" target="_blank">build-ubuntu.yml</a> in the GitHub repository for
 the list of dependencies. On <strong>Ubuntu</strong>, install build tools and clang-format:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
-sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libegl-dev<span class="w"> </span>libx11-dev<span class="w"> </span>libwayland-dev<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools
+sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libegl-dev<span class="w"> </span>libwayland-dev<span class="w"> </span>libx11-dev<span class="w"> </span>libxcursor-dev<span class="w"> </span>libxext-dev<span class="w"> </span>libxi-dev<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libxinerama-dev<span class="w"> </span>libxkbcommon-dev<span class="w"> </span>libxrandr-dev
 </pre></div>
 </div>
 <p>Runtime-only dependencies (needed to actually run teleop, not to build):</p>
@@ -1047,7 +1050,7 @@ targets, install the <code class="docutils literal notranslate"><span class="pre
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 26, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>

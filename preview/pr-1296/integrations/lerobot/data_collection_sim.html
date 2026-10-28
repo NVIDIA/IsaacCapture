@@ -563,15 +563,9 @@ this repository (<a class="reference external" href="https://github.com/NVIDIA/I
 source. If <code class="docutils literal notranslate"><span class="pre">./install/plugins/so101_leader/so101_leader_plugin</span></code> does not exist, this
 step has not been completed.</p>
 </div>
-<p>Install the build prerequisites first — a missing <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> is the most common
-cause of a failed build, because the format check is enforced by default on Linux:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>update
-sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libx11-dev<span class="w"> </span>clang-format-14<span class="w"> </span>ccache<span class="w"> </span>patchelf<span class="w"> </span>pkg-config<span class="w"> </span>glslang-tools
-</pre></div>
-</div>
-<p>Then clone, configure, build, and install (see
-<a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> for the full prerequisite list and all
-build options):</p>
+<p>Install the <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a>
+first, including <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> for the Linux format check. Then clone, configure,
+build, and install:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/NVIDIA/IsaacCapture.git
 <span class="nb">cd</span><span class="w"> </span>IsaacCapture
 cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w">                       </span><span class="c1"># configure</span>
@@ -879,7 +873,7 @@ branch in Isaac Lab, which targets a different task and must be adapted.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 26, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 28, 2026.
       <br/>
     
   </p>

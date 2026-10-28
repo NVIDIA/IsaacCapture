@@ -85,9 +85,8 @@ as described above, and a desktop display associated with a CUDA device.
 The native camera helper is required only when camera panels are also enabled.
 
 Initialize the renderer before starting the mirror. The mirror uses the OpenGL
-backend and defaults ``OMNIUI_BACKEND`` to ``opengl`` when it is unset. Configure
-this setting before the first OVUI initialization; existing settings and an
-already initialized backend are preserved. The CUDA image-copy path does not
+backend. The application must select ``OMNIUI_BACKEND=opengl`` before the
+first OVUI initialization. Capture does not change the process-wide backend. The CUDA image-copy path does not
 support the Vulkan UI backend. This setting does not change headset rendering.
 
 Use from another application
@@ -96,6 +95,26 @@ Use from another application
 ``isaaccapture.ovxr_session_manager.ovxr_session`` provides ``OvxrSession``
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
+The binding also supplies optional ``frame_consumers`` after the application has
+resolved its render-product paths. Capture does not depend on an Isaac Lab task
+or scene configuration.
+
+``CameraPanelConsumer`` and ``OwnedDesktopMirror`` implement the same
+``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
+``CameraPanelConfig`` values, each pairing a render-product path with its placement
+and image bound. Configure the mirror's camera choices with ``MirrorProduct``
+values. Either consumer can be enabled independently.
+
+Consumers receive ``FrameOutputs`` on the XR owner thread. Use ``latest_color``
+to select an output, then ``copy_host_rgba`` or ``map_gpu`` to consume it without
+unpacking native result structures. Selected handles are valid only during that
+callback. CPU snapshots are shared within that frame; GPU resources retain their
+completion and retirement rules. A consumer may contribute composition layers that remain valid
+through submission. ``on_openxr_ready`` may be called repeatedly and must be
+idempotent. ``finish_frame`` releases borrowed outputs before submission or
+cancellation; ``close`` must tolerate partial startup and retain resources if
+safe retirement fails. The camera consumer owns one native panel collection,
+which is loaded directly and is not an OpenXR API layer.
 
 For a uv-managed application, declare Isaac Capture with its ``ovxr`` extra and
 select the source-built wheel in the application's project configuration:
