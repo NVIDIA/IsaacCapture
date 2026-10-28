@@ -1,6 +1,6 @@
 {
   "name": "cloudxr-isaac-lab-teleop",
-  "version": "6.3.0",
+  "version": "6.4.1-isaaccapture",
   "private": true,
   "description": "NVIDIA Isaac Teleop Web Client",
   "author": "NVIDIA Corporation",
