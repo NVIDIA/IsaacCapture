@@ -90,7 +90,7 @@ fi
 
 # Select the toolkit CuPy will discover, without guessing from the driver.
 cuda_info=$(python3 "$HERE/check_cuda.py" --detect) || die "CUDA toolkit detection failed"
-IFS=$'\t' read -r cuda_root cuda_major cuda_minor <<< "$cuda_info"
+IFS=$'\t' read -r cuda_root cuda_major cuda_minor cupy_cuda_path <<< "$cuda_info"
 note "CUDA $cuda_major.$cuda_minor at $cuda_root"
 
 # System-dep check. apt-installable bits are NOT auto-installed — we
@@ -207,7 +207,9 @@ check_system_deps
 # ``libnvrtc.so`` and fails to resolve without these. Skipped on desktop
 # where the CUDA installer already lays down the right symlinks.
 check_cuda_symlinks() {
-    if ! $JETSON; then
+    # A toolkit found through nvcc is not JetPack's; its libs are already on
+    # the linker path.
+    if ! $JETSON || [[ -n "$cupy_cuda_path" ]]; then
         return 0
     fi
     if [[ ! -d "$cuda_root/lib64" ]]; then
@@ -502,6 +504,15 @@ if [[ ! -d "$VENV_DIR" ]]; then
     fi
 fi
 PY="$VENV_DIR/bin/python"
+
+# Read back by cuda_env.py; see there for why some toolkits need it.
+CUDA_PATH_RECORD="$VENV_DIR/camera_viz_cuda_path"
+if [[ -n "$cupy_cuda_path" ]]; then
+    printf '%s\n' "$cupy_cuda_path" > "$CUDA_PATH_RECORD"
+    note "CuPy uses CUDA_PATH=$cupy_cuda_path unless CUDA_PATH or CUDA_HOME is set"
+else
+    rm -f "$CUDA_PATH_RECORD"
+fi
 
 # cupy ships separate packages per CUDA major (cupy-cuda12x, cupy-cuda13x...);
 # they coexist on disk and CuPy warns about "multiple CuPy packages installed."
