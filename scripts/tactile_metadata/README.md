@@ -88,12 +88,10 @@ rendered.
   Click** and click the model surface.
 - Segments are represented by yellow spheres with radius 0.005 m.
 - Expand **All Segments** to edit HandJoint, position, and XYZ rotation.
-- Drag the handle above a segment to reorder it. Displayed IDs follow list order.
 
 HandJoint values must be unique. Taxel bindings use HandJoint names internally,
-so segment reordering does not change their semantic references. Removing or
-renaming a referenced segment leaves the affected taxel field invalid and
-outlined in red.
+so removing or renaming a referenced segment leaves the affected taxel field
+invalid and outlined in red.
 
 ### Taxels
 
@@ -115,8 +113,6 @@ Expand **All Taxels** to edit pose, four segment slots, and four weights. `None`
 is an editor-only inactive slot with weight zero. Editing a weight preserves the
 entered value and adjusts other active weights proportionally so the row sums to
 one. If only one slot is active, its weight is one.
-
-Dragging taxel rows changes their IDs and metadata array order.
 
 ## Scene selection
 

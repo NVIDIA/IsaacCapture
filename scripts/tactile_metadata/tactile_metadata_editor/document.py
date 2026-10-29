@@ -109,13 +109,6 @@ class Document:
             if 0 <= row < len(values):
                 values.pop(row)
 
-    def move(self, kind: str, source: int, target: int) -> None:
-        values = self.segments if kind == "segments" else self.taxels
-        if not 0 <= source < len(values) or not 0 <= target < len(values):
-            raise ValueError("Reorder row is outside the list")
-        value = values.pop(source)
-        values.insert(target, value)
-
     def assign(self, taxels: list[int], segment_rows: list[int]) -> None:
         if not 1 <= len(segment_rows) <= 4:
             raise ValueError("Select one to four segments")

@@ -105,8 +105,6 @@ class Editor:
             self.show_saved = gui.add_checkbox("Show Saved Binding Poses", False)
             self._watch(self.mode, self._set_mode)
             self._watch(self.show_saved, lambda _: self._request_draw())
-            self.reorder_bridge = gui.add_text("__Tactile Reorder Event", "")
-            self._watch(self.reorder_bridge, self._reorder)
 
         self.edit_tabs = gui.add_tab_group()
         self.urdf_tab = self.edit_tabs.add_tab("URDF")
@@ -215,7 +213,6 @@ class Editor:
                 self._action_button(
                     "Reset Values",
                     self._restore_preview,
-                    
                 )
                 gui.add_markdown("The following values affect Preview only.")
                 self.preview_segment_folder = gui.add_folder(
@@ -553,9 +550,6 @@ class Editor:
                         for issue in issues
                         if issue["kind"] == "segments" and issue["row"] == row
                     ]
-                    self.server.gui.add_html(
-                        f'<div class="tm-sort-handle" data-kind="segments" data-row="{row}" draggable="true">⠿ Drag</div>'
-                    )
                     with self.server.gui.add_folder(f"{row}: {segment.joint}"):
                         joint = self.server.gui.add_dropdown(
                             "⚠ Name"
@@ -615,9 +609,6 @@ class Editor:
                         for issue in issues
                         if issue["kind"] == "taxels" and issue["row"] == row
                     ]
-                    self.server.gui.add_html(
-                        f'<div class="tm-sort-handle" data-kind="taxels" data-row="{row}" draggable="true">⠿ Drag</div>'
-                    )
                     with self.server.gui.add_folder(f"Taxel {row}"):
                         position, rotation = geo.components(geo.matrix(taxel.pose))
                         positions = self._numbers("Position", position, 0.001)
@@ -724,18 +715,6 @@ class Editor:
             self.document.set_weight(row, slot, float(value))
         finally:
             self._rebuild_taxel_list()
-
-    def _reorder(self, value: str) -> None:
-        if not value:
-            return
-        parts = value.split(":")
-        if len(parts) != 4:
-            return
-        kind, source, target, _ = parts
-        if kind not in ("segments", "taxels"):
-            return
-        self.document.move(kind, int(source), int(target))
-        self._rebuild_edit_lists()
 
     def _start_binding(self) -> None:
         self.pick_mode = None

@@ -32,7 +32,7 @@ SPDX-License-Identifier: Apache-2.0
 - Drain cross-thread UI events with nonblocking reads and `queue.Empty`; `Queue.empty()` is not a synchronization boundary. Give no-op-looking actions such as creating an empty document visible completion status.
 - Call `/edit`, `/preview`, `/saved`, and `/errors` Viser scene-node groups, not image layers; this tool has no image-layer abstraction.
 - During live redraw, update the active scene-node group in place. Hide only groups that should be inactive; never hide and immediately re-show the active group each frame.
-- Keep metadata/force alignment with the producer and user; do not add source-row mappings, correspondence tracking across reordering, or alignment baselines to the editor.
+- Keep metadata/force alignment with the producer and user; do not add source-row mappings, alignment baselines, force permutations, or list-order controls to the editor.
 - JSON follows tactile_metadata.fbs and the existing bindings. Treat array and enum conversion for encoding as routine implementation rather than a separate product-format decision.
 - Persist only schema-defined tactile metadata fields. Keep model configuration, calibration, source mappings and internal IDs in session state; audit actual save/export output rather than inferring persistence requirements from editing needs.
 - Simplify persistence by deleting unsupported branches in place; do not relocate serialization into Document or introduce new state abstractions for a narrower file format.
