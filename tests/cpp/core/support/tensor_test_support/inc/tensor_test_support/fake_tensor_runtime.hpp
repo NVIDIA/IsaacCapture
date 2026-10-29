@@ -22,7 +22,7 @@
 #include <string_view>
 #include <vector>
 
-namespace tracker_metadata_test
+namespace tensor_test_support
 {
 
 class FakeTensorRuntime
@@ -238,4 +238,4 @@ private:
     uint64_t m_generation = 1;
 };
 
-} // namespace tracker_metadata_test
+} // namespace tensor_test_support

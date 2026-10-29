@@ -3,14 +3,22 @@
 
 #include "inc/deviceio_session/remote_session_host.hpp"
 
+#include "generated_output_watch_includes.inc"
+
+#include <deviceio_trackers/full_body_tracker.hpp>
 #include <log_bridge/logger.hpp>
+#include <mcap/recording_traits.hpp>
 #include <mcap/sample_stream.hpp>
+#include <mcap/tracker_channels.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <remote_link/messages.hpp>
 #include <remote_link/websocket_transport.hpp>
+#include <schema/full_body_generated.h>
+#include <schema/timestamp_generated.h>
 
 #include <algorithm>
 #include <condition_variable>
+#include <iterator>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -31,7 +39,53 @@ std::span<const uint8_t> samples_records(const std::vector<uint8_t>& payload)
     return std::span<const uint8_t>(payload).subspan(kSamplesPrefixSize);
 }
 
+/*!
+ * @brief A tracker type whose live output can go away without a record saying so.
+ *
+ * Plugin-fed trackers record only new samples. When the plugin's collection goes away, the live impl empties its
+ * output, which a local reader sees as no data, and records nothing, so the robot would keep the last sample.
+ */
+struct OutputWatch
+{
+    bool (*matches)(const ITracker& tracker);
+    bool (*has_output)(const ITracker& tracker, const ITrackerSession& session);
+    //! The absent payload, as the channel replay reads records it.
+    std::vector<uint8_t> (*no_data_record)(int64_t time_ns);
+    const char* channel;
+};
+
+template <typename TrackerT, typename RecordT, auto Get>
+OutputWatch output_watch(const char* channel)
+{
+    return OutputWatch{
+        [](const ITracker& tracker) { return dynamic_cast<const TrackerT*>(&tracker) != nullptr; },
+        [](const ITracker& tracker, const ITrackerSession& session)
+        { return static_cast<bool>((static_cast<const TrackerT&>(tracker).*Get)(session)); },
+        [](int64_t time_ns)
+        {
+            const auto record = pack_record<RecordT>(nullptr, DeviceDataTimestamp(time_ns, time_ns, time_ns));
+            return std::vector<uint8_t>(record.buffer().begin(), record.buffer().end());
+        },
+        channel,
+    };
+}
+
+// Full body is plugin-fed for the Noitom and Xsens vendors.
+const OutputWatch kOutputWatches[] = {
+    output_watch<FullBodyTracker, FullBodyPoseRecord, &FullBodyTracker::get_body_pose>(
+        FullBodyRecordingTraits::replay_channels[0]),
+#include "generated_output_watches.inc"
+};
+
 } // namespace
+
+struct RemoteSessionHost::WatchedOutput
+{
+    const ITracker* tracker;
+    const OutputWatch* watch;
+    std::string topic;
+    bool had_output = false;
+};
 
 std::vector<uint8_t> merge_samples_payloads(std::vector<uint8_t> older, std::vector<uint8_t> newer)
 {
@@ -162,6 +216,20 @@ void RemoteSessionHost::start_session(const std::vector<std::shared_ptr<ITracker
     recording.sample_stream = writer.get();
     writer_ = std::move(writer);
     session_ = DeviceIOSession::run(trackers, handles, std::move(recording), vendor_config);
+    for (const auto& [tracker, name] : tracker_names)
+    {
+        const auto watch = std::find_if(std::begin(kOutputWatches), std::end(kOutputWatches),
+                                        [tracker](const OutputWatch& w) { return w.matches(*tracker); });
+        if (watch == std::end(kOutputWatches))
+        {
+            continue;
+        }
+        std::string topic = mcap_topic(name, watch->channel);
+        if (topics.empty() || std::find(topics.begin(), topics.end(), topic) != topics.end())
+        {
+            watched_.push_back(WatchedOutput{ tracker, &*watch, std::move(topic) });
+        }
+    }
     isaaccapture::Logger::get("isaaccapture.core.RemoteSessionHost")
         ->info("RemoteSessionHost: streaming {} trackers, {} topics", tracker_names.size(), topics.size());
 
@@ -181,6 +249,16 @@ void RemoteSessionHost::tick()
     }
     const int64_t tick_time_ns = os_monotonic_now_ns();
     session_->update();
+    for (WatchedOutput& watched : watched_)
+    {
+        const bool has_output = watched.watch->has_output(*watched.tracker, *session_);
+        if (watched.had_output && !has_output)
+        {
+            writer_->add_record(
+                watched.topic, watched.watch->no_data_record(tick_time_ns), static_cast<uint64_t>(tick_time_ns));
+        }
+        watched.had_output = has_output;
+    }
     // Reliable SETUP is queued first; the link never sends a SAMPLES link message ahead of it.
     std::vector<uint8_t> setup = writer_->take_setup();
     if (!setup.empty())
@@ -205,6 +283,7 @@ std::string RemoteSessionHost::close_reason() const
 
 void RemoteSessionHost::close()
 {
+    watched_.clear();
     // The session writes the end of its recording into the writer, so it goes first.
     session_.reset();
     writer_.reset();

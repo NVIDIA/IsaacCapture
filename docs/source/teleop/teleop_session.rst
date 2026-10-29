@@ -242,7 +242,9 @@ Then point the robot app at it:
   ``ValueError``. Start the plugins on the server machine, by hand or with a
   script; they run outside the session, and the robot app reads their data
   through its trackers. A plugin that stops does not raise
-  ``PluginCrashException``.
+  ``PluginCrashException``: as in live mode, a tracker reports no data once its
+  plugin's data goes away, and keeps its last sample while the plugin runs but
+  pushes nothing new.
 - **Status.** ``get_status()`` shows the server's OpenXR session as the
   ``openxr/runtime`` provider and the headset as ``openxr/headset``, as in live
   mode; for example, the headset turns ``DISCONNECTED`` when the operator takes

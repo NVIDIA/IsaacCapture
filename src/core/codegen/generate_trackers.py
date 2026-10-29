@@ -146,6 +146,24 @@ def _gen_replay_stream_refusals(entries: list[dict[str, Any]]) -> Iterator[str]:
             yield f'    refuse_metadata_tracker<{ctx.cls}>(tracker, "{ctx.cls}");'
 
 
+def _gen_output_watch_includes(entries: list[dict[str, Any]]) -> Iterator[str]:
+    for entry in entries:
+        ctx = enrich_context(entry)
+        if ctx.direction == "pull" and ctx.record:
+            yield f"#include <deviceio_trackers/{ctx.header}.hpp>"
+
+
+def _gen_output_watches(entries: list[dict[str, Any]]) -> Iterator[str]:
+    # Recorded pull trackers record only new samples; RemoteSessionHost watches their output.
+    for entry in entries:
+        ctx = enrich_context(entry)
+        if ctx.direction == "pull" and ctx.record:
+            yield (
+                f"    output_watch<{ctx.cls}, {ctx.record_type}, &{ctx.cls}::get_data>"
+                f"({ctx.traits}::replay_channels[0]),"
+            )
+
+
 def _gen_factory_decls(entries: list[dict[str, Any]]) -> Iterator[str]:
     for entry in entries:
         ctx = enrich_context(entry)
@@ -270,6 +288,10 @@ def emit_inc_fragments(entries: list[dict[str, Any]]) -> dict[str, str]:
         "inc/generated_recording_traits.inc": _join_lines(
             _gen_all_recording_traits(entries)
         ),
+        "inc/generated_output_watch_includes.inc": _join_lines(
+            _gen_output_watch_includes(entries)
+        ),
+        "inc/generated_output_watches.inc": _join_lines(_gen_output_watches(entries)),
         "inc/generated_tracker_binding_includes.inc": _join_lines(
             _gen_tracker_binding_includes(entries)
         ),

@@ -70,7 +70,8 @@ public:
                        const std::vector<std::string>& topics);
 
     //! One DeviceIOSession::update(), sent as one SAMPLES link message after a SETUP for the channels it declared.
-    //! Sends nothing once the link is down. Throws what update() throws.
+    //! A plugin-fed tracker whose output went away during the update also gets a record without data, which the
+    //! session does not write. Sends nothing once the link is down. Throws what update() throws.
     void tick();
 
     bool alive() const;
@@ -81,6 +82,7 @@ public:
 
 private:
     struct State;
+    struct WatchedOutput;
 
     RemoteSessionHost(std::unique_ptr<ITransport> transport, LinkOptions link_options);
 
@@ -90,6 +92,7 @@ private:
     // The writer outlives the session recording into it.
     std::unique_ptr<TrackerSampleStreamWriter> writer_;
     std::unique_ptr<DeviceIOSession> session_;
+    std::vector<WatchedOutput> watched_;
     uint64_t next_tick_seq_ = 1;
     std::unique_ptr<State> state_;
     // Declared last, so it is closed (its threads joined) before the state its handler writes goes away.
